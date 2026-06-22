@@ -1,15 +1,15 @@
 # Spring-Manifold Next-Gen
 
-<p align="center">
-  <img src="images/logo.png" alt="Spring-Manifold Next-Gen Logo" width="200" />
-</p>
-
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java Version](https://img.shields.io/badge/Java-25-orange.svg)](https://jdk.java.net/25/)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4+-green.svg)](https://spring.io/projects/spring-boot)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
 
 **Spring-Manifold Next-Gen** is an enterprise data integration and ingestion platform modeled after Apache ManifoldCF. It leverages modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
+
+<p align="center">
+  <img src="images/logo.png" alt="Spring-Manifold Next-Gen Logo" width="200" />
+</p>
 
 ---
 
