@@ -29,6 +29,9 @@ public class VectorStoreConfig {
     @Value("${spring.ai.vectorstore.pgvector.initialize-schema:true}")
     private boolean initializeSchema;
 
+    @Value("${spring.ai.vectorstore.pgvector.dimensions:1536}")
+    private int dimensions;
+
     @Bean
     public DataSource pgVectorDataSource() {
         HikariConfig config = new HikariConfig();
@@ -48,6 +51,7 @@ public class VectorStoreConfig {
     public PgVectorStore vectorStore(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
         // Spring AI 2.0.0-M6: The builder requires JdbcTemplate and EmbeddingModel as arguments
         return PgVectorStore.builder(pgVectorJdbcTemplate, embeddingModel)
+                .dimensions(dimensions)
                 .initializeSchema(initializeSchema)
                 .build();
     }

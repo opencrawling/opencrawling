@@ -24,6 +24,7 @@ export const connectorApi = {
 export const statusApi = {
   getSystemStatus: () => api.get('/system/status'),
   getThroughput: () => api.get('/system/throughput'),
+  getLogs: () => api.get('/system/logs'),
 }
 
 export default api

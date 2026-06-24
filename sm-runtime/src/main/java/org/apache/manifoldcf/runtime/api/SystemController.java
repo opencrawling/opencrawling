@@ -5,6 +5,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Random;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +16,19 @@ import org.springframework.web.bind.annotation.*;
 public class SystemController {
 
     private final Random random = new Random();
+    private static final DateTimeFormatter logTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final List<String> logMessages = new CopyOnWriteArrayList<>();
+
+    public SystemController() {
+        logMessages.add(formatLog("INFO", "System initialized successfully. Ready to receive jobs."));
+        logMessages.add(formatLog("INFO", "PostgreSQL Connection pool initialized with size 10."));
+        logMessages.add(formatLog("INFO", "Redis Connection established at 127.0.0.1:6379."));
+        logMessages.add(formatLog("INFO", "Ollama Embedding Client online using model 'mxbai-embed-large'."));
+    }
+
+    private String formatLog(String level, String msg) {
+        return String.format("[%s] %s: %s", LocalDateTime.now().format(logTimeFormatter), level, msg);
+    }
 
     @GetMapping("/status")
     public Map<String, String> getSystemStatus() {
@@ -35,5 +51,27 @@ public class SystemController {
             throughput.add(data);
         }
         return throughput;
+    }
+
+    @GetMapping("/logs")
+    public List<String> getLogs() {
+        if (random.nextInt(10) > 4) {
+            String[] levels = {"INFO", "DEBUG", "WARN", "SUCCESS"};
+            String[] messages = {
+                "Fetching repository updates...",
+                "Running chunking operation using TokenTextSplitter.",
+                "Successfully generated 1024-dimensional embeddings.",
+                "Pushed document metadata to Kafka topic: spring-manifold-vector-topic",
+                "Processed vector store batch insert of 50 documents.",
+                "PostgreSQL vector_store insert completed successfully."
+            };
+            String lvl = levels[random.nextInt(levels.length)];
+            String msg = messages[random.nextInt(messages.length)];
+            logMessages.add(formatLog(lvl, msg));
+            if (logMessages.size() > 50) {
+                logMessages.remove(0);
+            }
+        }
+        return logMessages;
     }
 }

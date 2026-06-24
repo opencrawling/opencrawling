@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { 
   LayoutDashboard, 
   PlayCircle, 
@@ -7,19 +7,70 @@ import {
   Settings, 
   Menu,
   X,
-  Database,
   Search,
   ChevronRight
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
 import ConnectorForm from './components/ConnectorForm'
+import { statusApi } from './lib/api'
 
 type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings'
 
 export default function App() {
   const [activeView, setActiveView] = useState<View>('dashboard')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [systemStatus, setSystemStatus] = useState<Record<string, string>>({
+    postgres: 'DOWN',
+    redis: 'DOWN',
+    ollama: 'DOWN',
+    system: 'UNKNOWN'
+  })
+  const [logs, setLogs] = useState<string[]>([])
+
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await statusApi.getSystemStatus()
+        setSystemStatus(res.data)
+      } catch (err) {
+        console.error("Failed to fetch system status:", err)
+        setSystemStatus({
+          postgres: 'DOWN',
+          redis: 'DOWN',
+          ollama: 'DOWN',
+          system: 'UNREACHABLE'
+        })
+      }
+    }
+    fetchStatus()
+    const statusInterval = setInterval(fetchStatus, 5000)
+    return () => clearInterval(statusInterval)
+  }, [])
+
+  useEffect(() => {
+    if (activeView !== 'logs') return
+    const fetchLogs = async () => {
+      try {
+        const res = await statusApi.getLogs()
+        setLogs(res.data)
+      } catch (err) {
+        console.error("Failed to fetch logs:", err)
+      }
+    }
+    fetchLogs()
+    const logsInterval = setInterval(fetchLogs, 2000)
+    return () => clearInterval(logsInterval)
+  }, [activeView])
+
+  const getLogLineColor = (line: string) => {
+    if (line.includes("INFO:")) return "text-blue-400";
+    if (line.includes("DEBUG:")) return "text-slate-500";
+    if (line.includes("WARN:")) return "text-yellow-400";
+    if (line.includes("SUCCESS:")) return "text-green-400";
+    if (line.includes("ERROR:") || line.includes("FAILED:")) return "text-red-400";
+    return "text-slate-300";
+  }
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -86,9 +137,15 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-500/10 text-green-500 rounded-full text-xs font-medium border border-green-500/20">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              System Healthy
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border ${
+              systemStatus.system === 'HEALTHY'
+                ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                : 'bg-red-500/10 text-red-500 border-red-500/20'
+            }`}>
+              <div className={`w-2 h-2 rounded-full animate-pulse ${
+                systemStatus.system === 'HEALTHY' ? 'bg-green-500' : 'bg-red-500'
+              }`} />
+              System: {systemStatus.system}
             </div>
             <div className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center">
               <span className="text-xs font-bold">PL</span>
@@ -103,12 +160,16 @@ export default function App() {
           {activeView === 'logs' && (
             <div className="h-full flex flex-col gap-4">
                <h1 className="text-2xl font-bold">Real-time Activity Logs</h1>
-               <div className="flex-1 bg-slate-900 rounded-lg p-4 font-mono text-sm overflow-y-auto border border-border text-slate-300">
-                  <p className="text-blue-400">[2026-05-15 10:24:12] INFO: Job 'WebCrawler_01' started.</p>
-                  <p className="text-slate-500">[2026-05-15 10:24:13] DEBUG: Fetching https://example.com/page1</p>
-                  <p className="text-green-400">[2026-05-15 10:24:14] SUCCESS: Indexed document 'https://example.com/page1' into Ollama Vector Store.</p>
-                  <p className="text-slate-500">[2026-05-15 10:24:15] DEBUG: Fetching https://example.com/page2</p>
-                  <p className="text-yellow-400">[2026-05-15 10:24:16] WARN: Skipping duplicate 'https://example.com/page1'</p>
+               <div className="flex-1 bg-slate-900 rounded-lg p-4 font-mono text-sm overflow-y-auto border border-border text-slate-300 flex flex-col gap-1.5">
+                  {logs.length === 0 ? (
+                    <p className="text-slate-500 italic">No log entries available.</p>
+                  ) : (
+                    logs.map((log, index) => (
+                      <p key={index} className={getLogLineColor(log)}>
+                        {log}
+                      </p>
+                    ))
+                  )}
                </div>
             </div>
           )}
