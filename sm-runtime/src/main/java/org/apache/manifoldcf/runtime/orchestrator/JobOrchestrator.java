@@ -2,6 +2,9 @@ package org.apache.manifoldcf.runtime.orchestrator;
 
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+
+import reactor.core.publisher.Mono;
+
 import org.apache.manifoldcf.core.connector.RepositoryConnector;
 import org.apache.manifoldcf.core.connector.OutputConnector;
 import org.apache.manifoldcf.core.result.ScanResult;
@@ -48,9 +51,9 @@ public class JobOrchestrator {
                             kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), msg).get();
                             log.info("Published document reference to Kafka: {}", doc.id());
                             
-                            return reactor.core.publisher.Mono.just((ScanResult) new ScanResult.Success(doc.id(), "1.0"));
+                            return Mono.just((ScanResult) new ScanResult.Success(doc.id(), "1.0"));
                         } catch (Exception e) {
-                            return reactor.core.publisher.Mono.just(new ScanResult.Failure(doc.id(), e));
+                            return Mono.just(new ScanResult.Failure(doc.id(), e));
                         }
                     })
                     .doOnNext(results::add)

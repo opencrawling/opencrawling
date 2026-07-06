@@ -26,7 +26,7 @@ public class VectorOutputConnector implements OutputConnector {
 
     public VectorOutputConnector(VectorStore vectorStore) {
         this.vectorStore = vectorStore;
-        this.textSplitter = new TokenTextSplitter();
+        this.textSplitter = TokenTextSplitter.builder().build();
         this.tika = new Tika();
     }
 

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>4.0.6</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath /> <!-- lookup parent from repository -->
     </parent>
 
     <groupId>org.apache.manifoldcf</groupId>
@@ -39,10 +39,12 @@
             </roles>
         </developer>
     </developers>
-    
+
     <scm>
-        <connection>scm:git:git://github.com/your-username/spring-manifold-nextgen.git</connection>
-        <developerConnection>scm:git:ssh://github.com:your-username/spring-manifold-nextgen.git</developerConnection>
+        <connection>
+            scm:git:git://github.com/your-username/spring-manifold-nextgen.git</connection>
+        <developerConnection>
+            scm:git:ssh://github.com:your-username/spring-manifold-nextgen.git</developerConnection>
         <url>https://github.com/your-username/spring-manifold-nextgen/tree/main</url>
     </scm>
 
@@ -60,11 +62,11 @@
         <tika.version>3.3.1</tika.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        
+
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.5.5</maven-surefire-plugin.version>
         <maven-failsafe-plugin.version>3.5.5</maven-failsafe-plugin.version>
-        
+
     </properties>
 
     <dependencyManagement>
@@ -102,7 +104,8 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>${maven-surefire-plugin.version}</version>
                     <configuration>
-                        <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+                        <argLine>--enable-preview
+                            --enable-native-access=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -110,7 +113,8 @@
                     <artifactId>maven-failsafe-plugin</artifactId>
                     <version>${maven-failsafe-plugin.version}</version>
                     <configuration>
-                        <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+                        <argLine>--enable-preview
+                            --enable-native-access=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
             </plugins>
@@ -169,7 +173,7 @@
                 </property>
             </activation>
             <properties>
-                
+
                 <java.version>25</java.version>
             </properties>
         </profile>

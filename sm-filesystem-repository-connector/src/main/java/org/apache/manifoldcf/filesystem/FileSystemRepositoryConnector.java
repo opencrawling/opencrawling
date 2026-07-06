@@ -1,17 +1,20 @@
 package org.apache.manifoldcf.filesystem;
 
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.StructuredTaskScope;
+
 import org.apache.manifoldcf.core.connector.RepositoryConnector;
 import org.apache.manifoldcf.core.document.RepositoryDocument;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Flux;
 
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.concurrent.StructuredTaskScope;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Map;
-import java.io.IOException;
+import reactor.core.publisher.Flux;
 
 @Component
 public class FileSystemRepositoryConnector implements RepositoryConnector {
@@ -40,7 +43,8 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
         });
     }
 
-    private void scanDirectory(Path dir, reactor.core.publisher.FluxSink<RepositoryDocument> sink) throws InterruptedException {
+    @SuppressWarnings("preview")
+	private void scanDirectory(Path dir, reactor.core.publisher.FluxSink<RepositoryDocument> sink) throws InterruptedException {
         // Java 25: StructuredTaskScope.open() defaults to "shutdown on failure" behavior
         try (var scope = StructuredTaskScope.open()) {
             
