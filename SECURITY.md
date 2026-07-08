@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-We actively support and fix security vulnerabilities in the following versions of Spring-Manifold Next-Gen:
+We actively support and fix security vulnerabilities in the following versions of OpenCrawling:
 
 | Version | Supported |
 | ------- | --------- |
@@ -11,7 +11,7 @@ We actively support and fix security vulnerabilities in the following versions o
 
 ## Reporting a Vulnerability
 
-We take the security of Spring-Manifold Next-Gen seriously. If you believe you have found a security vulnerability, please do not report it publicly via the GitHub issue tracker.
+We take the security of OpenCrawling seriously. If you believe you have found a security vulnerability, please do not report it publicly via the GitHub issue tracker.
 
 Instead, please report it directly to the project maintainers. 
 

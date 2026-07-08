@@ -1,8 +1,8 @@
-# Contributing to Spring-Manifold Next-Gen
+# Contributing to OpenCrawling
 
 First off, thank you for taking the time to contribute! 🎉
 
-The following is a set of guidelines for contributing to Spring-Manifold Next-Gen. These are mostly guidelines, not rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
+The following is a set of guidelines for contributing to OpenCrawling. These are mostly guidelines, not rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
 
 ---
 
@@ -22,7 +22,7 @@ The following is a set of guidelines for contributing to Spring-Manifold Next-Ge
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by the [Spring-Manifold Next-Gen Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+This project and everyone participating in it is governed by the [OpenCrawling Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
 
 ---
 

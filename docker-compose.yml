@@ -3,17 +3,17 @@ services:
     image: pgvector/pgvector:pg17
     container_name: postgres-vector
     environment:
-      POSTGRES_USER: manifold
-      POSTGRES_PASSWORD: manifold_password
-      POSTGRES_DB: manifold
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+      POSTGRES_DB: opencrawling
     ports:
       - "5432:5432"
     volumes:
-      - spring-manifold-pgdata:/var/lib/postgresql/data
+      - opencrawling-pgdata:/var/lib/postgresql/data
     networks:
-      - spring-manifold-network
+      - opencrawling-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U manifold"]
+      test: ["CMD-SHELL", "pg_isready -U opencrawling"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -27,9 +27,9 @@ services:
       - "6379:6379"
       - "8001:8001"
     volumes:
-      - spring-manifold-redisdata:/data
+      - opencrawling-redisdata:/data
     networks:
-      - spring-manifold-network
+      - opencrawling-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,9 +42,9 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - spring-manifold-ollamadata:/root/.ollama
+      - opencrawling-ollamadata:/root/.ollama
     networks:
-      - spring-manifold-network
+      - opencrawling-network
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -57,7 +57,7 @@ services:
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
-      - spring-manifold-network
+      - opencrawling-network
     depends_on:
       ollama:
         condition: service_healthy
@@ -81,20 +81,20 @@ services:
     ports:
       - "9092:9092"
     volumes:
-      - spring-manifold-kafkadata:/var/lib/kafka/data
+      - opencrawling-kafkadata:/var/lib/kafka/data
     networks:
-      - spring-manifold-network
+      - opencrawling-network
 
 networks:
-  spring-manifold-network:
+  opencrawling-network:
     driver: bridge
 
 volumes:
-  spring-manifold-pgdata:
-    name: spring-manifold-pgdata
-  spring-manifold-redisdata:
-    name: spring-manifold-redisdata
-  spring-manifold-ollamadata:
-    name: spring-manifold-ollamadata
-  spring-manifold-kafkadata:
-    name: spring-manifold-kafkadata
+  opencrawling-pgdata:
+    name: opencrawling-pgdata
+  opencrawling-redisdata:
+    name: opencrawling-redisdata
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-kafkadata:
+    name: opencrawling-kafkadata

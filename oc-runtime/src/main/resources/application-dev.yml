@@ -39,7 +39,6 @@ spring:
         url: jdbc:postgresql://127.0.0.1:5432/opencrawling
         username: opencrawling
         password: opencrawling_password
-        driver-class-name: org.postgresql.Driver
         initialize-schema: true
         dimensions: 1024
 

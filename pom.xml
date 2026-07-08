@@ -11,13 +11,13 @@
         <relativePath /> <!-- lookup parent from repository -->
     </parent>
 
-    <groupId>org.apache.manifoldcf</groupId>
-    <artifactId>spring-manifold-parent</artifactId>
+    <groupId>org.opencrawling</groupId>
+    <artifactId>opencrawling-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Spring Manifold Next-Gen</name>
-    <description>Modernized Apache ManifoldCF using Java 25 and Spring Boot 4.0.6</description>
+    <name>OpenCrawling</name>
+    <description>OpenCrawling: Modernized Apache ManifoldCF using Java 25 and Spring Boot 4.0.6</description>
 
     <licenses>
         <license>
@@ -42,18 +42,18 @@
 
     <scm>
         <connection>
-            scm:git:git://github.com/your-username/spring-manifold-nextgen.git</connection>
+            scm:git:git://github.com/your-username/opencrawling.git</connection>
         <developerConnection>
-            scm:git:ssh://github.com:your-username/spring-manifold-nextgen.git</developerConnection>
-        <url>https://github.com/your-username/spring-manifold-nextgen/tree/main</url>
+            scm:git:ssh://github.com:your-username/opencrawling.git</developerConnection>
+        <url>https://github.com/your-username/opencrawling/tree/main</url>
     </scm>
 
     <modules>
-        <module>sm-core</module>
-        <module>sm-runtime</module>
-        <module>sm-filesystem-repository-connector</module>
-        <module>sm-vector-output-connector</module>
-        <module>sm-admin-ui</module>
+        <module>oc-core</module>
+        <module>oc-runtime</module>
+        <module>oc-filesystem-repository-connector</module>
+        <module>oc-vector-output-connector</module>
+        <module>oc-admin-ui</module>
     </modules>
 
     <properties>

@@ -1,38 +1,45 @@
-# Spring-Manifold Next-Gen
+# OpenCrawling
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Java Version](https://img.shields.io/badge/Java-25-orange.svg)](https://jdk.java.net/25/)
-[![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4+-green.svg)](https://spring.io/projects/spring-boot)
-[![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat)](LICENSE)
+[![Java Version](https://img.shields.io/badge/Java-25-orange.svg?style=flat&logo=openjdk&logoColor=white)](https://jdk.java.net/25/)
+[![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4+-green.svg?style=flat&logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-Supported-black.svg?style=flat&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17+-blue.svg?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
+[![GitHub Stars](https://img.shields.io/github/stars/OpenPj/spring-manifold-next-gen.svg?style=flat&logo=github)](https://github.com/OpenPj/spring-manifold-next-gen/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/OpenPj/spring-manifold-next-gen.svg?style=flat&logo=github)](https://github.com/OpenPj/spring-manifold-next-gen/issues)
+[![GitHub PRs](https://img.shields.io/github/issues-pr/OpenPj/spring-manifold-next-gen.svg?style=flat&logo=github)](https://github.com/OpenPj/spring-manifold-next-gen/pulls)
 
-**Spring-Manifold Next-Gen** is an enterprise data integration and ingestion platform modeled after Apache ManifoldCF. It leverages modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
+
+**OpenCrawling** is an enterprise data integration and ingestion platform modeled after Apache ManifoldCF. It leverages modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
 
 <p align="center">
-  <img src="images/logo.png" alt="Spring-Manifold Next-Gen Logo" width="200" />
+  <img src="images/logo.png" alt="OpenCrawling Logo" width="200" />
 </p>
 
 ---
 
 ## Architecture Diagram
 
-The diagram below shows the high-level architecture of Spring-Manifold Next-Gen:
+The diagram below shows the high-level architecture of OpenCrawling:
 
 ```mermaid
 graph TD
     subgraph UI
-        UI_App[Admin React UI - sm-admin-ui]
+        UI_App[Admin React UI - oc-admin-ui]
     end
 
-    subgraph Platform Runtime [Spring-Manifold JVM Runtime]
-        Core[Core Ingestion Engine - sm-core]
-        Runtime[Bootstrap - sm-runtime]
-        FS_Conn[Filesystem Repository - sm-filesystem-repository-connector]
-        Vec_Conn[Vector Output - sm-vector-output-connector]
+    subgraph Platform Runtime [OpenCrawling JVM Runtime]
+        Core[Core Ingestion Engine - oc-core]
+        Runtime[Bootstrap - oc-runtime]
+        FS_Conn[Filesystem Repository - oc-filesystem-repository-connector]
+        Vec_Conn[Vector Output - oc-vector-output-connector]
         Kafka_Cons[Ingestion Consumer - IngestionConsumer]
         
         Runtime --> Core
         Core --> FS_Conn
-        Core -->|Publish IngestionMessage| Kafka[(Kafka Topic: manifold-documents)]
+        Core -->|Publish IngestionMessage| Kafka[(Kafka Topic: opencrawling-documents)]
         Kafka -->|Consume Reference| Kafka_Cons
         Kafka_Cons -->|Resolve Content & Process| Vec_Conn
     end
@@ -106,20 +113,20 @@ mvn clean install
 #### 4. Run the Runtime Bootstrap
 Start the Spring Boot runtime application:
 ```bash
-mvn spring-boot:run -pl sm-runtime -Dspring-boot.run.profiles=dev
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 ```
 
 ##### Running a Sample Ingestion Job on Startup (Optional)
 By default, the automatic startup crawl is disabled to prevent unnecessary scans. To trigger a demo crawl job on startup, pass the configuration properties:
 ```bash
-mvn spring-boot:run -pl sm-runtime -Dspring-boot.run.profiles=dev \
-  -Dspring-boot.run.arguments="--spring.manifold.crawl-on-startup=true --spring.manifold.scan-path=/your/local/directory/to/scan"
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev \
+  -Dspring-boot.run.arguments="--spring.opencrawling.crawl-on-startup=true --spring.opencrawling.scan-path=/your/local/directory/to/scan"
 ```
 
 #### 5. Run the Admin UI
 To launch the administration dashboard:
 ```bash
-cd sm-admin-ui
+cd oc-admin-ui
 npm install
 npm run dev
 ```
@@ -128,12 +135,12 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Scaling Out & Performance
 
-Spring-Manifold Next-Gen is designed for high-throughput, horizontal scalability. Since the ingestion pipeline is decoupled using **Apache Kafka** and the **Claim Check Pattern**, you can scale components independently.
+OpenCrawling is designed for high-throughput, horizontal scalability. Since the ingestion pipeline is decoupled using **Apache Kafka** and the **Claim Check Pattern**, you can scale components independently.
 
 ### 1. Scaling the Ingestion / Processing (Output Connector)
 Vector indexing and embedding generation is typically the primary performance bottleneck because of deep learning model inference (Ollama) and database indexing (pgvector).
-* **Kafka Consumer Group Partitioning**: The `manifold-documents` topic is consumed by the `IngestionConsumer` inside the `sm-runtime` service. By configuring the topic with multiple partitions, Kafka will distribute documents among active consumers.
-* **Horizontal Scaling of Runtime Instances**: You can run multiple instances of the `sm-runtime` application sharing the same `spring.application.name` and consumer group (`spring-manifold-vector-group`). Kafka automatically distributes partitions and load-balances the messages.
+* **Kafka Consumer Group Partitioning**: The `opencrawling-documents` topic is consumed by the `IngestionConsumer` inside the `oc-runtime` service. By configuring the topic with multiple partitions, Kafka will distribute documents among active consumers.
+* **Horizontal Scaling of Runtime Instances**: You can run multiple instances of the `oc-runtime` application sharing the same `spring.application.name` and consumer group (`opencrawling-vector-group`). Kafka automatically distributes partitions and load-balances the messages.
 * **Ollama Load Balancing**: Scale out embedding generation by pointing `spring.ai.ollama.base-url` to a load balancer (e.g., NGINX, HAProxy) backed by a cluster of Ollama instances running on GPU-enabled nodes.
 
 ### 2. Scaling the Repository Connectors (Ingestion Source)
@@ -151,7 +158,7 @@ To ensure the messaging system remains fast and responsive:
 
 ## Verification & Monitoring
 
-- **Database**: Access PostgreSQL at `localhost:5432` (User: `manifold`, DB: `manifold`).
+- **Database**: Access PostgreSQL at `localhost:5432` (User: `opencrawling`, DB: `opencrawling`).
 - **Redis Dashboard**: Open [http://localhost:8001](http://localhost:8001) in your browser to view the Redis Stack Insight dashboard.
 - **Logs**: Monitor console output for the Virtual Thread Executor and Structured Concurrency task logs.
 
