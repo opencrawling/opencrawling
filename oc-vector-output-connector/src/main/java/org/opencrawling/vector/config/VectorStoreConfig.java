@@ -49,8 +49,8 @@ public class VectorStoreConfig {
 
     @Bean
     public PgVectorStore vectorStore(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
-        // Spring AI 2.0.0-M6: The builder requires JdbcTemplate and EmbeddingModel as arguments
-        return PgVectorStore.builder(pgVectorJdbcTemplate, embeddingModel)
+        PrecomputedEmbeddingModel precomputedModel = new PrecomputedEmbeddingModel(embeddingModel);
+        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedModel)
                 .dimensions(dimensions)
                 .initializeSchema(initializeSchema)
                 .build();

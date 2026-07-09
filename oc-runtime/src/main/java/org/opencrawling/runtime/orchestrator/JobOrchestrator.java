@@ -22,9 +22,9 @@ public class JobOrchestrator {
     
     private static final Logger log = LoggerFactory.getLogger(JobOrchestrator.class);
     
-    private final KafkaTemplate<String, IngestionMessage> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    public JobOrchestrator(KafkaTemplate<String, IngestionMessage> kafkaTemplate) {
+    public JobOrchestrator(KafkaTemplate<String, Object> kafkaTemplate) {
         this.kafkaTemplate = kafkaTemplate;
     }
 
