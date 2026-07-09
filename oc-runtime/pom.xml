@@ -119,6 +119,7 @@
                 <groupId>io.fabric8</groupId>
                 <artifactId>docker-maven-plugin</artifactId>
                 <configuration>
+                	<skip>true</skip>
                     <autoCreateCustomNetworks>true</autoCreateCustomNetworks>
                     <startContainerWaitTimeout>120000</startContainerWaitTimeout>
                     <images>

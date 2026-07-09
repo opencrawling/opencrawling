@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { 
   LayoutDashboard, 
   PlayCircle, 
   Plug2, 
   Activity, 
-  Settings, 
+  Settings as SettingsIcon, 
   Menu,
   X,
   Search,
@@ -13,6 +13,7 @@ import {
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
 import ConnectorForm from './components/ConnectorForm'
+import Settings from './components/Settings'
 import { statusApi } from './lib/api'
 
 type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings'
@@ -27,6 +28,7 @@ export default function App() {
     system: 'UNKNOWN'
   })
   const [logs, setLogs] = useState<string[]>([])
+  const logsEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -63,6 +65,12 @@ export default function App() {
     return () => clearInterval(logsInterval)
   }, [activeView])
 
+  useEffect(() => {
+    if (activeView === 'logs') {
+      logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [logs, activeView])
+
   const getLogLineColor = (line: string) => {
     if (line.includes("INFO:")) return "text-blue-400";
     if (line.includes("DEBUG:")) return "text-slate-500";
@@ -77,7 +85,7 @@ export default function App() {
     { id: 'jobs', label: 'Job Management', icon: PlayCircle },
     { id: 'connectors', label: 'Connectors', icon: Plug2 },
     { id: 'logs', label: 'Real-time Logs', icon: Activity },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ]
 
   return (
@@ -155,12 +163,13 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
           {activeView === 'dashboard' && <Dashboard />}
-          {activeView === 'jobs' && <JobTable />}
+          {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
           {activeView === 'connectors' && <ConnectorForm />}
+          {activeView === 'settings' && <Settings />}
           {activeView === 'logs' && (
-            <div className="h-full flex flex-col gap-4">
+            <div className="flex flex-col gap-4 h-[calc(100vh-12rem)]">
                <h1 className="text-2xl font-bold">Real-time Activity Logs</h1>
-               <div className="flex-1 bg-slate-900 rounded-lg p-4 font-mono text-sm overflow-y-auto border border-border text-slate-300 flex flex-col gap-1.5">
+               <div className="flex-1 bg-slate-900 rounded-lg p-4 font-mono text-sm overflow-y-auto border border-border text-slate-300 flex flex-col gap-1.5 custom-scrollbar">
                   {logs.length === 0 ? (
                     <p className="text-slate-500 italic">No log entries available.</p>
                   ) : (
@@ -170,6 +179,7 @@ export default function App() {
                       </p>
                     ))
                   )}
+                  <div ref={logsEndRef} />
                </div>
             </div>
           )}

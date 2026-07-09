@@ -4,11 +4,11 @@ import {
   X, 
   Plus, 
   Trash2, 
-  Info,
   Plug2,
   Settings2,
   ShieldCheck,
-  Loader2
+  Loader2,
+  AlertCircle
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -31,12 +31,17 @@ export default function ConnectorForm() {
   const [isSaving, setIsSaving] = useState(false)
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null)
 
-  const { register, handleSubmit, formState: { errors }, reset, setValue } = useForm<ConnectorFormData>({
+  const { register, handleSubmit, formState: { errors }, reset, setValue, watch } = useForm<ConnectorFormData>({
     defaultValues: {
       maxConnections: 10,
-      type: 'repository'
-    }
+      type: 'repository',
+      configuration: {}
+    },
+    shouldUnregister: true
   })
+
+  const selectedClass = watch('className')
+  const watchMaxConnections = watch('maxConnections') || 10
 
   const fetchConnectors = async () => {
     setIsLoading(true)
@@ -176,12 +181,17 @@ export default function ConnectorForm() {
            </div>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="lg:col-span-2 space-y-6">
+          {Object.keys(errors).length > 0 && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-lg flex items-center gap-2 animate-in fade-in duration-200">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              <span>Please fill in all required fields, including any technical configurations.</span>
+            </div>
+          )}
           <div className="card-container space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 border-b border-border pb-4">
               {selectedConnector ? <Settings2 className="w-5 h-5 text-primary" /> : <Plus className="w-5 h-5 text-primary" />}
-              {selectedConnector ? `Edit Connector: ${selectedConnector}` : `Add New {activeTab}`}
+              {selectedConnector ? `Edit Connector: ${selectedConnector}` : `Add New ${activeTab}`}
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -223,7 +233,7 @@ export default function ConnectorForm() {
                   <label className="text-xs text-muted uppercase font-bold">Max Connections</label>
                   <div className="flex items-center gap-3">
                     <input type="range" {...register('maxConnections')} min="1" max="100" className="flex-1 accent-primary" />
-                    <span className="font-mono text-sm text-primary w-8 text-right">10</span>
+                    <span className="font-mono text-sm text-primary w-8 text-right">{watchMaxConnections}</span>
                   </div>
                </div>
                <div className="flex gap-3">
@@ -246,9 +256,197 @@ export default function ConnectorForm() {
                 </h3>
              </div>
 
-             <div className="p-4 bg-slate-900/50 border border-dashed border-border rounded-lg text-center text-sm text-muted">
-                Advanced parameters can be added here once the connector class is selected.
-             </div>
+             {!selectedClass ? (
+                <div className="p-4 bg-slate-900/50 border border-dashed border-border rounded-lg text-center text-sm text-muted">
+                  Please select a Connector Class above to show configuration parameters.
+                </div>
+             ) : (
+                <div className="space-y-4 animate-in fade-in duration-200">
+                  {/* File System */}
+                  {selectedClass === 'org.opencrawling.crawler.connectors.filesystem.FileConnector' && (
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Path / Scanning Directory</label>
+                        <input 
+                          {...register('configuration.rootPath', { required: true })}
+                          placeholder="e.g. /Users/documents/scan"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                        <p className="text-xs text-muted-foreground">The root folder on the local filesystem that this connector is authorized to scan.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Web Crawler */}
+                  {selectedClass === 'org.opencrawling.crawler.connectors.webcrawler.WebcrawlerConnector' && (
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Seed URLs (One per line)</label>
+                        <textarea 
+                          {...register('configuration.seedUrls', { required: true })}
+                          rows={3}
+                          placeholder="https://example.com&#10;https://another.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Max Crawl Depth</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.maxDepth')}
+                            defaultValue="3"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">User Agent Name</label>
+                          <input 
+                            {...register('configuration.userAgent')}
+                            placeholder="OpenCrawlingBot/1.0"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Windows Share */}
+                  {selectedClass === 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">SMB Share Path</label>
+                        <input 
+                          {...register('configuration.smbPath', { required: true })}
+                          placeholder="smb://server/share/folder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Domain</label>
+                        <input 
+                          {...register('configuration.smbDomain')}
+                          placeholder="MYDOMAIN"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.smbUser')}
+                          placeholder="domain_user"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ollama Vector Store */}
+                  {selectedClass === 'org.opencrawling.agents.output.ollama.OllamaOutputConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ollama Server API URL</label>
+                        <input 
+                          {...register('configuration.ollamaUrl')}
+                          placeholder="http://127.0.0.1:11434"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Embedding Model</label>
+                        <input 
+                          {...register('configuration.modelName')}
+                          placeholder="mxbai-embed-large"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Elasticsearch */}
+                  {selectedClass === 'org.opencrawling.agents.output.elasticsearch.ElasticsearchConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Elasticsearch Hosts (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.esHosts', { required: true })}
+                          placeholder="http://localhost:9200"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Index Name</label>
+                        <input 
+                          {...register('configuration.esIndex', { required: true })}
+                          placeholder="opencrawling-vectors"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache Solr */}
+                  {selectedClass === 'org.opencrawling.agents.output.solr.SolrConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Solr Base URL</label>
+                        <input 
+                          {...register('configuration.solrUrl', { required: true })}
+                          placeholder="http://localhost:8983/solr"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Collection / Core</label>
+                        <input 
+                          {...register('configuration.solrCore', { required: true })}
+                          placeholder="opencrawling"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Active Directory & LDAP */}
+                  {(selectedClass === 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' || 
+                    selectedClass === 'org.opencrawling.authorities.authorities.ldap.LDAPAuthority') && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">LDAP server Domain Controller URL</label>
+                        <input 
+                          {...register('configuration.ldapUrl', { required: true })}
+                          placeholder="ldap://dc.company.com:389"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Base DN</label>
+                        <input 
+                          {...register('configuration.baseDn', { required: true })}
+                          placeholder="dc=company,dc=com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Bind Username</label>
+                        <input 
+                          {...register('configuration.bindUser')}
+                          placeholder="cn=admin,dc=company,dc=com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Bind Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.bindPassword')}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+             )}
           </div>
         </form>
       </div>

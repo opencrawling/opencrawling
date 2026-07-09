@@ -26,7 +26,7 @@ export default {
           foreground: '#f8fafc',
         },
         muted: {
-          DEFAULT: '#1e293b',
+          DEFAULT: '#94a3b8', // Slate-400 for high readability of text-muted
           foreground: '#94a3b8', // Slate-400
         },
         accent: {

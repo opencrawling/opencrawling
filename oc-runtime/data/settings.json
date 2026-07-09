@@ -1,0 +1,1 @@
+{"embeddingProvider":"Ollama","ollamaBaseUrl":"http://127.0.0.1:11434","ollamaModel":"mxbai-embed-large","vectorDimensions":1024,"chunkerType":"TokenTextSplitter","chunkSize":800,"chunkOverlap":100}

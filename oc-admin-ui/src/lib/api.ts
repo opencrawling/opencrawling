@@ -13,6 +13,8 @@ export const jobApi = {
   start: (id: string) => api.post(`/jobs/${id}/start`),
   stop: (id: string) => api.post(`/jobs/${id}/stop`),
   pause: (id: string) => api.post(`/jobs/${id}/pause`),
+  create: (data: any) => api.post('/jobs', data),
+  delete: (id: string) => api.delete(`/jobs/${id}`),
 }
 
 export const connectorApi = {
@@ -25,6 +27,8 @@ export const statusApi = {
   getSystemStatus: () => api.get('/system/status'),
   getThroughput: () => api.get('/system/throughput'),
   getLogs: () => api.get('/system/logs'),
+  getSettings: () => api.get('/system/settings'),
+  saveSettings: (data: any) => api.post('/system/settings', data),
 }
 
 export default api

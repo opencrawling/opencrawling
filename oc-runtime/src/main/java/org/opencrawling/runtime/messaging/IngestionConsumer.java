@@ -98,6 +98,8 @@ public class IngestionConsumer {
                 }
                 log.info("Successfully published all chunks for document: {}", message.documentId());
             }
+        } catch (java.nio.file.NoSuchFileException e) {
+            log.warn("Ingestion file no longer exists (possibly a temporary test file): {}", message.uri());
         } catch (Exception e) {
             log.error("Failed to process Kafka ingestion message: {}", message.documentId(), e);
         }

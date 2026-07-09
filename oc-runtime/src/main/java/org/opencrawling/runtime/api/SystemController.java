@@ -4,26 +4,53 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
 
 @RestController
 @RequestMapping("/api/system")
 public class SystemController {
 
-    private final Random random = new Random();
     private static final DateTimeFormatter logTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private final List<String> logMessages = new CopyOnWriteArrayList<>();
+    
+    // In-memory system settings persisted via PersistenceHelper
+    private SystemSettingsDTO settings;
 
     public SystemController() {
-        logMessages.add(formatLog("INFO", "System initialized successfully. Ready to receive jobs."));
-        logMessages.add(formatLog("INFO", "PostgreSQL Connection pool initialized with size 10."));
-        logMessages.add(formatLog("INFO", "Redis Connection established at 127.0.0.1:6379."));
-        logMessages.add(formatLog("INFO", "Ollama Embedding Client online using model 'mxbai-embed-large'."));
+        SystemSettingsDTO defaultSettings = new SystemSettingsDTO(
+            "Ollama",
+            "http://127.0.0.1:11434",
+            "mxbai-embed-large",
+            1024,
+            "TokenTextSplitter",
+            800,
+            100
+        );
+        this.settings = PersistenceHelper.loadObject("settings.json", SystemSettingsDTO.class, defaultSettings);
+
+        // Register programmatic log capture appender
+        try {
+            org.slf4j.ILoggerFactory factory = org.slf4j.LoggerFactory.getILoggerFactory();
+            if (factory instanceof ch.qos.logback.classic.LoggerContext context) {
+                ch.qos.logback.classic.Logger rootLogger = context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+                if (rootLogger.getAppender("IN_MEMORY") == null) {
+                    InMemoryLogAppender appender = new InMemoryLogAppender();
+                    appender.setContext(context);
+                    appender.setName("IN_MEMORY");
+                    appender.start();
+                    rootLogger.addAppender(appender);
+                }
+            }
+        } catch (Throwable e) {
+            System.err.println("Failed to initialize custom log appender: " + e.getMessage());
+        }
+        
+        InMemoryLogAppender.getLogs().add(formatLog("INFO", "Real-time in-memory logging system initialized successfully."));
+        InMemoryLogAppender.getLogs().add(formatLog("INFO", "System settings online: Model set to 'mxbai-embed-large' (1024d)"));
     }
 
     private String formatLog(String level, String msg) {
@@ -44,6 +71,7 @@ public class SystemController {
     public List<Map<String, Object>> getThroughput() {
         List<Map<String, Object>> throughput = new ArrayList<>();
         String[] hours = {"08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00"};
+        java.util.Random random = new java.util.Random();
         for (String hour : hours) {
             Map<String, Object> data = new HashMap<>();
             data.put("name", hour);
@@ -55,23 +83,64 @@ public class SystemController {
 
     @GetMapping("/logs")
     public List<String> getLogs() {
-        if (random.nextInt(10) > 4) {
-            String[] levels = {"INFO", "DEBUG", "WARN", "SUCCESS"};
-            String[] messages = {
-                "Fetching repository updates...",
-                "Running chunking operation using TokenTextSplitter.",
-                "Successfully generated 1024-dimensional embeddings.",
-                "Pushed document metadata to Kafka topic: opencrawling-documents",
-                "Processed vector store batch insert of 50 documents.",
-                "PostgreSQL vector_store insert completed successfully."
-            };
-            String lvl = levels[random.nextInt(levels.length)];
-            String msg = messages[random.nextInt(messages.length)];
-            logMessages.add(formatLog(lvl, msg));
-            if (logMessages.size() > 50) {
-                logMessages.remove(0);
+        return InMemoryLogAppender.getLogs();
+    }
+
+    @GetMapping("/settings")
+    public SystemSettingsDTO getSettings() {
+        return settings;
+    }
+
+    @PostMapping("/settings")
+    public ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
+        this.settings = newSettings;
+        PersistenceHelper.save("settings.json", newSettings);
+        InMemoryLogAppender.getLogs().add(formatLog("SUCCESS", "System settings updated: Model set to '" 
+            + newSettings.ollamaModel() + "' (" + newSettings.vectorDimensions() + "d) via " 
+            + newSettings.embeddingProvider() + ". Chunker: " + newSettings.chunkerType() 
+            + " [Size: " + newSettings.chunkSize() + ", Overlap: " + newSettings.chunkOverlap() + "]"));
+        return ResponseEntity.ok().build();
+    }
+
+    public static record SystemSettingsDTO(
+        String embeddingProvider,
+        String ollamaBaseUrl,
+        String ollamaModel,
+        int vectorDimensions,
+        String chunkerType,
+        int chunkSize,
+        int chunkOverlap
+    ) {}
+
+    // Custom Logback appender to record root system logs in memory
+    public static class InMemoryLogAppender extends ch.qos.logback.core.AppenderBase<ch.qos.logback.classic.spi.ILoggingEvent> {
+        private static final List<String> logsList = new CopyOnWriteArrayList<>();
+        private static final int MAX_LOGS = 100;
+        private static final java.time.format.DateTimeFormatter timeFormatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        public static List<String> getLogs() {
+            return logsList;
+        }
+
+        @Override
+        protected void append(ch.qos.logback.classic.spi.ILoggingEvent event) {
+            String level = event.getLevel().toString();
+            // Map common Logback levels to color matcher format
+            if ("ERROR".equals(level)) {
+                level = "FAILED";
+            }
+            String formatted = String.format("[%s] %s: %s", 
+                java.time.LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochMilli(event.getTimeStamp()), 
+                    java.time.ZoneId.systemDefault()
+                ).format(timeFormatter),
+                level,
+                event.getFormattedMessage()
+            );
+            logsList.add(formatted);
+            while (logsList.size() > MAX_LOGS) {
+                logsList.remove(0);
             }
         }
-        return logMessages;
     }
 }
