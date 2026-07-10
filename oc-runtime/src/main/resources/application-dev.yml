@@ -40,6 +40,13 @@ spring:
         password: opencrawling_password
         initialize-schema: true
         dimensions: 1024
+    mcp:
+      server:
+        name: "opencrawling-secure-vector-mcp"
+        version: "1.0.0"
+        transport: STREAMABLE_HTTP
+        annotation-scanner:
+          enabled: true
 
   batch:
     jdbc:
