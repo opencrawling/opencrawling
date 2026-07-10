@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.opencrawling.runtime.api;
 
 import java.util.List;
@@ -19,7 +34,7 @@ public class ConnectorController {
         // Initial mock data defaults
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
-        defaults.add(new ConnectorDTO("Ollama_Output", "Ollama Vector Store", "output", "org.opencrawling.agents.output.ollama.OllamaOutputConnector", 10, new HashMap<>()));
+        defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, new HashMap<>()));
         
         // Load persisted list
         this.storage = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, defaults));

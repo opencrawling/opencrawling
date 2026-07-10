@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 import { useForm } from 'react-hook-form'
 import { 
   Save, 
@@ -111,7 +126,7 @@ export default function ConnectorForm() {
       { label: 'Windows Share (JCIFS)', value: 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector' },
     ],
     output: [
-      { label: 'Ollama Vector Store', value: 'org.opencrawling.agents.output.ollama.OllamaOutputConnector' },
+      { label: 'PGVector Store', value: 'org.opencrawling.vector.VectorOutputConnector' },
       { label: 'Elasticsearch', value: 'org.opencrawling.agents.output.elasticsearch.ElasticsearchConnector' },
       { label: 'Apache Solr', value: 'org.opencrawling.agents.output.solr.SolrConnector' },
     ],
@@ -341,25 +356,10 @@ export default function ConnectorForm() {
                     </div>
                   )}
 
-                  {/* Ollama Vector Store */}
-                  {selectedClass === 'org.opencrawling.agents.output.ollama.OllamaOutputConnector' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Ollama Server API URL</label>
-                        <input 
-                          {...register('configuration.ollamaUrl')}
-                          placeholder="http://127.0.0.1:11434"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Embedding Model</label>
-                        <input 
-                          {...register('configuration.modelName')}
-                          placeholder="mxbai-embed-large"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
-                      </div>
+                  {/* PGVector Store */}
+                  {selectedClass === 'org.opencrawling.vector.VectorOutputConnector' && (
+                    <div className="p-4 bg-slate-900/50 border border-dashed border-border rounded-lg text-center text-sm text-muted w-full">
+                      This connector utilizes the global vector database and embedding engine settings configured in the Settings tab.
                     </div>
                   )}
 

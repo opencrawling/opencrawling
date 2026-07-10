@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 import { useState, useEffect } from 'react'
 import { 
   Play, 
@@ -17,6 +32,7 @@ import {
   Settings2,
   FolderOpen,
   AlertCircle,
+  Cpu,
   X
 } from 'lucide-react'
 import { jobApi, connectorApi } from '../lib/api'
@@ -34,6 +50,7 @@ interface Job {
   currentStage: string
   documents: number
   lastRun: string
+  embeddingModel: string
 }
 
 const statusStyles: Record<JobStatus, string> = {
@@ -83,6 +100,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   const [formOutput, setFormOutput] = useState('')
   const [formAuthority, setFormAuthority] = useState('')
   const [formPath, setFormPath] = useState('')
+  const [formEmbeddingModel, setFormEmbeddingModel] = useState('mxbai-embed-large')
   const [formError, setFormError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
@@ -163,6 +181,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormOutput(outputConnectors[0]?.name || '')
     setFormAuthority('')
     setFormPath('')
+    setFormEmbeddingModel('mxbai-embed-large')
     setFormError('')
     setIsFormOpen(true)
   }
@@ -174,6 +193,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormOutput(job.outputConnector)
     setFormAuthority(job.authorityConnector || '')
     setFormPath(job.path)
+    setFormEmbeddingModel(job.embeddingModel || 'mxbai-embed-large')
     setFormError('')
     setIsFormOpen(true)
   }
@@ -210,7 +230,8 @@ export default function JobTable({ setActiveView }: JobTableProps) {
         status: editingJob ? editingJob.status : 'Ready',
         currentStage: editingJob ? editingJob.currentStage : 'Idle',
         documents: editingJob ? editingJob.documents : 0,
-        lastRun: editingJob ? editingJob.lastRun : 'N/A'
+        lastRun: editingJob ? editingJob.lastRun : 'N/A',
+        embeddingModel: formEmbeddingModel
       }
       await jobApi.create(jobData)
       await fetchJobs(false)
@@ -331,6 +352,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                     {/* Job Details */}
                     <td className="px-6 py-4">
                       <div className="font-semibold text-foreground text-sm">{job.name}</div>
+                      <div className="text-[10px] text-indigo-400 font-bold tracking-wide mt-1.5 flex items-center gap-1 font-mono uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded w-max" title="Embedding Model">
+                        <Cpu className="w-3 h-3 text-indigo-400" />
+                        {job.embeddingModel || 'mxbai-embed-large'}
+                      </div>
                       <div className="text-xs text-muted-foreground mt-0.5 font-mono">ID: {job.id}</div>
                     </td>
                     
@@ -669,6 +694,26 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                       className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
                       required
                     />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Embedding Model */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium flex items-center gap-1.5">
+                      <Cpu className="w-4 h-4 text-indigo-400" />
+                      Embedding Model Profile
+                    </label>
+                    <select 
+                      value={formEmbeddingModel}
+                      onChange={(e) => setFormEmbeddingModel(e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+                      required
+                    >
+                      <option value="mxbai-embed-large">mxbai-embed-large (1024-dim)</option>
+                      <option value="nomic-embed-text">nomic-embed-text (768-dim)</option>
+                      <option value="all-minilm">all-minilm (384-dim)</option>
+                    </select>
                   </div>
                 </div>
               </div>

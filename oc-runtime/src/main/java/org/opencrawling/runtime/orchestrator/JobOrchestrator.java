@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.opencrawling.runtime.orchestrator;
 
 import org.springframework.kafka.core.KafkaTemplate;
@@ -29,8 +44,13 @@ public class JobOrchestrator {
     }
 
     @SuppressWarnings("preview")
-	public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path) {
-        log.info("Starting job for path: {}", path);
+    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path) {
+        runJob(repositoryConnector, outputConnector, path, "mxbai-embed-large");
+    }
+
+    @SuppressWarnings("preview")
+    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String embeddingModel) {
+        log.info("Starting job for path: {} with embedding model: {}", path, embeddingModel);
         
         try (var scope = StructuredTaskScope.open()) {
             
@@ -44,7 +64,8 @@ public class JobOrchestrator {
                                 doc.uri(),
                                 doc.metadata(),
                                 doc.acl(),
-                                doc.lastModified().toString()
+                                doc.lastModified().toString(),
+                                embeddingModel != null ? embeddingModel : "mxbai-embed-large"
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation

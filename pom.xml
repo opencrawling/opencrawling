@@ -1,4 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -128,6 +145,43 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>com.mycila</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>4.3</version>
+                <configuration>
+                    <properties>
+                        <owner>the original author or authors</owner>
+                        <email>piergiorgio@apache.org</email>
+                    </properties>
+                    <mapping>
+                        <ts>SLASHSTAR_STYLE</ts>
+                        <tsx>SLASHSTAR_STYLE</tsx>
+                        <conf>SCRIPT_STYLE</conf>
+                    </mapping>
+                    <licenseSets>
+                        <licenseSet>
+                            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+                            <excludes>
+                                <exclude>**/README.md</exclude>
+                                <exclude>**/LICENSE</exclude>
+                                <exclude>**/SECURITY.md</exclude>
+                                <exclude>**/TRADEMARK.md</exclude>
+                                <exclude>**/CONTRIBUTING.md</exclude>
+                                <exclude>**/CODE_OF_CONDUCT.md</exclude>
+                                <exclude>**/Dockerfile*</exclude>
+                                <exclude>**/.dockerignore</exclude>
+                                <exclude>src/test/resources/**</exclude>
+                                <exclude>src/main/resources/**</exclude>
+                                <exclude>**/*.json</exclude>
+                                <exclude>**/dist/**</exclude>
+                                <exclude>**/node/**</exclude>
+                                <exclude>**/node_modules/**</exclude>
+                            </excludes>
+                        </licenseSet>
+                    </licenseSets>
+                </configuration>
             </plugin>
         </plugins>
     </build>

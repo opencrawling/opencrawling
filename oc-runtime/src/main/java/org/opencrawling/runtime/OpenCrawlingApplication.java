@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.opencrawling.runtime;
 
 import org.opencrawling.core.connector.OutputConnector;
@@ -26,8 +41,11 @@ public class OpenCrawlingApplication {
     @Value("${spring.opencrawling.scan-path:}")
     private String scanPath;
 
+    @Value("${spring.opencrawling.embedding-model:mxbai-embed-large}")
+    private String embeddingModel;
+
     @SuppressWarnings("unused")
-	@Bean
+    @Bean
     @Profile("!test")
     public CommandLineRunner runSampleJob(
             JobOrchestrator orchestrator,
@@ -42,8 +60,8 @@ public class OpenCrawlingApplication {
                 if (scanPath == null || scanPath.isBlank()) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
-                    log.info("Triggering sample crawl job on path: {}", scanPath);
-                    orchestrator.runJob(repositoryConnector, outputConnector, scanPath);
+                    log.info("Triggering sample crawl job on path: {} with model: {}", scanPath, embeddingModel);
+                    orchestrator.runJob(repositoryConnector, outputConnector, scanPath, embeddingModel);
                 }
             } else {
                 log.info("Sample crawl job on startup is disabled. Use properties to enable it (spring.opencrawling.crawl-on-startup=true).");

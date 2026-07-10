@@ -1,3 +1,18 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.opencrawling.runtime.api;
 
 import java.time.LocalDateTime;
@@ -22,11 +37,11 @@ public class JobController {
     public JobController() {
         // Initial mock data defaults
         List<JobDTO> defaults = new ArrayList<>();
-        defaults.add(new JobDTO("1", "WebCrawler_Sito_A", "FileSystem_Local", "Ollama_Output", "LDAP", "/var/www/site_a", "Running", "Scanning", 12450, LocalDateTime.now().minusHours(1).format(formatter)));
-        defaults.add(new JobDTO("2", "FS_Sync_Docs", "FileSystem_Local", "Ollama_Output", "", "/Users/docs", "Paused", "Paused", 890, LocalDateTime.now().minusDays(1).format(formatter)));
-        defaults.add(new JobDTO("3", "SharePoint_Cloud", "FileSystem_Local", "Ollama_Output", "Active Directory", "/sharepoint/cloud", "Error", "Failed", 0, LocalDateTime.now().minusHours(2).format(formatter)));
-        defaults.add(new JobDTO("4", "Slack_History", "FileSystem_Local", "Ollama_Output", "", "/slack/backup", "Finished", "Completed", 56200, LocalDateTime.now().minusDays(1).format(formatter)));
-        defaults.add(new JobDTO("5", "Jira_Tickets", "FileSystem_Local", "Ollama_Output", "LDAP", "/jira/export", "Ready", "Idle", 0, "N/A"));
+        defaults.add(new JobDTO("1", "WebCrawler_Sito_A", "FileSystem_Local", "PGVector_Output", "LDAP", "/var/www/site_a", "Running", "Scanning", 12450, LocalDateTime.now().minusHours(1).format(formatter), "mxbai-embed-large"));
+        defaults.add(new JobDTO("2", "FS_Sync_Docs", "FileSystem_Local", "PGVector_Output", "", "/Users/docs", "Paused", "Paused", 890, LocalDateTime.now().minusDays(1).format(formatter), "nomic-embed-text"));
+        defaults.add(new JobDTO("3", "SharePoint_Cloud", "FileSystem_Local", "PGVector_Output", "Active Directory", "/sharepoint/cloud", "Error", "Failed", 0, LocalDateTime.now().minusHours(2).format(formatter), "mxbai-embed-large"));
+        defaults.add(new JobDTO("4", "Slack_History", "FileSystem_Local", "PGVector_Output", "", "/slack/backup", "Finished", "Completed", 56200, LocalDateTime.now().minusDays(1).format(formatter), "all-minilm"));
+        defaults.add(new JobDTO("5", "Jira_Tickets", "FileSystem_Local", "PGVector_Output", "LDAP", "/jira/export", "Ready", "Idle", 0, "N/A", "mxbai-embed-large"));
         
         // Load persisted list
         this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));
@@ -85,7 +100,8 @@ public class JobController {
                     nextStatus,
                     nextStage,
                     nextDocs,
-                    job.lastRun()
+                    job.lastRun(),
+                    job.embeddingModel()
                 ));
                 updated = true;
             }
@@ -121,7 +137,8 @@ public class JobController {
                 "Ready",
                 "Idle",
                 0,
-                "N/A"
+                "N/A",
+                job.embeddingModel() != null ? job.embeddingModel() : "mxbai-embed-large"
             );
             jobs.add(newJob);
         } else {
@@ -139,7 +156,8 @@ public class JobController {
                         job.status() != null ? job.status() : existing.status(),
                         job.currentStage() != null ? job.currentStage() : existing.currentStage(),
                         existing.documents(),
-                        existing.lastRun()
+                        existing.lastRun(),
+                        job.embeddingModel() != null ? job.embeddingModel() : existing.embeddingModel()
                     ));
                     break;
                 }
@@ -209,7 +227,8 @@ public class JobController {
                     status,
                     stage,
                     docCount,
-                    lastRun
+                    lastRun,
+                    job.embeddingModel()
                 ));
                 break;
             }
@@ -227,6 +246,7 @@ public class JobController {
         String status,
         String currentStage,
         long documents,
-        String lastRun
+        String lastRun,
+        String embeddingModel
     ) {}
 }

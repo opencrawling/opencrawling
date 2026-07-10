@@ -1,0 +1,97 @@
+name: Publish Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.0
+
+      # GHCR requires image names to be lowercase. This step handles converting 
+      # the repository owner to lowercase to prevent push failures.
+      - name: Downcase repository owner
+        id: repo-owner
+        run: |
+          echo "owner=${OWNER,,}" >> $GITHUB_OUTPUT
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.2.0
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Backend
+      - name: Extract metadata for Backend
+        id: meta-backend
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/opencrawling-backend
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      # Build and push Backend image (oc-runtime)
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: oc-runtime/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Extract metadata (tags, labels) for Frontend
+      - name: Extract metadata for Frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/opencrawling-frontend
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      # Build and push Frontend image (oc-admin-ui)
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ./oc-admin-ui
+          file: oc-admin-ui/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
