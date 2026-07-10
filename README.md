@@ -44,6 +44,8 @@ graph TD
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
         Vec_Conn[Vector Store Output - oc-vector-output-connector]
+
+        McpServer[Secure MCP Server - McpVectorServer]
         
         Runtime --> Core
         Core --> FS_Conn
@@ -60,6 +62,8 @@ graph TD
         Embed_Topic -->|Consume EmbeddedMessage| Writer_Cons
         Writer_Cons --> Precompute_Model
         Precompute_Model --> Vec_Conn
+
+        McpServer -->|Queries (Enforces ACLs)| Vec_Conn
     end
 
     subgraph Infrastructure [Docker Containers]
@@ -67,6 +71,10 @@ graph TD
         Redis[(Redis Cache & Session)]
         Ollama[Ollama AI Embeddings]
         Kafka_Broker[Apache Kafka Broker]
+    end
+
+    subgraph External [AI Clients]
+        LLM[AI Client / LLM Agent]
     end
 
     UI_App -->|REST API| Runtime
@@ -77,6 +85,9 @@ graph TD
     Ingest_Topic --> Kafka_Broker
     Chunk_Topic --> Kafka_Broker
     Embed_Topic --> Kafka_Broker
+
+    LLM -->|Model Context Protocol| McpServer
+
 ```
 
 ---
