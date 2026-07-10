@@ -186,6 +186,40 @@ To build and run the OpenCrawling backend runtime and administration UI as conta
 
 ---
 
+### Option A.2: Decoupled Multi-Service Deployment (Decoupled Microservices)
+
+To run each microservice component (Repository Crawler, Ingestion Consumer, Embedding Consumer, Vector Store Writer, Secure MCP Server, and Admin UI) as a completely separate containerized process communicating over Kafka:
+
+1. **Build the decoupled service images**:
+   ```bash
+   docker compose -f docker-compose-decoupled.yml build
+   ```
+
+2. **Start the complete decoupled pipeline**:
+   ```bash
+   docker compose -f docker-compose-decoupled.yml up -d
+   ```
+
+This spins up the database/event-stream dependencies alongside five decoupled OpenCrawling service containers. You can view logs, scale individual workers (e.g. `docker compose -f docker-compose-decoupled.yml scale oc-embedding-consumer=3`), and monitor the decoupled pipeline.
+
+* **React Admin UI Console**: Access the administration dashboard at [http://localhost:3000](http://localhost:3000).
+* **Secure MCP Server**: Connect your AI Client / IDE directly to [http://localhost:8080](http://localhost:8080) over SSE.
+
+#### Running the Decoupled Integration Test
+
+We provide a fully automated end-to-end integration test script that builds, boots, tests, and cleanses the entire decoupled environment:
+```bash
+./scripts/test-docker-decoupled.sh
+```
+This script:
+1. Builds all decoupled microservices from source.
+2. Boots up the Kafka broker, PostgreSQL + pgvector, Redis, Ollama, and consumer workers.
+3. Automatically generates a sample document in the crawler mount, triggers a scan, and waits for consumer ingestion.
+4. Queries pgvector directly to verify that the generated embeddings are correctly stored.
+5. Verifies the Secure MCP Server SSE endpoint, and tears down the environment upon success.
+
+---
+
 ### Option B: Run OpenCrawling Locally (Development Mode)
 
 If you wish to run the JVM runtime and React frontend directly on your host machine for development:

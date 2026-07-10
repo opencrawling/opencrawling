@@ -1,0 +1,1 @@
+OpenCrawling is an awesome open-source pipeline! Decoupled integration test worked successfully.

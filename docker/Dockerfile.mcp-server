@@ -1,0 +1,40 @@
+# Build stage
+FROM maven:3-eclipse-temurin-25 AS builder
+WORKDIR /app
+
+# Copy poms
+COPY pom.xml .
+COPY oc-core/pom.xml oc-core/
+COPY oc-filesystem-repository-connector/pom.xml oc-filesystem-repository-connector/
+COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
+COPY oc-admin-ui/pom.xml oc-admin-ui/
+COPY oc-runtime/pom.xml oc-runtime/
+
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-core,oc-filesystem-repository-connector,oc-vector-output-connector,oc-admin-ui,oc-runtime
+
+# Copy source code
+COPY oc-core/src/ /app/oc-core/src/
+COPY oc-filesystem-repository-connector/src/ /app/oc-filesystem-repository-connector/src/
+COPY oc-vector-output-connector/src/ /app/oc-vector-output-connector/src/
+COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
+COPY oc-admin-ui/package.json oc-admin-ui/package-lock.json oc-admin-ui/postcss.config.js oc-admin-ui/tailwind.config.js oc-admin-ui/tsconfig.json oc-admin-ui/tsconfig.node.json oc-admin-ui/vite.config.ts oc-admin-ui/index.html /app/oc-admin-ui/
+COPY oc-runtime/src/ /app/oc-runtime/src/
+
+RUN mvn clean package -DskipTests
+
+# Runtime stage
+FROM eclipse-temurin:25-jre-alpine
+WORKDIR /app
+COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
+
+# Decoupled component configuration: Enable Secure MCP Server (Spring AI), disable consumers
+ENV SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+ENV OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+ENV OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+ENV OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+ENV OPENCRAWLING_MCP_SERVER_ENABLED=true
+ENV SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]

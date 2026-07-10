@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.io.InputStream;
 import java.net.URI;
@@ -20,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Component
+@ConditionalOnProperty(name = "opencrawling.consumer.ingestion.enabled", havingValue = "true", matchIfMissing = true)
 public class IngestionConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(IngestionConsumer.class);
