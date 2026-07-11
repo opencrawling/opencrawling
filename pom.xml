@@ -71,6 +71,7 @@
         <module>oc-filesystem-repository-connector</module>
         <module>oc-vector-output-connector</module>
         <module>oc-admin-ui</module>
+        <module>oc-embedding-service</module>
     </modules>
 
     <properties>

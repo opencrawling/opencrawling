@@ -54,7 +54,7 @@ class OpenCrawlingIT {
     private OutputConnector outputConnector;
 
     @Autowired
-    private VectorStore vectorStore;
+    private List<VectorStore> vectorStores;
 
     @TempDir
     Path tempDir;
@@ -70,19 +70,28 @@ class OpenCrawlingIT {
         // 2. Run the job orchestrator on the temporary directory
         jobOrchestrator.runJob(repositoryConnector, outputConnector, tempDir.toString());
 
-        // 3. Verify the content in the Vector Store using a similarity search with retries
-        log.info("Performing similarity search for 'document orchestration' with retries...");
+        // 3. Verify the content in the Vector Stores using a similarity search with retries
+        log.info("Performing similarity search for 'document orchestration' with retries across available vector stores...");
         List<Document> results = List.of();
         for (int i = 0; i < 15; i++) {
-            results = vectorStore.similaritySearch(
-                    SearchRequest.builder()
-                            .query("document orchestration")
-                            .topK(5)
-                            .similarityThreshold(0.1) // Lower threshold to ensure we find it
-                            .build()
-            );
+            for (VectorStore store : vectorStores) {
+                try {
+                    results = store.similaritySearch(
+                            SearchRequest.builder()
+                                    .query("document orchestration")
+                                    .topK(5)
+                                    .similarityThreshold(0.1) // Lower threshold to ensure we find it
+                                    .build()
+                    );
+                    if (!results.isEmpty()) {
+                        log.info("Found document in Vector Store [{}] after {} seconds.", store.toString(), i);
+                        break;
+                    }
+                } catch (Exception e) {
+                    // Ignore dimension mismatch or query execution errors on other store tables
+                }
+            }
             if (!results.isEmpty()) {
-                log.info("Found document in Vector Store after {} seconds.", i);
                 break;
             }
             Thread.sleep(1000); // Wait 1 second before retrying

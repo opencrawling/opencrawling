@@ -24,7 +24,7 @@ import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.config.KafkaConfig;
-import org.opencrawling.runtime.messaging.IngestionMessage;
+import org.opencrawling.core.messaging.IngestionMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,13 +45,35 @@ public class JobOrchestrator {
 
     @SuppressWarnings("preview")
     public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path) {
-        runJob(repositoryConnector, outputConnector, path, "mxbai-embed-large");
+        runJob(repositoryConnector, outputConnector, path, null);
     }
 
     @SuppressWarnings("preview")
-    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String embeddingModel) {
-        log.info("Starting job for path: {} with embedding model: {}", path, embeddingModel);
+    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector) {
+        log.info("Starting job for path: {} with transformation connector: {}", path, transformationConnector);
         
+        String engine = "ollama";
+        java.util.Map<String, String> config = java.util.Map.of("model", "mxbai-embed-large");
+
+        if (transformationConnector != null && !transformationConnector.isBlank()) {
+            try {
+                java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
+                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
+                for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
+                    if (conn.name().equals(transformationConnector)) {
+                        engine = conn.configuration().getOrDefault("engine", "ollama");
+                        config = conn.configuration();
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load connector configuration for {}: {}", transformationConnector, e.getMessage());
+            }
+        }
+
+        final String finalEngine = engine;
+        final java.util.Map<String, String> finalConfig = config;
+
         try (var scope = StructuredTaskScope.open()) {
             
             StructuredTaskScope.Subtask<List<ScanResult>> scanTask = scope.fork(() -> {
@@ -65,7 +87,9 @@ public class JobOrchestrator {
                                 doc.metadata(),
                                 doc.acl(),
                                 doc.lastModified().toString(),
-                                embeddingModel != null ? embeddingModel : "mxbai-embed-large"
+                                transformationConnector,
+                                finalEngine,
+                                finalConfig
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation

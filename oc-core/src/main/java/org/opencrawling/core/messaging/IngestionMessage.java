@@ -13,14 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.runtime.messaging;
+package org.opencrawling.core.messaging;
 
+import java.util.List;
 import java.util.Map;
 
-public record DocumentChunkMessage(
+/**
+ * Message payload sent to Kafka to trigger vector store processing.
+ * Follows the Claim Check pattern: carries metadata and URI, consumer pulls content.
+ */
+public record IngestionMessage(
     String documentId,
-    String chunkId,
-    String text,
-    Map<String, Object> metadata,
-    String embeddingModel
+    String uri,
+    Map<String, List<String>> metadata,
+    String acl,
+    String lastModified,
+    String transformationConnector,
+    String transformationEngine,
+    Map<String, String> transformationConfig
 ) {}

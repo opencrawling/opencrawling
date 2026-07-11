@@ -63,10 +63,14 @@ public class VectorStoreConfig {
     }
 
     @Bean
+    public EmbeddingModel precomputedEmbeddingModel() {
+        return new PrecomputedEmbeddingModel(dimensions);
+    }
+
+    @Bean
     @org.springframework.context.annotation.Primary
-    public PgVectorStore vectorStore(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
-        PrecomputedEmbeddingModel precomputedModel = new PrecomputedEmbeddingModel(embeddingModel);
-        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedModel)
+    public PgVectorStore vectorStore(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel precomputedEmbeddingModel) {
+        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedEmbeddingModel)
                 .vectorTableName("vector_store")
                 .dimensions(dimensions)
                 .initializeSchema(initializeSchema)
@@ -74,9 +78,8 @@ public class VectorStoreConfig {
     }
 
     @Bean
-    public PgVectorStore vectorStore384(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
-        PrecomputedEmbeddingModel precomputedModel = new PrecomputedEmbeddingModel(embeddingModel);
-        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedModel)
+    public PgVectorStore vectorStore384(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel precomputedEmbeddingModel) {
+        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedEmbeddingModel)
                 .vectorTableName("vector_store_384")
                 .dimensions(384)
                 .initializeSchema(initializeSchema)
@@ -84,9 +87,8 @@ public class VectorStoreConfig {
     }
 
     @Bean
-    public PgVectorStore vectorStore768(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
-        PrecomputedEmbeddingModel precomputedModel = new PrecomputedEmbeddingModel(embeddingModel);
-        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedModel)
+    public PgVectorStore vectorStore768(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel precomputedEmbeddingModel) {
+        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedEmbeddingModel)
                 .vectorTableName("vector_store_768")
                 .dimensions(768)
                 .initializeSchema(initializeSchema)
@@ -94,9 +96,8 @@ public class VectorStoreConfig {
     }
 
     @Bean
-    public PgVectorStore vectorStore1024(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel embeddingModel) {
-        PrecomputedEmbeddingModel precomputedModel = new PrecomputedEmbeddingModel(embeddingModel);
-        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedModel)
+    public PgVectorStore vectorStore1024(JdbcTemplate pgVectorJdbcTemplate, EmbeddingModel precomputedEmbeddingModel) {
+        return PgVectorStore.builder(pgVectorJdbcTemplate, precomputedEmbeddingModel)
                 .vectorTableName("vector_store_1024")
                 .dimensions(1024)
                 .initializeSchema(initializeSchema)

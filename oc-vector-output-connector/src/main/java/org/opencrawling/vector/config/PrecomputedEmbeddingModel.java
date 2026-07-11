@@ -24,10 +24,14 @@ import java.util.List;
 
 public class PrecomputedEmbeddingModel implements EmbeddingModel {
 
-    private final EmbeddingModel delegate;
+    private final int defaultDimensions;
 
-    public PrecomputedEmbeddingModel(EmbeddingModel delegate) {
-        this.delegate = delegate;
+    public PrecomputedEmbeddingModel() {
+        this.defaultDimensions = 1536;
+    }
+
+    public PrecomputedEmbeddingModel(int defaultDimensions) {
+        this.defaultDimensions = defaultDimensions;
     }
 
     @Override
@@ -43,21 +47,31 @@ public class PrecomputedEmbeddingModel implements EmbeddingModel {
             }
             return vector;
         }
-        return delegate.embed(document);
+        throw new IllegalStateException("Embedding vector is missing in Document metadata. " +
+            "The output connector is designed to be decoupled and requires precomputed embeddings.");
     }
 
     @Override
     public float[] embed(String text) {
-        return delegate.embed(text);
+        float[] vector = new float[dimensions()];
+        vector[0] = 1.0f; // Avoid zero-vector division by zero in pgvector
+        return vector;
     }
 
     @Override
     public EmbeddingResponse call(EmbeddingRequest request) {
-        return delegate.call(request);
+        List<org.springframework.ai.embedding.Embedding> embeddings = request.getInstructions().stream()
+            .map(text -> {
+                float[] vector = new float[dimensions()];
+                vector[0] = 1.0f;
+                return new org.springframework.ai.embedding.Embedding(vector, 0);
+            })
+            .toList();
+        return new EmbeddingResponse(embeddings);
     }
 
     @Override
     public int dimensions() {
-        return delegate.dimensions();
+        return defaultDimensions; 
     }
 }

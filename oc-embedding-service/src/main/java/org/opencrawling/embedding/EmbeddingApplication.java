@@ -13,10 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.core.connector;
+package org.opencrawling.embedding;
 
-public sealed interface Connector permits RepositoryConnector, TransformationConnector, OutputConnector {
-    String getName();
-    void connect() throws Exception;
-    void disconnect() throws Exception;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class EmbeddingApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(EmbeddingApplication.class, args);
+    }
 }

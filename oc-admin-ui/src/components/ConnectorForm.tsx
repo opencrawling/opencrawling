@@ -23,12 +23,13 @@ import {
   Settings2,
   ShieldCheck,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Cpu
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
 
-type ConnectorType = 'repository' | 'output' | 'authority'
+type ConnectorType = 'repository' | 'output' | 'authority' | 'transformation'
 
 interface ConnectorFormData {
   name: string
@@ -125,6 +126,10 @@ export default function ConnectorForm() {
       { label: 'Web Crawler', value: 'org.opencrawling.crawler.connectors.webcrawler.WebcrawlerConnector' },
       { label: 'Windows Share (JCIFS)', value: 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector' },
     ],
+    transformation: [
+      { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
+      { label: 'OpenAI Embedding', value: 'org.opencrawling.embedding.OpenAIEmbeddingConnector' }
+    ],
     output: [
       { label: 'PGVector Store', value: 'org.opencrawling.vector.VectorOutputConnector' },
       { label: 'Elasticsearch', value: 'org.opencrawling.agents.output.elasticsearch.ElasticsearchConnector' },
@@ -143,16 +148,27 @@ export default function ConnectorForm() {
           <h1 className="text-2xl font-bold">Connector Configuration</h1>
           <p className="text-muted text-sm">Create and manage connections to external systems.</p>
         </div>
+        {selectedConnector && (
+          <button 
+            type="button"
+            onClick={handleReset}
+            className="btn-primary flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-black border border-cyan-400/25 shadow-lg shadow-cyan-500/20"
+          >
+            <Plus className="w-4 h-4 text-black" />
+            New Connector
+          </button>
+        )}
       </div>
 
       <div className="flex gap-1 p-1 bg-slate-900 rounded-lg w-fit border border-border">
-        {(['repository', 'output', 'authority'] as ConnectorType[]).map((tab) => (
+        {(['repository', 'transformation', 'output', 'authority'] as ConnectorType[]).map((tab) => (
           <button 
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors capitalize ${activeTab === tab ? 'bg-primary text-primary-foreground' : 'text-muted hover:text-foreground'}`}
           >
             {tab === 'repository' && <Plug2 className="w-4 h-4" />}
+            {tab === 'transformation' && <Cpu className="w-4 h-4" />}
             {tab === 'output' && <Settings2 className="w-4 h-4" />}
             {tab === 'authority' && <ShieldCheck className="w-4 h-4" />}
             {tab}
@@ -163,7 +179,20 @@ export default function ConnectorForm() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Existing Connectors List */}
         <div className="lg:col-span-1 space-y-4">
-           <h3 className="font-semibold text-sm uppercase tracking-wider text-muted px-1">Existing {activeTab}s</h3>
+            <div className="flex justify-between items-center px-1">
+               <h3 className="font-semibold text-sm uppercase tracking-wider text-muted">Existing {activeTab}s</h3>
+               {selectedConnector && (
+                 <button 
+                   type="button"
+                   onClick={handleReset}
+                   className="flex items-center gap-1 text-xs text-primary hover:text-primary-foreground bg-primary/10 hover:bg-primary px-2.5 py-1 rounded transition-colors font-medium animate-in fade-in duration-200"
+                   title="Add New Connector"
+                 >
+                   <Plus className="w-3.5 h-3.5" />
+                   New
+                 </button>
+               )}
+            </div>
            <div className="space-y-3">
               {isLoading ? (
                 <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
@@ -443,6 +472,56 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
+                    </div>
+                  )}
+
+                  {/* Ollama Embedding */}
+                  {selectedClass === 'org.opencrawling.embedding.OllamaEmbeddingConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ollama Base URL</label>
+                        <input 
+                          {...register('configuration.baseUrl', { required: true })}
+                          placeholder="http://localhost:11434"
+                          defaultValue="http://localhost:11434"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model Name</label>
+                        <input 
+                          {...register('configuration.model', { required: true })}
+                          placeholder="e.g. mxbai-embed-large"
+                          defaultValue="mxbai-embed-large"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <input type="hidden" {...register('configuration.engine')} value="ollama" />
+                    </div>
+                  )}
+
+                  {/* OpenAI Embedding */}
+                  {selectedClass === 'org.opencrawling.embedding.OpenAIEmbeddingConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OpenAI API Key</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.apiKey', { required: true })}
+                          placeholder="sk-..."
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model Name</label>
+                        <input 
+                          {...register('configuration.model', { required: true })}
+                          placeholder="e.g. text-embedding-3-small"
+                          defaultValue="text-embedding-3-small"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <input type="hidden" {...register('configuration.engine')} value="openai" />
                     </div>
                   )}
                 </div>

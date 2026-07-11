@@ -37,11 +37,11 @@ public class JobController {
     public JobController() {
         // Initial mock data defaults
         List<JobDTO> defaults = new ArrayList<>();
-        defaults.add(new JobDTO("1", "WebCrawler_Sito_A", "FileSystem_Local", "PGVector_Output", "LDAP", "/var/www/site_a", "Running", "Scanning", 12450, LocalDateTime.now().minusHours(1).format(formatter), "mxbai-embed-large"));
-        defaults.add(new JobDTO("2", "FS_Sync_Docs", "FileSystem_Local", "PGVector_Output", "", "/Users/docs", "Paused", "Paused", 890, LocalDateTime.now().minusDays(1).format(formatter), "nomic-embed-text"));
-        defaults.add(new JobDTO("3", "SharePoint_Cloud", "FileSystem_Local", "PGVector_Output", "Active Directory", "/sharepoint/cloud", "Error", "Failed", 0, LocalDateTime.now().minusHours(2).format(formatter), "mxbai-embed-large"));
-        defaults.add(new JobDTO("4", "Slack_History", "FileSystem_Local", "PGVector_Output", "", "/slack/backup", "Finished", "Completed", 56200, LocalDateTime.now().minusDays(1).format(formatter), "all-minilm"));
-        defaults.add(new JobDTO("5", "Jira_Tickets", "FileSystem_Local", "PGVector_Output", "LDAP", "/jira/export", "Ready", "Idle", 0, "N/A", "mxbai-embed-large"));
+        defaults.add(new JobDTO("1", "WebCrawler_Sito_A", "FileSystem_Local", "PGVector_Output", "LDAP", "/var/www/site_a", "Running", "Scanning", 12450, LocalDateTime.now().minusHours(1).format(formatter), "Ollama_Embedding_Default"));
+        defaults.add(new JobDTO("2", "FS_Sync_Docs", "FileSystem_Local", "PGVector_Output", "", "/Users/docs", "Paused", "Paused", 890, LocalDateTime.now().minusDays(1).format(formatter), "OpenAI_Embedding_Prod"));
+        defaults.add(new JobDTO("3", "SharePoint_Cloud", "FileSystem_Local", "PGVector_Output", "Active Directory", "/sharepoint/cloud", "Error", "Failed", 0, LocalDateTime.now().minusHours(2).format(formatter), "Ollama_Embedding_Default"));
+        defaults.add(new JobDTO("4", "Slack_History", "FileSystem_Local", "PGVector_Output", "", "/slack/backup", "Finished", "Completed", 56200, LocalDateTime.now().minusDays(1).format(formatter), "Ollama_Embedding_Default"));
+        defaults.add(new JobDTO("5", "Jira_Tickets", "FileSystem_Local", "PGVector_Output", "LDAP", "/jira/export", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default"));
         
         // Load persisted list
         this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));
@@ -101,7 +101,7 @@ public class JobController {
                     nextStage,
                     nextDocs,
                     job.lastRun(),
-                    job.embeddingModel()
+                    job.transformationConnector()
                 ));
                 updated = true;
             }
@@ -138,7 +138,7 @@ public class JobController {
                 "Idle",
                 0,
                 "N/A",
-                job.embeddingModel() != null ? job.embeddingModel() : "mxbai-embed-large"
+                job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default"
             );
             jobs.add(newJob);
         } else {
@@ -157,7 +157,7 @@ public class JobController {
                         job.currentStage() != null ? job.currentStage() : existing.currentStage(),
                         existing.documents(),
                         existing.lastRun(),
-                        job.embeddingModel() != null ? job.embeddingModel() : existing.embeddingModel()
+                        job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector()
                     ));
                     break;
                 }
@@ -228,7 +228,7 @@ public class JobController {
                     stage,
                     docCount,
                     lastRun,
-                    job.embeddingModel()
+                    job.transformationConnector()
                 ));
                 break;
             }
@@ -247,6 +247,6 @@ public class JobController {
         String currentStage,
         long documents,
         String lastRun,
-        String embeddingModel
+        String transformationConnector
     ) {}
 }

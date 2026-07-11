@@ -21,6 +21,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

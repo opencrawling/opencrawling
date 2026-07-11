@@ -13,12 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.runtime.config;
+package org.opencrawling.embedding.config;
 
-import java.util.HashMap;
-import java.util.Map;
-
-import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -28,7 +24,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -37,43 +32,21 @@ import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @Configuration
 @EnableKafka
 public class KafkaConfig {
 
-    public static final String TOPIC_NAME = "opencrawling-documents";
     public static final String CHUNKS_TOPIC_NAME = "opencrawling-chunks";
     public static final String EMBEDDED_TOPIC_NAME = "opencrawling-embedded";
 
     @Value("${spring.kafka.bootstrap-servers:127.0.0.1:9092}")
     private String bootstrapServers;
 
-    @Value("${spring.kafka.consumer.group-id:opencrawling-vector-group}")
+    @Value("${spring.kafka.consumer.group-id:opencrawling-embedding-group}")
     private String groupId;
-
-    @Bean
-    public NewTopic opencrawlingDocumentsTopic() {
-        return TopicBuilder.name(TOPIC_NAME)
-                .partitions(3)
-                .replicas(1)
-                .build();
-    }
-
-    @Bean
-    public NewTopic opencrawlingChunksTopic() {
-        return TopicBuilder.name(CHUNKS_TOPIC_NAME)
-                .partitions(3)
-                .replicas(1)
-                .build();
-    }
-
-    @Bean
-    public NewTopic opencrawlingEmbeddedTopic() {
-        return TopicBuilder.name(EMBEDDED_TOPIC_NAME)
-                .partitions(3)
-                .replicas(1)
-                .build();
-    }
 
     @Bean
     public ProducerFactory<String, Object> producerFactory() {

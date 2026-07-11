@@ -41,8 +41,8 @@ public class OpenCrawlingApplication {
     @Value("${spring.opencrawling.scan-path:}")
     private String scanPath;
 
-    @Value("${spring.opencrawling.embedding-model:mxbai-embed-large}")
-    private String embeddingModel;
+    @Value("${spring.opencrawling.transformation-connector:Ollama_Embedding_Default}")
+    private String transformationConnector;
 
     @SuppressWarnings("unused")
     @Bean
@@ -60,8 +60,8 @@ public class OpenCrawlingApplication {
                 if (scanPath == null || scanPath.isBlank()) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
-                    log.info("Triggering sample crawl job on path: {} with model: {}", scanPath, embeddingModel);
-                    orchestrator.runJob(repositoryConnector, outputConnector, scanPath, embeddingModel);
+                    log.info("Triggering sample crawl job on path: {} with transformation connector: {}", scanPath, transformationConnector);
+                    orchestrator.runJob(repositoryConnector, outputConnector, scanPath, transformationConnector);
                 }
             } else {
                 log.info("Sample crawl job on startup is disabled. Use properties to enable it (spring.opencrawling.crawl-on-startup=true).");

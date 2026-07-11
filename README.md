@@ -22,7 +22,7 @@
 
 ## Architecture Diagram
 
-The diagram below shows the high-level architecture of OpenCrawling:
+The diagram below shows the high-level architecture of OpenCrawling, highlighting the newly decoupled, stateless embedding microservice and transformation connectors:
 
 ```mermaid
 graph TD
@@ -30,16 +30,13 @@ graph TD
         UI_App[Admin React UI - oc-admin-ui]
     end
 
-    subgraph Platform Runtime [OpenCrawling JVM Runtime]
+    subgraph Platform Runtime [OpenCrawling Ingestion Runtime - oc-runtime]
         Core[Core Ingestion Engine - oc-core]
-        Runtime[Bootstrap - oc-runtime]
         FS_Conn[Filesystem Repository - oc-filesystem-repository-connector]
         
         Ing_Cons[Ingestion Consumer - IngestionConsumer]
         Tika[Apache Tika Text Extractor]
         Chunker[Token Chunker]
-        
-        Embed_Cons[Embedding Consumer - EmbeddingConsumer]
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
@@ -47,7 +44,6 @@ graph TD
 
         McpServer[Secure MCP Server - McpVectorServer]
         
-        Runtime --> Core
         Core --> FS_Conn
         Core -->|Publish IngestionMessage| Ingest_Topic[(Kafka Topic: opencrawling-ingestion)]
         
@@ -56,14 +52,20 @@ graph TD
         Tika --> Chunker
         Chunker -->|Publish Chunks| Chunk_Topic[(Kafka Topic: opencrawling-chunks)]
         
-        Chunk_Topic -->|Consume ChunkMessage| Embed_Cons
-        Embed_Cons -->|Publish Embedded| Embed_Topic[(Kafka Topic: opencrawling-embedded)]
-        
-        Embed_Topic -->|Consume EmbeddedMessage| Writer_Cons
+        Embed_Topic[(Kafka Topic: opencrawling-embedded)] -->|Consume EmbeddedMessage| Writer_Cons
         Writer_Cons --> Precompute_Model
         Precompute_Model --> Vec_Conn
 
         McpServer -->|Queries - Enforces ACLs| Vec_Conn
+    end
+
+    subgraph Embedding Service [OpenCrawling Embedding Service - oc-embedding-service]
+        Embed_Cons[Embedding Consumer - EmbeddingConsumer]
+        Model_Factory[EmbeddingModelFactory]
+        
+        Chunk_Topic -->|Consume ChunkMessage| Embed_Cons
+        Embed_Cons --> Model_Factory
+        Embed_Cons -->|Publish Embedded| Embed_Topic
     end
 
     subgraph Infrastructure [Docker Containers]
@@ -75,12 +77,15 @@ graph TD
 
     subgraph External [AI Clients]
         LLM[AI Client / LLM Agent]
+        OpenAI[OpenAI Platform]
     end
 
-    UI_App -->|REST API| Runtime
+    UI_App -->|REST API| Platform Runtime
     Vec_Conn -->|Vectors| PG
-    Runtime -->|Job Cache| Redis
-    Embed_Cons -->|Generates Embeddings| Ollama
+    Platform Runtime -->|Job Cache| Redis
+    
+    Model_Factory -->|Local Inference| Ollama
+    Model_Factory -->|Cloud Inference| OpenAI
     
     Ingest_Topic --> Kafka_Broker
     Chunk_Topic --> Kafka_Broker
@@ -108,7 +113,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 
 #### 📁 Connector Configurations
 ![Connector Registry Configuration](images/screenshots/ui-connector-configuration.png)
-*Manage endpoints and credentials for repositories (SharePoint, S3, Filesystem) and vector search destinations.*
+*Manage endpoints and credentials for repositories (SharePoint, S3, Filesystem), output vectors, and transformation engines.*
 
 #### ⚙️ Ingestion & Embedding Mappings
 ![Ingestion & Embedding Settings](images/screenshots/ui-ingestion-and-embedding-settings.png)
@@ -127,7 +132,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Redis Stack**: Lightweight caching and session management.
-- **Ollama**: Local AI embedding generation via open-source LLM models.
+- **Ollama & OpenAI**: Dynamic embedding generation via local and cloud-based AI engines.
 - **Vite + React + TailwindCSS**: Modern frontend administration dashboard.
 
 ---
@@ -155,7 +160,7 @@ docker compose up -d
 * **PostgreSQL (Port 5432)**: For job metadata, schema migrations, and pgvector storage.
 * **Redis (Port 6379 / Insight Port 8001)**: For caching and session management.
 * **Ollama (Port 11434)**: For local embeddings.
-* **Apache Kafka (Port 9092)**: KRaft-mode broker for decoupled, event-driven document processing (internal container communication on port `9094`).
+* **Apache Kafka (Port 9092)**: KRaft-mode broker for decoupled, event-driven document processing.
 
 #### 2. Pull the Embedding Models (Ollama)
 
@@ -179,7 +184,7 @@ OpenCrawling supports configuring different embedding models on a per-job basis 
 
 ### Option A: Run OpenCrawling in Docker Containers (Recommended)
 
-To build and run the OpenCrawling backend runtime and administration UI as containerized services, run:
+To build and run the OpenCrawling backend runtime, the dynamic embedding microservice, and the administration UI as containerized services, run:
 
 1. **Build the images**:
    ```bash
@@ -192,6 +197,7 @@ To build and run the OpenCrawling backend runtime and administration UI as conta
    ```
 
 * **Backend Service**: Access the backend runtime and integrated static resources at [http://localhost:8080](http://localhost:8080).
+* **Embedding Service**: The dynamic microservice processes embeddings at [http://localhost:8082](http://localhost:8082).
 * **Frontend Service**: Access the standalone React Administration Console at [http://localhost:3000](http://localhost:3000).
 
 ---
@@ -210,7 +216,7 @@ To run each microservice component (Repository Crawler, Ingestion Consumer, Embe
    docker compose -f docker-compose-decoupled.yml up -d
    ```
 
-This spins up the database/event-stream dependencies alongside five decoupled OpenCrawling service containers. You can view logs, scale individual workers (e.g. `docker compose -f docker-compose-decoupled.yml scale oc-embedding-consumer=3`), and monitor the decoupled pipeline.
+This spins up the database/event-stream dependencies alongside five decoupled OpenCrawling service containers. You can view logs, scale individual workers (e.g. `docker compose -f docker-compose-decoupled.yml scale oc-embedding-service=3`), and monitor the decoupled pipeline.
 
 * **React Admin UI Console**: Access the administration dashboard at [http://localhost:3000](http://localhost:3000).
 * **Secure MCP Server**: Connect your AI Client / IDE directly to [http://localhost:8080](http://localhost:8080) over SSE.
@@ -240,10 +246,16 @@ Compile all modules using Java 25. Since we utilize advanced features, preview f
 mvn clean install
 ```
 
-#### 2. Run the Runtime Bootstrap
+#### 2. Run the Ingestion Runtime Bootstrap
 Start the Spring Boot runtime application:
 ```bash
 mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+#### 3. Run the Embedding Service Microservice
+Start the Embedding Service application in a separate terminal:
+```bash
+mvn spring-boot:run -pl oc-embedding-service
 ```
 
 ##### Running a Sample Ingestion Job on Startup (Optional)
@@ -253,7 +265,7 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev \
   -Dspring-boot.run.arguments="--spring.opencrawling.crawl-on-startup=true --spring.opencrawling.scan-path=/your/local/directory/to/scan"
 ```
 
-#### 3. Run the Admin UI
+#### 4. Run the Admin UI
 To launch the administration dashboard:
 ```bash
 cd oc-admin-ui
@@ -261,6 +273,7 @@ npm install
 npm run dev
 ```
 Open [http://localhost:5173](http://localhost:5173) in your browser.
+
 ---
 
 ## Scaling Out & Performance
@@ -268,10 +281,10 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 OpenCrawling is designed for high-throughput, horizontal scalability. Since the ingestion pipeline is decoupled using **Apache Kafka** and the **Claim Check Pattern**, you can scale components independently.
 
 ### 1. Scaling the Ingestion / Processing (Output Connector)
-Vector indexing and embedding generation is typically the primary performance bottleneck because of deep learning model inference (Ollama) and database indexing (pgvector).
-* **Kafka Consumer Group Partitioning**: The three main topics (`opencrawling-ingestion`, `opencrawling-chunks`, and `opencrawling-embedded`) are consumed by `IngestionConsumer`, `EmbeddingConsumer`, and `VectorStoreWriterConsumer` respectively within the `oc-runtime` service. By configuring these topics with multiple partitions, Kafka distributes load dynamically among active consumer nodes.
-* **Horizontal Scaling of Runtime Instances**: You can run multiple instances of the `oc-runtime` application sharing the same `spring.application.name` and consumer group (`opencrawling-vector-group`). Kafka automatically distributes partitions and load-balances the messages.
-* **Ollama Load Balancing**: Scale out embedding generation by pointing `spring.ai.ollama.base-url` to a load balancer (e.g., NGINX, HAProxy) backed by a cluster of Ollama instances running on GPU-enabled nodes.
+Vector indexing and embedding generation is typically the primary performance bottleneck because of deep learning model inference (Ollama/OpenAI) and database indexing (pgvector).
+* **Kafka Consumer Group Partitioning**: The three main topics (`opencrawling-ingestion`, `opencrawling-chunks`, and `opencrawling-embedded`) are consumed by `IngestionConsumer`, `EmbeddingConsumer` (in `oc-embedding-service`), and `VectorStoreWriterConsumer` respectively within the OpenCrawling services. By configuring these topics with multiple partitions, Kafka distributes load dynamically among active consumer nodes.
+* **Horizontal Scaling of Service Instances**: You can run multiple instances of the `oc-embedding-service` application sharing the same consumer group. Kafka automatically distributes partitions and load-balances the messages.
+* **Ollama Load Balancing**: Scale out embedding generation by pointing `baseUrl` to a load balancer (e.g., NGINX, HAProxy) backed by a cluster of Ollama instances running on GPU-enabled nodes.
 
 ### 2. Scaling the Repository Connectors (Ingestion Source)
 The scanning/crawling phase can be distributed by splitting large target sources:
@@ -284,8 +297,8 @@ To ensure the messaging system remains fast and responsive:
 2. It publishes a lightweight `IngestionMessage` (Claim Check record) to the Kafka topic containing the metadata (URI, file path, version).
 3. The **Consumer Workers** process the ingestion:
    * **`IngestionConsumer`** pulls the reference, reads the file directly from storage, extracts text with **Apache Tika**, splits it into semantic chunks, and publishes them to the chunks topic.
-   * **`EmbeddingConsumer`** pulls the chunks, requests embedding vectors from **Ollama**, and publishes the embedded chunks to the embedded topic.
-   * **`VectorStoreWriterConsumer`** consumes embedded chunks and uses a `PrecomputedEmbeddingModel` to save them directly to pgvector.
+   * **`EmbeddingConsumer`** (running in the `oc-embedding-service` microservice) pulls the chunks, reads the dynamically configured Transformation Connector engine configurations, requests embedding vectors from the target model engine (Ollama, OpenAI, Hugging Face, etc.), and publishes the embedded chunks to the embedded topic.
+   * **`VectorStoreWriterConsumer`** consumes embedded chunks and uses a stateless `PrecomputedEmbeddingModel` to save them directly to pgvector.
 
 ---
 
@@ -307,4 +320,3 @@ To ensure the messaging system remains fast and responsive:
 ## Trademark
 
 OpenCrawling&reg; is a registered trademark of the OpenCrawling Organization. For guidelines on using the name and logo, please refer to the [TRADEMARK.md](TRADEMARK.md) file.
-

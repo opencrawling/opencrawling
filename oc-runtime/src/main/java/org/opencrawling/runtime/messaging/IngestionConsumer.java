@@ -19,6 +19,9 @@ import org.apache.tika.Tika;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.messaging.DocumentChunkMessage;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -110,7 +113,9 @@ public class IngestionConsumer {
                         chunkId,
                         chunk.getText(),
                         chunk.getMetadata(),
-                        message.embeddingModel()
+                        message.transformationConnector(),
+                        message.transformationEngine(),
+                        message.transformationConfig()
                     );
                     kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, chunkId, chunkMsg).get();
                 }

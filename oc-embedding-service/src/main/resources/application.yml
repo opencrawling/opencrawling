@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: oc-embedding-service
+
+  ai:
+    ollama:
+      base-url: http://127.0.0.1:11434
+      embedding:
+        options:
+          model: mxbai-embed-large
+
+  kafka:
+    bootstrap-servers: 127.0.0.1:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: opencrawling-embedding-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "org.opencrawling.core.messaging"
+
+server:
+  port: 8082

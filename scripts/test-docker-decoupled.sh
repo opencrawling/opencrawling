@@ -42,9 +42,9 @@ compose() {
   docker compose -f docker-compose-decoupled.yml "$@"
 }
 
-# Clean up any existing containers or volumes
-echo -e "${YELLOW}Cleaning up previous decoupled containers and volumes...${NC}"
-compose down -v --remove-orphans || true
+# Clean up any existing containers
+echo -e "${YELLOW}Cleaning up previous decoupled containers...${NC}"
+compose down --remove-orphans || true
 
 # Build microservices images
 echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source...${NC}"
@@ -96,7 +96,7 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled 
   # Output the latest log line from the model puller to show download progress status
   PROGRESS=$(docker logs --tail 1 ollama-model-puller-decoupled 2>&1 || true)
   if [ ! -z "$PROGRESS" ]; then
-    echo -ne "  Progress: $PROGRESS\r"
+    printf "  Progress: %s\r" "$PROGRESS"
   fi
   sleep 2
   ELAPSED=$((ELAPSED + 2))
@@ -144,7 +144,7 @@ sleep 10
 
 # Verify pgvector database content
 echo -e "${YELLOW}Verifying PgVector table records...${NC}"
-RECORD_COUNT=$(docker exec -t postgres-vector-decoupled psql -U opencrawling -d opencrawling -t -A -c "SELECT count(*) FROM vector_store;" || echo "0")
+RECORD_COUNT=$(docker exec -i postgres-vector-decoupled psql -U opencrawling -d opencrawling -t -A -P pager=off -c "SELECT (SELECT count(*) FROM vector_store) + (SELECT count(*) FROM vector_store_1024);" || echo "0")
 
 echo -e "PgVector Records count: ${GREEN}$RECORD_COUNT${NC}"
 if [ "$RECORD_COUNT" -eq 0 ] || [ "$RECORD_COUNT" == "failed" ]; then
@@ -152,13 +152,13 @@ if [ "$RECORD_COUNT" -eq 0 ] || [ "$RECORD_COUNT" == "failed" ]; then
   echo -e "${YELLOW}Printing consumer logs for diagnosis...${NC}"
   compose logs oc-ingestion-consumer
   compose logs oc-embedding-consumer
-  compose logs oc-writer-service
+  compose logs oc-writer-consumer
   exit 1
 fi
 
 # Verify MCP server endpoint
 echo -e "${YELLOW}Verifying MCP Server SSE endpoint...${NC}"
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mcp/sse || echo "failed")
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:8080/sse || true)
 echo -e "MCP Server HTTP Status: ${GREEN}$HTTP_STATUS${NC}"
 
 if [ "$HTTP_STATUS" != "200" ]; then
@@ -173,6 +173,6 @@ echo -e "${GREEN}===============================================================
 
 # Tear down the test environment
 echo -e "${YELLOW}Tearing down test environment...${NC}"
-compose down -v
+compose down
 
 exit 0

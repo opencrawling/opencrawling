@@ -13,10 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.core.connector;
+package org.opencrawling.core.messaging;
 
-public sealed interface Connector permits RepositoryConnector, TransformationConnector, OutputConnector {
-    String getName();
-    void connect() throws Exception;
-    void disconnect() throws Exception;
-}
+import java.util.Map;
+
+public record DocumentEmbeddedMessage(
+    String documentId,
+    String chunkId,
+    String text,
+    Map<String, Object> metadata,
+    float[] embedding
+) {}

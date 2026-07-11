@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.runtime.messaging;
+package org.opencrawling.core.messaging;
 
 import java.util.Map;
 
-public record DocumentEmbeddedMessage(
+public record DocumentChunkMessage(
     String documentId,
     String chunkId,
     String text,
     Map<String, Object> metadata,
-    float[] embedding
+    String transformationConnector,
+    String transformationEngine,
+    Map<String, String> transformationConfig
 ) {}

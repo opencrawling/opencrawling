@@ -35,6 +35,24 @@ services:
       - opencrawling-network
     restart: unless-stopped
 
+  opencrawling-embedding:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: opencrawling-embedding:latest
+    container_name: opencrawling-embedding
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OPENAI_API_KEY=mock-key
+    depends_on:
+      - opencrawling-backend
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
   opencrawling-frontend:
     build:
       context: ./oc-admin-ui
