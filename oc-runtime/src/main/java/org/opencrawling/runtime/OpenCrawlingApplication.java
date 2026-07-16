@@ -63,6 +63,8 @@ public class OpenCrawlingApplication {
                 .filter(c -> {
                     if ("alfresco".equalsIgnoreCase(repositoryConnectorType)) {
                         return c.getClass().getSimpleName().toLowerCase().contains("alfresco");
+                    } else if ("iceberg".equalsIgnoreCase(repositoryConnectorType)) {
+                        return c.getClass().getSimpleName().toLowerCase().contains("iceberg");
                     } else {
                         return c.getClass().getSimpleName().toLowerCase().contains("file");
                     }

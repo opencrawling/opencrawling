@@ -123,9 +123,8 @@ export default function ConnectorForm() {
   const connectorClasses = {
     repository: [
       { label: 'File System', value: 'org.opencrawling.crawler.connectors.filesystem.FileConnector' },
-      { label: 'Web Crawler', value: 'org.opencrawling.crawler.connectors.webcrawler.WebcrawlerConnector' },
-      { label: 'Windows Share (JCIFS)', value: 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector' },
       { label: 'Alfresco Content Services Repository', value: 'org.opencrawling.alfresco.AlfrescoRepositoryConnector' },
+      { label: 'Apache Iceberg Catalog Table', value: 'org.opencrawling.iceberg.IcebergRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -365,69 +364,60 @@ export default function ConnectorForm() {
                     </div>
                   )}
 
-                  {/* Web Crawler */}
-                  {selectedClass === 'org.opencrawling.crawler.connectors.webcrawler.WebcrawlerConnector' && (
-                    <div className="grid grid-cols-1 gap-4">
+                  {/* Apache Iceberg Catalog Table */}
+                  {selectedClass === 'org.opencrawling.iceberg.IcebergRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Seed URLs (One per line)</label>
-                        <textarea 
-                          {...register('configuration.seedUrls', { required: true })}
-                          rows={3}
-                          placeholder="https://example.com&#10;https://another.com"
+                        <label className="text-sm font-medium">Catalog Type</label>
+                        <select 
+                          {...register('configuration.catalogType', { required: true })}
+                          defaultValue="in-memory"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                        >
+                          <option value="in-memory">In-Memory (Local Testing)</option>
+                          <option value="rest">REST Catalog</option>
+                          <option value="hive">Hive Metastore (Thrift)</option>
+                          <option value="hadoop">Hadoop Catalog (Local/HDFS)</option>
+                          <option value="glue">AWS Glue</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Catalog URI (Optional)</label>
+                        <input 
+                          {...register('configuration.catalogUri')}
+                          placeholder="e.g. http://localhost:8181 or thrift://localhost:9083"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Max Crawl Depth</label>
-                          <input 
-                            type="number"
-                            {...register('configuration.maxDepth')}
-                            defaultValue="3"
-                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">User Agent Name</label>
-                          <input 
-                            {...register('configuration.userAgent')}
-                            placeholder="OpenCrawlingBot/1.0"
-                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                          />
-                        </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Warehouse Location</label>
+                        <input 
+                          {...register('configuration.warehouse', { required: true })}
+                          placeholder="s3a://bucket/warehouse or local path"
+                          defaultValue="tmp/iceberg-warehouse"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Default Table Name (Optional)</label>
+                        <input 
+                          {...register('configuration.tableName')}
+                          placeholder="e.g. db.table"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">ID Column (Optional)</label>
+                        <input 
+                          {...register('configuration.idColumn')}
+                          placeholder="e.g. id"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
                       </div>
                     </div>
                   )}
 
-                  {/* Windows Share */}
-                  {selectedClass === 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">SMB Share Path</label>
-                        <input 
-                          {...register('configuration.smbPath', { required: true })}
-                          placeholder="smb://server/share/folder"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Domain</label>
-                        <input 
-                          {...register('configuration.smbDomain')}
-                          placeholder="MYDOMAIN"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Username</label>
-                        <input 
-                          {...register('configuration.smbUser')}
-                          placeholder="domain_user"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
+
 
                   {/* PGVector Store */}
                   {selectedClass === 'org.opencrawling.vector.VectorOutputConnector' && (

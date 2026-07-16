@@ -24,7 +24,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.6</version>
+        <version>4.1.0</version>
         <relativePath /> <!-- lookup parent from repository -->
     </parent>
 
@@ -34,7 +34,7 @@
     <packaging>pom</packaging>
 
     <name>OpenCrawling</name>
-    <description>OpenCrawling: Modern Crawler using Java 25 and Spring Boot 4.0.6</description>
+    <description>OpenCrawling: An enterprise-grade, high-performance document crawling and ingestion pipeline built with Java 25 (leveraging virtual threads and structured concurrency) and Spring Boot 4. Compliant with the Open Ingestion Standard (OIS), it orchestrates repository scanning, claim-check metadata extraction, and vector store ingestion for advanced AI/RAG search scenarios.</description>
 
     <licenses>
         <license>
@@ -51,8 +51,29 @@
             <email>piergiorgio@apache.org</email>
             <timezone>Europe/Rome</timezone>
             <roles>
+                <role>Founder</role>
+                <role>Lead Architect</role>
                 <role>Lead Developer</role>
-                <role>Architect</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>michaelcizmar</id>
+            <name>Michael Cizmar</name>
+            <email>michael@michaelcizmar.com</email>
+            <timezone>America/Chicago</timezone>
+            <roles>
+                <role>Lead Architect</role>
+                <role>Lead Developer</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>lcabaceira</id>
+            <name>Luis Cabaceira</name>
+            <email>cabaceira@gmail.com</email>
+            <timezone>Europe/Lisbon</timezone>
+            <roles>
+                <role>Lead Architect</role>
+                <role>Lead Developer</role>
             </roles>
         </developer>
     </developers>
@@ -70,6 +91,7 @@
         <module>oc-runtime</module>
         <module>oc-filesystem-repository-connector</module>
         <module>oc-alfresco-repository-connector</module>
+        <module>oc-iceberg-repository-connector</module>
         <module>oc-vector-output-connector</module>
         <module>oc-admin-ui</module>
         <module>oc-embedding-service</module>
@@ -79,13 +101,18 @@
         <java.version>25</java.version>
         <spring-ai.version>2.0.0</spring-ai.version>
         <tika.version>3.3.1</tika.version>
+        <commons-io.version>2.22.0</commons-io.version>
+        <jaxb-api.version>2.3.1</jaxb-api.version>
+        
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.5.5</maven-surefire-plugin.version>
         <maven-failsafe-plugin.version>3.5.5</maven-failsafe-plugin.version>
+        
         <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
+        
     </properties>
 
     <dependencyManagement>
@@ -99,6 +126,18 @@
                 <groupId>org.apache.tika</groupId>
                 <artifactId>tika-parsers-standard-package</artifactId>
                 <version>${tika.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+            
+            <!-- transitive components within the testing environment -->
+            <dependency>
+                <groupId>javax.xml.bind</groupId>
+                <artifactId>jaxb-api</artifactId>
+                <version>${jaxb-api.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -234,7 +273,6 @@
                 </property>
             </activation>
             <properties>
-
                 <java.version>25</java.version>
             </properties>
         </profile>

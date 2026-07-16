@@ -227,6 +227,12 @@ public class JobController {
                             batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
                         } catch (Exception e) {}
                         resolvedConnector = new org.opencrawling.alfresco.AlfrescoRepositoryConnector(url, username, password, batchSize);
+                    } else if (connConfig.className().contains("Iceberg")) {
+                        String catalogType = connConfig.configuration().getOrDefault("catalogType", "in-memory");
+                        String catalogUri = connConfig.configuration().getOrDefault("catalogUri", "");
+                        String warehouse = connConfig.configuration().getOrDefault("warehouse", "tmp/iceberg-warehouse");
+                        String idColumn = connConfig.configuration().getOrDefault("idColumn", "");
+                        resolvedConnector = new org.opencrawling.iceberg.IcebergRepositoryConnector(catalogType, catalogUri, warehouse, idColumn);
                     } else {
                         resolvedConnector = fileSystemRepositoryConnector;
                     }

@@ -273,7 +273,7 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
         // Properties mapping
         JsonNode propertiesNode = entry.path("properties");
         if (propertiesNode != null && !propertiesNode.isMissingNode()) {
-            propertiesNode.fields().forEachRemaining(prop -> {
+            propertiesNode.properties().iterator().forEachRemaining(prop -> {
                 String propKey = prop.getKey();
                 String propValue = prop.getValue().asText();
                 if (propValue != null) {

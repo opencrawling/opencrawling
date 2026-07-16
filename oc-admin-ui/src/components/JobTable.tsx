@@ -116,23 +116,17 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. /Users/me/documents',
           description: 'The root folder on the local filesystem to scan.'
         };
-      case 'org.opencrawling.crawler.connectors.webcrawler.WebcrawlerConnector':
-        return {
-          label: 'Crawl Seed URL',
-          placeholder: 'e.g. https://website.com',
-          description: 'The starting URL for the web crawler.'
-        };
-      case 'org.opencrawling.crawler.connectors.jcifs.JCIFSConnector':
-        return {
-          label: 'SMB Share Path',
-          placeholder: 'e.g. smb://server/share/folder',
-          description: 'The SMB network share folder path.'
-        };
       case 'org.opencrawling.alfresco.AlfrescoRepositoryConnector':
         return {
           label: 'Crawl Folder Path / Node ID / CMIS Query',
           placeholder: 'e.g. -root-, /Company Home/Shared, or a specific Node UUID',
           description: 'Define the starting location in Alfresco. Use -root- to scan the whole repository, or provide a folder path or node UUID.'
+        };
+      case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
+        return {
+          label: 'Iceberg Table Name',
+          placeholder: 'e.g. test_db.test_table',
+          description: 'The full name of the Apache Iceberg table to scan (e.g. database.table).'
         };
       default:
         return {
@@ -295,7 +289,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   })
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 w-full max-w-full overflow-hidden">
       {/* Top Header Section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -322,7 +316,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       </div>
 
       {/* Main Table Card */}
-      <div className="card-container !p-0 overflow-hidden border-border bg-card/65 backdrop-blur-md">
+      <div className="card-container !p-0 overflow-hidden border-border bg-card/65 backdrop-blur-md w-full">
         <div className="p-4 border-b border-border flex flex-col sm:flex-row items-center gap-4 bg-slate-900/40">
           <div className="relative flex-1 w-full">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
@@ -395,7 +389,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                       <div className="font-semibold text-foreground text-sm">{job.name}</div>
                       <div className="text-[10px] text-indigo-400 font-bold tracking-wide mt-1.5 flex items-center gap-1 font-mono uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded w-max" title="Transformation Connector">
                         <Cpu className="w-3 h-3 text-indigo-400" />
-                        <span className="text-xs font-mono bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-indigo-400">
+                        <span className="text-xs font-mono bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-indigo-400 truncate max-w-[180px] inline-block" title={job.transformationConnector || 'Ollama_Embedding_Default'}>
                         {job.transformationConnector || 'Ollama_Embedding_Default'}
                       </span>
                       </div>
@@ -406,25 +400,31 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded border border-cyan-500/20" title="Repository Source">
-                          <Plug2 className="w-3 h-3" />
-                          {job.repositoryConnector || 'N/A'}
+                          <Plug2 className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate max-w-[120px] inline-block" title={job.repositoryConnector || 'N/A'}>
+                            {job.repositoryConnector || 'N/A'}
+                          </span>
                         </span>
                         
                         {job.authorityConnector && (
                           <>
-                            <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                            <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                             <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded border border-purple-500/20" title="Security Authority">
-                              <ShieldCheck className="w-3 h-3" />
-                              {job.authorityConnector}
+                              <ShieldCheck className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate max-w-[120px] inline-block" title={job.authorityConnector}>
+                                {job.authorityConnector}
+                              </span>
                             </span>
                           </>
                         )}
                         
-                        <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                        <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                         
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20" title="Vector Output">
-                          <Settings2 className="w-3 h-3" />
-                          {job.outputConnector || 'N/A'}
+                          <Settings2 className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate max-w-[120px] inline-block" title={job.outputConnector || 'N/A'}>
+                            {job.outputConnector || 'N/A'}
+                          </span>
                         </span>
                       </div>
                     </td>
