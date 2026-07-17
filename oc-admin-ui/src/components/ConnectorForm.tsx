@@ -24,7 +24,15 @@ import {
   ShieldCheck,
   Loader2,
   AlertCircle,
-  Cpu
+  Cpu,
+  HardDrive,
+  Database,
+  Server,
+  Search,
+  Sun,
+  Sparkles,
+  Key,
+  Network
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -38,6 +46,43 @@ interface ConnectorFormData {
   className: string
   maxConnections: number
   configuration: Record<string, string>
+}
+
+const getConnectorIconInfo = (className: string) => {
+  if (className.includes('filesystem.FileConnector') || className.includes('FileSystem')) {
+    return { icon: HardDrive, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
+  if (className.includes('Alfresco')) {
+    return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.includes('Iceberg')) {
+    return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
+  if (className.includes('VectorOutputConnector') || className.includes('vector')) {
+    return { icon: Network, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
+  if (className.includes('Milvus')) {
+    return { icon: Cpu, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
+  if (className.includes('elasticsearch')) {
+    return { icon: Search, color: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-500/20' }
+  }
+  if (className.includes('solr')) {
+    return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
+  }
+  if (className.includes('Ollama')) {
+    return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
+  }
+  if (className.includes('OpenAI')) {
+    return { icon: Sparkles, color: 'text-pink-400', bg: 'bg-pink-400/10', border: 'border-pink-500/20' }
+  }
+  if (className.includes('ActiveDirectory')) {
+    return { icon: ShieldCheck, color: 'text-indigo-400', bg: 'bg-indigo-400/10', border: 'border-indigo-500/20' }
+  }
+  if (className.includes('LDAP')) {
+    return { icon: Key, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
+  }
+  return { icon: Plug2, color: 'text-muted-foreground', bg: 'bg-muted-foreground/10', border: 'border-muted-foreground/20' }
 }
 
 export default function ConnectorForm() {
@@ -132,8 +177,7 @@ export default function ConnectorForm() {
     ],
     output: [
       { label: 'PGVector Store', value: 'org.opencrawling.vector.VectorOutputConnector' },
-      { label: 'Elasticsearch', value: 'org.opencrawling.agents.output.elasticsearch.ElasticsearchConnector' },
-      { label: 'Apache Solr', value: 'org.opencrawling.agents.output.solr.SolrConnector' },
+      { label: 'Milvus Vector Store', value: 'org.opencrawling.milvus.MilvusOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -201,26 +245,35 @@ export default function ConnectorForm() {
                    No {activeTab} connectors found.
                 </div>
               ) : (
-                connectors.map((c) => (
-                  <div 
-                    key={c.name} 
-                    onClick={() => handleSelectConnector(c)}
-                    className={`card-container !p-4 group cursor-pointer transition-all ${selectedConnector === c.name ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'hover:border-primary/50'}`}
-                  >
-                     <div className="flex justify-between items-start">
-                        <div>
-                           <h4 className={`font-bold transition-colors ${selectedConnector === c.name ? 'text-primary' : 'text-foreground'}`}>{c.name}</h4>
-                           <p className="text-xs text-muted truncate max-w-[150px]">{c.className.split('.').pop()}</p>
-                        </div>
-                        <button 
-                          onClick={(e) => handleDelete(e, c.name)}
-                          className={`p-1 text-muted hover:text-destructive transition-all ${selectedConnector === c.name ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                     </div>
-                  </div>
-                ))
+                connectors.map((c) => {
+                  const iconInfo = getConnectorIconInfo(c.className);
+                  const IconComponent = iconInfo.icon;
+                  return (
+                    <div 
+                      key={c.name} 
+                      onClick={() => handleSelectConnector(c)}
+                      className={`card-container !p-4 group cursor-pointer transition-all ${selectedConnector === c.name ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'hover:border-primary/50'}`}
+                    >
+                       <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-3">
+                             <div className={`p-2 rounded-lg border ${iconInfo.bg} ${iconInfo.color} ${iconInfo.border} flex items-center justify-center`}>
+                                <IconComponent className="w-5 h-5" />
+                             </div>
+                             <div>
+                                <h4 className={`font-bold transition-colors ${selectedConnector === c.name ? 'text-primary' : 'text-foreground'}`}>{c.name}</h4>
+                                <p className="text-xs text-muted truncate max-w-[150px]">{c.className.split('.').pop()}</p>
+                             </div>
+                          </div>
+                          <button 
+                            onClick={(e) => handleDelete(e, c.name)}
+                            className={`p-1 text-muted hover:text-destructive transition-all ${selectedConnector === c.name ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                       </div>
+                    </div>
+                  );
+                })
               )}
            </div>
         </div>
@@ -421,8 +474,146 @@ export default function ConnectorForm() {
 
                   {/* PGVector Store */}
                   {selectedClass === 'org.opencrawling.vector.VectorOutputConnector' && (
-                    <div className="p-4 bg-slate-900/50 border border-dashed border-border rounded-lg text-center text-sm text-muted w-full">
-                      This connector utilizes the global vector database and embedding engine settings configured in the Settings tab.
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">PostgreSQL JDBC URL</label>
+                          <input 
+                            {...register('configuration.pgVectorUrl')}
+                            placeholder="jdbc:postgresql://localhost:5432/opencrawling"
+                            defaultValue="jdbc:postgresql://127.0.0.1:5432/opencrawling"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.pgVectorUsername')}
+                            placeholder="opencrawling"
+                            defaultValue="opencrawling"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.pgVectorPassword')}
+                            placeholder="Database password"
+                            defaultValue="opencrawling_password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Name</label>
+                          <input 
+                            {...register('configuration.pgVectorTableName')}
+                            placeholder="vector_store"
+                            defaultValue="vector_store"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Dimensions</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.pgVectorDimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Milvus Vector Store */}
+                  {selectedClass === 'org.opencrawling.milvus.MilvusOutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Milvus URI</label>
+                          <input 
+                            {...register('configuration.milvusUri')}
+                            placeholder="http://localhost:19530"
+                            defaultValue="http://localhost:19530"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Token / Authentication</label>
+                          <input 
+                            {...register('configuration.milvusToken')}
+                            placeholder="root:Milvus"
+                            defaultValue="root:Milvus"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Collection Name</label>
+                          <input 
+                            {...register('configuration.milvusCollection')}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Field Name</label>
+                          <input 
+                            {...register('configuration.milvusVectorField')}
+                            placeholder="embeddings"
+                            defaultValue="embeddings"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Dimensions</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.milvusDimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Metric Type</label>
+                          <select 
+                            {...register('configuration.milvusMetricType')}
+                            defaultValue="COSINE"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="COSINE">COSINE (Default)</option>
+                            <option value="L2">L2 (Euclidean)</option>
+                            <option value="IP">IP (Inner Product)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Index Type</label>
+                          <select 
+                            {...register('configuration.milvusIndexType')}
+                            defaultValue="HNSW"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="HNSW">HNSW (Recommended)</option>
+                            <option value="IVF_FLAT">IVF_FLAT</option>
+                            <option value="FLAT">FLAT</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
                   )}
 

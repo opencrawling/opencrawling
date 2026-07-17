@@ -19,7 +19,9 @@ import org.apache.tika.Tika;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.slf4j.Logger;
@@ -33,6 +35,8 @@ import java.util.Map;
 import java.util.HashMap;
 
 @Component
+@Primary
+@ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "pgvector", matchIfMissing = true)
 public class VectorOutputConnector implements OutputConnector {
 
     private static final Logger log = LoggerFactory.getLogger(VectorOutputConnector.class);

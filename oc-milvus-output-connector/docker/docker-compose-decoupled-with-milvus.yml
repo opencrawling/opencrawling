@@ -1,0 +1,288 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- Infrastructure Services for Milvus ---
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACT_RETENTION=0.5
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - milvus-etcd-data:/etcd
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    command: minio server /minio_data --console-address ":9001"
+    volumes:
+      - milvus-minio-data:/minio_data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  milvus-standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.5
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - KNOWHERE_SIMD_TYPE=sse4_2
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-milvus
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-milvus:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-decoupled-milvus
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata-milvus:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ollama-model-puller:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-model-puller-decoupled-milvus
+    entrypoint: /bin/sh
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: -c "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-milvus
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-milvus:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-milvus
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/data  # Mount sample files directory
+    depends_on:
+      - kafka
+    networks:
+      - opencrawling-network
+    restart: on-failure
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-milvus
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
+    depends_on:
+      - kafka
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-consumer-service-milvus
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OPENAI_API_KEY=mock-key
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - ollama
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-milvus
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_TOKEN=root:Milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_COLLECTION_NAME=enterprise_kb
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_VECTOR_FIELD_NAME=embeddings
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_DIMENSIONS=1024
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - milvus-standalone
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-milvus
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
+      - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/app/data
+    depends_on:
+      - redis
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+  oc-admin-ui:
+    build:
+      context: ../../oc-admin-ui
+      dockerfile: Dockerfile
+    image: ghcr.io/opencrawling/oc-admin-ui:latest
+    container_name: oc-admin-ui-service-milvus
+    ports:
+      - "3000:80"
+    depends_on:
+      - oc-mcp-server
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  milvus-etcd-data:
+    name: milvus-etcd-data
+  milvus-minio-data:
+    name: milvus-minio-data
+  opencrawling-redisdata-milvus:
+    name: opencrawling-redisdata-milvus
+  opencrawling-ollamadata-milvus:
+    name: opencrawling-ollamadata-milvus
+  opencrawling-kafkadata-milvus:
+    name: opencrawling-kafkadata-milvus

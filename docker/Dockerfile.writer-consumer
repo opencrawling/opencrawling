@@ -9,11 +9,12 @@ COPY oc-filesystem-repository-connector/pom.xml oc-filesystem-repository-connect
 COPY oc-alfresco-repository-connector/pom.xml oc-alfresco-repository-connector/
 COPY oc-iceberg-repository-connector/pom.xml oc-iceberg-repository-connector/
 COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
+COPY oc-milvus-output-connector/pom.xml oc-milvus-output-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
 COPY oc-embedding-service/pom.xml oc-embedding-service/
 
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-core,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-vector-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-core,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service
 
 # Copy source code
 COPY oc-core/src/ /app/oc-core/src/
@@ -21,6 +22,7 @@ COPY oc-filesystem-repository-connector/src/ /app/oc-filesystem-repository-conne
 COPY oc-alfresco-repository-connector/src/ /app/oc-alfresco-repository-connector/src/
 COPY oc-iceberg-repository-connector/src/ /app/oc-iceberg-repository-connector/src/
 COPY oc-vector-output-connector/src/ /app/oc-vector-output-connector/src/
+COPY oc-milvus-output-connector/src/ /app/oc-milvus-output-connector/src/
 COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
 COPY oc-admin-ui/package.json oc-admin-ui/package-lock.json oc-admin-ui/postcss.config.js oc-admin-ui/tailwind.config.js oc-admin-ui/tsconfig.json oc-admin-ui/tsconfig.node.json oc-admin-ui/vite.config.ts oc-admin-ui/index.html /app/oc-admin-ui/
 COPY oc-runtime/src/ /app/oc-runtime/src/

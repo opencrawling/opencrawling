@@ -93,6 +93,7 @@
         <module>oc-alfresco-repository-connector</module>
         <module>oc-iceberg-repository-connector</module>
         <module>oc-vector-output-connector</module>
+        <module>oc-milvus-output-connector</module>
         <module>oc-admin-ui</module>
         <module>oc-embedding-service</module>
     </modules>

@@ -134,6 +134,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 - **Spring Boot & Spring AI**: High-performance backend orchestrating ingestion jobs.
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
+- **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Redis Stack**: Lightweight caching and session management.
 - **Ollama & OpenAI**: Dynamic embedding generation via local and cloud-based AI engines.
 - **Vite + React + TailwindCSS**: Modern frontend administration dashboard.
@@ -235,18 +236,39 @@ To run the complete decoupled pipeline using the official pre-built release cont
 
 This pulls the official `ghcr.io/opencrawling/...` images directly, allowing you to spin up the entire architecture (Crawler, Ingestion, Embedding Service, Writer, MCP Server, and Admin UI) instantly.
 
-#### Running the Decoupled Integration Test
+### Option A.4: Decoupled Milvus-Based Deployment (Standalone + etcd + MinIO)
 
-We provide a fully automated end-to-end integration test script that builds, boots, tests, and cleanses the entire decoupled environment:
-```bash
-./scripts/test-docker-decoupled.sh
-```
-This script:
-1. Builds all decoupled microservices from source.
-2. Boots up the Kafka broker, PostgreSQL + pgvector, Redis, Ollama, and consumer workers.
-3. Automatically generates a sample document in the crawler mount, triggers a scan, and waits for consumer ingestion.
-4. Queries pgvector directly to verify that the generated embeddings are correctly stored.
-5. Verifies the Secure MCP Server SSE endpoint, and tears down the environment upon success.
+To run the complete decoupled pipeline configured to use Milvus instead of PostgreSQL/pgvector:
+
+1. **Build the Milvus decoupled stack**:
+   ```bash
+   docker compose -f oc-milvus-output-connector/docker/docker-compose-decoupled-with-milvus.yml build
+   ```
+
+2. **Start the Milvus decoupled pipeline**:
+   ```bash
+   docker compose -f oc-milvus-output-connector/docker/docker-compose-decoupled-with-milvus.yml up -d
+   ```
+
+This starts the etcd, MinIO, and Milvus Standalone infrastructure alongside the decoupled OpenCrawling services. 
+
+---
+
+#### Running the Decoupled Integration Tests
+
+We provide fully automated end-to-end integration test scripts that build, boot, test, and cleanse the entire decoupled environment:
+
+*   **PGVector Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-docker-decoupled.sh
+    ```
+    This script tests the decoupled architecture using PostgreSQL and pgvector, verifying database content directly.
+
+*   **Milvus Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-milvus-decoupled.sh
+    ```
+    This script tests the decoupled architecture using Milvus, querying the Milvus REST API to verify row ingestion and checking Secure MCP Server endpoints.
 
 ---
 

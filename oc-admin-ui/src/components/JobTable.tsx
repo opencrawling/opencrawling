@@ -33,7 +33,14 @@ import {
   FolderOpen,
   AlertCircle,
   Cpu,
-  X
+  X,
+  HardDrive,
+  Database,
+  Server,
+  Sun,
+  Sparkles,
+  Key,
+  Network
 } from 'lucide-react'
 import { jobApi, connectorApi } from '../lib/api'
 
@@ -59,6 +66,43 @@ const statusStyles: Record<JobStatus, string> = {
   Error: 'bg-red-500/10 text-red-500 border-red-500/20',
   Finished: 'bg-green-500/10 text-green-500 border-green-500/20',
   Ready: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+}
+
+const getConnectorIconInfo = (className: string) => {
+  if (className.includes('filesystem.FileConnector') || className.includes('FileSystem')) {
+    return { icon: HardDrive, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
+  if (className.includes('Alfresco')) {
+    return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.includes('Iceberg')) {
+    return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
+  if (className.includes('VectorOutputConnector') || className.includes('vector')) {
+    return { icon: Network, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
+  if (className.includes('Milvus')) {
+    return { icon: Cpu, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
+  if (className.includes('elasticsearch')) {
+    return { icon: Search, color: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-500/20' }
+  }
+  if (className.includes('solr')) {
+    return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
+  }
+  if (className.includes('Ollama')) {
+    return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
+  }
+  if (className.includes('OpenAI')) {
+    return { icon: Sparkles, color: 'text-pink-400', bg: 'bg-pink-400/10', border: 'border-pink-500/20' }
+  }
+  if (className.includes('ActiveDirectory')) {
+    return { icon: ShieldCheck, color: 'text-indigo-400', bg: 'bg-indigo-400/10', border: 'border-indigo-500/20' }
+  }
+  if (className.includes('LDAP')) {
+    return { icon: Key, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
+  }
+  return null;
 }
 
 const getStageProgress = (stage: string): number => {
@@ -104,6 +148,20 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   const [formTransformationConnector, setFormTransformationConnector] = useState('Ollama_Embedding_Default')
   const [formError, setFormError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+
+  const getRepositoryIcon = (name: string) => {
+    const conn = repositoryConnectors.find(c => c.name === name);
+    const info = getConnectorIconInfo(conn?.className || '');
+    if (info) return info;
+    return { icon: Plug2, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' };
+  };
+
+  const getOutputIcon = (name: string) => {
+    const conn = outputConnectors.find(c => c.name === name);
+    const info = getConnectorIconInfo(conn?.className || '');
+    if (info) return info;
+    return { icon: Settings2, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' };
+  };
 
   const getPathFieldMeta = () => {
     const selected = repositoryConnectors.find(c => c.name === formRepository);
@@ -399,12 +457,18 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                     {/* Pipeline Flow */}
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded border border-cyan-500/20" title="Repository Source">
-                          <Plug2 className="w-3 h-3 flex-shrink-0" />
-                          <span className="truncate max-w-[120px] inline-block" title={job.repositoryConnector || 'N/A'}>
-                            {job.repositoryConnector || 'N/A'}
-                          </span>
-                        </span>
+                        {(() => {
+                          const repoInfo = getRepositoryIcon(job.repositoryConnector);
+                          const RepoIcon = repoInfo.icon;
+                          return (
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border ${repoInfo.bg} ${repoInfo.color} ${repoInfo.border}`} title="Repository Source">
+                              <RepoIcon className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate max-w-[120px] inline-block" title={job.repositoryConnector || 'N/A'}>
+                                {job.repositoryConnector || 'N/A'}
+                              </span>
+                            </span>
+                          );
+                        })()}
                         
                         {job.authorityConnector && (
                           <>
@@ -420,12 +484,18 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         
                         <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                         
-                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20" title="Vector Output">
-                          <Settings2 className="w-3 h-3 flex-shrink-0" />
-                          <span className="truncate max-w-[120px] inline-block" title={job.outputConnector || 'N/A'}>
-                            {job.outputConnector || 'N/A'}
-                          </span>
-                        </span>
+                        {(() => {
+                          const outInfo = getOutputIcon(job.outputConnector);
+                          const OutIcon = outInfo.icon;
+                          return (
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border ${outInfo.bg} ${outInfo.color} ${outInfo.border}`} title="Vector Output">
+                              <OutIcon className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate max-w-[120px] inline-block" title={job.outputConnector || 'N/A'}>
+                                {job.outputConnector || 'N/A'}
+                              </span>
+                            </span>
+                          );
+                        })()}
                       </div>
                     </td>
                     

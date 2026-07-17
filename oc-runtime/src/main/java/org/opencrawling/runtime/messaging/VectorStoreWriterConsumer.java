@@ -31,7 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 @Component
-@ConditionalOnProperty(name = "opencrawling.consumer.writer.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "pgvector", matchIfMissing = true)
 public class VectorStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(VectorStoreWriterConsumer.class);
