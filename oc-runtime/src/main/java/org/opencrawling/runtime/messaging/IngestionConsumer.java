@@ -27,17 +27,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
+import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.claimcheck.ClaimCheckProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Component
 @ConditionalOnProperty(name = "opencrawling.consumer.ingestion.enabled", havingValue = "true", matchIfMissing = true)
@@ -48,26 +50,33 @@ public class IngestionConsumer {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final TokenTextSplitter textSplitter;
     private final Tika tika;
+    private final ClaimCheckStore claimCheckStore;
+    private final ClaimCheckProperties claimCheckProperties;
 
-    public IngestionConsumer(KafkaTemplate<String, Object> kafkaTemplate) {
+    public IngestionConsumer(
+            KafkaTemplate<String, Object> kafkaTemplate,
+            @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
+            ClaimCheckProperties claimCheckProperties) {
         this.kafkaTemplate = kafkaTemplate;
+        this.claimCheckStore = claimCheckStore;
+        this.claimCheckProperties = claimCheckProperties;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.tika = new Tika();
     }
 
     @jakarta.annotation.PostConstruct
     public void init() {
-        log.info("IngestionConsumer initialized successfully!");
+        log.info("IngestionConsumer initialized successfully with ClaimCheckStore: {}!", claimCheckStore.getClass().getSimpleName());
     }
 
     @KafkaListener(topics = KafkaConfig.TOPIC_NAME)
     public void consume(IngestionMessage message) {
         log.info("Received document message from Kafka: {}", message.documentId());
         try {
-            URI fileUri = new URI(message.uri());
+            URI fileUri = URI.create(message.uri());
             
-            // Resolve local filesystem stream (Claim Check Pattern)
-            try (InputStream contentStream = Files.newInputStream(Paths.get(fileUri))) {
+            // Resolve stream via ClaimCheckStore (supports local filesystem, Apache Ozone, S3, etc.)
+            try (InputStream contentStream = claimCheckStore.get(fileUri)) {
                 byte[] contentBytes = contentStream.readAllBytes();
                 
                 if (contentBytes.length == 0) {
@@ -144,6 +153,14 @@ public class IngestionConsumer {
                     kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, chunkId, chunkMsg).get();
                 }
                 log.info("Successfully published all chunks for document: {}", message.documentId());
+            }
+
+            if (claimCheckProperties.isCleanupOnConsume()) {
+                try {
+                    claimCheckStore.delete(fileUri);
+                } catch (Exception e) {
+                    log.debug("Cleanup of claim check object {} failed or skipped: {}", fileUri, e.getMessage());
+                }
             }
         } catch (java.nio.file.NoSuchFileException e) {
             log.warn("Ingestion file no longer exists (possibly a temporary test file): {}", message.uri());

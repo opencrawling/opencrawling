@@ -28,13 +28,15 @@ import org.opencrawling.core.messaging.IngestionMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import java.io.File;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.FileOutputStream;
+import java.net.URI;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.List;
 import java.util.ArrayList;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Service
 public class JobOrchestrator {
@@ -42,9 +44,13 @@ public class JobOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(JobOrchestrator.class);
     
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ClaimCheckStore claimCheckStore;
 
-    public JobOrchestrator(KafkaTemplate<String, Object> kafkaTemplate) {
+    public JobOrchestrator(
+            KafkaTemplate<String, Object> kafkaTemplate,
+            @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore) {
         this.kafkaTemplate = kafkaTemplate;
+        this.claimCheckStore = claimCheckStore;
     }
 
     @SuppressWarnings("preview")
@@ -86,28 +92,29 @@ public class JobOrchestrator {
                     .flatMap(doc -> {
                         try {
                             String finalUri = doc.uri();
-                            if (finalUri != null && !finalUri.startsWith("file:")) {
-                                // Save stream to shared claims directory (Claim Check Pattern)
-                                String sharedDir = resolveSharedDir();
-                                File claimsDir = new File(sharedDir, "claims");
-                                if (!claimsDir.exists()) {
-                                    claimsDir.mkdirs();
-                                }
+                            boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
+                            boolean isSupportedByStore = finalUri != null && claimCheckStore.supports(URI.create(finalUri));
+
+                            // Save stream via ClaimCheckStore if remote stream OR store requires non-local persistence
+                            if (doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
                                 String filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0);
                                 filename = filename.replaceAll("[^a-zA-Z0-9.-]", "_");
-                                File claimFile = new File(claimsDir, filename);
+                                String mimeType = null;
+                                List<String> mimeList = doc.metadata().get("mimeType");
+                                if (mimeList != null && !mimeList.isEmpty()) {
+                                    mimeType = mimeList.get(0);
+                                }
                                 
-                                try (InputStream in = doc.contentStream();
-                                     OutputStream out = new FileOutputStream(claimFile)) {
+                                try (InputStream in = doc.contentStream()) {
                                     if (in != null) {
-                                        in.transferTo(out);
-                                        finalUri = claimFile.toURI().toString();
-                                        log.info("Saved Alfresco document content to Claim Check file: {}", finalUri);
+                                        URI claimUri = claimCheckStore.put(filename, in, -1, mimeType);
+                                        finalUri = claimUri.toString();
+                                        log.info("Saved document content to Claim Check store: {}", finalUri);
                                     } else {
                                         log.warn("Document content stream is null for id: {}", doc.id());
                                     }
                                 } catch (Exception e) {
-                                    log.error("Failed to write Claim Check file for doc: {}", doc.id(), e);
+                                    log.error("Failed to write Claim Check content for doc: {}", doc.id(), e);
                                 }
                             }
 

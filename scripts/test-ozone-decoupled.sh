@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,7 @@
 # limitations under the License.
 #
 
-
-# Integration test for docker-compose-decoupled.yml
+# Integration test for Apache Ozone Object Storage Claim Check store in docker-compose-decoupled.yml
 # Exit immediately if a command exits with a non-zero status
 set -e
 
@@ -26,7 +25,10 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}=== Starting OpenCrawling Decoupled Ingestion Pipeline Integration Test ===${NC}"
+# Set Ozone as active Claim Check store for decoupled containers
+export SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=ozone
+
+echo -e "${YELLOW}=== Starting OpenCrawling Apache Ozone Claim Check Ingestion Pipeline Integration Test ===${NC}"
 
 # Get the directory where this script is located and switch to the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,7 +53,7 @@ echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from sourc
 compose build
 
 # Start services
-echo -e "${YELLOW}Starting complete decoupled multi-service infrastructure...${NC}"
+echo -e "${YELLOW}Starting complete decoupled multi-service infrastructure with Apache Ozone...${NC}"
 compose up -d
 
 # Define timeout (in seconds)
@@ -93,7 +95,6 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled 
     compose logs ollama-model-puller
     exit 1
   fi
-  # Output the latest log line from the model puller to show download progress status
   PROGRESS=$(docker logs --tail 1 ollama-model-puller-decoupled 2>&1 || true)
   if [ ! -z "$PROGRESS" ]; then
     printf "  Progress: %s\r" "$PROGRESS"
@@ -102,7 +103,6 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled 
   ELAPSED=$((ELAPSED + 2))
 done
 echo ""
-
 
 # Check exit code of model puller
 EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' ollama-model-puller-decoupled 2>/dev/null || echo "1")
@@ -130,12 +130,12 @@ echo -e "${GREEN}Apache Ozone 2.2.0 S3 Gateway is ready!${NC}"
 # Create a sample test document in the mounted directory
 TEST_DOC_DIR="./oc-runtime/data"
 mkdir -p "$TEST_DOC_DIR"
-TEST_FILE="$TEST_DOC_DIR/decoupled-integration-test.txt"
-echo "OpenCrawling is an awesome open-source pipeline! Decoupled integration test worked successfully." > "$TEST_FILE"
+TEST_FILE="$TEST_DOC_DIR/ozone-claim-check-test.txt"
+echo "Apache Ozone S3 Gateway Claim Check pattern test for OpenCrawling! Decoupled object storage integration test worked successfully." > "$TEST_FILE"
 echo -e "${GREEN}Created test document: $TEST_FILE${NC}"
 
-# Restart crawler to trigger directory scan and Kafka publication
-echo -e "${YELLOW}Restarting crawler service to trigger directory scan...${NC}"
+# Restart crawler service to trigger directory scan and Ozone upload
+echo -e "${YELLOW}Restarting crawler service with Apache Ozone Claim Check store...${NC}"
 compose restart oc-crawler
 
 # Wait for crawler completion
@@ -150,29 +150,21 @@ until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service 2>/dev/null
   sleep 2
   ELAPSED=$((ELAPSED + 2))
 done
-echo -e "${GREEN}oc-crawler-service finished directory scanning!${NC}"
+echo -e "${GREEN}oc-crawler-service finished directory scanning and Ozone upload!${NC}"
 
 # Wait for messaging pipeline to process document vectors (with retries)
-# Note: The Ollama embedding pipeline is async — the crawler finishes near-instantly but
-# the oc-embedding-consumer takes time per chunk (CPU-bound). Allow generous timeout.
-echo -e "${YELLOW}Waiting for Kafka consumers to process and store vectors...${NC}"
+echo -e "${YELLOW}Waiting for Kafka consumers to process and store vectors via Ozone claim check...${NC}"
 RECORD_COUNT=0
 ELAPSED=0
-TIMEOUT=120  # Generous timeout: Ollama embedding is CPU-bound and slow on first run
+TIMEOUT=120
 until [ "$RECORD_COUNT" -gt 0 ] 2>/dev/null || [ $ELAPSED -ge $TIMEOUT ]; do
   sleep 2
   ELAPSED=$((ELAPSED + 2))
-  # Count across all four dimension-specific vector store tables:
-  #   vector_store       – default/fallback (1536-dim)
-  #   vector_store_384   – 384-dim models (e.g. all-minilm)
-  #   vector_store_768   – 768-dim models (e.g. nomic-embed-text)
-  #   vector_store_1024  – 1024-dim models (e.g. mxbai-embed-large)
   RECORD_COUNT=$(docker exec -i postgres-vector-decoupled psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
     "SELECT (SELECT count(*) FROM vector_store) \
           + (SELECT count(*) FROM vector_store_384) \
           + (SELECT count(*) FROM vector_store_768) \
           + (SELECT count(*) FROM vector_store_1024);" 2>/dev/null || echo "0")
-  # Trim spaces and check if empty
   RECORD_COUNT=$(echo "$RECORD_COUNT" | tr -d '[:space:]')
   if [ -z "$RECORD_COUNT" ]; then
     RECORD_COUNT=0
@@ -182,45 +174,33 @@ done
 echo ""
 
 # Verify pgvector database content
-echo -e "${YELLOW}Verifying PgVector table records...${NC}"
+echo -e "${YELLOW}Verifying PgVector table records for Ozone claim check test...${NC}"
 echo -e "PgVector Records count: ${GREEN}$RECORD_COUNT${NC}"
 if [ "$RECORD_COUNT" -eq 0 ] || [ "$RECORD_COUNT" == "failed" ]; then
-  echo -e "${RED}Decoupled integration test failed: 0 records found in pgvector database!${NC}"
-  # Print per-table counts for easier diagnosis
-  echo -e "${YELLOW}Per-table record counts:${NC}"
-  docker exec -i postgres-vector-decoupled psql -U opencrawling -d opencrawling -t -P pager=off -c \
-    "SELECT 'vector_store' AS table, count(*) FROM vector_store
-     UNION ALL SELECT 'vector_store_384', count(*) FROM vector_store_384
-     UNION ALL SELECT 'vector_store_768', count(*) FROM vector_store_768
-     UNION ALL SELECT 'vector_store_1024', count(*) FROM vector_store_1024;" 2>/dev/null || true
-  echo -e "${YELLOW}Printing consumer service logs for diagnosis...${NC}"
-  # Note: service names match the 'services:' keys in docker-compose-decoupled.yml
+  echo -e "${RED}Apache Ozone integration test failed: 0 records found in pgvector database!${NC}"
   compose logs oc-ingestion-consumer
   compose logs oc-embedding-consumer
   compose logs oc-writer
+  compose logs ozone-s3g
   exit 1
 fi
 
 # Verify MCP server endpoint
-# The runtime uses STREAMABLE_HTTP transport, so the health endpoint is POST /mcp
-# We verify with a lightweight GET to / (the actuator/health or root) that the server is up
 echo -e "${YELLOW}Verifying MCP Server health endpoint...${NC}"
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/mcp || \
               curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/ || true)
 echo -e "MCP Server HTTP Status: ${GREEN}$HTTP_STATUS${NC}"
 
-# Accept both 200 (OK) and 405 (Method Not Allowed) — 405 means the server is up
-# but requires a POST body for the MCP Streamable HTTP endpoint
 if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
-  echo -e "${RED}Decoupled integration test failed: MCP Server returned unexpected status $HTTP_STATUS${NC}"
+  echo -e "${RED}Ozone decoupled integration test failed: MCP Server returned unexpected status $HTTP_STATUS${NC}"
   compose logs oc-mcp-server
   exit 1
 fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
-echo -e "${GREEN}========================================================================${NC}"
-echo -e "${GREEN}SUCCESS: Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
-echo -e "${GREEN}========================================================================${NC}"
+echo -e "${GREEN}================================================================================${NC}"
+echo -e "${GREEN}SUCCESS: Apache Ozone Claim Check Decoupled Pipeline Integration Test Passed!${NC}"
+echo -e "${GREEN}================================================================================${NC}"
 
 # Clean up temporary test files
 echo -e "${YELLOW}Cleaning up temporary test files...${NC}"

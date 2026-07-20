@@ -169,7 +169,7 @@ class MilvusOutputConnectorIT {
                 .collectionName("it_kb")
                 .build());
 
-        // Perform search mimicking a normal user (no permissions)
+        // Perform search mimicking a normal user (no permissions) with retries for collection index load
         SearchReq searchPublic = SearchReq.builder()
                 .collectionName("it_kb")
                 .data(Collections.singletonList(new FloatVec(Arrays.asList(0.1f, 0.2f, 0.3f, 0.4f))))
@@ -178,8 +178,16 @@ class MilvusOutputConnectorIT {
                 .outputFields(Arrays.asList("id", "text", "uri", "security_allowed_read"))
                 .build();
 
-        SearchResp respPublic = milvusClient.search(searchPublic);
-        List<List<SearchResp.SearchResult>> resultsPublic = respPublic.getSearchResults();
+        List<List<SearchResp.SearchResult>> resultsPublic = List.of();
+        for (int i = 0; i < 15; i++) {
+            SearchResp respPublic = milvusClient.search(searchPublic);
+            resultsPublic = respPublic.getSearchResults();
+            if (!resultsPublic.isEmpty() && !resultsPublic.get(0).isEmpty()) {
+                break;
+            }
+            Thread.sleep(500);
+        }
+
         assertThat(resultsPublic).isNotEmpty();
         assertThat(resultsPublic.get(0)).isNotEmpty();
         assertThat(resultsPublic.get(0).get(0).getEntity().get("id").toString()).contains("doc-public");
