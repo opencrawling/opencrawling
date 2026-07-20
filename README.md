@@ -14,6 +14,7 @@
 [![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-8A2BE2.svg?style=flat&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/opencrawling/opencrawling)
 
 **OpenCrawling** is an enterprise data integration and ingestion platform. It leverages modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
 
