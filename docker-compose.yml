@@ -102,6 +102,61 @@ services:
     networks:
       - opencrawling-network
 
+  # --- Apache Ozone Object Storage (Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm
+    hostname: scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om
+    hostname: om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "om"]
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "datanode"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+      - ozone-datanode
+    networks:
+      - opencrawling-network
+
 networks:
   opencrawling-network:
     name: opencrawling-network

@@ -1,0 +1,39 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/opencrawling}
+    username: ${SPRING_DATASOURCE_USERNAME:opencrawling}
+    password: ${SPRING_DATASOURCE_PASSWORD:opencrawling_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:20}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:5}
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+
+  batch:
+    jdbc:
+      initialize-schema: ${SPRING_BATCH_JDBC_INITIALIZE_SCHEMA:always}
+
+  ai:
+    vectorstore:
+      pgvector:
+        url: ${SPRING_AI_VECTORSTORE_PGVECTOR_URL:jdbc:postgresql://postgres:5432/opencrawling}
+        username: ${SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME:opencrawling}
+        password: ${SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD:opencrawling_password}
+        driver-class-name: org.postgresql.Driver
+        dimensions: ${SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS:1024}
+        initialize-schema: ${SPRING_AI_VECTORSTORE_PGVECTOR_INITIALIZE_SCHEMA:true}

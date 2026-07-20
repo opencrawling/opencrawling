@@ -272,6 +272,12 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ```
     This script tests the decoupled architecture using Milvus, querying the Milvus REST API to verify row ingestion and checking Secure MCP Server endpoints.
 
+*   **Apache Ozone Object Storage Claim Check Pipeline**:
+    ```bash
+    ./scripts/test-ozone-decoupled.sh
+    ```
+    This script tests the decoupled architecture using Apache Ozone 2.2.0 (SCM, OM, Datanode, S3 Gateway) as the Claim Check Object Store for large document payloads.
+
 ---
 
 ### Option B: Run OpenCrawling Locally (Development Mode)

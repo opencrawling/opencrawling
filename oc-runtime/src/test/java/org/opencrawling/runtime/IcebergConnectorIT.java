@@ -71,6 +71,9 @@ class IcebergConnectorIT {
     @Autowired
     private List<VectorStore> vectorStores;
 
+    @Autowired
+    private org.opencrawling.core.claimcheck.LocalFileClaimCheckStore localFileClaimCheckStore;
+
     private InMemoryCatalog catalog;
     private Schema schema;
     private TableIdentifier tableId;
@@ -152,11 +155,10 @@ class IcebergConnectorIT {
         // Verify that the record has been ingested into the vector store
         log.info("Performing similarity search for 'Product A' with retries across vector stores...");
         List<Document> results = List.of();
-        String localDataPath = new java.io.File("data").getAbsolutePath();
-        java.io.File claimFile = new java.io.File(new java.io.File(localDataPath, "claims"), "101_Product_A");
+        java.io.File claimFile = new java.io.File(localFileClaimCheckStore.getClaimsDir().toFile(), "101_Product_A");
         String expectedUri = claimFile.toURI().toString();
 
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < 15; i++) {
             for (VectorStore store : vectorStores) {
                 try {
                     results = store.similaritySearch(

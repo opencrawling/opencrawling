@@ -57,6 +57,22 @@ spring:
     virtual:
       enabled: true
 
+  opencrawling:
+    claim-check:
+      store: ${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:local}
+      cleanup-on-consume: true
+      local:
+        dir: ${SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR:target/claims}
+      ozone:
+        s3-endpoint: ${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT:http://localhost:9878}
+        volume: ${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_VOLUME:s3v}
+        bucket: ${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET:claims}
+        access-key: ${OZONE_ACCESS_KEY_ID:ozone}
+        secret-key: ${OZONE_SECRET_ACCESS_KEY:ozone-secret}
+        path-style-access: true
+        region: us-east-1
+        auto-create-bucket: true
+
   kafka:
     bootstrap-servers: 127.0.0.1:9092
     producer:

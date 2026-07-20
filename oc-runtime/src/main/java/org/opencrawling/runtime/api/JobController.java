@@ -55,13 +55,9 @@ public class JobController {
         this.outputConnector = outputConnector;
         this.jdbcTemplate = jdbcTemplate;
         
-        // Initial mock data defaults
+        // Initial defaults
         List<JobDTO> defaults = new ArrayList<>();
-        defaults.add(new JobDTO("1", "WebCrawler_Sito_A", "FileSystem_Local", "PGVector_Output", "LDAP", "/var/www/site_a", "Running", "Scanning", 12450, LocalDateTime.now().minusHours(1).format(formatter), "Ollama_Embedding_Default"));
-        defaults.add(new JobDTO("2", "FS_Sync_Docs", "FileSystem_Local", "PGVector_Output", "", "/Users/docs", "Paused", "Paused", 890, LocalDateTime.now().minusDays(1).format(formatter), "OpenAI_Embedding_Prod"));
-        defaults.add(new JobDTO("3", "SharePoint_Cloud", "FileSystem_Local", "PGVector_Output", "Active Directory", "/sharepoint/cloud", "Error", "Failed", 0, LocalDateTime.now().minusHours(2).format(formatter), "Ollama_Embedding_Default"));
-        defaults.add(new JobDTO("4", "Slack_History", "FileSystem_Local", "PGVector_Output", "", "/slack/backup", "Finished", "Completed", 56200, LocalDateTime.now().minusDays(1).format(formatter), "Ollama_Embedding_Default"));
-        defaults.add(new JobDTO("5", "Jira_Tickets", "FileSystem_Local", "PGVector_Output", "LDAP", "/jira/export", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default"));
+        defaults.add(new JobDTO("1", "Default_Job", "FileSystem_Local", "PGVector_Output", "", "/data", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default"));
         
         // Load persisted list
         this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));

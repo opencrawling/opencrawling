@@ -111,6 +111,20 @@ if [ "$EXIT_CODE" -ne 0 ]; then
 fi
 echo -e "${GREEN}Ollama embedding model pulled successfully!${NC}"
 
+# Reset elapsed timer
+ELAPSED=0
+echo -e "${YELLOW}Waiting for Apache Ozone 2.2.0 S3 Gateway (port 9878) to be ready...${NC}"
+until curl -s http://localhost:9878/ >/dev/null 2>&1 || [ $ELAPSED -ge $TIMEOUT ]; do
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+done
+if [ $ELAPSED -ge $TIMEOUT ]; then
+  echo -e "${RED}Timeout waiting for Apache Ozone S3 Gateway.${NC}"
+  compose logs ozone-s3g
+  exit 1
+fi
+echo -e "${GREEN}Apache Ozone 2.2.0 S3 Gateway is ready!${NC}"
+
 # Create a sample test document in the mounted directory
 TEST_DOC_DIR="./oc-runtime/data"
 mkdir -p "$TEST_DOC_DIR"

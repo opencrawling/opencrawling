@@ -74,7 +74,7 @@ class OpenCrawlingIT {
         log.info("Performing similarity search for 'document orchestration' with retries across available vector stores...");
         List<Document> results = List.of();
         String expectedUri = testFile.toUri().toString();
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < 15; i++) {
             for (VectorStore store : vectorStores) {
                 try {
                     results = store.similaritySearch(

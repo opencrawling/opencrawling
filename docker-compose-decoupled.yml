@@ -104,6 +104,60 @@ services:
     networks:
       - opencrawling-network
 
+  # --- Apache Ozone Object Storage (Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm
+    hostname: scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om
+    hostname: om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "om"]
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "datanode"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
   # --- Decoupled OpenCrawling Services ---
   oc-crawler:
     build:
@@ -119,6 +173,12 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
     volumes:
       - ./oc-runtime/data:/data  # Mount sample files directory
     depends_on:
@@ -126,7 +186,7 @@ services:
       - postgres
     networks:
       - opencrawling-network
-    restart: on-failure
+    restart: "no"
 
   oc-ingestion-consumer:
     build:
@@ -139,6 +199,8 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
     volumes:
       - ./oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
     depends_on:
