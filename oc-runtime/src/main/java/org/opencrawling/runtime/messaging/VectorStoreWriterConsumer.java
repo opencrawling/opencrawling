@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
+import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Component
 @ConditionalOnProperty(name = "opencrawling.consumer.writer.enabled", havingValue = "true", matchIfMissing = true)
@@ -40,22 +42,29 @@ public class VectorStoreWriterConsumer {
     private final PgVectorStore vectorStore384;
     private final PgVectorStore vectorStore768;
     private final PgVectorStore vectorStore1024;
+    private final TelemetryTraceStore traceStore;
 
     public VectorStoreWriterConsumer(
             PgVectorStore vectorStore,
             PgVectorStore vectorStore384,
             PgVectorStore vectorStore768,
-            PgVectorStore vectorStore1024) {
+            PgVectorStore vectorStore1024,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
         this.vectorStore = vectorStore;
         this.vectorStore384 = vectorStore384;
         this.vectorStore768 = vectorStore768;
         this.vectorStore1024 = vectorStore1024;
+        this.traceStore = traceStore;
     }
 
     @KafkaListener(topics = KafkaConfig.EMBEDDED_TOPIC_NAME)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);
+        long startTime = System.currentTimeMillis();
+        String traceId = UUID.randomUUID().toString().substring(0, 8);
+        String jobId = message.documentId();
+
         try {
             Map<String, Object> metadata = new HashMap<>(message.metadata());
             // Put the precomputed embedding into the metadata so PrecomputedEmbeddingModel can extract it
@@ -76,9 +85,21 @@ public class VectorStoreWriterConsumer {
             }
             
             targetStore.add(List.of(doc));
-            log.info("Successfully saved chunk {} to Vector Store.", message.chunkId());
+            long duration = System.currentTimeMillis() - startTime;
+
+            if (traceStore != null) {
+                traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
+                        UUID.randomUUID().toString(), traceId, jobId, "Indexing", "VectorStoreWriterConsumer",
+                        startTime, duration, "SUCCESS", null, Map.of("db", "pgvector", "chunkId", message.chunkId())
+                ));
+            }
+
+            log.info("Successfully saved chunk {} to Vector Store in {} ms.", message.chunkId(), duration);
         } catch (Exception e) {
             log.error("Failed to store embedded chunk: {}", message.chunkId(), e);
+            if (traceStore != null) {
+                traceStore.recordError(jobId, "ERROR", "VectorStoreWriterConsumer", "Failed to store embedded chunk: " + message.chunkId() + " - " + e.getMessage(), e.toString());
+            }
         }
     }
 }

@@ -62,4 +62,11 @@ export const statusApi = {
   saveSettings: (data: any) => api.post('/system/settings', data),
 }
 
+export const observabilityApi = {
+  diagnoseJob: (jobId: string) => api.get(`/observability/diagnose/${jobId}`),
+  getJobTraces: (jobId: string) => api.get(`/observability/traces/${jobId}`),
+  getErrorLogs: (jobId: string, timeframe?: string) => api.get(`/observability/errors/${jobId}${timeframe ? `?timeframe=${timeframe}` : ''}`),
+  getMetrics: (connectorId?: string) => api.get(`/observability/metrics${connectorId ? `?connectorId=${connectorId}` : ''}`),
+}
+
 export default api

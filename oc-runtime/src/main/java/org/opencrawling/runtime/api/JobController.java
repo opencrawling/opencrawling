@@ -247,7 +247,7 @@ public class JobController {
             Thread.ofVirtual().start(() -> {
                 try {
                     log.info("Starting real background crawl job for path: {}", activeJob.path());
-                    jobOrchestrator.runJob(finalConnector, outputConnector, activeJob.path(), activeJob.transformationConnector());
+                    jobOrchestrator.runJob(finalConnector, outputConnector, activeJob.path(), activeJob.transformationConnector(), activeJob.id());
                     log.info("Real background crawl job completed successfully!");
                     // update status to completed when done, and pull actual db document count
                     updateJobStatusAndStage(id, "Finished", "Completed", getActualDbDocCount());

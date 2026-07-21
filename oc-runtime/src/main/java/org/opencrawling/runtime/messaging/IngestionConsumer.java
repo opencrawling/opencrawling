@@ -21,6 +21,7 @@ import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
+import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,14 +53,17 @@ public class IngestionConsumer {
     private final Tika tika;
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties claimCheckProperties;
+    private final TelemetryTraceStore traceStore;
 
     public IngestionConsumer(
             KafkaTemplate<String, Object> kafkaTemplate,
             @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
-            ClaimCheckProperties claimCheckProperties) {
+            ClaimCheckProperties claimCheckProperties,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
         this.kafkaTemplate = kafkaTemplate;
         this.claimCheckStore = claimCheckStore;
         this.claimCheckProperties = claimCheckProperties;
+        this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.tika = new Tika();
     }
@@ -72,6 +76,10 @@ public class IngestionConsumer {
     @KafkaListener(topics = KafkaConfig.TOPIC_NAME)
     public void consume(IngestionMessage message) {
         log.info("Received document message from Kafka: {}", message.documentId());
+        long startTime = System.currentTimeMillis();
+        String traceId = UUID.randomUUID().toString().substring(0, 8);
+        String jobId = message.documentId();
+
         try {
             URI fileUri = URI.create(message.uri());
             
@@ -108,6 +116,14 @@ public class IngestionConsumer {
                     return;
                 }
 
+                long extractTime = System.currentTimeMillis() - startTime;
+                if (traceStore != null) {
+                    traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
+                            UUID.randomUUID().toString(), traceId, jobId, "Extracting", "TikaExtractor",
+                            startTime, extractTime, "SUCCESS", null, Map.of("length", String.valueOf(text.length()))
+                    ));
+                }
+
                 log.info("Extracted {} characters from document: {}", text.length(), message.documentId());
 
                 // Map repository metadata to Vector Document metadata
@@ -132,7 +148,17 @@ public class IngestionConsumer {
                 Document aiDoc = new Document(message.documentId(), text, metadata);
                 
                 // Chunk the document using TokenTextSplitter
+                long chunkStart = System.currentTimeMillis();
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
+                long chunkTime = System.currentTimeMillis() - chunkStart;
+
+                if (traceStore != null) {
+                    traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
+                            UUID.randomUUID().toString(), traceId, jobId, "Chunking", "TokenTextSplitter",
+                            chunkStart, chunkTime, "SUCCESS", null, Map.of("chunkCount", String.valueOf(chunks.size()))
+                    ));
+                }
+
                 log.info("Split document {} into {} chunks. Publishing to Kafka topic: {}", 
                     message.documentId(), chunks.size(), KafkaConfig.CHUNKS_TOPIC_NAME);
                 
@@ -166,6 +192,9 @@ public class IngestionConsumer {
             log.warn("Ingestion file no longer exists (possibly a temporary test file): {}", message.uri());
         } catch (Exception e) {
             log.error("Failed to process Kafka ingestion message: {}", message.documentId(), e);
+            if (traceStore != null) {
+                traceStore.recordError(jobId, "ERROR", "IngestionConsumer", "Failed to process Kafka ingestion message: " + e.getMessage(), e.toString());
+            }
         }
     }
 }

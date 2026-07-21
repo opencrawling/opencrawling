@@ -25,6 +25,7 @@ import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.runtime.observability.TelemetryTraceStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +36,8 @@ import java.net.URI;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 
@@ -45,12 +48,15 @@ public class JobOrchestrator {
     
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ClaimCheckStore claimCheckStore;
+    private final TelemetryTraceStore traceStore;
 
     public JobOrchestrator(
             KafkaTemplate<String, Object> kafkaTemplate,
-            @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore) {
+            @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
+            TelemetryTraceStore traceStore) {
         this.kafkaTemplate = kafkaTemplate;
         this.claimCheckStore = claimCheckStore;
+        this.traceStore = traceStore;
     }
 
     @SuppressWarnings("preview")
@@ -60,7 +66,15 @@ public class JobOrchestrator {
 
     @SuppressWarnings("preview")
     public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector) {
-        log.info("Starting job for path: {} with transformation connector: {}", path, transformationConnector);
+        runJob(repositoryConnector, outputConnector, path, transformationConnector, "1");
+    }
+
+    @SuppressWarnings("preview")
+    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector, String jobId) {
+        log.info("Starting job {} for path: {} with transformation connector: {}", jobId, path, transformationConnector);
+        long startTime = System.currentTimeMillis();
+        String traceId = UUID.randomUUID().toString().substring(0, 8);
+        String currentJobId = jobId != null ? jobId : "1";
         
         String engine = "ollama";
         java.util.Map<String, String> config = java.util.Map.of("model", "mxbai-embed-large");
@@ -115,6 +129,7 @@ public class JobOrchestrator {
                                     }
                                 } catch (Exception e) {
                                     log.error("Failed to write Claim Check content for doc: {}", doc.id(), e);
+                                    traceStore.recordError(currentJobId, "ERROR", "ClaimCheckStore", "Failed to write Claim Check content for doc: " + doc.id(), e.toString());
                                 }
                             }
 
@@ -136,6 +151,7 @@ public class JobOrchestrator {
                             
                             return Mono.just((ScanResult) new ScanResult.Success(doc.id(), "1.0"));
                         } catch (Exception e) {
+                            traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + doc.id() + ": " + e.getMessage(), e.toString());
                             return Mono.just(new ScanResult.Failure(doc.id(), e));
                         }
                     })
@@ -149,12 +165,28 @@ public class JobOrchestrator {
             List<ScanResult> scanResults = scanTask.get();
             scanResults.forEach(r -> log.info(r.summarize()));
             
-            log.info("Job scanning phase completed. Documents published to Kafka.");
+            long duration = System.currentTimeMillis() - startTime;
+            traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
+                UUID.randomUUID().toString(),
+                traceId,
+                currentJobId,
+                "Scanning",
+                repositoryConnector.getClass().getSimpleName(),
+                startTime,
+                duration,
+                "SUCCESS",
+                null,
+                Map.of("path", path, "scannedCount", String.valueOf(scanResults.size()))
+            ));
+
+            log.info("Job scanning phase completed in {} ms. Documents published to Kafka.", duration);
             
         } catch (StructuredTaskScope.FailedException e) {
             log.error("Job execution failed due to subtask failure: ", e.getCause());
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + e.getCause().getMessage(), e.toString());
         } catch (Exception e) {
             log.error("Job execution failed: ", e);
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + e.getMessage(), e.toString());
         }
     }
 
