@@ -19,6 +19,7 @@
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![OIS](https://img.shields.io/badge/OIS-Open_Ingestion_Standard-0052CC.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-8A2BE2.svg?style=flat&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io/)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-AIOps-7B42BC.svg?style=flat&logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/opencrawling/opencrawling)
 
 **OpenCrawling** is the reference Java and Spring Framework implementation of the **[Open Ingestion Standard (OIS)](https://github.com/opencrawling/open-ingestion-standard)**. It provides a secure, decoupled, and vendor-neutral enterprise data integration platform leveraging modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, Spring AI, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
@@ -135,16 +136,32 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 
 ---
 
+## 🤖 AI-Powered Observability & Log Analysis (AIOps)
+
+OpenCrawling incorporates **AI-Powered Observability (AIOps)** to automatically translate complex OpenTelemetry (OTel) distributed traces, Micrometer performance metrics, and Virtual Thread execution stack traces into plain, human-readable **Root Cause Analysis (RCA)** reports.
+
+### Key Capabilities
+- **Instant Root Cause Analysis (RCA)**: Click **"Diagnose with AI"** next to any pipeline job in `oc-admin-ui` to analyze OTel spans, identify exact failure points (e.g. database insertion timeouts, network latency), and receive actionable fix recommendations.
+- **Correlated OpenTelemetry Spans**: All major pipeline stages (`Scanning`, `Extracting`, `Chunking`, `Embedding`, `Indexing`) record correlated OTel spans with timing breakdowns.
+- **System MCP Tools**: Admin Copilot exposes native Model Context Protocol (MCP) tools for LLM diagnostic queries:
+  - `fetch_job_traces(jobId)`: Retrieves correlated OTel spans and timing breakdowns per pipeline stage.
+  - `get_error_logs(jobId, timeframe)`: Fetches failure logs and exception stack traces.
+  - `query_throughput_metrics(connectorId)`: Queries throughput rates (docs/sec), P95 latency, and active virtual threads.
+
+---
+
 ## Core Technologies
 
 - **Java 25 Preview Features**: Structured Concurrency, Virtual Threads, and Pattern Matching.
-- **Spring Boot & Spring AI**: High-performance backend orchestrating ingestion jobs.
+- **Spring Boot & Spring AI**: High-performance backend orchestrating ingestion jobs and MCP Tool calling.
+- **OpenTelemetry & Micrometer AIOps**: Automated Root Cause Analysis (RCA) and correlated distributed span telemetry.
+- **Model Context Protocol (MCP)**: System tools exposing vector search and OTel telemetry to LLMs.
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Redis Stack**: Lightweight caching and session management.
 - **Ollama & OpenAI**: Dynamic embedding generation via local and cloud-based AI engines.
-- **Vite + React + TailwindCSS**: Modern frontend administration dashboard.
+- **Vite + React + TailwindCSS**: Modern frontend administration dashboard with interactive AIOps diagnostic panels.
 
 ---
 
