@@ -608,6 +608,7 @@ export default function ConnectorForm() {
                             defaultValue="HNSW"
                             className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                           >
+                            <option value="AUTOINDEX">AUTOINDEX (Zilliz Cloud)</option>
                             <option value="HNSW">HNSW (Recommended)</option>
                             <option value="IVF_FLAT">IVF_FLAT</option>
                             <option value="FLAT">FLAT</option>
