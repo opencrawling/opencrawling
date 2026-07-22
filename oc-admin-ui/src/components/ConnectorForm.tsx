@@ -67,6 +67,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('elasticsearch')) {
     return { icon: Search, color: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-500/20' }
   }
+  if (className.includes('opensearch') || className.includes('OpenSearch')) {
+    return { icon: Search, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
+  }
   if (className.includes('solr')) {
     return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
   }
@@ -178,6 +181,8 @@ export default function ConnectorForm() {
     output: [
       { label: 'PGVector Store', value: 'org.opencrawling.vector.VectorOutputConnector' },
       { label: 'Milvus Vector Store', value: 'org.opencrawling.milvus.MilvusOutputConnector' },
+      { label: 'OpenSearch 2.x Output Connector', value: 'org.opencrawling.opensearch2.OpenSearch2OutputConnector' },
+      { label: 'OpenSearch 3.x Output Connector', value: 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -612,6 +617,122 @@ export default function ConnectorForm() {
                             <option value="IVF_FLAT">IVF_FLAT</option>
                             <option value="FLAT">FLAT</option>
                           </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OpenSearch 2.x Output Store */}
+                  {selectedClass === 'org.opencrawling.opensearch2.OpenSearch2OutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OpenSearch 2.x URIs</label>
+                          <input 
+                            {...register('configuration.opensearch2Uris')}
+                            placeholder="http://localhost:9200"
+                            defaultValue="http://localhost:9200"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Index Name</label>
+                          <input 
+                            {...register('configuration.opensearch2IndexName')}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.opensearch2Username')}
+                            placeholder="admin"
+                            defaultValue="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.opensearch2Password')}
+                            placeholder="admin"
+                            defaultValue="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Dimensions</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.opensearch2Dimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OpenSearch 3.x Output Store */}
+                  {selectedClass === 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OpenSearch 3.x URIs</label>
+                          <input 
+                            {...register('configuration.opensearch3Uris')}
+                            placeholder="http://localhost:9200"
+                            defaultValue="http://localhost:9200"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Index Name</label>
+                          <input 
+                            {...register('configuration.opensearch3IndexName')}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.opensearch3Username')}
+                            placeholder="admin"
+                            defaultValue="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.opensearch3Password')}
+                            placeholder="admin"
+                            defaultValue="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Dimensions</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.opensearch3Dimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
                         </div>
                       </div>
                     </div>

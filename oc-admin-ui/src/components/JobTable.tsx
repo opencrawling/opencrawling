@@ -94,6 +94,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('elasticsearch')) {
     return { icon: Search, color: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-500/20' }
   }
+  if (className.includes('opensearch') || className.includes('OpenSearch')) {
+    return { icon: Search, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
+  }
   if (className.includes('solr')) {
     return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
   }

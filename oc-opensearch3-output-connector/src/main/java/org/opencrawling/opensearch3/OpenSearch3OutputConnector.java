@@ -13,17 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.milvus;
+package org.opencrawling.opensearch3;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import io.milvus.v2.client.ConnectConfig;
-import io.milvus.v2.client.MilvusClientV2;
-import io.milvus.v2.service.vector.request.InsertReq;
+import org.apache.hc.client5.http.auth.AuthScope;
+import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
+import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
+import org.apache.hc.core5.http.HttpHost;
 import org.apache.tika.Tika;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
+import org.opensearch.client.json.jackson.JacksonJsonpMapper;
+import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch.core.BulkRequest;
+import org.opensearch.client.transport.OpenSearchTransport;
+import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -39,59 +43,68 @@ import java.io.InputStream;
 import java.util.*;
 
 @Component
-@ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "milvus")
-public class MilvusOutputConnector implements OutputConnector {
+@ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "opensearch3")
+public class OpenSearch3OutputConnector implements OutputConnector {
 
-    private static final Logger log = LoggerFactory.getLogger(MilvusOutputConnector.class);
+    private static final Logger log = LoggerFactory.getLogger(OpenSearch3OutputConnector.class);
 
     private final TokenTextSplitter textSplitter;
     private final Tika tika;
-    private final Gson gson;
 
-    @Value("${spring.opencrawling.output.milvus.uri:http://localhost:19530}")
-    private String uri = "http://localhost:19530";
+    @Value("${spring.opencrawling.output.opensearch3.uris:http://localhost:9200}")
+    private String uris = "http://localhost:9200";
 
-    @Value("${spring.opencrawling.output.milvus.token:root:Milvus}")
-    private String token = "root:Milvus";
+    @Value("${spring.opencrawling.output.opensearch3.username:admin}")
+    private String username = "admin";
 
-    @Value("${spring.opencrawling.output.milvus.collection-name:enterprise_kb}")
-    private String collectionName = "enterprise_kb";
+    @Value("${spring.opencrawling.output.opensearch3.password:admin}")
+    private String password = "admin";
 
-    @Value("${spring.opencrawling.output.milvus.vector-field-name:embeddings}")
-    private String vectorFieldName = "embeddings";
+    @Value("${spring.opencrawling.output.opensearch3.index-name:enterprise_kb}")
+    private String indexName = "enterprise_kb";
 
-    @Value("${spring.opencrawling.output.milvus.dimensions:1024}")
+    @Value("${spring.opencrawling.output.opensearch3.dimensions:1024}")
     private int dimensions = 1024;
 
-    private MilvusClientV2 client;
+    private OpenSearchClient client;
     private final EmbeddingModel embeddingModel;
 
     @Autowired
-    public MilvusOutputConnector(
-            @Autowired(required = false) MilvusClientV2 client,
+    public OpenSearch3OutputConnector(
+            @Autowired(required = false) OpenSearchClient client,
             @Autowired(required = false) EmbeddingModel embeddingModel) {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.tika = new Tika();
-        this.gson = new Gson();
     }
 
-    private synchronized MilvusClientV2 getOrInitClient() {
+    private synchronized OpenSearchClient getOrInitClient() {
         if (client == null) {
-            log.info("Initializing lazy MilvusClientV2 in connector. URI: {}", uri);
-            ConnectConfig config = ConnectConfig.builder()
-                    .uri(uri)
-                    .token(token)
-                    .build();
-            client = new MilvusClientV2(config);
+            log.info("Initializing lazy OpenSearchClient (3.x) in connector. URI: {}", uris);
+            try {
+                final HttpHost host = HttpHost.create(uris);
+                final BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                credentialsProvider.setCredentials(new AuthScope(host), new UsernamePasswordCredentials(username, password.toCharArray()));
+
+                final OpenSearchTransport transport = ApacheHttpClient5TransportBuilder
+                        .builder(host)
+                        .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider))
+                        .setMapper(new JacksonJsonpMapper())
+                        .build();
+
+                client = new OpenSearchClient(transport);
+            } catch (Exception e) {
+                log.error("Failed to initialize OpenSearchClient", e);
+                throw new RuntimeException("OpenSearch client initialization error", e);
+            }
         }
         return client;
     }
 
     @Override
     public String getName() {
-        return "MilvusOutputConnector";
+        return "OpenSearch3OutputConnector";
     }
 
     @Override
@@ -101,7 +114,6 @@ public class MilvusOutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
-        // MilvusClientV2 doesn't have a close/disconnect in standard v2 API, but we release reference
         client = null;
     }
 
@@ -112,7 +124,7 @@ public class MilvusOutputConnector implements OutputConnector {
                 byte[] contentBytes = is.readAllBytes();
 
                 if (contentBytes.length == 0) {
-                    log.warn("Document {} content is empty, skipping Milvus ingestion.", document.id());
+                    log.warn("Document {} content is empty, skipping OpenSearch ingestion.", document.id());
                     return;
                 }
 
@@ -136,7 +148,7 @@ public class MilvusOutputConnector implements OutputConnector {
                 text = text.replace("\u0000", "");
 
                 if (text.isBlank()) {
-                    log.warn("Document {} extracted text is empty, skipping Milvus ingestion.", document.id());
+                    log.warn("Document {} extracted text is empty, skipping OpenSearch ingestion.", document.id());
                     return;
                 }
 
@@ -155,16 +167,16 @@ public class MilvusOutputConnector implements OutputConnector {
                         metadata.put(key, cleanedList);
                     }
                 });
-                metadata.put(MilvusConstants.FIELD_URI, document.uri());
-                metadata.put(MilvusConstants.FIELD_ACL, document.acl());
-                metadata.put(MilvusConstants.FIELD_LAST_MODIFIED, document.lastModified().toString());
+                metadata.put(OpenSearch3Constants.FIELD_URI, document.uri());
+                metadata.put(OpenSearch3Constants.FIELD_ACL, document.acl());
+                metadata.put(OpenSearch3Constants.FIELD_LAST_MODIFIED, document.lastModified().toString());
 
                 // Construct Spring AI Document for chunking
                 Document aiDoc = new Document(document.id(), text, metadata);
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
-                log.info("Split document into {} chunks for Milvus.", chunks.size());
+                log.info("Split document into {} chunks for OpenSearch.", chunks.size());
 
-                List<JsonObject> rows = new ArrayList<>();
+                List<Map<String, Object>> rows = new ArrayList<>();
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
 
@@ -199,43 +211,50 @@ public class MilvusOutputConnector implements OutputConnector {
                         }
                     }
 
-                    JsonObject row = new JsonObject();
-                    row.addProperty(MilvusConstants.FIELD_ID, chunkId);
-                    row.addProperty(MilvusConstants.FIELD_TEXT, chunk.getText());
-                    row.addProperty(MilvusConstants.FIELD_URI, document.uri());
-                    row.addProperty(MilvusConstants.FIELD_ACL, document.acl());
-                    row.addProperty(MilvusConstants.FIELD_LAST_MODIFIED, document.lastModified().toString());
-                    row.addProperty(MilvusConstants.FIELD_SECURITY_INHERITANCE, inheritanceEnabled);
-                    row.add(MilvusConstants.FIELD_SECURITY_ALLOWED_READ, gson.toJsonTree(allowedRead));
-                    row.add(MilvusConstants.FIELD_SECURITY_DENIED_READ, gson.toJsonTree(deniedRead));
-                    row.add(vectorFieldName, gson.toJsonTree(embedding));
+                    Map<String, Object> row = new HashMap<>();
+                    row.put(OpenSearch3Constants.FIELD_ID, chunkId);
+                    row.put(OpenSearch3Constants.FIELD_TEXT, chunk.getText());
+                    row.put(OpenSearch3Constants.FIELD_URI, document.uri());
+                    row.put(OpenSearch3Constants.FIELD_ACL, document.acl());
+                    row.put(OpenSearch3Constants.FIELD_LAST_MODIFIED, document.lastModified().toString());
+                    row.put(OpenSearch3Constants.FIELD_SECURITY_INHERITANCE, inheritanceEnabled);
+                    row.put(OpenSearch3Constants.FIELD_SECURITY_ALLOWED_READ, allowedRead);
+                    row.put(OpenSearch3Constants.FIELD_SECURITY_DENIED_READ, deniedRead);
+                    row.put(OpenSearch3Constants.FIELD_EMBEDDINGS, embedding);
 
                     // Add other dynamic metadata properties to row
                     metadata.forEach((key, val) -> {
-                        if (!MilvusConstants.FIELD_URI.equals(key) &&
-                            !MilvusConstants.FIELD_ACL.equals(key) &&
-                            !MilvusConstants.FIELD_LAST_MODIFIED.equals(key)) {
-                            row.add(key, gson.toJsonTree(val));
+                        if (!OpenSearch3Constants.FIELD_URI.equals(key) &&
+                            !OpenSearch3Constants.FIELD_ACL.equals(key) &&
+                            !OpenSearch3Constants.FIELD_LAST_MODIFIED.equals(key)) {
+                            row.put(key, val);
                         }
                     });
 
                     rows.add(row);
                 }
 
-                // Insert to Milvus
+                // Insert to OpenSearch
                 if (!rows.isEmpty()) {
-                    InsertReq insertReq = InsertReq.builder()
-                            .collectionName(collectionName)
-                            .data(rows)
-                            .build();
-                    getOrInitClient().insert(insertReq);
-                    log.info("Successfully added {} chunks for document {} to Milvus collection '{}'.", 
-                            rows.size(), document.id(), collectionName);
+                    BulkRequest.Builder br = new BulkRequest.Builder();
+                    for (Map<String, Object> row : rows) {
+                        String id = (String) row.get(OpenSearch3Constants.FIELD_ID);
+                        br.operations(op -> op
+                            .index(idx -> idx
+                                .index(indexName)
+                                .id(id)
+                                .document(row)
+                            )
+                        );
+                    }
+                    getOrInitClient().bulk(br.build());
+                    log.info("Successfully added {} chunks for document {} to OpenSearch index '{}' via Bulk API.", 
+                            rows.size(), document.id(), indexName);
                 }
 
             } catch (Exception e) {
-                log.error("Error processing document {} for Milvus: {}", document.id(), e.getMessage());
-                throw new RuntimeException("Failed to process document for Milvus: " + document.id(), e);
+                log.error("Error processing document {} for OpenSearch: {}", document.id(), e.getMessage());
+                throw new RuntimeException("Failed to process document for OpenSearch: " + document.id(), e);
             }
         });
     }

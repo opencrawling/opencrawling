@@ -1,0 +1,307 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- Infrastructure Services for OpenSearch ---
+  opensearch-standalone:
+    container_name: opensearch-standalone
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_SECURITY_PLUGIN=true
+      - cluster.routing.allocation.disk.threshold_enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-opensearch
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-opensearch:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-decoupled-opensearch
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata-opensearch:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ollama-model-puller:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-model-puller-decoupled-opensearch
+    entrypoint: /bin/sh
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: -c "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-opensearch
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-opensearch:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Apache Ozone Object Storage (Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm-opensearch
+    hostname: scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om-opensearch
+    hostname: om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "om"]
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode-opensearch
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "datanode"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g-opensearch
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-opensearch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/data  # Mount sample files directory
+    depends_on:
+      - kafka
+    networks:
+      - opencrawling-network
+    restart: on-failure
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-opensearch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
+    depends_on:
+      - kafka
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-consumer-service-opensearch
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OPENAI_API_KEY=mock-key
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - ollama
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-opensearch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_USERNAME=admin
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_PASSWORD=admin
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_INDEX_NAME=enterprise_kb
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_DIMENSIONS=1024
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - opensearch-standalone
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-opensearch
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
+      - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    volumes:
+      - ../../oc-runtime/data:/app/data
+    depends_on:
+      - redis
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+  oc-admin-ui:
+    build:
+      context: ../../oc-admin-ui
+      dockerfile: Dockerfile
+    image: ghcr.io/opencrawling/oc-admin-ui:latest
+    container_name: oc-admin-ui-service-opensearch
+    ports:
+      - "3000:80"
+    depends_on:
+      - oc-mcp-server
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  opencrawling-redisdata-opensearch:
+    name: opencrawling-redisdata-opensearch
+  opencrawling-ollamadata-opensearch:
+    name: opencrawling-ollamadata-opensearch
+  opencrawling-kafkadata-opensearch:
+    name: opencrawling-kafkadata-opensearch

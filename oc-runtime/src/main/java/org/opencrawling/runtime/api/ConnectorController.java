@@ -52,6 +52,20 @@ public class ConnectorController {
             "milvusMetricType", "COSINE",
             "milvusIndexType", "HNSW"
         )));
+        defaults.add(new ConnectorDTO("OpenSearch2_Output", "OpenSearch 2.x Search Engine Store", "output", "org.opencrawling.opensearch2.OpenSearch2OutputConnector", 10, Map.of(
+            "opensearch2Uris", "http://localhost:9200",
+            "opensearch2Username", "admin",
+            "opensearch2Password", "admin",
+            "opensearch2IndexName", "enterprise_kb",
+            "opensearch2Dimensions", "1024"
+        )));
+        defaults.add(new ConnectorDTO("OpenSearch3_Output", "OpenSearch 3.x Search Engine Store", "output", "org.opencrawling.opensearch3.OpenSearch3OutputConnector", 10, Map.of(
+            "opensearch3Uris", "http://localhost:9200",
+            "opensearch3Username", "admin",
+            "opensearch3Password", "admin",
+            "opensearch3IndexName", "enterprise_kb",
+            "opensearch3Dimensions", "1024"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
