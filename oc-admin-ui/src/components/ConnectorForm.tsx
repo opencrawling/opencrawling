@@ -548,7 +548,8 @@ export default function ConnectorForm() {
                         </div>
                         <div className="space-y-2">
                           <label className="text-sm font-medium">Token / Authentication</label>
-                          <input 
+                          <input
+                            type="password"
                             {...register('configuration.milvusToken')}
                             placeholder="root:Milvus"
                             defaultValue="root:Milvus"
