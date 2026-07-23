@@ -225,18 +225,45 @@ Content-Type: application/json
 }
 ```
 
+### Per-Job Configuration
+
+Narrativization is configured on a **per-job basis**. Each ingestion job can define its own Mustache template or disable narrativization entirely:
+
+```json
+{
+  "id": "job-101",
+  "name": "Iceberg_Sales_EU",
+  "repositoryConnector": "Iceberg_Local",
+  "outputConnector": "PGVector_Output",
+  "path": "sales_db.eu_transactions",
+  "narrativization": {
+    "enabled": true,
+    "template": "Transaction {{id}} processed amount €{{amount}} in region {{region}} at {{timestamp}}.",
+    "connectorType": "iceberg"
+  }
+}
+```
+
+When `enabled: true`, `JobOrchestrator` applies the `MustacheTransformationConnector` to render the document's metadata before publishing to Kafka.
+
 ### AI Engine Configuration
 
-The Copilot defaults to **Ollama** as its AI engine. This is configured via Spring property:
+The Copilot defaults to **Ollama** using **`llama3.2`** as its chat model. This is configured via Spring properties:
 
 ```yaml
 spring:
   ai:
     copilot:
       engine: ollama   # default — override with 'openai' to use OpenAI
+    ollama:
+      base-url: http://127.0.0.1:11434
+      chat:
+        options:
+          model: ${SPRING_AI_OLLAMA_CHAT_MODEL:llama3.2}
+          keep_alive: 1m
 ```
 
-When Ollama is unavailable (e.g. during tests or offline environments), the service automatically falls back to a **deterministic template generator** that produces valid Mustache templates and typed mock values from the schema metadata — ensuring the API is always reliable regardless of AI availability.
+When Ollama is unavailable or the chat model is not loaded, the service automatically falls back to a **deterministic template generator** that produces valid Mustache templates and typed mock values from the schema metadata — ensuring the API is always reliable.
 
 ### Integration Test
 
