@@ -69,7 +69,7 @@ public class MilvusOutputConnector implements OutputConnector {
     @Autowired
     public MilvusOutputConnector(
             @Autowired(required = false) MilvusClientV2 client,
-            @Autowired(required = false) EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();

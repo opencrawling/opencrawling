@@ -23,15 +23,17 @@ import {
   Menu,
   X,
   Search,
-  ChevronRight
+  ChevronRight,
+  Wand2
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
 import ConnectorForm from './components/ConnectorForm'
 import Settings from './components/Settings'
+import Narrativization from './components/Narrativization'
 import { statusApi } from './lib/api'
 
-type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings'
+type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings' | 'narrativization'
 
 export default function App() {
   const [activeView, setActiveView] = useState<View>('dashboard')
@@ -96,11 +98,12 @@ export default function App() {
   }
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'jobs', label: 'Job Management', icon: PlayCircle },
-    { id: 'connectors', label: 'Connectors', icon: Plug2 },
-    { id: 'logs', label: 'Real-time Logs', icon: Activity },
-    { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    { id: 'dashboard',       label: 'Dashboard',       icon: LayoutDashboard },
+    { id: 'jobs',            label: 'Job Management',  icon: PlayCircle },
+    { id: 'connectors',      label: 'Connectors',      icon: Plug2 },
+    { id: 'logs',            label: 'Real-time Logs',  icon: Activity },
+    { id: 'narrativization', label: 'Narrativization', icon: Wand2 },
+    { id: 'settings',        label: 'Settings',        icon: SettingsIcon },
   ]
 
   return (
@@ -181,6 +184,7 @@ export default function App() {
           {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
           {activeView === 'connectors' && <ConnectorForm />}
           {activeView === 'settings' && <Settings />}
+          {activeView === 'narrativization' && <Narrativization />}
           {activeView === 'logs' && (
             <div className="flex flex-col gap-4 h-[calc(100vh-12rem)]">
                <h1 className="text-2xl font-bold">Real-time Activity Logs</h1>

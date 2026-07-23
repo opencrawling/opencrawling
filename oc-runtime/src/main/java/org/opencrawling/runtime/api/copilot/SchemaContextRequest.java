@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.core.connector;
+package org.opencrawling.runtime.api.copilot;
 
-import org.opencrawling.core.document.RepositoryDocument;
-import reactor.core.publisher.Flux;
+import java.util.List;
 
-public non-sealed interface RepositoryConnector extends Connector {
-    Flux<RepositoryDocument> scan(String basePath);
-
-    default ConnectorSchema getSchema(String basePath) {
-        return new ConnectorSchema(java.util.List.of());
-    }
+public record SchemaContextRequest(
+    String connectorType,
+    List<FieldDto> fields
+) {
+    public record FieldDto(
+        String name,
+        String type,
+        String description
+    ) {}
 }

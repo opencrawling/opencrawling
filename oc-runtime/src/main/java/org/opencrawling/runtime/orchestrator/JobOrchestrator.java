@@ -22,7 +22,10 @@ import reactor.core.publisher.Mono;
 
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.connector.MustacheTransformationConnector;
+import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.result.ScanResult;
+import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
@@ -71,6 +74,30 @@ public class JobOrchestrator {
 
     @SuppressWarnings("preview")
     public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector, String jobId) {
+        runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, null);
+    }
+
+    @SuppressWarnings("preview")
+    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, NarrativizationConfig narrativization) {
+        
+        final MustacheTransformationConnector mustacheConnector =
+            (narrativization != null && narrativization.enabled() &&
+             narrativization.template() != null && !narrativization.template().isBlank())
+            ? new MustacheTransformationConnector(narrativization.template())
+            : null;
+
+        if (mustacheConnector != null) {
+            log.info("Narrativization enabled for job {}. Template preview: {}", jobId,
+                narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
+        }
+
+        runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector);
+    }
+
+    @SuppressWarnings("preview")
+    private void runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector) {
         log.info("Starting job {} for path: {} with transformation connector: {}", jobId, path, transformationConnector);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
@@ -103,8 +130,18 @@ public class JobOrchestrator {
             StructuredTaskScope.Subtask<List<ScanResult>> scanTask = scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
                 List<ScanResult> results = new ArrayList<>();
                 repositoryConnector.scan(path)
-                    .flatMap(doc -> {
+                    .flatMap(initialDoc -> {
                         try {
+                            RepositoryDocument doc = initialDoc;
+                            if (mustacheConnector != null) {
+                                try {
+                                    doc = mustacheConnector.transform(initialDoc).blockFirst();
+                                    log.debug("Applied Mustache narrativization to document: {}", doc.id());
+                                } catch (Exception ex) {
+                                    log.warn("Mustache transformation failed for doc {}: {}", initialDoc.id(), ex.getMessage());
+                                }
+                            }
+
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
                             boolean isSupportedByStore = finalUri != null && claimCheckStore.supports(URI.create(finalUri));
@@ -151,8 +188,8 @@ public class JobOrchestrator {
                             
                             return Mono.just((ScanResult) new ScanResult.Success(doc.id(), "1.0"));
                         } catch (Exception e) {
-                            traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + doc.id() + ": " + e.getMessage(), e.toString());
-                            return Mono.just(new ScanResult.Failure(doc.id(), e));
+                            traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + initialDoc.id() + ": " + e.getMessage(), e.toString());
+                            return Mono.just(new ScanResult.Failure(initialDoc.id(), e));
                         }
                     })
                     .doOnNext(results::add)

@@ -33,6 +33,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
+  timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -67,6 +68,11 @@ export const observabilityApi = {
   getJobTraces: (jobId: string) => api.get(`/observability/traces/${jobId}`),
   getErrorLogs: (jobId: string, timeframe?: string) => api.get(`/observability/errors/${jobId}${timeframe ? `?timeframe=${timeframe}` : ''}`),
   getMetrics: (connectorId?: string) => api.get(`/observability/metrics${connectorId ? `?connectorId=${connectorId}` : ''}`),
+}
+
+export const narrativizationApi = {
+  generate: (data: { connectorType: string; fields: { name: string; type: string; description: string }[] }) =>
+    api.post('/transformation/copilot/generate', data),
 }
 
 export default api

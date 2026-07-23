@@ -39,6 +39,7 @@ import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.rest.RESTCatalog;
+import org.opencrawling.core.connector.ConnectorSchema;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.slf4j.Logger;
@@ -149,6 +150,28 @@ public class IcebergRepositoryConnector implements RepositoryConnector {
 
     public void setCatalog(Catalog catalog) {
         this.catalog = catalog;
+    }
+
+    @Override
+    public ConnectorSchema getSchema(String basePath) {
+        try {
+            if (catalog == null) {
+                connect();
+            }
+            TableIdentifier tableId = TableIdentifier.parse(basePath);
+            Table table = catalog.loadTable(tableId);
+            List<ConnectorSchema.SchemaField> fields = table.schema().columns().stream()
+                    .map(col -> new ConnectorSchema.SchemaField(
+                            col.name(),
+                            col.type().toString(),
+                            col.doc()
+                    ))
+                    .toList();
+            return new ConnectorSchema(fields);
+        } catch (Exception e) {
+            log.error("Failed to retrieve schema for Iceberg table: {}", basePath, e);
+            throw new RuntimeException("Failed to retrieve schema for Iceberg table: " + basePath, e);
+        }
     }
 
     @Override

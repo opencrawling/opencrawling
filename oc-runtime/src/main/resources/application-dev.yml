@@ -28,8 +28,19 @@ spring:
       password: redis_password
 
   ai:
+    # ── Copilot engine: 'ollama' (default) or 'openai'
+    copilot:
+      engine: ollama
+    # OpenAI autoconfiguration is OFF by default in dev profile.
+    # Set OPENAI_API_KEY env var and spring.ai.openai.enabled=true to activate.
+    openai:
+      enabled: false
+      api-key: ${OPENAI_API_KEY:disabled}
     ollama:
       base-url: http://127.0.0.1:11434
+      chat:
+        options:
+          model: ${SPRING_AI_OLLAMA_CHAT_MODEL:llama3.2}
       embedding:
         options:
           model: mxbai-embed-large
