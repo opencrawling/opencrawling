@@ -365,7 +365,7 @@ To build and run the OpenCrawling backend runtime, the dynamic embedding microse
    docker compose -f docker-compose-apps.yml up -d
    ```
 
-* **Backend Service**: Access the backend runtime and integrated static resources at [http://localhost:8080](http://localhost:8080).
+* **Backend Service**: Access the backend runtime and integrated static resources at [http://web.archive.org/web/20170831232747/http://web.archive.org/web/20170831232747/http://localhost:8080//](http://localhost:8080).
 * **Embedding Service**: The dynamic microservice processes embeddings at [http://localhost:8082](http://localhost:8082).
 * **Frontend Service**: Access the standalone React Administration Console at [http://localhost:3000](http://localhost:3000).
 
