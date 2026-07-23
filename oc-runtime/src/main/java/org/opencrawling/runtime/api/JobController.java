@@ -57,7 +57,7 @@ public class JobController {
         
         // Initial defaults
         List<JobDTO> defaults = new ArrayList<>();
-        defaults.add(new JobDTO("1", "Default_Job", "FileSystem_Local", "PGVector_Output", "", "/data", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default"));
+        defaults.add(new JobDTO("1", "Default_Job", "FileSystem_Local", "PGVector_Output", "", "/data", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default", null));
         
         // Load persisted list
         this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));
@@ -117,7 +117,8 @@ public class JobController {
                     nextStage,
                     nextDocs,
                     job.lastRun(),
-                    job.transformationConnector()
+                    job.transformationConnector(),
+                    job.narrativization()
                 ));
                 updated = true;
             }
@@ -154,7 +155,8 @@ public class JobController {
                 "Idle",
                 0,
                 "N/A",
-                job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default"
+                job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
+                job.narrativization()
             );
             jobs.add(newJob);
         } else {
@@ -173,7 +175,8 @@ public class JobController {
                         job.currentStage() != null ? job.currentStage() : existing.currentStage(),
                         existing.documents(),
                         existing.lastRun(),
-                        job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector()
+                        job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
+                        job.narrativization() != null ? job.narrativization() : existing.narrativization()
                     ));
                     break;
                 }
@@ -247,7 +250,7 @@ public class JobController {
             Thread.ofVirtual().start(() -> {
                 try {
                     log.info("Starting real background crawl job for path: {}", activeJob.path());
-                    jobOrchestrator.runJob(finalConnector, outputConnector, activeJob.path(), activeJob.transformationConnector(), activeJob.id());
+                    jobOrchestrator.runJob(finalConnector, outputConnector, activeJob.path(), activeJob.transformationConnector(), activeJob.id(), activeJob.narrativization());
                     log.info("Real background crawl job completed successfully!");
                     // update status to completed when done, and pull actual db document count
                     updateJobStatusAndStage(id, "Finished", "Completed", getActualDbDocCount());
@@ -307,7 +310,8 @@ public class JobController {
                     stage,
                     docCount,
                     lastRun,
-                    job.transformationConnector()
+                    job.transformationConnector(),
+                    job.narrativization()
                 ));
                 break;
             }
@@ -330,7 +334,8 @@ public class JobController {
                     stage,
                     docCount,
                     LocalDateTime.now().format(formatter),
-                    job.transformationConnector()
+                    job.transformationConnector(),
+                    job.narrativization()
                 ));
                 break;
             }
@@ -354,6 +359,16 @@ public class JobController {
         }
     }
 
+    public static record NarrativizationConfig(
+        boolean enabled,
+        String template,
+        String connectorType
+    ) {
+        public static NarrativizationConfig disabled() {
+            return new NarrativizationConfig(false, null, null);
+        }
+    }
+
     public static record JobDTO(
         String id,
         String name,
@@ -365,6 +380,11 @@ public class JobController {
         String currentStage,
         long documents,
         String lastRun,
-        String transformationConnector
-    ) {}
+        String transformationConnector,
+        NarrativizationConfig narrativization
+    ) {
+        public JobDTO {
+            if (narrativization == null) narrativization = NarrativizationConfig.disabled();
+        }
+    }
 }

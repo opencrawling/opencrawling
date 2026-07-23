@@ -156,6 +156,114 @@ OpenCrawling incorporates **AI-Powered Observability (AIOps)** to automatically 
 
 ---
 
+## 📝 Auto-Narrativization Copilot
+
+OpenCrawling introduces an **Auto-Narrativization Copilot** — an AI-powered pipeline that automatically translates structured dataset schemas (field names, types, and descriptions) into human-readable **Mustache narrative templates** and corresponding **mock datasets**, ready to be used in document transformation pipelines.
+
+### How It Works
+
+```
+Schema Context (connectorType + fields)
+        │
+        ▼
+ TemplateGenerationCopilot
+  ├── Calls Ollama / OpenAI via Spring AI (if available)
+  └── Falls back to deterministic template generation (offline-safe)
+        │
+        ▼
+ TemplateCopilotResponse
+  ├── template  → Mustache template string  e.g. "Record {{id}} processed {{amount}} in {{region}} on {{timestamp}}"
+  └── mockData  → JSON map with field-typed sample values
+        │
+        ▼
+ MustacheTransformationConnector  (oc-core)
+  └── Renders the template against a live RepositoryDocument's metadata
+        │
+        ▼
+  Enriched narrative text stored in the document content stream
+```
+
+### Key Components
+
+| Component | Module | Role |
+|---|---|---|
+| `MustacheTransformationConnector` | `oc-core` | Renders Mustache templates against `RepositoryDocument` metadata using JMustache 1.16 |
+| `ConnectorSchema` / `SchemaField` | `oc-core` | SPI record that exposes a connector's field schema (`name`, `type`, `description`) |
+| `RepositoryConnector.getSchema()` | `oc-core` | Default SPI method returning `ConnectorSchema.UNKNOWN`; connectors may override |
+| `IcebergRepositoryConnector.getSchema()` | `oc-iceberg-repository-connector` | Returns the live Apache Iceberg table schema as a `ConnectorSchema` |
+| `TemplateGenerationCopilot` | `oc-runtime` | Spring AI client that calls the configured LLM (Ollama default) or falls back to deterministic generation |
+| `NarrativizationCopilotController` | `oc-runtime` | REST controller exposing `POST /api/transformation/copilot/generate` |
+
+### REST API
+
+```http
+POST /api/transformation/copilot/generate
+Content-Type: application/json
+
+{
+  "connectorType": "iceberg",
+  "fields": [
+    { "name": "id",        "type": "STRING", "description": "Primary record identifier" },
+    { "name": "amount",    "type": "DOUBLE", "description": "Transaction monetary value" },
+    { "name": "region",    "type": "STRING", "description": "Geographical region code" },
+    { "name": "timestamp", "type": "DATE",   "description": "Transaction timestamp" }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "template": "Record {{id}} processed {{amount}} in {{region}} on {{timestamp}}.",
+  "mockData": {
+    "id":        "Sample id",
+    "amount":    123.45,
+    "region":    "Sample region",
+    "timestamp": "2026-01-01"
+  }
+}
+```
+
+### AI Engine Configuration
+
+The Copilot defaults to **Ollama** as its AI engine. This is configured via Spring property:
+
+```yaml
+spring:
+  ai:
+    copilot:
+      engine: ollama   # default — override with 'openai' to use OpenAI
+```
+
+When Ollama is unavailable (e.g. during tests or offline environments), the service automatically falls back to a **deterministic template generator** that produces valid Mustache templates and typed mock values from the schema metadata — ensuring the API is always reliable regardless of AI availability.
+
+### Integration Test
+
+A dedicated layered integration test script is provided under `scripts/`:
+
+```bash
+# Layers 1–3: Mustache engine, Schema SPI, Copilot REST API (no infrastructure required)
+./scripts/test-narrativization.sh
+
+# Layer 4: End-to-end curl test against a running OpenCrawling instance
+./scripts/test-narrativization.sh --e2e
+
+# Point to a custom host
+./scripts/test-narrativization.sh --e2e --url http://staging.host:8080
+```
+
+The script covers:
+
+| Layer | What is tested |
+|---|---|
+| **Layer 1** | `MustacheTransformationConnector` JUnit test + JMustache JAR presence |
+| **Layer 2** | `ConnectorSchema` SPI compilation + `IcebergRepositoryConnector.getSchema()` override |
+| **Layer 3** | `NarrativizationCopilotIT` (Mockito), Ollama default config assertion, DTO shape checks |
+| **Layer 4** | Live HTTP `POST /api/transformation/copilot/generate` + response JSON assertions |
+
+---
+
 ## Core Technologies
 
 - **Java 25 Preview Features**: Structured Concurrency, Virtual Threads, and Pattern Matching.

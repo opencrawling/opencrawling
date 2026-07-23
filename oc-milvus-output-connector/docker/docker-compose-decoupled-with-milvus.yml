@@ -112,7 +112,7 @@ services:
   ollama-model-puller:
     image: ollama/ollama:0.23.4
     container_name: ollama-model-puller-decoupled-milvus
-    entrypoint: /bin/sh
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
@@ -120,7 +120,6 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-    command: -c "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"
 
   kafka:
     image: apache/kafka:3.7.0

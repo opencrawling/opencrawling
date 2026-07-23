@@ -47,11 +47,22 @@ import {
   AlertTriangle,
   XCircle,
   Wrench,
-  BarChart2
+  BarChart2,
+  Wand2,
+  FileText,
+  ChevronUp,
+  Check,
+  Info
 } from 'lucide-react'
-import { jobApi, connectorApi, observabilityApi } from '../lib/api'
+import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
 
 type JobStatus = 'Running' | 'Paused' | 'Error' | 'Finished' | 'Ready'
+
+interface NarrativizationConfig {
+  enabled: boolean
+  template: string
+  connectorType: string
+}
 
 interface Job {
   id: string
@@ -65,6 +76,7 @@ interface Job {
   documents: number
   lastRun: string
   transformationConnector: string
+  narrativization?: NarrativizationConfig
 }
 
 const statusStyles: Record<JobStatus, string> = {
@@ -128,7 +140,7 @@ const getStageProgress = (stage: string): number => {
 }
 
 interface JobTableProps {
-  setActiveView: (view: 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings') => void
+  setActiveView: (view: 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings' | 'narrativization') => void
 }
 
 export default function JobTable({ setActiveView }: JobTableProps) {
@@ -158,6 +170,15 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   const [formTransformationConnector, setFormTransformationConnector] = useState('Ollama_Embedding_Default')
   const [formError, setFormError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+
+  // Narrativization per-job state
+  const [formNarrEnabled, setFormNarrEnabled] = useState(false)
+  const [formNarrTemplate, setFormNarrTemplate] = useState('')
+  const [formNarrConnectorType, setFormNarrConnectorType] = useState('iceberg')
+  const [isGeneratingTemplate, setIsGeneratingTemplate] = useState(false)
+  const [narrGenError, setNarrGenError] = useState('')
+  const [narrSectionOpen, setNarrSectionOpen] = useState(false)
+  const [narrCopied, setNarrCopied] = useState(false)
 
   // AIOps Observability Diagnostic State
   const [isDiagnoseOpen, setIsDiagnoseOpen] = useState(false)
@@ -402,6 +423,11 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormAuthority('')
     setFormPath('')
     setFormTransformationConnector('Ollama_Embedding_Default')
+    setFormNarrEnabled(false)
+    setFormNarrTemplate('')
+    setFormNarrConnectorType('iceberg')
+    setNarrSectionOpen(false)
+    setNarrGenError('')
     setFormError('')
     setIsFormOpen(true)
   }
@@ -414,6 +440,11 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormAuthority(job.authorityConnector || '')
     setFormPath(job.path)
     setFormTransformationConnector(job.transformationConnector || 'Ollama_Embedding_Default')
+    setFormNarrEnabled(job.narrativization?.enabled ?? false)
+    setFormNarrTemplate(job.narrativization?.template ?? '')
+    setFormNarrConnectorType(job.narrativization?.connectorType ?? 'iceberg')
+    setNarrSectionOpen(!!(job.narrativization?.enabled))
+    setNarrGenError('')
     setFormError('')
     setIsFormOpen(true)
   }
@@ -451,7 +482,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
         currentStage: editingJob ? editingJob.currentStage : 'Idle',
         documents: editingJob ? editingJob.documents : 0,
         lastRun: editingJob ? editingJob.lastRun : 'N/A',
-        transformationConnector: formTransformationConnector
+        transformationConnector: formTransformationConnector,
+        narrativization: {
+          enabled: formNarrEnabled,
+          template: formNarrTemplate,
+          connectorType: formNarrConnectorType,
+        }
       }
       await jobApi.create(jobData)
       await fetchJobs(false)
@@ -948,6 +984,163 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                {/* ─── Narrativization Section ──────────────────────────────────── */}
+                <div className="border border-border rounded-xl overflow-hidden">
+                  {/* Header / toggle */}
+                  <button
+                    type="button"
+                    id="narr-section-toggle"
+                    onClick={() => setNarrSectionOpen(p => !p)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/40 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Wand2 className="w-4 h-4 text-primary" />
+                      Auto-Narrativization Copilot
+                      {formNarrEnabled && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 ml-1">ENABLED</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted">Generate a Mustache template for this job</span>
+                      {narrSectionOpen ? <ChevronUp className="w-4 h-4 text-muted" /> : <ChevronDown className="w-4 h-4 text-muted" />}
+                    </div>
+                  </button>
+
+                  {narrSectionOpen && (
+                    <div className="p-4 space-y-4 border-t border-border bg-background/40">
+
+                      {/* Enable toggle */}
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-primary" />
+                          Enable narrativization for this job
+                        </label>
+                        <button
+                          type="button"
+                          id="narr-enabled-toggle"
+                          onClick={() => setFormNarrEnabled(p => !p)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            formNarrEnabled ? 'bg-primary' : 'bg-border'
+                          }`}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                            formNarrEnabled ? 'translate-x-4' : 'translate-x-1'
+                          }`} />
+                        </button>
+                      </div>
+
+                      {/* Connector type + copilot button */}
+                      <div className="flex items-end gap-3">
+                        <div className="space-y-1.5 flex-1">
+                          <label className="text-xs text-muted font-medium">Connector type (for schema inference)</label>
+                          <select
+                            id="narr-connector-type"
+                            value={formNarrConnectorType}
+                            onChange={e => setFormNarrConnectorType(e.target.value)}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+                          >
+                            <option value="iceberg">🧊 Iceberg</option>
+                            <option value="filesystem">📁 FileSystem</option>
+                            <option value="alfresco">🏢 Alfresco</option>
+                            <option value="custom">⚙️ Custom</option>
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          id="narr-generate-btn"
+                          disabled={isGeneratingTemplate}
+                          onClick={async () => {
+                            setIsGeneratingTemplate(true)
+                            setNarrGenError('')
+                            try {
+                              // Build a minimal schema from the connector type
+                              const schemaMap: Record<string, { name: string; type: string; description: string }[]> = {
+                                iceberg:    [{ name: 'id', type: 'STRING', description: 'Record identifier' }, { name: 'amount', type: 'DOUBLE', description: 'Transaction amount' }, { name: 'region', type: 'STRING', description: 'Region code' }, { name: 'timestamp', type: 'TIMESTAMP', description: 'Event time' }],
+                                filesystem: [{ name: 'filename', type: 'STRING', description: 'File name' }, { name: 'path', type: 'STRING', description: 'File path' }, { name: 'size', type: 'LONG', description: 'File size in bytes' }, { name: 'extension', type: 'STRING', description: 'File extension' }],
+                                alfresco:   [{ name: 'nodeId', type: 'STRING', description: 'Alfresco node UUID' }, { name: 'title', type: 'STRING', description: 'Document title' }, { name: 'author', type: 'STRING', description: 'Document author' }, { name: 'modified', type: 'DATE', description: 'Last modified date' }],
+                                custom:     [{ name: 'id', type: 'STRING', description: 'Identifier' }, { name: 'content', type: 'STRING', description: 'Document content' }],
+                              }
+                              const res = await narrativizationApi.generate({
+                                connectorType: formNarrConnectorType,
+                                fields: schemaMap[formNarrConnectorType] ?? schemaMap.custom,
+                              })
+                              if (res.data?.template) {
+                                setFormNarrTemplate(res.data.template)
+                                setFormNarrEnabled(true)
+                              }
+                            } catch (err: any) {
+                              setNarrGenError(err?.response?.data?.message ?? err?.message ?? 'Copilot unavailable')
+                            } finally {
+                              setIsGeneratingTemplate(false)
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                          {isGeneratingTemplate
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating…</>
+                            : <><Wand2 className="w-3.5 h-3.5" /> Generate with Copilot</>}
+                        </button>
+                      </div>
+
+                      {narrGenError && (
+                        <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          {narrGenError}
+                        </div>
+                      )}
+
+                      {/* Template textarea */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-muted font-medium">Mustache Template</label>
+                          {formNarrTemplate && (
+                            <button
+                              type="button"
+                              id="narr-copy-btn"
+                              onClick={async () => {
+                                await navigator.clipboard.writeText(formNarrTemplate)
+                                setNarrCopied(true)
+                                setTimeout(() => setNarrCopied(false), 2000)
+                              }}
+                              className="flex items-center gap-1 text-xs text-muted hover:text-foreground"
+                            >
+                              {narrCopied ? <Check className="w-3 h-3 text-green-400" /> : <FileText className="w-3 h-3" />}
+                              {narrCopied ? 'Copied!' : 'Copy'}
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          id="narr-template-input"
+                          rows={3}
+                          value={formNarrTemplate}
+                          onChange={e => setFormNarrTemplate(e.target.value)}
+                          placeholder='e.g. Record {{id}} processed {{amount}} in {{region}} on {{timestamp}}.'
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground placeholder:text-muted resize-none"
+                        />
+                        <p className="text-[11px] text-muted">
+                          Use <code className="text-primary">{'{{fieldName}}'}</code> to reference document metadata fields.
+                          The template is applied to every document before embedding.
+                        </p>
+                      </div>
+
+                      {/* Rendered preview */}
+                      {formNarrTemplate && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted font-medium">Preview (with placeholder values)</p>
+                          <div className="bg-primary/5 border border-primary/15 rounded-lg px-3 py-2 text-xs text-primary/90 font-mono leading-relaxed">
+                            {formNarrTemplate.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => `[${k}]`)}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-start gap-2 text-[11px] text-muted p-3 bg-card rounded-lg border border-border/60">
+                        <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
+                        <span>The Copilot uses <strong className="text-foreground">Ollama</strong> (default) or OpenAI. If AI is unavailable it falls back to deterministic generation — a valid template is always returned.</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

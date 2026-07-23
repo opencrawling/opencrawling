@@ -72,7 +72,7 @@ public class OpenSearch2OutputConnector implements OutputConnector {
     @Autowired
     public OpenSearch2OutputConnector(
             @Autowired(required = false) OpenSearchClient client,
-            @Autowired(required = false) EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();

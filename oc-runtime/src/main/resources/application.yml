@@ -28,8 +28,21 @@ spring:
       password: redis_password
 
   ai:
+    # ── Copilot engine: 'ollama' (default) or 'openai'
+    # Set spring.ai.copilot.engine=openai and provide spring.ai.openai.api-key
+    # to switch the narrativization copilot to OpenAI.
+    copilot:
+      engine: ollama
+    # OpenAI autoconfiguration is OFF by default — no API key required.
+    # Override with spring.ai.openai.enabled=true + spring.ai.openai.api-key=sk-...
+    openai:
+      enabled: false
+      api-key: ${OPENAI_API_KEY:disabled}
     ollama:
       base-url: http://127.0.0.1:11434
+      chat:
+        options:
+          model: ${SPRING_AI_OLLAMA_CHAT_MODEL:llama3.2}
       embedding:
         options:
           model: mxbai-embed-large

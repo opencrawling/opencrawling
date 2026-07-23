@@ -59,7 +59,7 @@ public class ObservabilityController {
         JobController.JobDTO job = jobController.getAllJobs().stream()
                 .filter(j -> j.id().equals(jobId))
                 .findFirst()
-                .orElse(new JobController.JobDTO(jobId, "Job #" + jobId, "FileSystem", "PGVector", "", "/data", "Finished", "Completed", 120, "N/A", "Ollama_Embedding_Default"));
+                .orElse(new JobController.JobDTO(jobId, "Job #" + jobId, "FileSystem", "PGVector", "", "/data", "Finished", "Completed", 120, "N/A", "Ollama_Embedding_Default", null));
 
         AIOpsDiagnosticService.DiagnosticReport report = diagnosticService.diagnoseJob(
                 job.id(),

@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,18 @@
  */
 package org.opencrawling.core.connector;
 
-import org.opencrawling.core.document.RepositoryDocument;
-import reactor.core.publisher.Flux;
+import java.util.List;
 
-public non-sealed interface RepositoryConnector extends Connector {
-    Flux<RepositoryDocument> scan(String basePath);
-
-    default ConnectorSchema getSchema(String basePath) {
-        return new ConnectorSchema(java.util.List.of());
+public record ConnectorSchema(
+    List<SchemaField> fields
+) {
+    public record SchemaField(
+        String name,
+        String type,
+        String description
+    ) {
+        public SchemaField(String name, String type) {
+            this(name, type, null);
+        }
     }
 }
