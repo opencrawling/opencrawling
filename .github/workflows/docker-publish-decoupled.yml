@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       # GHCR requires image names to be lowercase. This step handles converting 
       # the repository owner to lowercase to prevent push failures.
