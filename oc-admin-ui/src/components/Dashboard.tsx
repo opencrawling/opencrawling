@@ -46,7 +46,7 @@ export default function Dashboard() {
   })
   const [statsData, setStatsData] = useState({
     activeJobs: 0,
-    indexedDocs: 0,
+    ingestedDocs: 0,
     serviceAlerts: 0,
     vectorStoreSize: '0 MB'
   })
@@ -71,7 +71,7 @@ export default function Dashboard() {
 
         setStatsData({
           activeJobs: activeCount,
-          indexedDocs: totalDocs,
+          ingestedDocs: totalDocs,
           serviceAlerts: errorCount,
           vectorStoreSize: `${(totalDocs * 0.005).toFixed(1)} MB`
         })
@@ -87,7 +87,7 @@ export default function Dashboard() {
 
   const stats = [
     { label: 'Active Jobs', value: statsData.activeJobs.toString(), icon: PlayCircle, color: 'text-cyan-500', bg: 'bg-cyan-500/10' },
-    { label: 'Indexed Documents', value: statsData.indexedDocs.toLocaleString(), icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-500/10' },
+    { label: 'Ingested Documents', value: statsData.ingestedDocs.toLocaleString(), icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-500/10' },
     { label: 'Service Alerts', value: statsData.serviceAlerts.toString(), icon: AlertCircle, color: statsData.serviceAlerts > 0 ? 'text-red-500' : 'text-slate-400', bg: statsData.serviceAlerts > 0 ? 'bg-red-500/10' : 'bg-slate-400/10' },
     { label: 'Estimated Vector Size', value: statsData.vectorStoreSize, icon: Database, color: 'text-blue-500', bg: 'bg-blue-500/10' },
   ]

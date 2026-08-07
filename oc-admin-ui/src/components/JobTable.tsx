@@ -133,7 +133,8 @@ const getStageProgress = (stage: string): number => {
     case 'Extracting': return 40;
     case 'Chunking': return 60;
     case 'Embedding': return 80;
-    case 'Indexing': return 95;
+    case 'Indexing':
+    case 'Ingesting': return 95;
     case 'Completed': return 100;
     default: return 0;
   }
@@ -244,13 +245,13 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           ? `Root Cause Analysis identified: OpenTelemetry trace correlation showed a failure during document text extraction or downstream vector store insertion into '${outName}'. Check connector credentials and repository path '${job.path}'.`
           : isRunning
           ? `Pipeline '${job.name}' is actively processing documents. Current stage '${job.currentStage}' handling ${job.documents} discovered documents via ${transformName}.`
-          : `All 5 pipeline stages (Scanning [${repoName}], Extracting, Chunking, Embedding [${transformName}], Indexing [${outName}]) executed without errors. Total span execution time: ${totalMs} ms.`,
+          : `All 5 pipeline stages (Scanning [${repoName}], Extracting, Chunking, Embedding [${transformName}], Ingesting [${outName}]) executed without errors. Total span execution time: ${totalMs} ms.`,
         stageTimingMillis: {
           Scanning: scanMs,
           Extracting: extractMs,
           Chunking: chunkMs,
           Embedding: embedMs,
-          Indexing: indexMs
+          Ingesting: indexMs
         },
         bottleneckInsights: isFailed
           ? [`${outName} insertion timeout or batch threshold limit exceeded during flush.`, `Kafka consumer pipeline for topic '${job.path}' encountered retried exception.`]
@@ -276,7 +277,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           { spanId: 'span-2', traceId, jobId: job.id, stage: 'Extracting', component: 'TikaExtractor', startTimeMillis: now - 4500, durationMillis: extractMs, status: 'SUCCESS', attributes: { length: '4820', mimeType: 'text/plain' } },
           { spanId: 'span-3', traceId, jobId: job.id, stage: 'Chunking', component: 'TokenTextSplitter', startTimeMillis: now - 3500, durationMillis: chunkMs, status: 'SUCCESS', attributes: { chunkCount: '6', chunkSize: '1000' } },
           { spanId: 'span-4', traceId, jobId: job.id, stage: 'Embedding', component: 'EmbeddingConsumer', startTimeMillis: now - 3000, durationMillis: embedMs, status: isFailed ? 'ERROR' : 'SUCCESS', errorMessage: isFailed ? 'Read timeout from embedding client' : null, attributes: { model: transformName, engine: 'ollama' } },
-          { spanId: 'span-5', traceId, jobId: job.id, stage: 'Indexing', component: 'VectorStoreWriterConsumer', startTimeMillis: now - 1000, durationMillis: indexMs, status: isFailed ? 'UNEXECUTED' : 'SUCCESS', attributes: { db: outName, pgVectorTableName: 'vector_store' } }
+          { spanId: 'span-5', traceId, jobId: job.id, stage: 'Ingesting', component: 'VectorStoreWriterConsumer', startTimeMillis: now - 1000, durationMillis: indexMs, status: isFailed ? 'UNEXECUTED' : 'SUCCESS', attributes: { db: outName, pgVectorTableName: 'vector_store' } }
         ]
       })
 
