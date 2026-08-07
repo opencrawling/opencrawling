@@ -65,67 +65,6 @@ public class JobController {
 
     @GetMapping
     public List<JobDTO> getAllJobs() {
-        boolean updated = false;
-        // Simulate running job progress
-        for (int i = 0; i < jobs.size(); i++) {
-            JobDTO job = jobs.get(i);
-            if ("Running".equals(job.status())) {
-                String nextStage = job.currentStage();
-                String nextStatus = "Running";
-                long nextDocs = job.documents();
-                
-                switch (job.currentStage()) {
-                    case "Scanning" -> {
-                        nextStage = "Extracting";
-                        nextDocs += 15;
-                        log.info("Job '{}' [ID: {}]: Completed Scanning. Transitioned to Extracting.", job.name(), job.id());
-                    }
-                    case "Extracting" -> {
-                        nextStage = "Chunking";
-                        nextDocs += 45;
-                        log.info("Job '{}' [ID: {}]: Completed text extraction. Transitioned to Chunking.", job.name(), job.id());
-                    }
-                    case "Chunking" -> {
-                        nextStage = "Embedding";
-                        nextDocs += 120;
-                        log.info("Job '{}' [ID: {}]: Chunks split successfully using TokenTextSplitter. Transitioned to Embedding.", job.name(), job.id());
-                    }
-                    case "Embedding" -> {
-                        nextStage = "Indexing";
-                        nextDocs += 120;
-                        log.info("Job '{}' [ID: {}]: Generated 1024-dimensional embeddings. Transitioned to Indexing.", job.name(), job.id());
-                    }
-                    case "Indexing" -> {
-                        nextStage = "Completed";
-                        nextStatus = "Finished";
-                        log.info("Job '{}' [ID: {}]: Indexing completed. Inserted vector data into PostgreSQL.", job.name(), job.id());
-                    }
-                    default -> {
-                        nextStage = "Scanning";
-                        log.info("Job '{}' [ID: {}]: Starting document discovery scanner.", job.name(), job.id());
-                    }
-                }
-                
-                jobs.set(i, new JobDTO(
-                    job.id(),
-                    job.name(),
-                    job.repositoryConnector(),
-                    job.outputConnector(),
-                    job.authorityConnector(),
-                    job.path(),
-                    nextStatus,
-                    nextStage,
-                    nextDocs,
-                    job.lastRun(),
-                    job.transformationConnector(),
-                    job.narrativization()
-                ));
-                updated = true;
-            }
-        }
-        if (updated) {
-            PersistenceHelper.save("jobs.json", jobs);
-        }
         return jobs;
     }
 

@@ -65,7 +65,8 @@ export default function Dashboard() {
 
         const jobs = jobsRes.data || []
         const activeCount = jobs.filter((j: any) => j.status === 'Running').length
-        const totalDocs = jobs.reduce((sum: number, j: any) => sum + (j.documents || 0), 0)
+        const realDbDocs = statusRes.data?.totalIndexedDocs !== undefined ? parseInt(statusRes.data.totalIndexedDocs, 10) : NaN
+        const totalDocs = !isNaN(realDbDocs) ? realDbDocs : jobs.reduce((sum: number, j: any) => sum + (j.documents || 0), 0)
         const errorCount = jobs.filter((j: any) => j.status === 'Error').length
 
         setStatsData({

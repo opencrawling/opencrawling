@@ -23,8 +23,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
+import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 @RestController
 @RequestMapping("/api/system")
@@ -32,10 +35,17 @@ public class SystemController {
 
     private static final DateTimeFormatter logTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
-    // In-memory system settings persisted via PersistenceHelper
     private SystemSettingsDTO settings;
+    private final JdbcTemplate jdbcTemplate;
+    private final TelemetryTraceStore traceStore;
 
-    public SystemController() {
+    @Autowired
+    public SystemController(
+            @Autowired(required = false) JdbcTemplate jdbcTemplate,
+            @Autowired(required = false) TelemetryTraceStore traceStore) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.traceStore = traceStore;
+
         SystemSettingsDTO defaultSettings = new SystemSettingsDTO(
             "Ollama",
             "http://127.0.0.1:11434",
@@ -75,22 +85,141 @@ public class SystemController {
     @GetMapping("/status")
     public Map<String, String> getSystemStatus() {
         Map<String, String> status = new HashMap<>();
-        status.put("postgres", "UP");
-        status.put("redis", "UP");
-        status.put("ollama", "UP");
-        status.put("system", "HEALTHY");
+        String pgStatus = checkPostgres();
+        String redisStatus = checkRedis();
+        String ollamaStatus = checkOllama();
+
+        status.put("postgres", pgStatus);
+        status.put("redis", redisStatus);
+        status.put("ollama", ollamaStatus);
+        status.put("totalIndexedDocs", String.valueOf(getActualDbDocCount()));
+
+        if ("UP".equals(pgStatus) && "UP".equals(redisStatus) && "UP".equals(ollamaStatus)) {
+            status.put("system", "HEALTHY");
+        } else if ("UP".equals(pgStatus) || "UP".equals(redisStatus) || "UP".equals(ollamaStatus)) {
+            status.put("system", "DEGRADED");
+        } else {
+            status.put("system", "UNHEALTHY");
+        }
         return status;
+    }
+
+    private long getActualDbDocCount() {
+        if (jdbcTemplate == null) {
+            return 0;
+        }
+        try {
+            Long count = jdbcTemplate.queryForObject(
+                "SELECT (SELECT count(*) FROM vector_store) + " +
+                "(SELECT count(*) FROM vector_store_1024) + " +
+                "(SELECT count(*) FROM vector_store_768) + " +
+                "(SELECT count(*) FROM vector_store_384)",
+                Long.class
+            );
+            return count != null ? count : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private String checkPostgres() {
+        if (jdbcTemplate == null) {
+            return "DOWN";
+        }
+        try {
+            Integer res = jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+            return (res != null && res == 1) ? "UP" : "DOWN";
+        } catch (Exception e) {
+            return "DOWN";
+        }
+    }
+
+    private String checkOllama() {
+        try {
+            String baseUrl = (settings != null && settings.ollamaBaseUrl() != null && !settings.ollamaBaseUrl().isBlank())
+                    ? settings.ollamaBaseUrl() : "http://127.0.0.1:11434";
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofMillis(1500))
+                    .build();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(baseUrl + "/api/tags"))
+                    .timeout(java.time.Duration.ofMillis(1500))
+                    .GET()
+                    .build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() == 200 ? "UP" : "DOWN";
+        } catch (Exception e) {
+            return "DOWN";
+        }
+    }
+
+    private String checkRedis() {
+        String host = System.getenv().getOrDefault("SPRING_DATA_REDIS_HOST", System.getenv().getOrDefault("SPRING_REDIS_HOST", "127.0.0.1"));
+        int port = 6379;
+        try {
+            port = Integer.parseInt(System.getenv().getOrDefault("SPRING_DATA_REDIS_PORT", System.getenv().getOrDefault("SPRING_REDIS_PORT", "6379")));
+        } catch (Exception ignored) {}
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port), 500);
+            return "UP";
+        } catch (Exception e) {
+            return "DOWN";
+        }
     }
 
     @GetMapping("/throughput")
     public List<Map<String, Object>> getThroughput() {
         List<Map<String, Object>> throughput = new ArrayList<>();
-        String[] hours = {"08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00"};
-        java.util.Random random = new java.util.Random();
-        for (String hour : hours) {
+        LocalDateTime now = LocalDateTime.now();
+        DateTimeFormatter hourFormatter = DateTimeFormatter.ofPattern("HH:00");
+
+        Map<String, Long> hourlyCounts = new HashMap<>();
+        if (traceStore != null) {
+            Map<String, List<TelemetryTraceStore.SpanRecord>> allSpans = traceStore.getAllSpans();
+            for (List<TelemetryTraceStore.SpanRecord> spans : allSpans.values()) {
+                for (TelemetryTraceStore.SpanRecord span : spans) {
+                    if ("Indexing".equalsIgnoreCase(span.stage()) || "Completed".equalsIgnoreCase(span.stage())) {
+                        LocalDateTime spanTime = LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(span.startTimeMillis()),
+                            java.time.ZoneId.systemDefault()
+                        );
+                        String hourKey = spanTime.format(hourFormatter);
+                        long docCount = 1;
+                        if (span.attributes() != null && span.attributes().containsKey("chunkCount")) {
+                            try {
+                                docCount = Long.parseLong(span.attributes().get("chunkCount"));
+                            } catch (Exception ignored) {}
+                        }
+                        hourlyCounts.put(hourKey, hourlyCounts.getOrDefault(hourKey, 0L) + docCount);
+                    }
+                }
+            }
+        }
+
+        long dbDocCount = 0;
+        if (jdbcTemplate != null) {
+            try {
+                Long count = jdbcTemplate.queryForObject(
+                    "SELECT (SELECT count(*) FROM vector_store) + " +
+                    "(SELECT count(*) FROM vector_store_1024) + " +
+                    "(SELECT count(*) FROM vector_store_768) + " +
+                    "(SELECT count(*) FROM vector_store_384)",
+                    Long.class
+                );
+                if (count != null) dbDocCount = count;
+            } catch (Exception ignored) {}
+        }
+
+        for (int i = 6; i >= 0; i--) {
+            LocalDateTime hourTime = now.minusHours(i);
+            String hourStr = hourTime.format(hourFormatter);
+            long count = hourlyCounts.getOrDefault(hourStr, 0L);
+            if (i == 0 && count == 0 && dbDocCount > 0) {
+                count = dbDocCount;
+            }
             Map<String, Object> data = new HashMap<>();
-            data.put("name", hour);
-            data.put("docs", 400 + random.nextInt(2000));
+            data.put("name", hourStr);
+            data.put("docs", count);
             throughput.add(data);
         }
         return throughput;
