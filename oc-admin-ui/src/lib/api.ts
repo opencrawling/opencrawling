@@ -64,6 +64,12 @@ export const statusApi = {
   saveSettings: (data: any) => api.post('/system/settings', data),
 }
 
+export const transportApi = {
+  getSettings: () => api.get('/v1/admin/settings/transport'),
+  saveSettings: (data: any) => api.put('/v1/admin/settings/transport', data),
+  testGrpc: (data?: { host?: string; port?: number }) => api.post('/v1/admin/settings/transport/test-grpc', data),
+}
+
 export const observabilityApi = {
   diagnoseJob: (jobId: string) => api.get(`/observability/diagnose/${jobId}`),
   getJobTraces: (jobId: string) => api.get(`/observability/traces/${jobId}`),

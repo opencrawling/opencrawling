@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package opencrawling.internal.v1;
+
+option java_multiple_files = true;
+option java_package = "org.opencrawling.internal.v1";
+option java_outer_classname = "InternalPayloadProto";
+
+service InternalPayloadService {
+  // Bi-directional document streaming
+  rpc StreamDocumentPayloads (stream DocumentPayloadRequest) returns (stream PayloadIngestionResponse);
+
+  // Single document payload ingestion
+  rpc SendDocumentPayload (DocumentPayloadRequest) returns (PayloadIngestionResponse);
+
+  // Health check / probe for Admin UI diagnostic tests
+  rpc PingTransport (PingRequest) returns (PingResponse);
+}
+
+message DocumentPayloadRequest {
+  string task_id = 1;
+  string repository_id = 2;
+  string document_id = 3;
+  bytes raw_content = 4;
+  map<string, string> metadata = 5;
+  repeated string security_acls = 6;
+  int64 timestamp = 7;
+}
+
+message PayloadIngestionResponse {
+  string document_id = 1;
+  enum Status { SUCCESS = 0; PROCESSING = 1; FAILED = 2; }
+  Status status = 2;
+  string error_message = 3;
+}
+
+message PingRequest { int64 client_timestamp = 1; }
+message PingResponse { int64 server_timestamp = 1; bool healthy = 2; }

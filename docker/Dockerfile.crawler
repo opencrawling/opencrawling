@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Copy poms
 COPY pom.xml .
+COPY oc-grpc-api/pom.xml oc-grpc-api/
 COPY oc-core/pom.xml oc-core/
 COPY oc-observability/pom.xml oc-observability/
 COPY oc-filesystem-repository-connector/pom.xml oc-filesystem-repository-connector/
@@ -26,9 +27,10 @@ COPY oc-connector-archetypes/opencrawling-archetype-output-connector/pom.xml oc-
 COPY oc-connector-archetypes/opencrawling-archetype-transformation-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-transformation-connector/
 COPY oc-java-client-sdk/pom.xml oc-java-client-sdk/
 
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk
 
 # Copy source code
+COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
 COPY oc-core/src/ /app/oc-core/src/
 COPY oc-observability/src/ /app/oc-observability/src/
 COPY oc-filesystem-repository-connector/src/ /app/oc-filesystem-repository-connector/src/

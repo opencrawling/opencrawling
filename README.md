@@ -24,6 +24,7 @@
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![OIS](https://img.shields.io/badge/OIS-Open_Ingestion_Standard-0052CC.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-8A2BE2.svg?style=flat&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io/)
+[![gRPC Transport](https://img.shields.io/badge/gRPC-Internal_Transport-4285F4.svg?style=flat&logo=grpc&logoColor=white)](#-grpc-high-performance-internal-transport)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-AIOps-7B42BC.svg?style=flat&logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
 [![Maven Archetypes](https://img.shields.io/badge/Maven_Archetypes-Supported-C71A36.svg?style=flat&logo=apachemaven&logoColor=white)](#-custom-connectors-maven-archetypes-suite)
 [![Maven Central](https://img.shields.io/maven-central/v/org.opencrawling.archetypes/opencrawling-connector-archetypes.svg?style=flat&logo=apachemaven&logoColor=white)](https://central.sonatype.com/artifact/org.opencrawling.archetypes/opencrawling-connector-archetypes)
@@ -168,6 +169,33 @@ OpenCrawling incorporates **AI-Powered Observability (AIOps)** to automatically 
   - `fetch_job_traces(jobId)`: Retrieves correlated OTel spans and timing breakdowns per pipeline stage.
   - `get_error_logs(jobId, timeframe)`: Fetches failure logs and exception stack traces.
   - `query_throughput_metrics(connectorId)`: Queries throughput rates (docs/sec), P95 latency, and active virtual threads.
+
+---
+
+## ⚡ gRPC High-Performance Internal Transport
+
+OpenCrawling supports **gRPC as an optional, high-performance binary transport protocol** for internal component payload communication across microservices (e.g. `oc-repository-connectors`, `oc-core`, `oc-worker`, `oc-output-connectors`).
+
+### Key Features
+- **Up to 50% Payload Size Reduction**: Protobuf binary serialization compresses document metadata and chunk payload transport compared to verbose JSON strings.
+- **Protocol Modes (`AUTO`, `GRPC`, `REST`)**:
+  - **`AUTO` (Recommended)**: Attempts high-speed gRPC binary streaming over port `9095`. If unreachable or timing out, automatically falls back to HTTP/REST.
+  - **`GRPC` (Strict)**: Enforces Protobuf gRPC streaming across all processing nodes.
+  - **`REST` (Standard)**: Disables gRPC server and uses standard HTTP/REST JSON endpoints.
+- **TLS / mTLS Encryption**: Supports certificate-based transport security for enterprise compliance (`tlsEnabled=true`).
+- **Live Admin UI Diagnostic Probes**: Test gRPC channel connectivity and latency directly from the **Internal Communication & Transport Settings Panel** in `oc-admin-ui` or via `POST /api/v1/admin/settings/transport/test-grpc`.
+
+```protobuf
+// Protobuf Payload Contract (oc-grpc-api)
+service InternalPayloadService {
+  rpc StreamDocumentPayloads (stream DocumentPayloadRequest) returns (stream PayloadIngestionResponse);
+  rpc SendDocumentPayload (DocumentPayloadRequest) returns (PayloadIngestionResponse);
+  rpc PingTransport (PingRequest) returns (PingResponse);
+}
+```
+
+> [!TIP]
+> See [gRPC Internal Transport](https://github.com/opencrawling/opencrawling/wiki/gRPC-Internal-Transport) in the Wiki for full Protobuf schema definitions, YAML properties, and environment variables.
 
 ---
 
@@ -386,6 +414,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 
 - **Java 25 Preview Features**: Structured Concurrency, Virtual Threads, and Pattern Matching.
 - **Spring Boot & Spring AI**: High-performance backend orchestrating ingestion jobs and MCP Tool calling.
+- **gRPC High-Performance Binary Transport**: Protobuf-backed binary payload channel (Port 9095) with automatic HTTP/REST fallback, TLS/mTLS encryption, and live Admin UI diagnostic ping testing.
 - **OpenTelemetry & Micrometer AIOps**: Automated Root Cause Analysis (RCA) and correlated distributed span telemetry.
 - **Model Context Protocol (MCP)**: System tools exposing vector search and OTel telemetry to LLMs.
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.

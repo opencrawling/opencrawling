@@ -96,6 +96,24 @@ spring:
       properties:
         spring.json.trusted.packages: "org.opencrawling.runtime.messaging"
 
+  grpc:
+    server:
+      port: 9095
+    client:
+      channel:
+        internal:
+          target: "static://127.0.0.1:9095"
+
+opencrawling:
+  transport:
+    mode: AUTO # Options: AUTO, GRPC, REST
+    grpc:
+      enabled: true
+      port: 9095
+      max-message-size: 33554432
+      fallback-to-rest: true
+      keep-alive-time-ms: 30000
+
 server:
   port: 8080
 
