@@ -247,6 +247,7 @@ services:
     container_name: oc-mcp-server-service
     ports:
       - "8080:8080"
+      - "9095:9095"
     environment:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling

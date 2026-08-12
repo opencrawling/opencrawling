@@ -23,6 +23,7 @@ services:
     container_name: opencrawling-backend
     ports:
       - "8080:8080"
+      - "9095:9095"
     environment:
       - SPRING_DATA_REDIS_HOST=redis-stack
       - SPRING_DATA_REDIS_PASSWORD=redis_password
