@@ -26,9 +26,26 @@ import {
   HelpCircle,
   Database,
   HardDrive,
-  Zap
+  Zap,
+  Radio,
+  Server,
+  ShieldCheck,
+  Activity
 } from 'lucide-react'
-import { statusApi } from '../lib/api'
+import { statusApi, transportApi } from '../lib/api'
+
+interface TransportSettings {
+  mode: 'AUTO' | 'GRPC' | 'REST'
+  grpcEnabled: boolean
+  grpcPort: number
+  maxMessageSizeMb: number
+  fallbackToRest: boolean
+  keepAliveTimeMs: number
+  connectionTimeoutMs: number
+  tlsEnabled: boolean
+  certChainPath: string
+  privateKeyPath: string
+}
 
 interface SystemSettings {
   embeddingProvider: string
@@ -65,11 +82,26 @@ export default function Settings() {
     ozoneBucket: 'claims'
   })
 
+  const [transportSettings, setTransportSettings] = useState<TransportSettings>({
+    mode: 'AUTO',
+    grpcEnabled: true,
+    grpcPort: 9095,
+    maxMessageSizeMb: 32,
+    fallbackToRest: true,
+    keepAliveTimeMs: 30000,
+    connectionTimeoutMs: 5000,
+    tlsEnabled: false,
+    certChainPath: '',
+    privateKeyPath: ''
+  })
+
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed'>('idle')
+  const [testingGrpc, setTestingGrpc] = useState(false)
+  const [grpcTestResult, setGrpcTestResult] = useState<{ status: string; message: string; latencyMs?: number } | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
 
   const fetchSettings = async () => {
@@ -78,6 +110,10 @@ export default function Settings() {
       const res = await statusApi.getSettings()
       if (res.data) {
         setSettings(res.data)
+      }
+      const tRes = await transportApi.getSettings()
+      if (tRes.data && tRes.data.settings) {
+        setTransportSettings(tRes.data.settings)
       }
     } catch (err) {
       console.error("Failed to load settings:", err)
@@ -98,6 +134,7 @@ export default function Settings() {
     setErrorMessage('')
     try {
       await statusApi.saveSettings(settings)
+      await transportApi.saveSettings(transportSettings)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err) {
@@ -105,6 +142,28 @@ export default function Settings() {
       setErrorMessage("Failed to persist updated settings.")
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const handleTestGrpc = async () => {
+    setTestingGrpc(true)
+    setGrpcTestResult(null)
+    try {
+      const res = await transportApi.testGrpc({ port: transportSettings.grpcPort })
+      if (res.data) {
+        setGrpcTestResult({
+          status: res.data.status,
+          message: res.data.message,
+          latencyMs: res.data.latencyMs
+        })
+      }
+    } catch (err: any) {
+      setGrpcTestResult({
+        status: 'FAILED',
+        message: 'Failed to trigger gRPC connectivity probe: ' + (err.message || 'Network error')
+      })
+    } finally {
+      setTestingGrpc(false)
     }
   }
 
@@ -551,6 +610,199 @@ export default function Settings() {
                       className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
                     />
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Card 4: Internal Communication & Transport Settings */}
+        <div className="card-container space-y-6">
+          <div className="flex items-center justify-between border-b border-border pb-4">
+            <div className="flex items-center gap-3">
+              <Server className="w-5 h-5 text-cyan-400" />
+              <div>
+                <h3 className="text-lg font-bold text-foreground">4. Internal Communication & Transport (gRPC / REST)</h3>
+                <p className="text-xs text-muted-foreground">Configure high-performance gRPC payload transport with dynamic REST fallback for internal node communication.</p>
+              </div>
+            </div>
+            <span className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase ${
+              transportSettings.mode === 'GRPC' 
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                : transportSettings.mode === 'AUTO'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                : 'bg-slate-800 text-slate-400 border border-slate-700'
+            }`}>
+              Mode: {transportSettings.mode}
+            </span>
+          </div>
+
+          <div className="space-y-6">
+            {/* Mode Selector */}
+            <div>
+              <label className="text-sm font-semibold mb-2 block">Transport Operational Mode</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* AUTO */}
+                <div 
+                  onClick={() => setTransportSettings({ ...transportSettings, mode: 'AUTO', grpcEnabled: true })}
+                  className={`p-4 border rounded-lg flex flex-col justify-between cursor-pointer transition-all ${
+                    transportSettings.mode === 'AUTO'
+                      ? 'border-cyan-500/80 bg-cyan-500/10 ring-1 ring-cyan-500/30'
+                      : 'border-border bg-slate-900/30 hover:border-border-50 opacity-70'
+                  }`}
+                >
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-cyan-400" />
+                      AUTO (Recommended)
+                    </span>
+                    <span className="text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold">gRPC + REST Fallback</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Attempts high-speed gRPC streams first. Automatically falls back to HTTP/REST payload transport if gRPC is unavailable.
+                  </p>
+                </div>
+
+                {/* Strict gRPC */}
+                <div 
+                  onClick={() => setTransportSettings({ ...transportSettings, mode: 'GRPC', grpcEnabled: true })}
+                  className={`p-4 border rounded-lg flex flex-col justify-between cursor-pointer transition-all ${
+                    transportSettings.mode === 'GRPC'
+                      ? 'border-emerald-500/80 bg-emerald-500/10 ring-1 ring-emerald-500/30'
+                      : 'border-border bg-slate-900/30 hover:border-border-50 opacity-70'
+                  }`}
+                >
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-emerald-400" />
+                      GRPC (Strict)
+                    </span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-mono font-bold">Strict High Performance</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Enforces binary Protobuf gRPC streaming across all core processing nodes. Highest throughput and lowest CPU serialization overhead.
+                  </p>
+                </div>
+
+                {/* REST Only */}
+                <div 
+                  onClick={() => setTransportSettings({ ...transportSettings, mode: 'REST', grpcEnabled: false })}
+                  className={`p-4 border rounded-lg flex flex-col justify-between cursor-pointer transition-all ${
+                    transportSettings.mode === 'REST'
+                      ? 'border-slate-500/80 bg-slate-800/40 ring-1 ring-slate-500/30'
+                      : 'border-border bg-slate-900/30 hover:border-border-50 opacity-70'
+                  }`}
+                >
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                      <Globe className="w-4 h-4 text-slate-400" />
+                      REST (Standard)
+                    </span>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded font-mono font-bold">HTTP/1.1 JSON</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Disables internal gRPC server and utilizes standard HTTP/REST JSON endpoints. Ideal for simple local testing.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Config Fields */}
+            {transportSettings.mode !== 'REST' && (
+              <div className="space-y-6 pt-4 border-t border-border/40 animate-in fade-in duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground">gRPC Server Port</label>
+                    <input 
+                      type="number"
+                      value={transportSettings.grpcPort}
+                      onChange={(e) => setTransportSettings({ ...transportSettings, grpcPort: parseInt(e.target.value) || 9095 })}
+                      placeholder="9095"
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground">Max Message Size (MB)</label>
+                    <input 
+                      type="number"
+                      value={transportSettings.maxMessageSizeMb}
+                      onChange={(e) => setTransportSettings({ ...transportSettings, maxMessageSizeMb: parseInt(e.target.value) || 32 })}
+                      placeholder="32"
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground">Connection Timeout (ms)</label>
+                    <input 
+                      type="number"
+                      value={transportSettings.connectionTimeoutMs}
+                      onChange={(e) => setTransportSettings({ ...transportSettings, connectionTimeoutMs: parseInt(e.target.value) || 5000 })}
+                      placeholder="5000"
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Checkboxes & Resilience */}
+                <div className="p-4 bg-slate-950/40 border border-border/50 rounded-lg space-y-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      checked={transportSettings.fallbackToRest}
+                      onChange={(e) => setTransportSettings({ ...transportSettings, fallbackToRest: e.target.checked })}
+                      className="w-4 h-4 rounded border-border text-cyan-500 focus:ring-cyan-500/50 bg-background"
+                    />
+                    <div>
+                      <span className="text-sm font-semibold text-foreground">Auto-fallback to HTTP/REST on Channel Timeout or Error</span>
+                      <p className="text-xs text-muted-foreground">Guarantees zero document loss by instantly rerouting failed gRPC chunks over HTTP/REST.</p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 cursor-pointer pt-2 border-t border-border/30">
+                    <input 
+                      type="checkbox"
+                      checked={transportSettings.tlsEnabled}
+                      onChange={(e) => setTransportSettings({ ...transportSettings, tlsEnabled: e.target.checked })}
+                      className="w-4 h-4 rounded border-border text-cyan-500 focus:ring-cyan-500/50 bg-background"
+                    />
+                    <div>
+                      <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                        Enable TLS / mTLS Transport Encryption
+                      </span>
+                      <p className="text-xs text-muted-foreground">Encrypt inter-node gRPC channels using server certificates and private keys.</p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Diagnostic Test Probe */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleTestGrpc}
+                    disabled={testingGrpc}
+                    className="btn-secondary flex items-center gap-2 px-4 py-2 text-sm font-medium"
+                  >
+                    {testingGrpc ? <Loader2 className="w-4 h-4 animate-spin text-cyan-400" /> : <Activity className="w-4 h-4 text-cyan-400" />}
+                    Test gRPC Connectivity
+                  </button>
+
+                  {grpcTestResult && (
+                    <div className={`p-3 rounded-lg border text-xs flex items-center gap-2 animate-in fade-in duration-200 ${
+                      grpcTestResult.status === 'SUCCESS'
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                        : grpcTestResult.status === 'FALLBACK'
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                        : 'bg-red-500/10 border-red-500/30 text-red-300'
+                    }`}>
+                      {grpcTestResult.status === 'SUCCESS' && <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
+                      {grpcTestResult.status === 'FALLBACK' && <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />}
+                      {grpcTestResult.status === 'FAILED' && <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />}
+                      <span>{grpcTestResult.message}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

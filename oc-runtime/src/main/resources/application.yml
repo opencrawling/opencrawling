@@ -103,6 +103,24 @@ spring:
     template:
       observation-enabled: ${OPENCRAWLING_OBSERVABILITY_ENABLED:true}
 
+  grpc:
+    server:
+      port: 9095
+    client:
+      channel:
+        internal:
+          target: "static://127.0.0.1:9095"
+
+opencrawling:
+  transport:
+    mode: AUTO # Options: AUTO, GRPC, REST
+    grpc:
+      enabled: true
+      port: 9095
+      max-message-size: 33554432
+      fallback-to-rest: true
+      keep-alive-time-ms: 30000
+
 management:
   endpoints:
     web:

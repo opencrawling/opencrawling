@@ -20,48 +20,46 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+
     <parent>
         <groupId>org.opencrawling</groupId>
         <artifactId>opencrawling-parent</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>oc-core</artifactId>
+    <artifactId>oc-grpc-api</artifactId>
     <packaging>jar</packaging>
 
-    <name>OpenCrawling - Core</name>
+    <name>OpenCrawling - gRPC API &amp; Protobuf Contracts</name>
 
     <dependencies>
         <dependency>
-            <groupId>org.opencrawling</groupId>
-            <artifactId>oc-grpc-api</artifactId>
-            <version>${project.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-grpc-server</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
+            <artifactId>spring-boot-starter-grpc-client</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-autoconfigure</artifactId>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
         </dependency>
         <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>s3</artifactId>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.samskivert</groupId>
-            <artifactId>jmustache</artifactId>
-            <version>1.16</version>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
+            <groupId>javax.annotation</groupId>
+            <artifactId>javax.annotation-api</artifactId>
         </dependency>
     </dependencies>
 </project>

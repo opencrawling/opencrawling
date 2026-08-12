@@ -39,6 +39,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-grpc-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
