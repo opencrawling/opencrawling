@@ -37,7 +37,7 @@
         <dependency>
             <groupId>org.opencrawling</groupId>
             <artifactId>oc-java-client-sdk</artifactId>
-            <version>${project.version}</version>
+            <version>${oc-java-client-sdk.version}</version>
         </dependency>
 
         <!-- Picocli Command Line Framework -->
