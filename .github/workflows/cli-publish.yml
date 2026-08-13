@@ -1,0 +1,177 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Publish OpenCrawling CLI (oc-cli)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version for oc-cli (e.g. 1.0.0)'
+        required: false
+        default: '1.0.0'
+
+permissions: read-all
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-test-cli:
+    name: Build & Test CLI Executable
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build & Test CLI Module
+        run: |
+          mvn clean package -pl oc-cli
+
+      - name: Run CLI Integration Test Script
+        run: |
+          chmod +x scripts/test-cli.sh
+          ./scripts/test-cli.sh
+
+      - name: Upload CLI Executable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-cli-jar
+          path: oc-cli/target/oc-cli-*.jar
+
+  publish-cli-docker:
+    name: Build & Push CLI Docker Image (GHCR)
+    runs-on: ubuntu-latest
+    needs: build-and-test-cli
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Downcase repository owner
+        id: repo-owner
+        run: |
+          echo "owner=${OWNER,,}" >> $GITHUB_OUTPUT
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Metadata for CLI Image
+        id: meta-cli
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/oc-cli
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+
+      - name: Build and Push CLI Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cli
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-cli.outputs.tags }}
+          labels: ${{ steps.meta-cli.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-github-release-assets:
+    name: Attach Assets to GitHub Release
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: build-and-test-cli
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download CLI Executable Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oc-cli-jar
+          path: release-assets/
+
+      - name: Upload Assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/oc-cli-*.jar
+
+  publish-homebrew-tap:
+    name: Update Homebrew Tap Formula
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [build-and-test-cli, publish-github-release-assets]
+    steps:
+      - name: Download CLI Executable Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oc-cli-jar
+          path: release-assets/
+
+      - name: Calculate SHA256 Checksum
+        id: shasum
+        run: |
+          JAR_FILE=$(ls release-assets/oc-cli-*.jar | head -n 1)
+          SHA=$(sha256sum "$JAR_FILE" | awk '{print $1}')
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG_NAME#v}"
+          echo "sha256=$SHA" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew Tap Formula
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: oc
+          formula-path: Formula/oc.rb
+          homebrew-tap: opencrawling/homebrew-tap
+          download-url: https://github.com/opencrawling/opencrawling/releases/download/${{ github.ref_name }}/oc-cli-${{ steps.shasum.outputs.version }}.jar
+          download-sha256: ${{ steps.shasum.outputs.sha256 }}
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+

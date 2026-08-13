@@ -42,9 +42,10 @@ COPY oc-connector-archetypes/opencrawling-archetype-repository-connector/pom.xml
 COPY oc-connector-archetypes/opencrawling-archetype-output-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-output-connector/
 COPY oc-connector-archetypes/opencrawling-archetype-transformation-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-transformation-connector/
 COPY oc-java-client-sdk/pom.xml oc-java-client-sdk/
+COPY oc-cli/pom.xml oc-cli/
 
 # Download maven dependencies first (saves time on rebuilds if code changes but dependencies do not)
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli
 
 # Copy all source files
 COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
@@ -65,6 +66,7 @@ COPY oc-vespa-output-connector/vespa-app/ /app/oc-vespa-output-connector/vespa-a
 COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/
+COPY oc-cli/src/ /app/oc-cli/src/
 
 # Copy frontend source files (needed by frontend-maven-plugin in oc-admin-ui)
 COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
@@ -74,7 +76,7 @@ COPY oc-admin-ui/package.json oc-admin-ui/package-lock.json oc-admin-ui/postcss.
 COPY oc-runtime/src/ /app/oc-runtime/src/
 
 # Build and package the application
-RUN mvn clean package -DskipTests
+RUN mvn clean package -pl oc-runtime -am -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:25-jre-alpine

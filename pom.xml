@@ -106,10 +106,13 @@
         <module>oc-camunda-repository-connector</module>
         <module>oc-connector-archetypes</module>
         <module>oc-java-client-sdk</module>
+        <module>oc-cli</module>
     </modules>
 
     <properties>
         <java.version>25</java.version>
+        <picocli.version>4.7.6</picocli.version>
+        <jline.version>3.26.1</jline.version>
         <spring-ai.version>2.0.0</spring-ai.version>
         <tika.version>3.3.1</tika.version>
         <commons-io.version>2.22.0</commons-io.version>
