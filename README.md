@@ -27,6 +27,7 @@
 [![gRPC Transport](https://img.shields.io/badge/gRPC-Internal_Transport-4285F4.svg?style=flat&logo=grpc&logoColor=white)](#-grpc-high-performance-internal-transport)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-AIOps-7B42BC.svg?style=flat&logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
 [![Maven Archetypes](https://img.shields.io/badge/Maven_Archetypes-Supported-C71A36.svg?style=flat&logo=apachemaven&logoColor=white)](#-custom-connectors-maven-archetypes-suite)
+[![CLI](https://img.shields.io/badge/CLI-oc--cli-4B0082.svg?style=flat&logo=gnu-bash&logoColor=white)](#-opencrawling-cli-oc)
 [![Maven Central](https://img.shields.io/maven-central/v/org.opencrawling.archetypes/opencrawling-connector-archetypes.svg?style=flat&logo=apachemaven&logoColor=white)](https://central.sonatype.com/artifact/org.opencrawling.archetypes/opencrawling-connector-archetypes)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/opencrawling/opencrawling/badge)](https://scorecard.dev/viewer/?uri=github.com/opencrawling/opencrawling)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/opencrawling/opencrawling)
@@ -150,6 +151,49 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 #### 🪵 Real-Time Ingestion Logs
 ![Real-Time Activity Logs](images/screenshots/ui-real-time-activity-logs.png)
 *Inspect live Java logging streams and Kafka consumer offsets to troubleshoot connector execution.*
+
+---
+
+## 💻 OpenCrawling CLI (`oc`)
+
+The **OpenCrawling CLI** (`oc-cli`, binary `oc`) is a terminal-native, enterprise-grade command-line interface built with **Java 25**, **Picocli**, and **JLine** for DevSecOps automation, CI/CD pipeline integration, connector health inspection, offline OIS schema validation, and terminal ingestion management.
+
+### 🚀 Quick Start
+```bash
+# Build the CLI executable JAR
+mvn clean package -pl oc-cli
+
+# Run CLI commands
+java --enable-preview -jar oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar system status
+```
+
+### 🐳 Docker Container Execution
+```bash
+docker run --rm -it ghcr.io/opencrawling/oc-cli:latest --help
+docker run --rm --network host ghcr.io/opencrawling/oc-cli:latest system status
+```
+
+### 🍺 Homebrew Installation (macOS / Linux)
+```bash
+brew tap opencrawling/tap
+brew install oc
+oc --version
+```
+
+### 📋 Command Summary Matrix
+
+| Command | Subcommands | Description |
+|---|---|---|
+| `oc job` | `list`, `start`, `status`, `pause`, `stop`, `delete`, `create` | Manage crawling and data ingestion jobs. |
+| `oc connector` | `list`, `check`, `create`, `delete` | Inspect connector health and registry definitions. |
+| `oc system` | `status`, `logs`, `settings`, `throughput` | Query runtime component health and settings. |
+| `oc aiops` | `rca`, `spans`, `errors`, `metrics` | Query OpenTelemetry traces and AI Root Cause Analysis. |
+| `oc copilot` | `narrativize`, `mock` | Generate natural language Mustache templates from schemas. |
+| `oc archetype` | `init` | Scaffold custom repository/output connector Maven projects. |
+| `oc schema` | `validate` | Validate Open Ingestion Standard (OIS) schemas offline. |
+| `oc config` | `set`, `get`, `context` | Manage active server URL contexts and credentials. |
+
+> For complete flag details, environment variables, and GitHub Actions workflow integration examples, visit the [OpenCrawling CLI Wiki Documentation](https://github.com/opencrawling/opencrawling/wiki/OpenCrawling-CLI).
 
 ---
 
@@ -692,6 +736,16 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-observability.sh
     ```
     This script tests the telemetry ingestion pipeline, spinning up Jaeger, the OTel Collector, and Prometheus, executing a JUnit-based trace emitter, and verifying trace propagation using Jaeger's query API.
+
+*   **OpenCrawling CLI (oc) Integration Test Suites**:
+    ```bash
+    # Local CLI Integration Suite
+    ./scripts/test-cli.sh
+
+    # Decoupled Multi-Container CLI Integration Suite
+    ./scripts/test-cli-decoupled.sh
+    ```
+    These scripts compile `oc-cli`, execute end-to-end command suite assertions (job creation, connector checks, system metrics, AIOps traces, schema validation, and archetype scaffolding), and verify live CLI interoperability against decoupled multi-container clusters.
 
 ---
 
