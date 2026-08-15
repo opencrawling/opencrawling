@@ -46,7 +46,7 @@ jobs:
       # Extract metadata (tags, labels) for Backend
       - name: Extract metadata for Backend
         id: meta-backend
-        uses: docker/metadata-action@v6.2.0
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/oc-mcp-server
           tags: |
@@ -72,7 +72,7 @@ jobs:
       # Extract metadata (tags, labels) for Frontend
       - name: Extract metadata for Frontend
         id: meta-frontend
-        uses: docker/metadata-action@v6.2.0
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/oc-admin-ui
           tags: |
