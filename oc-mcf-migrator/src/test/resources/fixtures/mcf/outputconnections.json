@@ -1,0 +1,42 @@
+{"outputconnection": [
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Alfresco"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.agents.output.bfsioutput.AlfrescoBfsiOutputConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "configuration", "_children_": [
+      {"_type_": "_PARAMETER_", "_value_": "streaming", "_attribute_name": "ingestMode"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "es-1"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.agents.output.elasticsearch.ElasticSearchConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "configuration"}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "es-2"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.agents.output.elasticsearch.ElasticSearchConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "configuration"}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Mfiles"},
+    {"_type_": "class_name", "_value_": "com.speedysearch.manifoldcf.mfiles.output.MFilesOutputConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "configuration"}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Vespa Federated Index"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.agents.output.vespa.VespaOutputConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "configuration", "_children_": [
+      {"_type_": "_PARAMETER_", "_value_": "http://vespa:8080", "_attribute_name": "vespaEndpoint"},
+      {"_type_": "_PARAMETER_", "_value_": "http://embedder:8000/embed", "_attribute_name": "vespaEmbeddingEndpoint"}
+    ]}
+  ]}
+]}
