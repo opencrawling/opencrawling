@@ -40,6 +40,16 @@
             <version>${oc-java-client-sdk.version}</version>
         </dependency>
 
+        <!-- ManifoldCF migration engine — reused as a plain library dependency (see oc-mcf-migrator's
+             own pom for why it publishes an unshaded main artifact) to back `oc mcf`. Versioned
+             independently of the platform, like oc-java-client-sdk, since it has its own release
+             cadence — not `${project.version}`. -->
+        <dependency>
+            <groupId>org.opencrawling</groupId>
+            <artifactId>oc-mcf-migrator</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
+        </dependency>
+
         <!-- Picocli Command Line Framework -->
         <dependency>
             <groupId>info.picocli</groupId>
