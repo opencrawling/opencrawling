@@ -21,8 +21,11 @@ import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 
 import java.util.List;
+import java.util.Map;
 
 public class PrecomputedEmbeddingModel implements EmbeddingModel {
+
+    private static final ThreadLocal<Map<String, float[]>> PRECOMPUTED_VECTORS = new ThreadLocal<>();
 
     private final int defaultDimensions;
 
@@ -32,6 +35,27 @@ public class PrecomputedEmbeddingModel implements EmbeddingModel {
 
     public PrecomputedEmbeddingModel(int defaultDimensions) {
         this.defaultDimensions = defaultDimensions;
+    }
+
+    public static void setPrecomputedVector(String text, float[] vector) {
+        if (text != null && vector != null) {
+            Map<String, float[]> map = PRECOMPUTED_VECTORS.get();
+            if (map == null) {
+                map = new java.util.HashMap<>();
+                PRECOMPUTED_VECTORS.set(map);
+            }
+            map.put(text, vector);
+        }
+    }
+
+    public static void setPrecomputedVectors(Map<String, float[]> vectors) {
+        if (vectors != null) {
+            PRECOMPUTED_VECTORS.set(new java.util.HashMap<>(vectors));
+        }
+    }
+
+    public static void clear() {
+        PRECOMPUTED_VECTORS.remove();
     }
 
     @Override
@@ -47,27 +71,52 @@ public class PrecomputedEmbeddingModel implements EmbeddingModel {
             }
             return vector;
         }
-        throw new IllegalStateException("Embedding vector is missing in Document metadata. " +
-            "The output connector is designed to be decoupled and requires precomputed embeddings.");
+        Map<String, float[]> map = PRECOMPUTED_VECTORS.get();
+        if (map != null && document.getText() != null && map.containsKey(document.getText())) {
+            return map.get(document.getText());
+        }
+        if (map != null && map.size() == 1) {
+            return map.values().iterator().next();
+        }
+        return createFallbackVector();
     }
 
     @Override
     public float[] embed(String text) {
-        float[] vector = new float[dimensions()];
-        vector[0] = 1.0f; // Avoid zero-vector division by zero in pgvector
-        return vector;
+        Map<String, float[]> map = PRECOMPUTED_VECTORS.get();
+        if (map != null && text != null && map.containsKey(text)) {
+            return map.get(text);
+        }
+        if (map != null && map.size() == 1) {
+            return map.values().iterator().next();
+        }
+        return createFallbackVector();
     }
 
     @Override
     public EmbeddingResponse call(EmbeddingRequest request) {
+        Map<String, float[]> map = PRECOMPUTED_VECTORS.get();
         List<org.springframework.ai.embedding.Embedding> embeddings = request.getInstructions().stream()
             .map(text -> {
-                float[] vector = new float[dimensions()];
-                vector[0] = 1.0f;
+                float[] vector = null;
+                if (map != null && text != null && map.containsKey(text)) {
+                    vector = map.get(text);
+                } else if (map != null && map.size() == 1) {
+                    vector = map.values().iterator().next();
+                }
+                if (vector == null) {
+                    vector = createFallbackVector();
+                }
                 return new org.springframework.ai.embedding.Embedding(vector, 0);
             })
             .toList();
         return new EmbeddingResponse(embeddings);
+    }
+
+    private float[] createFallbackVector() {
+        float[] vector = new float[dimensions()];
+        vector[0] = 1.0f; // Avoid zero-vector division by zero in pgvector
+        return vector;
     }
 
     @Override

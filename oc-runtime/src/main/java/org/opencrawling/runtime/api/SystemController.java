@@ -45,10 +45,10 @@ public class SystemController {
             @Autowired(required = false) TelemetryTraceStore traceStore) {
         this.jdbcTemplate = jdbcTemplate;
         this.traceStore = traceStore;
-
+        String defaultOllamaUrl = System.getenv().getOrDefault("SPRING_AI_OLLAMA_BASE_URL", "http://127.0.0.1:11434");
         SystemSettingsDTO defaultSettings = new SystemSettingsDTO(
             "Ollama",
-            "http://127.0.0.1:11434",
+            defaultOllamaUrl,
             "mxbai-embed-large",
             1024,
             "TokenTextSplitter",
@@ -135,9 +135,37 @@ public class SystemController {
     }
 
     private String checkOllama() {
+        String envBaseUrl = System.getenv("SPRING_AI_OLLAMA_BASE_URL");
+        String settingsUrl = (settings != null && settings.ollamaBaseUrl() != null && !settings.ollamaBaseUrl().isBlank())
+                ? settings.ollamaBaseUrl() : null;
+
+        List<String> candidates = new ArrayList<>();
+        if (envBaseUrl != null && !envBaseUrl.isBlank()) {
+            candidates.add(envBaseUrl);
+        }
+        if (settingsUrl != null && !candidates.contains(settingsUrl)) {
+            candidates.add(settingsUrl);
+        }
+        if (!candidates.contains("http://ollama:11434")) {
+            candidates.add("http://ollama:11434");
+        }
+        if (!candidates.contains("http://127.0.0.1:11434")) {
+            candidates.add("http://127.0.0.1:11434");
+        }
+        if (!candidates.contains("http://host.docker.internal:11434")) {
+            candidates.add("http://host.docker.internal:11434");
+        }
+
+        for (String url : candidates) {
+            if (pingOllama(url)) {
+                return "UP";
+            }
+        }
+        return "DOWN";
+    }
+
+    private boolean pingOllama(String baseUrl) {
         try {
-            String baseUrl = (settings != null && settings.ollamaBaseUrl() != null && !settings.ollamaBaseUrl().isBlank())
-                    ? settings.ollamaBaseUrl() : "http://127.0.0.1:11434";
             java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
                     .connectTimeout(java.time.Duration.ofMillis(1500))
                     .build();
@@ -147,9 +175,9 @@ public class SystemController {
                     .GET()
                     .build();
             java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200 ? "UP" : "DOWN";
+            return response.statusCode() == 200;
         } catch (Exception e) {
-            return "DOWN";
+            return false;
         }
     }
 

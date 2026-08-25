@@ -131,6 +131,7 @@ services:
     container_name: oc-crawler-service-flowable
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=flowable
       - OPENCRAWLING_CONNECTOR_TYPE=flowable
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_ENABLED=true
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_ENDPOINT=http://flowable:8080/flowable-rest/service

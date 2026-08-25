@@ -166,6 +166,8 @@ services:
     container_name: oc-crawler-service
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/data
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
@@ -186,6 +188,7 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: "no"
@@ -198,6 +201,8 @@ services:
     container_name: oc-ingestion-consumer-service
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
@@ -211,6 +216,7 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -225,6 +231,8 @@ services:
       - "8082:8082"
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
@@ -237,6 +245,7 @@ services:
       - kafka
       - ollama
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -249,6 +258,8 @@ services:
     container_name: oc-writer-service
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
@@ -258,6 +269,7 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped

@@ -51,6 +51,18 @@ public class OpenCrawlingApplication {
     @Value("${spring.opencrawling.repository-connector-type:filesystem}")
     private String repositoryConnectorType;
 
+    @Value("${opencrawling.consumer.ingestion.enabled:true}")
+    private boolean consumerIngestionEnabled;
+
+    @Value("${opencrawling.consumer.embedding.enabled:true}")
+    private boolean consumerEmbeddingEnabled;
+
+    @Value("${opencrawling.consumer.writer.enabled:true}")
+    private boolean consumerWriterEnabled;
+
+    @Value("${opencrawling.mcp.server.enabled:true}")
+    private boolean mcpServerEnabled;
+
     @SuppressWarnings("unused")
     @Bean
     @Profile("!test")
@@ -64,13 +76,9 @@ public class OpenCrawlingApplication {
 
             RepositoryConnector activeConnector = repositoryConnectors.stream()
                 .filter(c -> {
-                    if ("alfresco".equalsIgnoreCase(repositoryConnectorType)) {
-                        return c.getClass().getSimpleName().toLowerCase().contains("alfresco");
-                    } else if ("iceberg".equalsIgnoreCase(repositoryConnectorType)) {
-                        return c.getClass().getSimpleName().toLowerCase().contains("iceberg");
-                    } else {
-                        return c.getClass().getSimpleName().toLowerCase().contains("file");
-                    }
+                    String className = c.getClass().getSimpleName().toLowerCase();
+                    String connectorType = repositoryConnectorType.toLowerCase();
+                    return className.contains(connectorType) || (connectorType.contains("file") && className.contains("file"));
                 })
                 .findFirst()
                 .orElse(repositoryConnectors.isEmpty() ? null : repositoryConnectors.get(0));
@@ -84,17 +92,26 @@ public class OpenCrawlingApplication {
             log.info("Detected Output Connector: {}", outputConnector.getName());
 
             if (crawlOnStartup) {
-                if (scanPath == null || scanPath.isBlank()) {
+                String targetPath = (scanPath != null && !scanPath.isBlank()) ? scanPath : "default";
+                if ((scanPath == null || scanPath.isBlank()) && 
+                    !"camunda".equalsIgnoreCase(repositoryConnectorType) && 
+                    !"flowable".equalsIgnoreCase(repositoryConnectorType)) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
-                    log.info("Triggering sample crawl job on path: {} with transformation connector: {}", scanPath, transformationConnector);
-                    orchestrator.runJob(activeConnector, outputConnector, scanPath, transformationConnector);
+                    log.info("Triggering sample crawl job on target: {} with transformation connector: {}", targetPath, transformationConnector);
+                    orchestrator.runJob(activeConnector, outputConnector, targetPath, transformationConnector);
                 }
             } else {
                 log.info("Sample crawl job on startup is disabled. Use properties to enable it (spring.opencrawling.crawl-on-startup=true).");
             }
             
             log.info("--- Bootstrap sequence completed ---");
+
+            boolean isStandaloneCrawler = !consumerIngestionEnabled && !consumerEmbeddingEnabled && !consumerWriterEnabled && !mcpServerEnabled;
+            if (isStandaloneCrawler) {
+                log.info("Standalone crawler job completed. Exiting process cleanly.");
+                System.exit(0);
+            }
         };
     }
 }

@@ -103,13 +103,14 @@ export default function Settings() {
   const [testingGrpc, setTestingGrpc] = useState(false)
   const [grpcTestResult, setGrpcTestResult] = useState<{ status: string; message: string; latencyMs?: number } | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  const [activeTab, setActiveTab] = useState<'embedding' | 'chunking' | 'storage' | 'transport'>('embedding')
 
   const fetchSettings = async () => {
     setIsLoading(true)
     try {
       const res = await statusApi.getSettings()
       if (res.data) {
-        setSettings(res.data)
+        setSettings(prev => ({ ...prev, ...res.data }))
       }
       const tRes = await transportApi.getSettings()
       if (tRes.data && tRes.data.settings) {
@@ -205,7 +206,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl animate-in fade-in duration-500 pb-20">
+    <div className="space-y-6 w-full max-w-full lg:max-w-7xl animate-in fade-in duration-500 pb-20">
       <div>
         <h1 className="text-2xl font-bold">Ingestion & Embedding Settings</h1>
         <p className="text-muted text-sm">Configure the artificial intelligence embedding models and chunk splitting parameters for vector storage ingestion.</p>
@@ -229,14 +230,50 @@ export default function Settings() {
         </div>
       )}
 
+      {/* Fluid Responsive Tab Bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-b border-border/80 pb-4">
+        {[
+          { id: 'embedding', label: 'Embedding Engine', icon: Cpu, badge: settings.embeddingProvider || 'Ollama' },
+          { id: 'chunking', label: 'Splitter & Chunker', icon: Layers, badge: settings.chunkerType || 'TokenTextSplitter' },
+          { id: 'storage', label: 'Claim-Check Storage', icon: HardDrive, badge: (settings.claimCheckStore || 'ozone').toUpperCase() },
+          { id: 'transport', label: 'Internal Transport', icon: Server, badge: transportSettings?.mode || 'AUTO' }
+        ].map((tab) => {
+          const Icon = tab.icon
+          const isActive = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center justify-between gap-2.5 px-4 py-3.5 rounded-lg transition-all border text-left cursor-pointer w-full min-w-0 ${
+                isActive
+                  ? 'border-cyan-500/80 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 font-semibold shadow-md'
+                  : 'border-border/60 bg-slate-900/30 text-muted-foreground hover:text-foreground hover:bg-slate-900/60 hover:border-border'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0 truncate">
+                <Icon className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${isActive ? 'text-cyan-400' : 'text-muted-foreground'}`} />
+                <span className="text-xs sm:text-sm lg:text-base font-medium tracking-tight truncate">{tab.label}</span>
+              </div>
+              <span className={`text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-md uppercase font-bold flex-shrink-0 ${
+                isActive ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700/50'
+              }`}>
+                {tab.badge}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
       <form onSubmit={handleSave} className="space-y-8">
         
         {/* Card 1: Embedding Provider Config */}
-        <div className="card-container space-y-6">
-          <div className="flex items-center gap-3 border-b border-border pb-4">
-            <Cpu className="w-5 h-5 text-cyan-400" />
-            <div>
-              <h3 className="text-lg font-bold text-foreground">1. Embedding Engine Settings</h3>
+        {activeTab === 'embedding' && (
+          <div className="card-container space-y-6 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3 border-b border-border pb-4">
+              <Cpu className="w-5 h-5 text-cyan-400" />
+              <div>
+                <h3 className="text-lg font-bold text-foreground">1. Embedding Engine Settings</h3>
               <p className="text-xs text-muted-foreground">Select and configure the embedding model provider.</p>
             </div>
           </div>
@@ -369,9 +406,11 @@ export default function Settings() {
             )}
           </div>
         </div>
+        )}
 
         {/* Card 2: Chunking Config */}
-        <div className="card-container space-y-6">
+        {activeTab === 'chunking' && (
+        <div className="card-container space-y-6 animate-in fade-in duration-200">
           <div className="flex items-center gap-3 border-b border-border pb-4">
             <Layers className="w-5 h-5 text-cyan-400" />
             <div>
@@ -448,9 +487,11 @@ export default function Settings() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Card 3: Apache Ozone Storage & Client Selection */}
-        <div className="card-container space-y-6">
+        {activeTab === 'storage' && (
+        <div className="card-container space-y-6 animate-in fade-in duration-200">
           <div className="flex items-center gap-3 border-b border-border pb-4">
             <HardDrive className="w-5 h-5 text-amber-400" />
             <div>
@@ -615,9 +656,11 @@ export default function Settings() {
             )}
           </div>
         </div>
+        )}
 
         {/* Card 4: Internal Communication & Transport Settings */}
-        <div className="card-container space-y-6">
+        {activeTab === 'transport' && (
+        <div className="card-container space-y-6 animate-in fade-in duration-200">
           <div className="flex items-center justify-between border-b border-border pb-4">
             <div className="flex items-center gap-3">
               <Server className="w-5 h-5 text-cyan-400" />
@@ -808,6 +851,7 @@ export default function Settings() {
             )}
           </div>
         </div>
+        )}
 
         {/* Form Actions footer */}
         <div className="flex justify-end gap-3">

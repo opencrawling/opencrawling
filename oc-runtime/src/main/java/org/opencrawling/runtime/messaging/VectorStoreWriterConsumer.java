@@ -25,6 +25,8 @@ import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
+import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,7 +88,14 @@ public class VectorStoreWriterConsumer {
                 };
             }
             
-            targetStore.add(List.of(doc));
+            try {
+                if (message.embedding() != null) {
+                    PrecomputedEmbeddingModel.setPrecomputedVector(message.text(), message.embedding());
+                }
+                targetStore.add(List.of(doc));
+            } finally {
+                PrecomputedEmbeddingModel.clear();
+            }
             long duration = System.currentTimeMillis() - startTime;
 
             if (traceStore != null) {

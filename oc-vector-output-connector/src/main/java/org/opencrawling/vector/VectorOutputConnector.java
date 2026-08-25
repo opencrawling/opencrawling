@@ -34,6 +34,11 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
 
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
+
 @Component
 @Primary
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "pgvector", matchIfMissing = true)
@@ -43,11 +48,20 @@ public class VectorOutputConnector implements OutputConnector {
     private final VectorStore vectorStore;
     private final TokenTextSplitter textSplitter;
     private final Tika tika;
+    private final EmbeddingModel embeddingModel;
 
-    public VectorOutputConnector(VectorStore vectorStore) {
+    @Autowired
+    public VectorOutputConnector(
+            VectorStore vectorStore,
+            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
         this.vectorStore = vectorStore;
+        this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.tika = new Tika();
+    }
+
+    public VectorOutputConnector(VectorStore vectorStore) {
+        this(vectorStore, null);
     }
 
     @Override
@@ -122,9 +136,29 @@ public class VectorOutputConnector implements OutputConnector {
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
                 log.info("Split document into {} chunks for vector store.", chunks.size());
                 
-                // Persist the embedded chunks to the configured Vector Store
-                vectorStore.add(chunks);
-                log.info("Successfully added document {} to Vector Store.", document.id());
+                Map<String, float[]> precomputedVectors = new HashMap<>();
+                if (embeddingModel != null) {
+                    for (Document chunk : chunks) {
+                        try {
+                            float[] vector = embeddingModel.embed(chunk.getText());
+                            chunk.getMetadata().put("embedding", vector);
+                            precomputedVectors.put(chunk.getText(), vector);
+                        } catch (Exception e) {
+                            log.warn("Failed to compute embedding for chunk in document {}: {}", document.id(), e.getMessage());
+                        }
+                    }
+                }
+
+                try {
+                    if (!precomputedVectors.isEmpty()) {
+                        PrecomputedEmbeddingModel.setPrecomputedVectors(precomputedVectors);
+                    }
+                    // Persist the embedded chunks to the configured Vector Store
+                    vectorStore.add(chunks);
+                    log.info("Successfully added document {} to Vector Store.", document.id());
+                } finally {
+                    PrecomputedEmbeddingModel.clear();
+                }
                 
             } catch (Exception e) {
                 log.error("Error processing document {}: {}", document.id(), e.getMessage());

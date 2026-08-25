@@ -47,7 +47,10 @@ services:
     volumes:
       - opencrawling-pgdata-camunda:/var/lib/postgresql/data
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
       interval: 5s
@@ -131,6 +134,9 @@ services:
     container_name: oc-crawler-service-camunda
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=camunda
       - OPENCRAWLING_CONNECTOR_TYPE=camunda
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_ENABLED=true
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_URL=http://camunda:8080/engine-rest
@@ -146,9 +152,14 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - camunda
-      - postgres-vector
+      kafka:
+        condition: service_started
+      camunda:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: on-failure
@@ -161,6 +172,8 @@ services:
     container_name: oc-ingestion-consumer-service-camunda
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
@@ -168,8 +181,12 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - postgres-vector
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -184,6 +201,8 @@ services:
       - "8082:8082"
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
@@ -192,9 +211,14 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - ollama
-      - postgres-vector
+      kafka:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -207,6 +231,8 @@ services:
     container_name: oc-writer-service-camunda
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
@@ -214,8 +240,12 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - postgres-vector
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -240,8 +270,10 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - redis
-      - postgres-vector
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       opencrawling-network:
         aliases:

@@ -85,8 +85,8 @@ WORKDIR /app
 # Copy the fat jar from the builder stage
 COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
 
-# Expose the port the backend runs on
-EXPOSE 8080
+# Expose the ports the backend runs on (8080 HTTP/REST, 9095 gRPC Transport)
+EXPOSE 8080 9095
 
 # Run the Spring Boot application enabling Java 25 preview features
 ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
