@@ -107,6 +107,7 @@
         <module>oc-connector-archetypes</module>
         <module>oc-java-client-sdk</module>
         <module>oc-cli</module>
+        <module>oc-mcf-migrator</module>
     </modules>
 
     <properties>

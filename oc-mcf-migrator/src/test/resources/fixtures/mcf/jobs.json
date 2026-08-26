@@ -1,0 +1,69 @@
+{"job": [
+  {"_children_": [
+    {"_type_": "id", "_value_": "1"},
+    {"_type_": "description", "_value_": "HR Documents to Vespa"},
+    {"_type_": "repository_connection", "_value_": "Alfresco HR Data"},
+    {"_type_": "document_specification", "enabledocumentprocessing": {"_attribute_value": "true"}},
+    {"_type_": "pipelinestage", "_children_": [
+      {"_type_": "stage_id", "_value_": "0"},
+      {"_type_": "stage_isoutput", "_value_": "true"},
+      {"_type_": "stage_connectionname", "_value_": "Vespa Federated Index"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "id", "_value_": "2"},
+    {"_type_": "description", "_value_": "Legal Documents to Vespa"},
+    {"_type_": "repository_connection", "_value_": "Alfresco Legal Documents"},
+    {"_type_": "document_specification", "enabledocumentprocessing": {"_attribute_value": "true"}},
+    {"_type_": "pipelinestage", "_children_": [
+      {"_type_": "stage_id", "_value_": "0"},
+      {"_type_": "stage_isoutput", "_value_": "true"},
+      {"_type_": "stage_connectionname", "_value_": "Vespa Federated Index"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "id", "_value_": "3"},
+    {"_type_": "description", "_value_": "Mfiles to Vespa"},
+    {"_type_": "repository_connection", "_value_": "Mfiles Source Repository"},
+    {"_type_": "document_specification", "enabledocumentprocessing": {"_attribute_value": "true"}},
+    {"_type_": "pipelinestage", "_children_": [
+      {"_type_": "stage_id", "_value_": "0"},
+      {"_type_": "stage_isoutput", "_value_": "true"},
+      {"_type_": "stage_connectionname", "_value_": "Vespa Federated Index"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "id", "_value_": "4"},
+    {"_type_": "description", "_value_": "Migration From SharePoint to Alfresco"},
+    {"_type_": "repository_connection", "_value_": "SharepointDrive"},
+    {"_type_": "document_specification", "startpoint": {
+      "_attribute_path": "/mnt/drive-a/files",
+      "_children_": [
+        {"_type_": "include", "_attribute_match": ".*\\.pdf", "_attribute_type": "file"}
+      ]
+    }},
+    {"_type_": "pipelinestage", "_children_": [
+      {"_type_": "stage_id", "_value_": "0"},
+      {"_type_": "stage_isoutput", "_value_": "true"},
+      {"_type_": "stage_connectionname", "_value_": "Alfresco"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "id", "_value_": "5"},
+    {"_type_": "description", "_value_": "SharePoint drive to Vespa"},
+    {"_type_": "repository_connection", "_value_": "SharepointDrive"},
+    {"_type_": "document_specification", "startpoint": {
+      "_attribute_path": "/mnt/drive-a/files",
+      "_children_": [
+        {"_type_": "include", "_attribute_match": "*", "_attribute_type": "file"},
+        {"_type_": "exclude", "_attribute_match": ".*", "_attribute_type": "file"},
+        {"_type_": "exclude", "_attribute_match": ".*", "_attribute_type": "directory"}
+      ]
+    }},
+    {"_type_": "pipelinestage", "_children_": [
+      {"_type_": "stage_id", "_value_": "0"},
+      {"_type_": "stage_isoutput", "_value_": "true"},
+      {"_type_": "stage_connectionname", "_value_": "Vespa Federated Index"}
+    ]}
+  ]}
+]}
