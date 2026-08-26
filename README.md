@@ -218,12 +218,12 @@ OpenCrawling incorporates **AI-Powered Observability (AIOps)** to automatically 
 
 ## ⚡ gRPC High-Performance Internal Transport
 
-OpenCrawling supports **gRPC as an optional, high-performance binary transport protocol** for internal component payload communication across microservices (e.g. `oc-repository-connectors`, `oc-core`, `oc-worker`, `oc-output-connectors`).
+OpenCrawling supports **gRPC as an optional, high-performance binary transport protocol** for internal component payload communication across microservices (e.g. `oc-repository-connectors`, `oc-core`, `oc-worker`, `oc-output-connectors`). By default, transport operates in **`AUTO`** mode.
 
 ### Key Features
 - **Up to 50% Payload Size Reduction**: Protobuf binary serialization compresses document metadata and chunk payload transport compared to verbose JSON strings.
 - **Protocol Modes (`AUTO`, `GRPC`, `REST`)**:
-  - **`AUTO` (Recommended)**: Attempts high-speed gRPC binary streaming over port `9095`. If unreachable or timing out, automatically falls back to HTTP/REST.
+  - **`AUTO` (Default / Recommended)**: Attempts high-speed gRPC binary streaming over port `9095`. If unreachable or timing out, automatically falls back to HTTP/REST.
   - **`GRPC` (Strict)**: Enforces Protobuf gRPC streaming across all processing nodes.
   - **`REST` (Standard)**: Disables gRPC server and uses standard HTTP/REST JSON endpoints.
 - **TLS / mTLS Encryption**: Supports certificate-based transport security for enterprise compliance (`tlsEnabled=true`).
