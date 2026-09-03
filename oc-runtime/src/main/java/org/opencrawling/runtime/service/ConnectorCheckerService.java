@@ -241,6 +241,17 @@ public class ConnectorCheckerService {
                 return new ConnectionCheckResult(false, "PostgreSQL connection returned invalid state for " + url, null);
             }
         } catch (Exception e) {
+            // Fallback for containerized deployments where localhost/127.0.0.1 resolves differently inside container network
+            if (url.contains("localhost") || url.contains("127.0.0.1")) {
+                for (String fallbackHost : java.util.List.of("postgres-vector-decoupled", "postgres")) {
+                    String fallbackUrl = url.replace("localhost", fallbackHost).replace("127.0.0.1", fallbackHost);
+                    try (Connection conn = DriverManager.getConnection(fallbackUrl, user, pass)) {
+                        if (conn.isValid(5)) {
+                            return new ConnectionCheckResult(true, "Successfully connected to PostgreSQL PGVector database at " + fallbackUrl + ".", null);
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
             return new ConnectionCheckResult(false, "Failed to connect to PostgreSQL database at " + url + ": " + e.getMessage(), e.toString());
         }
     }
