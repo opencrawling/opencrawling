@@ -131,7 +131,7 @@
         <maven-failsafe-plugin.version>3.5.5</maven-failsafe-plugin.version>
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         
-        <aws-sdk.version>2.30.34</aws-sdk.version>
+        <aws-sdk.version>2.49.2</aws-sdk.version>
         <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
         <skipITs>true</skipITs>
         <gpg.skip>true</gpg.skip>
