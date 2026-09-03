@@ -60,6 +60,12 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- SLF4J NOP Logger Provider -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-nop</artifactId>
+        </dependency>
+
         <!-- Testing Dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
