@@ -118,6 +118,17 @@ class LiveSystemIntegrationTest {
 
             ThroughputMetricsResponse metrics = client.observability().getMetrics("FileSystem_Local");
             assertThat(metrics).isNotNull();
+
+            // 6. OIS Document Lifecycle Actions & Tombstone Deletes Integration Assertion
+            DocumentPayload tombstonePayload = DocumentPayload.createDeleteTombstone(
+                "sdk-live-tombstone-101",
+                java.util.Map.of("type", "sdk", "instance", "live-decoupled-test")
+            );
+            assertThat(tombstonePayload.id()).isEqualTo("sdk-live-tombstone-101");
+            assertThat(tombstonePayload.action()).isEqualTo(DocumentAction.DELETE);
+            assertThat(tombstonePayload.content()).isNull();
+            assertThat(tombstonePayload.metadata()).isNull();
+            System.out.println("Live System SDK OIS Tombstone Payload Asserted: ID=" + tombstonePayload.id() + ", Action=" + tombstonePayload.action());
         }
     }
 }

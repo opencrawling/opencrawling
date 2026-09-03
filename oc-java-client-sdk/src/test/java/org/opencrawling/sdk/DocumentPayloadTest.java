@@ -16,6 +16,7 @@
 package org.opencrawling.sdk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.sdk.models.DocumentAction;
 import org.opencrawling.sdk.models.DocumentPayload;
@@ -24,44 +25,88 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Dedicated unit test suite for Open Ingestion Standard (OIS) Document Lifecycle Actions
+ * and Tombstone Deletions in the Java Client SDK.
+ */
 class DocumentPayloadTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    @DisplayName("Unit Test: Standard UPSERT Document Payload Jackson Serialization")
     void testUpsertDocumentPayloadSerialization() throws Exception {
         DocumentPayload payload = new DocumentPayload(
-            "doc-123",
+            "doc-upsert-101",
             Map.of("type", "filesystem", "instance", "local"),
-            Map.of("text", "Sample text"),
-            Map.of("name", "test.txt"),
+            Map.of("text", "Sample document content"),
+            Map.of("name", "architecture.pdf", "mimeType", "application/pdf"),
             Map.of("inheritanceEnabled", true)
         );
 
-        assertEquals("doc-123", payload.id());
+        assertEquals("doc-upsert-101", payload.id());
         assertEquals(DocumentAction.UPSERT, payload.action());
+        assertNotNull(payload.content());
+        assertNotNull(payload.metadata());
+        assertNotNull(payload.security());
 
         String json = mapper.writeValueAsString(payload);
         assertTrue(json.contains("\"action\":\"UPSERT\""));
-        assertTrue(json.contains("\"id\":\"doc-123\""));
+        assertTrue(json.contains("\"id\":\"doc-upsert-101\""));
+        assertTrue(json.contains("\"content\""));
+        assertTrue(json.contains("\"metadata\""));
     }
 
     @Test
+    @DisplayName("Unit Test: Tombstone DELETE Payload Factory & Jackson Serialization")
     void testDeleteTombstonePayloadSerialization() throws Exception {
         DocumentPayload tombstone = DocumentPayload.createDeleteTombstone(
-            "doc-123",
-            Map.of("type", "filesystem", "instance", "local")
+            "doc-delete-202",
+            Map.of("type", "kafka", "instance", "decoupled-cluster")
         );
 
-        assertEquals("doc-123", tombstone.id());
+        assertEquals("doc-delete-202", tombstone.id());
         assertEquals(DocumentAction.DELETE, tombstone.action());
+        assertNotNull(tombstone.source());
         assertNull(tombstone.content());
         assertNull(tombstone.metadata());
         assertNull(tombstone.security());
 
         String json = mapper.writeValueAsString(tombstone);
         assertTrue(json.contains("\"action\":\"DELETE\""));
-        assertTrue(json.contains("\"id\":\"doc-123\""));
-        assertFalse(json.contains("\"content\""));
+        assertTrue(json.contains("\"id\":\"doc-delete-202\""));
+        assertFalse(json.contains("\"content\""), "Tombstone DELETE JSON must omit null content payload");
+        assertFalse(json.contains("\"metadata\""), "Tombstone DELETE JSON must omit null metadata payload");
+        assertFalse(json.contains("\"security\""), "Tombstone DELETE JSON must omit null security payload");
+    }
+
+    @Test
+    @DisplayName("Unit Test: Tombstone DELETE Payload JSON Deserialization")
+    void testDeleteTombstonePayloadDeserialization() throws Exception {
+        String tombstoneJson = """
+            {
+              "id": "doc-tombstone-303",
+              "action": "DELETE",
+              "source": {
+                "type": "sharepoint",
+                "site": "engineering"
+              }
+            }
+            """;
+
+        DocumentPayload deserialized = mapper.readValue(tombstoneJson, DocumentPayload.class);
+        assertEquals("doc-tombstone-303", deserialized.id());
+        assertEquals(DocumentAction.DELETE, deserialized.action());
+        assertEquals("sharepoint", deserialized.source().get("type"));
+        assertNull(deserialized.content());
+        assertNull(deserialized.metadata());
+    }
+
+    @Test
+    @DisplayName("Unit Test: DocumentAction Enum Value Integrity")
+    void testDocumentActionEnumValues() {
+        assertEquals(2, DocumentAction.values().length);
+        assertEquals(DocumentAction.UPSERT, DocumentAction.valueOf("UPSERT"));
+        assertEquals(DocumentAction.DELETE, DocumentAction.valueOf("DELETE"));
     }
 }
