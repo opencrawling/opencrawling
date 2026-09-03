@@ -69,6 +69,11 @@ public class ConnectorCheckerService {
                 return checkVespa(config);
             }
 
+            // --- Solr Output Connector ---
+            if (className.contains("SolrOutputConnector") || className.contains("Solr")) {
+                return checkSolr(config);
+            }
+
             // --- Camunda Repository Connector ---
             if (className.contains("CamundaRepositoryConnector") || className.contains("Camunda")) {
                 return checkCamunda(config);
@@ -401,6 +406,28 @@ public class ConnectorCheckerService {
             return new ConnectionCheckResult(true, "Successfully verified TCP connection to LDAP/AD server at " + host + ":" + port + ".", null);
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to LDAP/AD server at " + host + ":" + port + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkSolr(Map<String, String> config) {
+        String urlStr = config.getOrDefault("solrUrl", config.getOrDefault("url", "http://localhost:8983/solr"));
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            String pingUrl = urlStr.endsWith("/") ? urlStr + "admin/info/system" : urlStr + "/admin/info/system";
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(pingUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Apache Solr at " + urlStr + " (HTTP " + response.statusCode() + ").", response.body());
+            } else {
+                return new ConnectionCheckResult(false, "Apache Solr returned HTTP status " + response.statusCode() + " from " + urlStr, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Apache Solr at " + urlStr + ": " + e.getMessage(), e.toString());
         }
     }
 
