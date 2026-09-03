@@ -277,6 +277,11 @@ if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS
 fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
+# Verify OIS Document Lifecycle Tombstone DELETE action feature
+echo -e "${YELLOW}Executing OIS Document Lifecycle Tombstone DELETE action test for Vespa...${NC}"
+mvn test -pl oc-vespa-output-connector -Dtest=VespaStoreWriterConsumerTest
+echo -e "${GREEN}OIS Tombstone DELETE action integration step for Vespa passed!${NC}"
+
 echo -e "${GREEN}================================================================================${NC}"
 echo -e "${GREEN}SUCCESS: Vespa Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}================================================================================${NC}"

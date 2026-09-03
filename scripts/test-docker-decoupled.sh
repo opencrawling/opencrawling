@@ -230,6 +230,11 @@ if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS
 fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
+# Verify OIS Document Lifecycle Tombstone DELETE action feature
+echo -e "${YELLOW}Executing OIS Document Lifecycle Tombstone DELETE action test...${NC}"
+mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesAllVectorStores
+echo -e "${GREEN}OIS Tombstone DELETE action integration step passed!${NC}"
+
 echo -e "${GREEN}========================================================================${NC}"
 echo -e "${GREEN}SUCCESS: Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}========================================================================${NC}"

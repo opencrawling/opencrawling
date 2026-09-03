@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import org.apache.tika.Tika;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
@@ -81,6 +82,22 @@ public class IngestionConsumer {
         String jobId = message.documentId();
 
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for document: {}. Forwarding tombstone to chunks topic.", message.documentId());
+                DocumentChunkMessage deleteChunkMsg = new DocumentChunkMessage(
+                    message.documentId(),
+                    message.documentId(),
+                    "",
+                    message.metadata() != null ? new HashMap<>(message.metadata()) : Map.of(),
+                    message.transformationConnector(),
+                    message.transformationEngine(),
+                    message.transformationConfig(),
+                    DocumentAction.DELETE
+                );
+                kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, message.documentId(), deleteChunkMsg).get();
+                return;
+            }
+
             URI fileUri = URI.create(message.uri());
             
             // Resolve stream via ClaimCheckStore (supports local filesystem, Apache Ozone, S3, etc.)

@@ -90,9 +90,20 @@ echo '{"id": "job-101", "name": "SharePoint Ingestion", "repositoryConnector": "
 
 SCHEMA_OUT=$($RUN_CLI schema validate --file "$TEMP_SCHEMA_FILE")
 if [[ "$SCHEMA_OUT" == *"valid"* ]]; then
-    echo -e "${GREEN}  ✔ oc schema validate passed successfully.${NC}"
+    echo -e "${GREEN}  ✔ oc schema validate passed successfully for standard OIS document.${NC}"
 else
     echo -e "${RED}[ERROR] oc schema validate failed. Output: $SCHEMA_OUT${NC}"
+    exit 1
+fi
+
+echo -e "${CYAN}[INFO] Step 5b: Testing OIS tombstone DELETE action schema validation (oc schema)...${NC}"
+TEMP_TOMBSTONE_FILE="oc-cli/target/test-ois-tombstone-schema.json"
+echo '{"id": "doc-delete-1", "action": "DELETE", "source": {"type": "filesystem", "instance": "local"}}' > "$TEMP_TOMBSTONE_FILE"
+TOMBSTONE_OUT=$($RUN_CLI schema validate --file "$TEMP_TOMBSTONE_FILE")
+if [[ "$TOMBSTONE_OUT" == *"DELETE"* ]] && [[ "$TOMBSTONE_OUT" == *"valid"* ]]; then
+    echo -e "${GREEN}  ✔ oc schema validate passed for tombstone DELETE payload.${NC}"
+else
+    echo -e "${RED}[ERROR] oc schema validate failed for tombstone DELETE payload. Output: $TOMBSTONE_OUT${NC}"
     exit 1
 fi
 

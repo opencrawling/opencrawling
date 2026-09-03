@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
-
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 
 import org.slf4j.Logger;
@@ -70,6 +70,15 @@ public class VectorStoreWriterConsumer {
         String jobId = message.documentId();
 
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for document: {}. Purging document/chunks from pgvector store.", message.documentId());
+                vectorStore.delete(List.of(message.documentId()));
+                vectorStore384.delete(List.of(message.documentId()));
+                vectorStore768.delete(List.of(message.documentId()));
+                vectorStore1024.delete(List.of(message.documentId()));
+                log.info("Successfully purged tombstone document {} from pgvector stores.", message.documentId());
+                return;
+            }
             Map<String, Object> metadata = new HashMap<>(message.metadata());
             // Put the precomputed embedding into the metadata so PrecomputedEmbeddingModel can extract it
             metadata.put("embedding", message.embedding());

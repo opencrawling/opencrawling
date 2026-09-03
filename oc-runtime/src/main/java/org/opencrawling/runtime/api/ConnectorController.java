@@ -163,7 +163,14 @@ public class ConnectorController {
     @PostMapping("/check")
     public ResponseEntity<ConnectionCheckResult> checkConnection(@RequestBody ConnectorDTO connector) {
         System.out.println("Checking connection for connector: " + connector.name() + " (" + connector.className() + ")");
-        ConnectionCheckResult result = checkerService.check(connector);
+        ConnectorDTO target = connector;
+        if (target.className() == null && target.name() != null) {
+            target = storage.stream()
+                    .filter(c -> c.name().equalsIgnoreCase(connector.name()))
+                    .findFirst()
+                    .orElse(connector);
+        }
+        ConnectionCheckResult result = checkerService.check(target);
         return ResponseEntity.ok(result);
     }
 

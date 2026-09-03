@@ -15,6 +15,7 @@
  */
 package org.opencrawling.embedding.messaging;
 
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.embedding.EmbeddingModelFactory;
@@ -44,6 +45,19 @@ public class EmbeddingConsumer {
         log.info("Received chunk for embedding: {} (Engine: {}, Connector: {})", 
             message.chunkId(), message.transformationEngine(), message.transformationConnector());
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for chunk embedding: {}. Bypassing AI model embedding.", message.chunkId());
+                DocumentEmbeddedMessage embeddedMessage = new DocumentEmbeddedMessage(
+                    message.documentId(),
+                    message.chunkId(),
+                    "",
+                    message.metadata(),
+                    new float[0],
+                    DocumentAction.DELETE
+                );
+                kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMessage).get();
+                return;
+            }
             // Resolve the dynamic embedding model client from factory
             EmbeddingModel model = modelFactory.getModel(
                 message.transformationEngine(), 

@@ -13,26 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.core.messaging;
+package org.opencrawling.core.document;
 
-import java.util.Map;
-import org.opencrawling.core.document.DocumentAction;
+/**
+ * Defines document lifecycle actions supported by the Open Ingestion Standard (OIS).
+ */
+public enum DocumentAction {
+    /**
+     * Creation or modification of a document in the index (default).
+     */
+    UPSERT,
 
-public record DocumentEmbeddedMessage(
-    String documentId,
-    String chunkId,
-    String text,
-    Map<String, Object> metadata,
-    float[] embedding,
-    DocumentAction action
-) {
-    public DocumentEmbeddedMessage(
-        String documentId,
-        String chunkId,
-        String text,
-        Map<String, Object> metadata,
-        float[] embedding
-    ) {
-        this(documentId, chunkId, text, metadata, embedding, DocumentAction.UPSERT);
-    }
+    /**
+     * Tombstone deletion of a document from the index.
+     */
+    DELETE
 }

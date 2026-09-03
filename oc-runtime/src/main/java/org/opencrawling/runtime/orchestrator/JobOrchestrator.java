@@ -24,6 +24,7 @@ import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.MustacheTransformationConnector;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
@@ -147,7 +148,7 @@ public class JobOrchestrator {
                             boolean isSupportedByStore = finalUri != null && claimCheckStore.supports(URI.create(finalUri));
 
                             // Save stream via ClaimCheckStore if remote stream OR store requires non-local persistence
-                            if (doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
+                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
                                 String filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0);
                                 filename = filename.replaceAll("[^a-zA-Z0-9.-]", "_");
                                 String mimeType = null;
@@ -179,7 +180,8 @@ public class JobOrchestrator {
                                 doc.lastModified().toString(),
                                 transformationConnector,
                                 finalEngine,
-                                finalConfig
+                                finalConfig,
+                                doc.action()
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation

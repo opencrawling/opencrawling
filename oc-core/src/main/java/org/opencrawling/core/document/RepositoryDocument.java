@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,8 +28,21 @@ public record RepositoryDocument(
     Map<String, List<String>> metadata,
     String acl,
     SecurityConfig security,
-    Instant lastModified
+    Instant lastModified,
+    DocumentAction action
 ) {
+    public RepositoryDocument(
+        String id,
+        String uri,
+        InputStream contentStream,
+        Map<String, List<String>> metadata,
+        String acl,
+        SecurityConfig security,
+        Instant lastModified
+    ) {
+        this(id, uri, contentStream, metadata, acl, security, lastModified, DocumentAction.UPSERT);
+    }
+
     public RepositoryDocument(
         String id,
         String uri,
@@ -38,6 +51,10 @@ public record RepositoryDocument(
         String acl,
         Instant lastModified
     ) {
-        this(id, uri, contentStream, metadata, acl, SecurityConfig.createPublic(), lastModified);
+        this(id, uri, contentStream, metadata, acl, SecurityConfig.createPublic(), lastModified, DocumentAction.UPSERT);
+    }
+
+    public static RepositoryDocument createTombstone(String id, String uri) {
+        return new RepositoryDocument(id, uri, null, Map.of(), "", SecurityConfig.createPublic(), Instant.now(), DocumentAction.DELETE);
     }
 }

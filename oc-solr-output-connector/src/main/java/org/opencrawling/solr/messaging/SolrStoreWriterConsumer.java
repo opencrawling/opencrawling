@@ -18,6 +18,7 @@ package org.opencrawling.solr.messaging;
 import jakarta.annotation.PostConstruct;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.common.SolrInputDocument;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.solr.SolrConstants;
 import org.slf4j.Logger;
@@ -59,6 +60,12 @@ public class SolrStoreWriterConsumer {
         log.info("Received embedded chunk for Solr storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for Solr storage: document {}", message.documentId());
+                solrClient.deleteByQuery(collectionName, "id:\"" + message.documentId() + "\" OR chunk_id:\"" + message.chunkId() + "\"", commitWithinMs);
+                log.info("Successfully deleted tombstone document/chunk {} from Solr collection '{}'.", message.documentId(), collectionName);
+                return;
+            }
             // Map Zero-Trust security ACLs
             List<String> allowedRead = new ArrayList<>();
             List<String> deniedRead = new ArrayList<>();

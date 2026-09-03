@@ -67,6 +67,17 @@ public class SchemaCommand implements Runnable {
                     System.out.println(AnsiColors.yellow("⚠ Warning: Schema lacks standard top-level fields (id, name, or repositoryConnector)"));
                 }
 
+                if (root.has("action")) {
+                    String actionVal = root.get("action").asText();
+                    if (!"UPSERT".equalsIgnoreCase(actionVal) && !"DELETE".equalsIgnoreCase(actionVal)) {
+                        System.out.println(AnsiColors.red("✖ Invalid OIS action field value: " + actionVal + " (must be UPSERT or DELETE)"));
+                        return 1;
+                    }
+                    if ("DELETE".equalsIgnoreCase(actionVal)) {
+                        System.out.println(AnsiColors.cyan("ℹ OIS Document Tombstone DELETE action payload detected."));
+                    }
+                }
+
                 if (valid) {
                     System.out.println(AnsiColors.green("✔ OIS JSON Schema structure is valid!"));
                 }
