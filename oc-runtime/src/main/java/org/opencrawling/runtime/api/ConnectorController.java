@@ -92,11 +92,32 @@ public class ConnectorController {
             "vespaTimeoutSeconds", "30",
             "vespaTlsEnabled", "false"
         )));
+        defaults.add(new ConnectorDTO("Solr_Output", "Apache Solr 10 Vector Search Store", "output", "org.opencrawling.solr.SolrOutputConnector", 10, Map.ofEntries(
+            Map.entry("solrMode", "standalone"),
+            Map.entry("solrUrl", "http://localhost:8983/solr"),
+            Map.entry("solrZkHost", "localhost:2181"),
+            Map.entry("solrCollection", "enterprise_kb"),
+            Map.entry("solrDimensions", "1024"),
+            Map.entry("solrSimilarity", "cosine"),
+            Map.entry("solrVectorEncoding", "FLOAT32"),
+            Map.entry("solrQuantization", "none"),
+            Map.entry("solrHnswMaxConnections", "16"),
+            Map.entry("solrHnswBeamWidth", "100"),
+            Map.entry("solrEfSearch", "100"),
+            Map.entry("solrCommitWithinMs", "1000")
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
         // Load persisted list
         this.storage = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, defaults));
+        
+        // Ensure standard built-in defaults exist in storage even if an existing connectors.json file was loaded from disk
+        for (ConnectorDTO def : defaults) {
+            if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(def.name()))) {
+                storage.add(def);
+            }
+        }
         
         // Dynamically discover SPI connectors loaded via plugin classloaders
         try {

@@ -102,6 +102,7 @@
         <module>oc-opensearch2-output-connector</module>
         <module>oc-opensearch3-output-connector</module>
         <module>oc-vespa-output-connector</module>
+        <module>oc-solr-output-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
         <module>oc-connector-archetypes</module>

@@ -122,6 +122,7 @@ export default function ConnectorForm() {
   // Map<String,String>), so a plain truthy check would treat the string "false" as checked/true.
   const vespaTlsEnabledBool = vespaTlsEnabled === true || vespaTlsEnabled === 'true'
   const vespaEndpointValue = watch('configuration.vespaEndpoint')
+  const solrMode = watch('configuration.solrMode') || 'standalone'
 
   const fetchConnectors = async () => {
     setIsLoading(true)
@@ -224,6 +225,7 @@ export default function ConnectorForm() {
       { label: 'OpenSearch 2.x Output Connector', value: 'org.opencrawling.opensearch2.OpenSearch2OutputConnector' },
       { label: 'OpenSearch 3.x Output Connector', value: 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' },
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
+      { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -1180,23 +1182,146 @@ export default function ConnectorForm() {
                     </div>
                   )}
 
-                  {/* Apache Solr */}
-                  {selectedClass === 'org.opencrawling.agents.output.solr.SolrConnector' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Solr Base URL</label>
-                        <input 
-                          {...register('configuration.solrUrl', { required: true })}
-                          placeholder="http://localhost:8983/solr"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
-                        />
+                  {/* Apache Solr Output Connector */}
+                  {selectedClass === 'org.opencrawling.solr.SolrOutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Solr Mode</label>
+                          <select
+                            {...register('configuration.solrMode')}
+                            defaultValue="standalone"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="standalone">Standalone Solr</option>
+                            <option value="cloud">SolrCloud (ZooKeeper)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Solr Base URL</label>
+                          <input
+                            {...register('configuration.solrUrl', { required: true })}
+                            placeholder="http://localhost:8983/solr"
+                            defaultValue="http://localhost:8983/solr"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
                       </div>
+
+                      {solrMode === 'cloud' && (
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">ZooKeeper Host(s)</label>
+                          <input
+                            {...register('configuration.solrZkHost')}
+                            placeholder="localhost:2181"
+                            defaultValue="localhost:2181"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">ZooKeeper connection string for SolrCloud mode (comma separated).</p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Collection Name</label>
+                          <input
+                            {...register('configuration.solrCollection', { required: true })}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Dimensions</label>
+                          <input
+                            type="number"
+                            {...register('configuration.solrDimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Similarity Metric</label>
+                          <select
+                            {...register('configuration.solrSimilarity')}
+                            defaultValue="cosine"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="cosine">Cosine</option>
+                            <option value="dot_product">Dot Product</option>
+                            <option value="euclidean">Euclidean</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Encoding (Solr 10)</label>
+                          <select
+                            {...register('configuration.solrVectorEncoding')}
+                            defaultValue="FLOAT32"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          >
+                            <option value="FLOAT32">FLOAT32</option>
+                            <option value="BYTE">BYTE</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Quantization (Solr 10)</label>
+                          <select
+                            {...register('configuration.solrQuantization')}
+                            defaultValue="none"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="none">None (Full Precision)</option>
+                            <option value="scalar">Scalar Quantization (SQ)</option>
+                            <option value="binary">Binary Quantization (BQ)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">HNSW Max Connections</label>
+                          <input
+                            type="number"
+                            {...register('configuration.solrHnswMaxConnections', { valueAsNumber: true })}
+                            placeholder="16"
+                            defaultValue={16}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">HNSW Beam Width</label>
+                          <input
+                            type="number"
+                            {...register('configuration.solrHnswBeamWidth', { valueAsNumber: true })}
+                            placeholder="100"
+                            defaultValue={100}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">efSearch (Solr 10)</label>
+                          <input
+                            type="number"
+                            {...register('configuration.solrEfSearch', { valueAsNumber: true })}
+                            placeholder="100"
+                            defaultValue={100}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Collection / Core</label>
-                        <input 
-                          {...register('configuration.solrCore', { required: true })}
-                          placeholder="opencrawling"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        <label className="text-sm font-medium">Commit Within (ms)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.solrCommitWithinMs', { valueAsNumber: true })}
+                          placeholder="1000"
+                          defaultValue={1000}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
                     </div>
