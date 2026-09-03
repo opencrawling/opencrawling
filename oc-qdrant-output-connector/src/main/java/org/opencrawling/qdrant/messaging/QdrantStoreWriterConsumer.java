@@ -17,6 +17,7 @@ package org.opencrawling.qdrant.messaging;
 
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.grpc.Points.PointStruct;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.qdrant.QdrantFields;
 import org.opencrawling.qdrant.QdrantPointMapper;
@@ -28,7 +29,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
+
+import static io.qdrant.client.PointIdFactory.id;
 
 @Component
 // Mirrors VectorStoreWriterConsumer (pgvector) / MilvusStoreWriterConsumer: enabled by default so a
@@ -61,6 +66,13 @@ public class QdrantStoreWriterConsumer {
         log.info("Received embedded chunk for Qdrant storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for Qdrant storage: {}", message.chunkId());
+                UUID pointUuid = UUID.nameUUIDFromBytes(message.chunkId().getBytes(StandardCharsets.UTF_8));
+                client.deleteAsync(properties.collectionName(), List.of(id(pointUuid))).get();
+                log.info("Successfully deleted tombstone chunk {} from Qdrant collection '{}'.", message.chunkId(), properties.collectionName());
+                return;
+            }
             Object uri = message.metadata().get(QdrantFields.FIELD_URI);
             Object acl = message.metadata().get(QdrantFields.FIELD_ACL);
             Object lastModified = message.metadata().get(QdrantFields.FIELD_LAST_MODIFIED);

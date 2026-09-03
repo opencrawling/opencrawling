@@ -29,7 +29,7 @@
     </parent>
 
     <artifactId>oc-cli</artifactId>
-    <name>OpenCrawling CLI</name>
+    <name>OpenCrawling - CLI</name>
     <description>Command-line interface (oc-cli) for OpenCrawling DevSecOps management, connector health checks, job execution, and copilot commands.</description>
 
     <dependencies>

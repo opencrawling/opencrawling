@@ -173,6 +173,12 @@ echo '{"id": "decoupled-job-1", "name": "Kafka Stream Ingestion", "repositoryCon
 $RUN_CLI schema validate --file "$TEMP_SCHEMA" > /dev/null
 echo -e "${GREEN}  ✔ oc schema validate passed.${NC}"
 
+echo -e "${CYAN}  -> Testing OIS tombstone DELETE action schema validation via 'oc schema validate'...${NC}"
+TEMP_TOMBSTONE_SCHEMA="oc-cli/target/decoupled-ois-tombstone-schema.json"
+echo '{"id": "doc-tombstone-1", "action": "DELETE", "source": {"type": "kafka", "instance": "decoupled"}}' > "$TEMP_TOMBSTONE_SCHEMA"
+$RUN_CLI schema validate --file "$TEMP_TOMBSTONE_SCHEMA" > /dev/null
+echo -e "${GREEN}  ✔ oc schema validate passed for tombstone DELETE payload.${NC}"
+
 # 4.6 Archetype Command
 echo -e "${CYAN}  -> Testing archetype project generator via 'oc archetype init'...${NC}"
 ARCH_DIR="oc-cli/target/decoupled-scaffold-test"

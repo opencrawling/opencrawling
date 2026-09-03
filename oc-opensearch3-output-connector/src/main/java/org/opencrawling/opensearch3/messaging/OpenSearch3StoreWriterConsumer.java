@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package org.opencrawling.opensearch3.messaging;
 
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.opensearch3.OpenSearch3Constants;
 import org.opensearch.client.opensearch.OpenSearchClient;
@@ -54,6 +55,12 @@ public class OpenSearch3StoreWriterConsumer {
         log.info("Received embedded chunk for OpenSearch 3.x storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for OpenSearch: {}", message.chunkId());
+                client.delete(d -> d.index(indexName).id(message.chunkId()));
+                log.info("Successfully deleted tombstone chunk {} from OpenSearch index '{}'.", message.chunkId(), indexName);
+                return;
+            }
             // Map Zero-Trust security ACLs
             List<String> allowedRead = new ArrayList<>();
             List<String> deniedRead = new ArrayList<>();

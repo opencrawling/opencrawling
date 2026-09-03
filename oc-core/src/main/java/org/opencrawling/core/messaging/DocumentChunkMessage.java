@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package org.opencrawling.core.messaging;
 
 import java.util.Map;
+import org.opencrawling.core.document.DocumentAction;
 
 public record DocumentChunkMessage(
     String documentId,
@@ -24,5 +25,18 @@ public record DocumentChunkMessage(
     Map<String, Object> metadata,
     String transformationConnector,
     String transformationEngine,
-    Map<String, String> transformationConfig
-) {}
+    Map<String, String> transformationConfig,
+    DocumentAction action
+) {
+    public DocumentChunkMessage(
+        String documentId,
+        String chunkId,
+        String text,
+        Map<String, Object> metadata,
+        String transformationConnector,
+        String transformationEngine,
+        Map<String, String> transformationConfig
+    ) {
+        this(documentId, chunkId, text, metadata, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT);
+    }
+}

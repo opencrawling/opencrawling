@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package org.opencrawling.core.messaging;
 
 import java.util.List;
 import java.util.Map;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.security.SecurityConfig;
 
 /**
@@ -32,8 +33,23 @@ public record IngestionMessage(
     String lastModified,
     String transformationConnector,
     String transformationEngine,
-    Map<String, String> transformationConfig
+    Map<String, String> transformationConfig,
+    DocumentAction action
 ) {
+    public IngestionMessage(
+        String documentId,
+        String uri,
+        Map<String, List<String>> metadata,
+        String acl,
+        SecurityConfig security,
+        String lastModified,
+        String transformationConnector,
+        String transformationEngine,
+        Map<String, String> transformationConfig
+    ) {
+        this(documentId, uri, metadata, acl, security, lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT);
+    }
+
     public IngestionMessage(
         String documentId,
         String uri,
@@ -44,6 +60,6 @@ public record IngestionMessage(
         String transformationEngine,
         Map<String, String> transformationConfig
     ) {
-        this(documentId, uri, metadata, acl, SecurityConfig.createPublic(), lastModified, transformationConnector, transformationEngine, transformationConfig);
+        this(documentId, uri, metadata, acl, SecurityConfig.createPublic(), lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT);
     }
 }

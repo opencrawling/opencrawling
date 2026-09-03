@@ -15,8 +15,10 @@
  */
 package org.opencrawling.vespa.messaging;
 
+import ai.vespa.feed.client.DocumentId;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.vespa.VespaDocumentMapper;
 import org.opencrawling.vespa.VespaFields;
@@ -58,6 +60,14 @@ public class VespaStoreWriterConsumer {
         log.info("Received embedded chunk for Vespa storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for Vespa storage: {}", message.chunkId());
+                String documentType = properties.documentType();
+                DocumentId docId = DocumentId.of(properties.namespace(), documentType, message.chunkId());
+                client.remove(docId, OperationParameters.empty()).get();
+                log.info("Successfully removed tombstone chunk {} from Vespa.", message.chunkId());
+                return;
+            }
             Object uri = message.metadata().get(VespaFields.FIELD_URI);
             Object acl = message.metadata().get(VespaFields.FIELD_ACL);
             Object lastModified = message.metadata().get(VespaFields.FIELD_LAST_MODIFIED);

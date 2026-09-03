@@ -73,4 +73,23 @@ class VectorStoreWriterConsumerTest {
         verify(store1024).add(anyList());
         verifyNoInteractions(store384, store768, defaultStore);
     }
+
+    @Test
+    void testConsumeDeleteTombstonePurgesAllVectorStores() {
+        DocumentEmbeddedMessage tombstone = new DocumentEmbeddedMessage(
+                "doc-delete-1",
+                "doc-delete-1",
+                "",
+                Map.of(),
+                new float[0],
+                org.opencrawling.core.document.DocumentAction.DELETE
+        );
+
+        consumer.consume(tombstone);
+
+        verify(defaultStore).delete(List.of("doc-delete-1"));
+        verify(store384).delete(List.of("doc-delete-1"));
+        verify(store768).delete(List.of("doc-delete-1"));
+        verify(store1024).delete(List.of("doc-delete-1"));
+    }
 }

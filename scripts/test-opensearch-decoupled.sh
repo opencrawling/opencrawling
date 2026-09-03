@@ -206,6 +206,11 @@ if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS
 fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
+# Verify OIS Document Lifecycle Tombstone DELETE action feature
+echo -e "${YELLOW}Executing OIS Document Lifecycle Tombstone DELETE action test for OpenSearch...${NC}"
+mvn test -pl oc-opensearch2-output-connector,oc-opensearch3-output-connector -Dtest=OpenSearch2StoreWriterConsumerTest,OpenSearch3StoreWriterConsumerTest
+echo -e "${GREEN}OIS Tombstone DELETE action integration step for OpenSearch passed!${NC}"
+
 echo -e "${GREEN}================================================================================${NC}"
 echo -e "${GREEN}SUCCESS: OpenSearch Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}================================================================================${NC}"

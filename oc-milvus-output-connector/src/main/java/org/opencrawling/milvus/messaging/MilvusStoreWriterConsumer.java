@@ -18,7 +18,9 @@ package org.opencrawling.milvus.messaging;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.milvus.v2.client.MilvusClientV2;
+import io.milvus.v2.service.vector.request.DeleteReq;
 import io.milvus.v2.service.vector.request.InsertReq;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.milvus.MilvusConstants;
 import org.slf4j.Logger;
@@ -65,6 +67,16 @@ public class MilvusStoreWriterConsumer {
         log.info("Received embedded chunk for Milvus storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE tombstone for Milvus storage: {}", message.chunkId());
+                DeleteReq deleteReq = DeleteReq.builder()
+                    .collectionName(collectionName)
+                    .filter("id == '" + message.chunkId() + "'")
+                    .build();
+                client.delete(deleteReq);
+                log.info("Successfully deleted tombstone chunk {} from Milvus collection '{}'.", message.chunkId(), collectionName);
+                return;
+            }
             // Map Zero-Trust security ACLs
             List<String> allowedRead = new ArrayList<>();
             List<String> deniedRead = new ArrayList<>();
