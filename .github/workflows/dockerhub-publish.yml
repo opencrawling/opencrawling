@@ -44,7 +44,7 @@ jobs:
 
       # Build and push Backend image (oc-runtime)
       - name: Build and push Backend image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: oc-runtime/Dockerfile
@@ -69,7 +69,7 @@ jobs:
 
       # Build and push Frontend image (oc-admin-ui)
       - name: Build and push Frontend image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7
         with:
           context: ./oc-admin-ui
           file: oc-admin-ui/Dockerfile
