@@ -60,6 +60,8 @@ graph TD
         Runtime_Node([OpenCrawling Ingestion Runtime])
         Core[Core Ingestion Engine - oc-core]
         FS_Conn[Filesystem Repository - oc-filesystem-repository-connector]
+        ACS_Conn[Alfresco Repository - oc-alfresco-repository-connector]
+        Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
         Camunda_Conn[Camunda Repository - oc-camunda-repository-connector]
         
@@ -69,7 +71,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Store Output - oc-vector-output-connector]
+        Vec_Conn[Vector Stores: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
