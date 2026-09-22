@@ -39,7 +39,7 @@ command -v mvn >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Maven is required but
 
 # Step 1: Maven Build & Unit Tests
 echo -e "${CYAN}[INFO] Step 1: Compiling & packaging oc-cli module...${NC}"
-mvn clean package -pl oc-cli
+mvn clean package -pl oc-cli -am
 
 CLI_JAR="oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar"
 if [ ! -f "$CLI_JAR" ]; then
@@ -109,13 +109,66 @@ fi
 
 # Step 6: Testing Subcommand Help Displays
 echo -e "${CYAN}[INFO] Step 6: Verifying all subcommand help menus...${NC}"
-for cmd in job connector copilot aiops system config schema; do
+for cmd in job connector copilot aiops system config schema mcf; do
     $RUN_CLI $cmd --help > /dev/null
     echo -e "${GREEN}  ✔ oc $cmd --help passed.${NC}"
 done
 
-# Step 7: Live REST API Check (if backend is running)
-echo -e "${CYAN}[INFO] Step 7: Testing live REST API integration if runtime is online...${NC}"
+# Step 7: Testing ManifoldCF Migrator CLI (oc mcf)
+echo -e "${CYAN}[INFO] Step 7: Testing ManifoldCF Migrator CLI (oc mcf)...${NC}"
+
+# 7a: list-mappers
+MAPPERS_OUT=$($RUN_CLI mcf list-mappers)
+if [[ "$MAPPERS_OUT" == *"FileConnector"* ]] && [[ "$MAPPERS_OUT" == *"VespaOutputConnector"* ]]; then
+    echo -e "${GREEN}  ✔ oc mcf list-mappers passed (verified registered mappers).${NC}"
+else
+    echo -e "${RED}[ERROR] oc mcf list-mappers failed. Output: $MAPPERS_OUT${NC}"
+    exit 1
+fi
+
+# 7b: audit from JSON snapshot fixtures
+AUDIT_JSON="oc-cli/target/test-mcf-audit-report.json"
+rm -f "$AUDIT_JSON"
+$RUN_CLI mcf audit --mcf-input-dir oc-mcf-migrator/src/test/resources/fixtures/mcf --report-format json --report-file "$AUDIT_JSON" > /dev/null
+if [ -f "$AUDIT_JSON" ]; then
+    echo -e "${GREEN}  ✔ oc mcf audit passed with JSON report generated.${NC}"
+else
+    echo -e "${RED}[ERROR] oc mcf audit failed to produce expected report at $AUDIT_JSON${NC}"
+    exit 1
+fi
+
+# 7c: audit from XML export fixture
+AUDIT_XML="oc-cli/target/test-mcf-xml-report.json"
+rm -f "$AUDIT_XML"
+$RUN_CLI mcf audit --mcf-export-file oc-mcf-migrator/src/test/resources/fixtures/mcf-xml/export.xml --report-format json --report-file "$AUDIT_XML" > /dev/null
+if [ -f "$AUDIT_XML" ]; then
+    echo -e "${GREEN}  ✔ oc mcf audit passed with XML export input.${NC}"
+else
+    echo -e "${RED}[ERROR] oc mcf audit failed with XML export input.${NC}"
+    exit 1
+fi
+
+# 7d: convert to OIS jobs and validate converted schema
+MCF_CONVERT_DIR="oc-cli/target/test-ois-mcf-jobs"
+rm -rf "$MCF_CONVERT_DIR"
+$RUN_CLI mcf convert --mcf-input-dir oc-mcf-migrator/src/test/resources/fixtures/mcf --output-dir "$MCF_CONVERT_DIR" --output-format json --report-file "oc-cli/target/test-mcf-convert-report.json" > /dev/null
+CONVERTED_JOB_JSON="$MCF_CONVERT_DIR/sharepoint-drive-to-vespa.json"
+if [ -f "$CONVERTED_JOB_JSON" ]; then
+    echo -e "${GREEN}  ✔ oc mcf convert successfully generated OIS job file.${NC}"
+    VALIDATE_OUT=$($RUN_CLI schema validate --file "$CONVERTED_JOB_JSON")
+    if [[ "$VALIDATE_OUT" == *"valid"* ]]; then
+        echo -e "${GREEN}  ✔ oc schema validate successfully validated converted OIS job file.${NC}"
+    else
+        echo -e "${RED}[ERROR] oc schema validate failed on converted OIS job file. Output: $VALIDATE_OUT${NC}"
+        exit 1
+    fi
+else
+    echo -e "${RED}[ERROR] oc mcf convert failed to produce $CONVERTED_JOB_JSON${NC}"
+    exit 1
+fi
+
+# Step 8: Live REST API Check (if backend is running)
+echo -e "${CYAN}[INFO] Step 8: Testing live REST API integration if runtime is online...${NC}"
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/system/status || echo "000")
 
 if [ "$HTTP_CODE" = "200" ]; then

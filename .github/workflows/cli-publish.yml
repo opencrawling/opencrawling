@@ -17,11 +17,6 @@
 name: Publish OpenCrawling CLI (oc-cli)
 
 on:
-  push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
-  release:
-    types: [ published ]
   workflow_dispatch:
     inputs:
       release_version:

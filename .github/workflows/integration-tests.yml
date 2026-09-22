@@ -1,0 +1,115 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: End-to-End Integration Tests
+
+on:
+  push:
+    tags:
+      - '*'
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  integration-tests:
+    name: ${{ matrix.test.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - name: "CLI Test Suite"
+            script: "test-cli.sh"
+          - name: "CLI Decoupled Pipeline Test Suite"
+            script: "test-cli-decoupled.sh"
+          - name: "Docker Decoupled Pipeline Test Suite"
+            script: "test-docker-decoupled.sh"
+          - name: "Java Client SDK Test Suite"
+            script: "test-java-client-sdk.sh"
+          - name: "Java Client SDK Decoupled Test Suite"
+            script: "test-java-client-sdk-decoupled.sh"
+          - name: "gRPC Transport Test Suite"
+            script: "test-grpc-transport.sh"
+          - name: "Observability Stack Test Suite"
+            script: "test-observability.sh"
+          - name: "Narrativization Pipeline Test Suite"
+            script: "test-narrativization.sh"
+          - name: "Apache Ozone Claim-Check GC Test Suite"
+            script: "test-ozone-claimcheck-gc.sh"
+          - name: "Apache Ozone Decoupled Pipeline Test Suite"
+            script: "test-ozone-decoupled.sh"
+          - name: "Camunda Connector Test Suite"
+            script: "test-camunda-connector.sh"
+          - name: "Camunda Decoupled Pipeline Test Suite"
+            script: "test-camunda-decoupled.sh"
+          - name: "Flowable Connector Test Suite"
+            script: "test-flowable-connector.sh"
+          - name: "Flowable Decoupled Pipeline Test Suite"
+            script: "test-flowable-decoupled.sh"
+          - name: "Milvus Decoupled Pipeline Test Suite"
+            script: "test-milvus-decoupled.sh"
+          - name: "OpenSearch Decoupled Pipeline Test Suite"
+            script: "test-opensearch-decoupled.sh"
+          - name: "Qdrant Connector Test Suite"
+            script: "test-qdrant-connector.sh"
+          - name: "Qdrant Decoupled Pipeline Test Suite"
+            script: "test-qdrant-decoupled.sh"
+          - name: "Apache Solr Decoupled Pipeline Test Suite"
+            script: "test-solr-decoupled.sh"
+          - name: "Vespa Connector Test Suite"
+            script: "test-vespa-connector.sh"
+          - name: "Vespa Decoupled Pipeline Test Suite"
+            script: "test-vespa-decoupled.sh"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Execute ${{ matrix.test.name }}
+        run: ./scripts/${{ matrix.test.script }}
+
+  integration-tests-summary:
+    name: Integration Tests Summary
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Check overall test result
+        run: |
+          if [ "${{ needs.integration-tests.result }}" != "success" ]; then
+            echo "::error::One or more integration test suites failed or were cancelled."
+            exit 1
+          fi
+          echo "All 21 integration test suites passed successfully!"
