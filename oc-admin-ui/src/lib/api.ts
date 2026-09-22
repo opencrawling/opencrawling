@@ -100,4 +100,70 @@ export const narrativizationApi = {
     api.post('/transformation/copilot/generate', data),
 }
 
+export interface McfMigrationRequest {
+  mcfUrl: string
+  mcfUsername?: string
+  mcfPassword?: string
+  defaultEmbeddingDimensions?: number
+  /** Only meaningful on /apply — restricts which of the supported connections actually get applied. Omit/empty = all. */
+  selectedConnections?: string[]
+  /** Only meaningful on /apply — restricts which of the supported jobs actually get applied. Omit/empty = all. */
+  selectedJobs?: string[]
+}
+
+export interface McfMigrationNote {
+  field: string
+  kind: 'DROPPED' | 'DEFAULTED' | 'CONVERTED' | 'SCOPE_CHANGE' | 'RUNTIME_RISK'
+  recommendedAction?: string
+  message: string
+}
+
+export interface McfConnectionSummary {
+  name: string
+  manifoldClass: string
+  supported: boolean
+  targetType?: string
+  targetClass?: string
+  reason?: string
+  recommendedAction?: string
+  notes: McfMigrationNote[]
+}
+
+export interface McfJobSummary {
+  name: string
+  supported: boolean
+  repositoryConnector?: string
+  outputConnector?: string
+  transformationConnector?: string
+  path?: string
+  blockingConnectors: string[]
+  reason?: string
+  recommendedAction?: string
+  notes: McfMigrationNote[]
+}
+
+export interface McfApplyResult {
+  success: boolean
+  detail: string
+}
+
+export interface McfMigrationResponse {
+  connections: McfConnectionSummary[]
+  jobs: McfJobSummary[]
+  summary: {
+    connectionsTotal: number
+    connectionsMigrated: number
+    jobsTotal: number
+    jobsMigrated: number
+    compatibilityScorePercentage: number
+  }
+  connectionResults?: Record<string, McfApplyResult>
+  jobResults?: Record<string, McfApplyResult>
+}
+
+export const mcfMigrationApi = {
+  plan: (data: McfMigrationRequest) => api.post<McfMigrationResponse>('/mcf-migration/plan', data),
+  apply: (data: McfMigrationRequest) => api.post<McfMigrationResponse>('/mcf-migration/apply', data),
+}
+
 export default api

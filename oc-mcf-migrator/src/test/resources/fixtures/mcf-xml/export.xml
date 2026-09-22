@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <repositoryconnection>
+    <isnew>false</isnew>
+    <name>SharepointDrive</name>
+    <class_name>org.apache.manifoldcf.crawler.connectors.filesystem.FileConnector</class_name>
+    <max_connections>10</max_connections>
+    <description>Company File Share</description>
+    <configuration/>
+  </repositoryconnection>
+  <repositoryconnection>
+    <isnew>false</isnew>
+    <name>Alfresco HR Data</name>
+    <class_name>org.apache.manifoldcf.crawler.connectors.alfrescowebscript.AlfrescoConnector</class_name>
+    <max_connections>10</max_connections>
+    <description>HR Documents</description>
+    <configuration>
+      <_PARAMETER_ name="hostname">repo2.localhost</_PARAMETER_>
+    </configuration>
+  </repositoryconnection>
+  <outputconnection>
+    <isnew>false</isnew>
+    <name>Vespa Federated Index</name>
+    <class_name>org.apache.manifoldcf.agents.output.vespa.VespaOutputConnector</class_name>
+    <max_connections>10</max_connections>
+    <configuration>
+      <_PARAMETER_ name="vespaEndpoint">http://vespa:8080</_PARAMETER_>
+    </configuration>
+  </outputconnection>
+  <job>
+    <id>1</id>
+    <description>SharePoint drive to Vespa</description>
+    <repository_connection>SharepointDrive</repository_connection>
+    <document_specification>
+      <startpoint path="/mnt/drive-a/files"/>
+    </document_specification>
+    <pipelinestage>
+      <stage_id>0</stage_id>
+      <stage_isoutput>true</stage_isoutput>
+      <stage_connectionname>Vespa Federated Index</stage_connectionname>
+    </pipelinestage>
+  </job>
+</configuration>

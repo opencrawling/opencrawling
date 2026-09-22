@@ -14,26 +14,28 @@
  * limitations under the License.
  */
 import { useState, useEffect, useRef } from 'react'
-import { 
-  LayoutDashboard, 
-  PlayCircle, 
-  Plug2, 
-  Activity, 
-  Settings as SettingsIcon, 
+import {
+  LayoutDashboard,
+  PlayCircle,
+  Plug2,
+  Activity,
+  Settings as SettingsIcon,
   Menu,
   X,
   Search,
   ChevronRight,
-  Wand2
+  Wand2,
+  ArrowRightLeft
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
 import ConnectorForm from './components/ConnectorForm'
 import Settings from './components/Settings'
 import Narrativization from './components/Narrativization'
+import McfMigration from './components/McfMigration'
 import { statusApi } from './lib/api'
 
-type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings' | 'narrativization'
+type View = 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings' | 'narrativization' | 'mcf-migration'
 
 export default function App() {
   const [activeView, setActiveView] = useState<View>('dashboard')
@@ -98,12 +100,13 @@ export default function App() {
   }
 
   const menuItems = [
-    { id: 'dashboard',       label: 'Dashboard',       icon: LayoutDashboard },
-    { id: 'jobs',            label: 'Job Management',  icon: PlayCircle },
-    { id: 'connectors',      label: 'Connectors',      icon: Plug2 },
-    { id: 'logs',            label: 'Real-time Logs',  icon: Activity },
-    { id: 'narrativization', label: 'Narrativization', icon: Wand2 },
-    { id: 'settings',        label: 'Settings',        icon: SettingsIcon },
+    { id: 'dashboard',       label: 'Dashboard',              icon: LayoutDashboard },
+    { id: 'jobs',            label: 'Job Management',         icon: PlayCircle },
+    { id: 'connectors',      label: 'Connectors',              icon: Plug2 },
+    { id: 'mcf-migration',   label: 'ManifoldCF Migration',   icon: ArrowRightLeft },
+    { id: 'logs',            label: 'Real-time Logs',         icon: Activity },
+    { id: 'narrativization', label: 'Narrativization',        icon: Wand2 },
+    { id: 'settings',        label: 'Settings',                icon: SettingsIcon },
   ]
 
   return (
@@ -159,7 +162,9 @@ export default function App() {
           <div className="flex items-center gap-2 text-muted text-sm">
             <span>Admin</span>
             <ChevronRight className="w-4 h-4" />
-            <span className="text-foreground font-medium capitalize">{activeView}</span>
+            <span className="text-foreground font-medium capitalize">
+              {activeView === 'mcf-migration' ? 'ManifoldCF Migration' : activeView}
+            </span>
           </div>
           
           <div className="flex items-center gap-4">
@@ -183,6 +188,7 @@ export default function App() {
           {activeView === 'dashboard' && <Dashboard />}
           {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
           {activeView === 'connectors' && <ConnectorForm />}
+          {activeView === 'mcf-migration' && <McfMigration />}
           {activeView === 'settings' && <Settings />}
           {activeView === 'narrativization' && <Narrativization />}
           {activeView === 'logs' && (

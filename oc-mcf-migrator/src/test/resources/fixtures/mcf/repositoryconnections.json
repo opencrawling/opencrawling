@@ -1,0 +1,40 @@
+{"repositoryconnection": [
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Alfresco HR Data"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.crawler.connectors.alfrescowebscript.AlfrescoConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "description", "_value_": "HR Documents"},
+    {"_type_": "configuration", "_children_": [
+      {"_type_": "_PARAMETER_", "_value_": "repo2.localhost", "_attribute_name": "hostname"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Alfresco Legal Documents"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.crawler.connectors.alfrescowebscript.AlfrescoConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "description", "_value_": "Legal Documents"},
+    {"_type_": "configuration", "_children_": [
+      {"_type_": "_PARAMETER_", "_value_": "repo1.localhost", "_attribute_name": "hostname"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "Mfiles Source Repository"},
+    {"_type_": "class_name", "_value_": "com.speedysearch.manifoldcf.mfiles.MFilesRepositoryConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "description", "_value_": "Mfiles Source Repository"},
+    {"_type_": "configuration", "_children_": [
+      {"_type_": "_PARAMETER_", "_value_": "http://192.168.1.74/REST", "_attribute_name": "mfwsBaseUrl"}
+    ]}
+  ]},
+  {"_children_": [
+    {"_type_": "isnew", "_value_": "false"},
+    {"_type_": "name", "_value_": "SharepointDrive"},
+    {"_type_": "class_name", "_value_": "org.apache.manifoldcf.crawler.connectors.filesystem.FileConnector"},
+    {"_type_": "max_connections", "_value_": "10"},
+    {"_type_": "description", "_value_": "Company File Share"},
+    {"_type_": "configuration"}
+  ]}
+]}

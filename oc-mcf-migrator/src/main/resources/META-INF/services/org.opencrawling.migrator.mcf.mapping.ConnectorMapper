@@ -1,0 +1,3 @@
+org.opencrawling.migrator.mcf.mapping.filesystem.FileConnectorMapper
+org.opencrawling.migrator.mcf.mapping.vespa.VespaOutputConnectorMapper
+org.opencrawling.migrator.mcf.mapping.opensearch.ElasticSearchToOpenSearch2Mapper

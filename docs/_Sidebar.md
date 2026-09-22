@@ -4,6 +4,7 @@
 * **[Architecture](Architecture)**
 * **[Configuration Guide](Configuration-Guide)**
 * **[Model Context Protocol](Model-Context-Protocol)**
+* **[Migration Guide](Migration-Guide)**
 
 ---
 

@@ -1,0 +1,7 @@
+{"transformationconnection": {"_children_": [
+  {"_type_": "isnew", "_value_": "false"},
+  {"_type_": "name", "_value_": "Content Limiter"},
+  {"_type_": "class_name", "_value_": "org.apache.manifoldcf.agents.transformation.contentlimiter.ContentLimiter"},
+  {"_type_": "max_connections", "_value_": "10"},
+  {"_type_": "configuration"}
+]}}
