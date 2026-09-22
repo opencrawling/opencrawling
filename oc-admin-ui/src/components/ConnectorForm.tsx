@@ -81,6 +81,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('solr')) {
     return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
   }
+  if (className.includes('luxir') || className.includes('Luxir')) {
+    return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
   if (className.includes('Ollama')) {
     return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
   }
@@ -226,6 +229,7 @@ export default function ConnectorForm() {
       { label: 'OpenSearch 3.x Output Connector', value: 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' },
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
+      { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -1323,6 +1327,82 @@ export default function ConnectorForm() {
                           defaultValue={1000}
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Luxir Output Connector */}
+                  {selectedClass === 'org.opencrawling.luxir.LuxirOutputConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Luxir HTTP Endpoint</label>
+                        <input 
+                          {...register('configuration.luxirEndpoint', { required: true })}
+                          placeholder="http://localhost:9400"
+                          defaultValue="http://localhost:9400"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">HTTP/JSON API endpoint for Luxir Search Engine (default port 9400).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Collection Name</label>
+                        <input 
+                          {...register('configuration.luxirCollection', { required: true })}
+                          placeholder="opencrawling"
+                          defaultValue="opencrawling"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Target collection name in Luxir (auto-created on initialization).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Vector Field Name</label>
+                        <input 
+                          {...register('configuration.luxirVectorField')}
+                          placeholder="embedding_v"
+                          defaultValue="embedding_v"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Vector field name (supports Luxir _v naming convention).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Vector Dimensions</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.luxirDimensions', { valueAsNumber: true })}
+                          placeholder="1024"
+                          defaultValue={1024}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Dense embedding dimensionality (e.g. 384 for MiniLM, 768 for Nomic, 1024 for mxbai).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Similarity Metric</label>
+                        <select 
+                          {...register('configuration.luxirSimilarity')}
+                          defaultValue="cosine"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="cosine">Cosine (cosine)</option>
+                          <option value="l2">Euclidean (l2)</option>
+                          <option value="ip">Inner Product (ip)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Vector similarity distance function used for kNN indexing.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (seconds)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.luxirTimeoutSeconds', { valueAsNumber: true })}
+                          placeholder="30"
+                          defaultValue={30}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">HTTP socket and connection timeout.</p>
                       </div>
                     </div>
                   )}

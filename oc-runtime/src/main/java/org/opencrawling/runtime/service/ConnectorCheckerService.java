@@ -74,6 +74,11 @@ public class ConnectorCheckerService {
                 return checkSolr(config);
             }
 
+            // --- Luxir Output Connector ---
+            if (className.contains("LuxirOutputConnector") || className.contains("Luxir")) {
+                return checkLuxir(config);
+            }
+
             // --- Camunda Repository Connector ---
             if (className.contains("CamundaRepositoryConnector") || className.contains("Camunda")) {
                 return checkCamunda(config);
@@ -439,6 +444,40 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Apache Solr at " + urlStr + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkLuxir(Map<String, String> config) {
+        String endpoint = config.getOrDefault("luxirEndpoint", config.getOrDefault("endpoint", "http://localhost:9400"));
+        String cleanEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            String statsUrl = cleanEndpoint + "/_stats";
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(statsUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Luxir search engine at " + cleanEndpoint + " (HTTP " + response.statusCode() + ").", response.body());
+            }
+
+            // Fallback to /collections
+            HttpRequest collectionsReq = HttpRequest.newBuilder()
+                    .uri(URI.create(cleanEndpoint + "/collections"))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+            HttpResponse<String> collectionsResp = client.send(collectionsReq, HttpResponse.BodyHandlers.ofString());
+            if (collectionsResp.statusCode() >= 200 && collectionsResp.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Luxir search engine at " + cleanEndpoint + " (HTTP " + collectionsResp.statusCode() + ").", collectionsResp.body());
+            } else {
+                return new ConnectionCheckResult(false, "Luxir returned HTTP status " + response.statusCode() + " from " + statsUrl, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Luxir at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
         }
     }
 

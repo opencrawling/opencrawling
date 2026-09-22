@@ -23,6 +23,7 @@
 [![Qdrant](https://img.shields.io/badge/Qdrant-1.12-DC244C.svg?style=flat&logo=qdrant&logoColor=white)](https://qdrant.tech/)
 [![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x%20%7C%203.x-005EB8.svg?style=flat&logo=opensearch&logoColor=white)](https://opensearch.org/)
 [![Vespa](https://img.shields.io/badge/Vespa-8-4E9BFA.svg?style=flat&logo=vespa&logoColor=white)](https://vespa.ai/)
+[![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
 [![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![OIS](https://img.shields.io/badge/OIS-Open_Ingestion_Standard-0052CC.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
@@ -74,7 +75,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch]
+        Vec_Conn[Vector Stores: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
@@ -696,6 +697,44 @@ This starts a standalone Vespa instance, deploys its schema application package 
 
 ---
 
+### Option A.7: Decoupled Apache Solr-Based Deployment
+
+[![Apache Solr](https://img.shields.io/badge/Apache_Solr-10-D9411E.svg?style=flat&logo=apachesolr&logoColor=white)](https://solr.apache.org/)
+
+To run the complete decoupled pipeline configured to use Apache Solr instead of PostgreSQL/pgvector:
+
+1. **Build the Solr decoupled stack**:
+   ```bash
+   docker compose -f oc-solr-output-connector/docker/docker-compose-decoupled-with-solr.yml build
+   ```
+
+2. **Start the Solr decoupled pipeline**:
+   ```bash
+   docker compose -f oc-solr-output-connector/docker/docker-compose-decoupled-with-solr.yml up -d
+   ```
+
+---
+
+### Option A.8: Decoupled Luxir-Based Deployment
+
+[![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
+
+To run the complete decoupled pipeline configured to use Luxir instead of PostgreSQL/pgvector:
+
+1. **Build the Luxir decoupled stack**:
+   ```bash
+   docker compose -f oc-luxir-output-connector/docker/docker-compose-decoupled-with-luxir.yml build
+   ```
+
+2. **Start the Luxir decoupled pipeline**:
+   ```bash
+   docker compose -f oc-luxir-output-connector/docker/docker-compose-decoupled-with-luxir.yml up -d
+   ```
+
+This starts a standalone Luxir search engine instance alongside the decoupled OpenCrawling services. Key configuration properties (see `spring.opencrawling.output.luxir.*`): `endpoint`, `collection`, `vector-field` (`embedding_v`), `dimensions` (`384` / `768` / `1024`), `similarity` (`cosine`), and `auto-commit` (`true`). Luxir automatically handles dense vector kNN search, dynamic typing schemas (`_t`, `_s`, `_ss`, `_v`), OIS v1.1 tombstone deletions via `delete_ids`, and zero-trust ACL token filtering.
+
+---
+
 #### Running the Decoupled Integration Tests
 
 We provide fully automated end-to-end integration test scripts that build, boot, test, and cleanse the entire decoupled environment:
@@ -735,6 +774,18 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-vespa-connector.sh
     ```
     This script runs a fast standalone smoke test against a running or temporary Vespa container, deploying `vespa-app/`, feeding ACL-tagged document chunks at multiple vector dimensions, and verifying dynamic routing (`384`/`768`/`1024`) and search ACL filtering.
+
+*   **Apache Solr Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-solr-decoupled.sh
+    ```
+    This script tests the decoupled architecture using Apache Solr 10.x / 9.x, verifying HNSW `solr.DenseVectorField` vector search, schema auto-provisioning, full-text queries, and Secure MCP Server endpoints.
+
+*   **Luxir Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-luxir-decoupled.sh
+    ```
+    This script tests the decoupled architecture using Luxir, asserting schema auto-provisioning, full-text match queries, dense vector kNN search, OIS tombstone deletions, and Secure MCP Server endpoints.
 
 *   **OpenTelemetry & Observability Pipeline**:
     ```bash

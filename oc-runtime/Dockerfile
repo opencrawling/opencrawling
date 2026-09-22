@@ -35,6 +35,7 @@ COPY oc-opensearch3-output-connector/pom.xml oc-opensearch3-output-connector/
 COPY oc-qdrant-output-connector/pom.xml oc-qdrant-output-connector/
 COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
 COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
+COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
 COPY oc-embedding-service/pom.xml oc-embedding-service/
@@ -47,7 +48,7 @@ COPY oc-cli/pom.xml oc-cli/
 COPY oc-mcf-migrator/pom.xml oc-mcf-migrator/
 
 # Download maven dependencies first (saves time on rebuilds if code changes but dependencies do not)
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
 
 # Copy all source files
 COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
@@ -66,6 +67,7 @@ COPY oc-qdrant-output-connector/src/ /app/oc-qdrant-output-connector/src/
 COPY oc-vespa-output-connector/src/ /app/oc-vespa-output-connector/src/
 COPY oc-vespa-output-connector/vespa-app/ /app/oc-vespa-output-connector/vespa-app/
 COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
+COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
 COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/

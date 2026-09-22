@@ -66,4 +66,14 @@ class ConnectorCheckerServiceTest {
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to Flowable"));
     }
+
+    @Test
+    void testCheckLuxirConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Luxir_Test", "Test Luxir", "output",
+                "org.opencrawling.luxir.LuxirOutputConnector", 10, Map.of("luxirEndpoint", "http://127.0.0.1:59999"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Luxir"));
+    }
 }
