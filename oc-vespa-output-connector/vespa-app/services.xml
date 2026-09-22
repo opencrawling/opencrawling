@@ -21,6 +21,11 @@
         <nodes>
             <node hostalias="node1" distribution-key="0"/>
         </nodes>
+        <tuning>
+            <resource-limits>
+                <disk>0.999</disk>
+            </resource-limits>
+        </tuning>
     </content>
 
 </services>
