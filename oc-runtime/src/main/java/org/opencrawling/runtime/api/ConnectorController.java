@@ -106,6 +106,13 @@ public class ConnectorController {
             Map.entry("solrEfSearch", "100"),
             Map.entry("solrCommitWithinMs", "1000")
         )));
+        defaults.add(new ConnectorDTO("Luxir_Output", "Luxir Hybrid Search Vector Store", "output", "org.opencrawling.luxir.LuxirOutputConnector", 10, Map.of(
+            "luxirEndpoint", "http://localhost:9400",
+            "luxirCollection", "opencrawling",
+            "luxirVectorField", "embedding_v",
+            "luxirDimensions", "1024",
+            "luxirSimilarity", "cosine"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         

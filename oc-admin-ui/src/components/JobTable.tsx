@@ -112,6 +112,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('solr')) {
     return { icon: Sun, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-500/20' }
   }
+  if (className.includes('luxir') || className.includes('Luxir')) {
+    return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
   if (className.includes('Ollama')) {
     return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
   }

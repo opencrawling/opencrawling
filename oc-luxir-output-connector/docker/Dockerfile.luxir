@@ -1,0 +1,22 @@
+FROM --platform=linux/amd64 ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG LUXIR_VERSION=0.1.0
+ARG LUXIR_TIER=v2
+
+RUN curl -fsSL "https://github.com/luxir-search/luxir/releases/download/v${LUXIR_VERSION}/luxir-${LUXIR_VERSION}-linux-x86_64-${LUXIR_TIER}" -o /usr/local/bin/luxir \
+    && chmod +x /usr/local/bin/luxir
+
+WORKDIR /data
+
+EXPOSE 9400 9401
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 \
+  CMD curl -s http://localhost:9400/collections || exit 1
+
+ENTRYPOINT ["/usr/local/bin/luxir"]
+CMD ["--store.backend", "fs", "--store.data-dir", "/data", "--server.http.port", "9400"]

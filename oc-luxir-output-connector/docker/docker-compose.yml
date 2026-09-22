@@ -1,0 +1,21 @@
+services:
+  luxir:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.luxir
+    image: opencrawling/luxir:0.1.0
+    container_name: luxir-standalone
+    ports:
+      - "9400:9400"
+    volumes:
+      - luxir-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9400/collections > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  luxir-data:
+    name: luxir-data
