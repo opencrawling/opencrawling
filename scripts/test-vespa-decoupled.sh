@@ -127,6 +127,7 @@ echo -e "${GREEN}Ollama is healthy!${NC}"
 
 # Reset elapsed timer
 ELAPSED=0
+TIMEOUT=300
 echo -e "${YELLOW}Waiting for Ollama model puller to pull embedding models and exit...${NC}"
 until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-vespa 2>/dev/null || echo 'false')" == "false" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then

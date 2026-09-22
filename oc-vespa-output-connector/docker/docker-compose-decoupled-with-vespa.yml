@@ -107,7 +107,7 @@ services:
   ollama-model-puller:
     image: ollama/ollama:0.23.4
     container_name: ollama-model-puller-decoupled-vespa
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
@@ -202,16 +202,24 @@ services:
     container_name: oc-crawler-service-vespa
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/data
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=vespa
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
     volumes:
       - ../../oc-runtime/data:/data  # Mount sample files directory
     depends_on:
       kafka:
+        condition: service_started
+      redis:
         condition: service_started
       vespa:
         condition: service_healthy
@@ -229,6 +237,8 @@ services:
     container_name: oc-ingestion-consumer-service-vespa
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=vespa
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
@@ -236,6 +246,8 @@ services:
       - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
     depends_on:
       kafka:
+        condition: service_started
+      redis:
         condition: service_started
       vespa:
         condition: service_healthy
@@ -255,6 +267,8 @@ services:
       - "8082:8082"
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_OPENAI_API_KEY=mock-key
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=vespa
@@ -263,6 +277,7 @@ services:
     depends_on:
       - kafka
       - ollama
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -275,6 +290,8 @@ services:
     container_name: oc-writer-service-vespa
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=vespa
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_DOCUMENT_TYPE=opencrawling_chunk
@@ -282,6 +299,8 @@ services:
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
     depends_on:
       kafka:
+        condition: service_started
+      redis:
         condition: service_started
       vespa:
         condition: service_healthy
