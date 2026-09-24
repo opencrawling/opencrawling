@@ -50,7 +50,7 @@ jobs:
       # Extract metadata (tags, labels) for the specific matrix component
       - name: Extract metadata for ${{ matrix.component }}
         id: meta
-        uses: docker/metadata-action@v6.2.0
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/oc-${{ matrix.component }}
           tags: |
