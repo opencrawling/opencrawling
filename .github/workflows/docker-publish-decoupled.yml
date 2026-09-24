@@ -62,7 +62,7 @@ jobs:
 
       # Build and push the decoupled component image
       - name: Build and push ${{ matrix.component }} image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile.${{ matrix.component }}
