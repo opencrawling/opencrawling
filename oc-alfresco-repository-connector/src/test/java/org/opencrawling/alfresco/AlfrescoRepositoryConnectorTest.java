@@ -199,4 +199,63 @@ class AlfrescoRepositoryConnectorTest {
                 })
                 .verifyComplete();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testScanSkipsDataDictionaryFolder() throws Exception {
+        HttpResponse<String> rootResponse = mock(HttpResponse.class);
+        when(rootResponse.statusCode()).thenReturn(200);
+        when(rootResponse.body()).thenReturn("""
+            {
+              "list": {
+                "pagination": { "count": 2, "hasMoreItems": false, "totalItems": 2, "skipCount": 0, "maxItems": 10 },
+                "entries": [
+                  {
+                    "entry": {
+                      "id": "dict-id",
+                      "name": "Data Dictionary",
+                      "isFolder": true,
+                      "isFile": false,
+                      "nodeType": "cm:folder"
+                    }
+                  },
+                  {
+                    "entry": {
+                      "id": "repo-doc-1",
+                      "name": "spec.txt",
+                      "isFolder": false,
+                      "isFile": true,
+                      "nodeType": "cm:content",
+                      "content": { "mimeType": "text/plain", "sizeInBytes": 10 }
+                    }
+                  }
+                ]
+              }
+            }
+            """);
+
+        HttpResponse<InputStream> contentResponse = mock(HttpResponse.class);
+        when(contentResponse.statusCode()).thenReturn(200);
+        when(contentResponse.body()).thenReturn(new ByteArrayInputStream("Repo content".getBytes()));
+
+        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenAnswer(invocation -> {
+                    HttpResponse.BodyHandler<?> handler = invocation.getArgument(1);
+                    if (handler == HttpResponse.BodyHandlers.ofInputStream()) {
+                        return contentResponse;
+                    }
+                    return rootResponse;
+                });
+
+        connector.setHttpClient(mockHttpClient);
+
+        Flux<RepositoryDocument> scanFlux = connector.scan("-root-");
+
+        StepVerifier.create(scanFlux)
+                .assertNext(doc -> {
+                    assertThat(doc.id()).isEqualTo("repo-doc-1");
+                    assertThat(doc.metadata().get("name")).containsExactly("spec.txt");
+                })
+                .verifyComplete();
+    }
 }

@@ -24,16 +24,20 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.stream.Collectors;
 
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -52,21 +56,40 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
     private final String username;
     private final String password;
     private final int batchSize;
+    private final Set<String> excludedFolders;
     private final ObjectMapper objectMapper;
     
     private HttpClient httpClient;
     private String authHeader;
 
+    @Autowired
     public AlfrescoRepositoryConnector(
             @Value("${spring.opencrawling.connector.alfresco.url:http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1}") String url,
             @Value("${spring.opencrawling.connector.alfresco.username:admin}") String username,
             @Value("${spring.opencrawling.connector.alfresco.password:admin}") String password,
-            @Value("${spring.opencrawling.connector.alfresco.batch-size:100}") int batchSize) {
+            @Value("${spring.opencrawling.connector.alfresco.batch-size:100}") int batchSize,
+            @Value("${spring.opencrawling.connector.alfresco.excluded-folders:Data Dictionary}") String excludedFoldersConfig) {
         this.url = url;
         this.username = username;
         this.password = password;
         this.batchSize = batchSize;
+        if (excludedFoldersConfig != null && !excludedFoldersConfig.isBlank()) {
+            this.excludedFolders = Arrays.stream(excludedFoldersConfig.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toSet());
+        } else {
+            this.excludedFolders = Set.of("Data Dictionary");
+        }
         this.objectMapper = new ObjectMapper();
+    }
+
+    public AlfrescoRepositoryConnector(
+            String url,
+            String username,
+            String password,
+            int batchSize) {
+        this(url, username, password, batchSize, "Data Dictionary");
     }
 
     @Override
@@ -131,6 +154,9 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
                     if (basePath.startsWith("/")) {
                         // It is a path; we use -root- and relativePath
                         relativePath = basePath.substring(1); // strip leading slash
+                        if (relativePath.isBlank()) {
+                            relativePath = null;
+                        }
                     } else {
                         // It is a specific Node ID (e.g. UUID)
                         startNodeId = basePath;
@@ -138,9 +164,13 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
                 }
                 
                 scanFolder(startNodeId, relativePath, sink);
-                sink.complete();
+                synchronized (sink) {
+                    sink.complete();
+                }
             } catch (Exception e) {
-                sink.error(e);
+                synchronized (sink) {
+                    sink.error(e);
+                }
             }
         });
     }
@@ -175,6 +205,10 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
                     boolean isFile = entry.path("isFile").asBoolean(false);
                     
                     if (isFolder) {
+                        if (excludedFolders.stream().anyMatch(ex -> ex.equalsIgnoreCase(childName))) {
+                            log.info("Skipping excluded folder '{}' (id: {})", childName, childId);
+                            continue;
+                        }
                         scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
                             // After resolving the path down, we use the absolute child Node ID, so relativePath is null
                             scanFolder(childId, null, sink);
@@ -182,8 +216,17 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
                         }));
                     } else if (isFile) {
                         try {
+                            JsonNode contentNode = entry.path("content");
+                            if (contentNode == null || contentNode.isMissingNode()) {
+                                log.debug("Skipping file node without content: {} (name: {})", childId, childName);
+                                continue;
+                            }
                             RepositoryDocument doc = createDocument(entry);
-                            sink.next(doc);
+                            if (doc != null && doc.contentStream() != null) {
+                                synchronized (sink) {
+                                    sink.next(doc);
+                                }
+                            }
                         } catch (Exception e) {
                             log.error("Error creating document for nodeId={} (name={}): {}", childId, childName, e.getMessage());
                         }
@@ -283,7 +326,14 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
         }
         
         String contentUri = url + "/nodes/" + childId + "/content";
-        InputStream contentStream = getDocumentContentStream(childId);
+        InputStream contentStream = null;
+        if (contentNode != null && !contentNode.isMissingNode()) {
+            try {
+                contentStream = getDocumentContentStream(childId);
+            } catch (Exception e) {
+                log.warn("Failed to download content stream for node {}: {}", childId, e.getMessage());
+            }
+        }
         
         return new RepositoryDocument(
             childId,

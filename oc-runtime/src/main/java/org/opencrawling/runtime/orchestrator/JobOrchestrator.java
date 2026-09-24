@@ -195,7 +195,25 @@ public class JobOrchestrator {
                             // Direct ingestion to OutputConnector for synchronous application runtime
                             if (outputConnector != null) {
                                 try {
-                                    outputConnector.send(doc).block();
+                                    RepositoryDocument outputDoc = doc;
+                                    if (doc.contentStream() != null && !finalUri.equals(doc.uri())) {
+                                        try {
+                                            InputStream freshStream = claimCheckStore.get(URI.create(finalUri));
+                                            outputDoc = new RepositoryDocument(
+                                                doc.id(),
+                                                finalUri,
+                                                freshStream,
+                                                doc.metadata(),
+                                                doc.acl(),
+                                                doc.security(),
+                                                doc.lastModified(),
+                                                doc.action()
+                                            );
+                                        } catch (Exception ex) {
+                                            log.debug("Could not resolve fresh stream from ClaimCheckStore: {}", ex.getMessage());
+                                        }
+                                    }
+                                    outputConnector.send(outputDoc).block();
                                     log.info("Successfully ingested document {} directly into OutputConnector: {}", doc.id(), outputConnector.getName());
                                 } catch (Exception outEx) {
                                     log.error("Direct OutputConnector ingestion failed for doc {}: {}", doc.id(), outEx.getMessage(), outEx);

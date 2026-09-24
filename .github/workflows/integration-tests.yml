@@ -58,6 +58,8 @@ jobs:
             script: "test-ozone-claimcheck-gc.sh"
           - name: "Apache Ozone Decoupled Pipeline Test Suite"
             script: "test-ozone-decoupled.sh"
+          - name: "Alfresco Decoupled Pipeline Test Suite"
+            script: "test-alfresco-decoupled.sh"
           - name: "Camunda Connector Test Suite"
             script: "test-camunda-connector.sh"
           - name: "Camunda Decoupled Pipeline Test Suite"
@@ -112,4 +114,4 @@ jobs:
             echo "::error::One or more integration test suites failed or were cancelled."
             exit 1
           fi
-          echo "All 21 integration test suites passed successfully!"
+          echo "All integration test suites passed successfully!"

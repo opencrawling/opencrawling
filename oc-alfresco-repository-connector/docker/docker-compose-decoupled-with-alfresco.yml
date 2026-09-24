@@ -1,0 +1,421 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- Alfresco Content Services (Community Edition) ---
+  alfresco:
+    image: docker.io/alfresco/alfresco-content-repository-community:26.1.0
+    container_name: alfresco-community-decoupled
+    mem_limit: 2g
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -Dencryption.keystore.type=JCEKS
+        -Dencryption.cipherAlgorithm=DESede/CBC/PKCS5Padding
+        -Dencryption.keyAlgorithm=DESede
+        -Dencryption.keystore.location=/usr/local/tomcat/shared/classes/alfresco/extension/keystore/keystore
+        -Dmetadata-keystore.password=mp6yc0UD9e
+        -Dmetadata-keystore.aliases=metadata
+        -Dmetadata-keystore.metadata.password=oKIWzVdEdA
+        -Dmetadata-keystore.metadata.algorithm=DESede
+      JAVA_OPTS: >-
+        -Ddb.driver=org.postgresql.Driver
+        -Ddb.username=alfresco
+        -Ddb.password=alfresco
+        -Ddb.url=jdbc:postgresql://postgres-alfresco:5432/alfresco
+        -Dsolr.host=solr6
+        -Dsolr.port=8983
+        -Dsolr.http.connection.timeout=1000
+        -Dsolr.secureComms=secret
+        -Dsolr.sharedSecret=secret
+        -Dsolr.base.url=/solr
+        -Dindex.subsystem.name=solr6
+        -Dshare.host=localhost
+        -Dshare.port=8080
+        -Dalfresco.host=localhost
+        -Dalfresco.port=8080
+        -Dcsrf.filter.enabled=false
+        -Daos.baseUrlOverwrite=http://localhost:8080/alfresco/aos
+        -Dmessaging.broker.url="failover:(nio://activemq:61616)?timeout=3000&jms.useCompression=true"
+        -Dmessaging.broker.username=admin
+        -Dmessaging.broker.password=admin
+        -Ddeployment.method=DOCKER_COMPOSE
+        -DlocalTransform.core-aio.url=http://transform-core-aio:8090/
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/probes/-ready-"]
+      interval: 10s
+      timeout: 3s
+      retries: 25
+      start_period: 30s
+    volumes:
+      - opencrawling-alfrescodata:/usr/local/tomcat/alf_data
+    depends_on:
+      postgres-alfresco:
+        condition: service_healthy
+      activemq:
+        condition: service_healthy
+      transform-core-aio:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+
+  transform-core-aio:
+    image: alfresco/alfresco-transform-core-aio:5.4.2
+    container_name: transform-core-aio-decoupled
+    mem_limit: 1536m
+    environment:
+      JAVA_OPTS: >-
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      activemq:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+
+  postgres-alfresco:
+    image: postgres:17.9
+    container_name: postgres-alfresco-decoupled
+    mem_limit: 512m
+    environment:
+      - POSTGRES_PASSWORD=alfresco
+      - POSTGRES_USER=alfresco
+      - POSTGRES_DB=alfresco
+    command: postgres -c max_connections=300 -c log_min_messages=LOG
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - opencrawling-alfresco-pgdata:/var/lib/postgresql/data
+    networks:
+      - opencrawling-network
+
+  activemq:
+    image: docker.io/alfresco/alfresco-activemq:6.2.6-jre17-rockylinux8
+    container_name: activemq-alfresco-decoupled
+    mem_limit: 1g
+    environment:
+      - ACTIVEMQ_ADMIN_LOGIN=admin
+      - ACTIVEMQ_ADMIN_PASSWORD=admin
+    ports:
+      - "8161:8161"
+      - "61616:61616"
+    healthcheck:
+      test: ["CMD", "/opt/activemq/bin/activemq", "query", "--objname", "type=Broker,brokerName=*,service=Health", "|", "grep", "Good"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - opencrawling-network
+
+  # --- Vector Store (PostgreSQL / pgvector) ---
+  postgres-vector:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-decoupled-alfresco
+    environment:
+      POSTGRES_DB: opencrawling
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-pgdata-alfresco:/var/lib/postgresql/data
+    networks:
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-alfresco
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-alfresco:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-decoupled-alfresco
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ollama-model-puller:
+    image: ollama/ollama:0.23.4
+    container_name: ollama-model-puller-decoupled-alfresco
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-alfresco
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-alfresco:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-alfresco
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=alfresco
+      - OPENCRAWLING_CONNECTOR_TYPE=alfresco
+      - SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_ENABLED=true
+      - SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_URL=http://alfresco:8080/alfresco/api/-default-/public/alfresco/versions/1
+      - SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_USERNAME=admin
+      - SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_PASSWORD=admin
+      - SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_BATCH_SIZE=100
+      - SPRING_OPENCRAWLING_SCAN_PATH=${SPRING_OPENCRAWLING_SCAN_PATH:--root-}
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+    volumes:
+      - opencrawling-claims-alfresco:/data/claims
+    depends_on:
+      kafka:
+        condition: service_started
+      alfresco:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-alfresco
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+    volumes:
+      - opencrawling-claims-alfresco:/data/claims
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-consumer-service-alfresco
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      kafka:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-alfresco
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-alfresco
+    ports:
+      - "8080:8080"
+      - "9095:9095"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+    depends_on:
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  opencrawling-pgdata-alfresco:
+    name: opencrawling-pgdata-alfresco
+  opencrawling-redisdata-alfresco:
+    name: opencrawling-redisdata-alfresco
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-kafkadata-alfresco:
+    name: opencrawling-kafkadata-alfresco
+  opencrawling-alfrescodata:
+    name: opencrawling-alfrescodata
+  opencrawling-alfresco-pgdata:
+    name: opencrawling-alfresco-pgdata
+  opencrawling-claims-alfresco:
+    name: opencrawling-claims-alfresco

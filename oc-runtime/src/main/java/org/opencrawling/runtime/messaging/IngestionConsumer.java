@@ -100,9 +100,20 @@ public class IngestionConsumer {
 
             URI fileUri = URI.create(message.uri());
             
-            // Resolve stream via ClaimCheckStore (supports local filesystem, Apache Ozone, S3, etc.)
-            try (InputStream contentStream = claimCheckStore.get(fileUri)) {
-                byte[] contentBytes = contentStream.readAllBytes();
+            // Resolve stream via ClaimCheckStore (supports local filesystem, Apache Ozone, S3, etc.) or HTTP
+            byte[] contentBytes;
+            if ("http".equalsIgnoreCase(fileUri.getScheme()) || "https".equalsIgnoreCase(fileUri.getScheme())) {
+                try (InputStream httpStream = fileUri.toURL().openStream()) {
+                    contentBytes = httpStream.readAllBytes();
+                } catch (Exception e) {
+                    log.warn("Failed to read HTTP stream directly for {}: {}", fileUri, e.getMessage());
+                    contentBytes = new byte[0];
+                }
+            } else {
+                try (InputStream contentStream = claimCheckStore.get(fileUri)) {
+                    contentBytes = contentStream.readAllBytes();
+                }
+            }
                 
                 if (contentBytes.length == 0) {
                     log.warn("Document {} content is empty, skipping chunking.", message.documentId());
@@ -156,6 +167,7 @@ public class IngestionConsumer {
                         metadata.put(key, cleanedList);
                     }
                 });
+                metadata.put("documentId", message.documentId());
                 metadata.put("uri", message.uri());
                 metadata.put("acl", message.acl());
                 metadata.put("security", message.security());
@@ -196,9 +208,8 @@ public class IngestionConsumer {
                     kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, chunkId, chunkMsg).get();
                 }
                 log.info("Successfully published all chunks for document: {}", message.documentId());
-            }
 
-            if (claimCheckProperties.isCleanupOnConsume()) {
+            if (claimCheckProperties.isCleanupOnConsume() && !"http".equalsIgnoreCase(fileUri.getScheme()) && !"https".equalsIgnoreCase(fileUri.getScheme())) {
                 try {
                     claimCheckStore.delete(fileUri);
                 } catch (Exception e) {
