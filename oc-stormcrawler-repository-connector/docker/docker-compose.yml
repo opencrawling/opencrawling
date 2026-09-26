@@ -1,0 +1,75 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: storm-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOO_MY_ID: 1
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  storm-nimbus:
+    image: storm:2.8.0
+    container_name: storm-nimbus
+    command: storm nimbus
+    ports:
+      - "6627:6627"
+    environment:
+      STORM_ZOOKEEPER_SERVERS: "zookeeper"
+      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6627 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  storm-supervisor:
+    image: storm:2.8.0
+    container_name: storm-supervisor
+    command: storm supervisor
+    environment:
+      STORM_ZOOKEEPER_SERVERS: "zookeeper"
+      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
+    depends_on:
+      - storm-nimbus
+      - zookeeper
+
+  storm-ui:
+    image: storm:2.8.0
+    container_name: storm-ui
+    command: storm ui
+    ports:
+      - "8088:8080"
+    environment:
+      STORM_ZOOKEEPER_SERVERS: "zookeeper"
+      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
+    depends_on:
+      - storm-nimbus
+      - zookeeper
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

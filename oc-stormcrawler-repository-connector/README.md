@@ -43,3 +43,17 @@ spring:
         exclude-patterns:
           - ".*\\.(pdf|zip|gz|exe)$"
 ```
+
+## Docker Support
+
+You can spin up a standalone Apache Storm cluster (Zookeeper, Nimbus, Supervisor, Storm UI) for testing:
+
+```bash
+docker compose -f oc-stormcrawler-repository-connector/docker/docker-compose.yml up -d
+```
+
+To spin up the entire decoupled OpenCrawling stack orchestrated with Apache Storm:
+
+```bash
+docker compose -f oc-stormcrawler-repository-connector/docker/docker-compose-decoupled-with-stormcrawler.yml up -d
+```
