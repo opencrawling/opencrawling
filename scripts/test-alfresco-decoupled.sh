@@ -122,6 +122,7 @@ cleanup() {
   if [ "${KEEP_CONTAINERS}" = false ]; then
     log_info "Tearing down Decoupled Alfresco Docker Compose environment..."
     compose down --remove-orphans >/dev/null 2>&1 || true
+    docker compose -f oc-alfresco-repository-connector/alfresco-community-compose.yml down -v >/dev/null 2>&1 || true
     log_success "Environment cleanup complete."
   else
     log_warn "KEEP_CONTAINERS=true set. Skipping docker compose teardown."
@@ -145,7 +146,18 @@ log_pass "Prerequisites verified successfully."
 # ------------------------------------------------------------------------------
 log_step 2 "Cleaning up any existing decoupled Alfresco containers..."
 compose down --remove-orphans || true
-log_pass "Existing containers cleaned up."
+docker compose -f oc-alfresco-repository-connector/alfresco-community-compose.yml down -v >/dev/null 2>&1 || true
+docker rm -f postgres-alfresco >/dev/null 2>&1 || true
+
+# Free common ports if lingering containers from previous runs are still binding them
+for p in 8080 8081 9092 5432 5433 6379 11434; do
+  c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
+  if [ -n "$c_ids" ]; then
+    docker stop $c_ids >/dev/null 2>&1 || true
+    docker rm -f $c_ids >/dev/null 2>&1 || true
+  fi
+done
+log_pass "Existing containers and port bindings cleaned up."
 
 # ------------------------------------------------------------------------------
 # STEP 3: Build OpenCrawling decoupled microservice images

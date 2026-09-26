@@ -77,6 +77,7 @@ LIST_ONLY=false
 DRY_RUN=false
 USER_FILTERS=()
 EXPLICIT_TESTS=()
+export FORCE_CLEANUP="${FORCE_CLEANUP:-true}"
 
 # ------------------------------------------------------------------------------
 # Helper: Print Usage
@@ -341,6 +342,17 @@ cleanup_on_interrupt() {
     sleep 1
     kill -KILL "$CURRENT_CHILD_PID" 2>/dev/null || true
   fi
+  # Clean up any lingering containers publishing integration test ports
+  if command -v docker >/dev/null 2>&1; then
+    for p in 8080 8081 9092 5432 5433 6379 11434; do
+      local c_ids
+      c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
+      if [ -n "$c_ids" ]; then
+        docker stop $c_ids >/dev/null 2>&1 || true
+        docker rm -f $c_ids >/dev/null 2>&1 || true
+      fi
+    done
+  fi
 }
 trap cleanup_on_interrupt INT TERM
 
@@ -419,6 +431,17 @@ for test_path in ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"}; do
 
   # Make sure script is executable
   chmod +x "$test_path" 2>/dev/null || true
+
+  # Ensure common integration test ports are not blocked by lingering containers from aborted/prior runs
+  if command -v docker >/dev/null 2>&1; then
+    for p in 8080 8081 9092 5432 5433 6379 11434; do
+      c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
+      if [ -n "$c_ids" ]; then
+        docker stop $c_ids >/dev/null 2>&1 || true
+        docker rm -f $c_ids >/dev/null 2>&1 || true
+      fi
+    done
+  fi
 
   test_start=$(date +%s)
   test_exit_code=0

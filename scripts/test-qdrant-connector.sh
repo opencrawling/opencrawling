@@ -20,6 +20,7 @@ COLLECTION_NAME="${COLLECTION_NAME:-enterprise_kb}"
 VECTOR_DIMENSIONS=1024
 CONTAINER_NAME="opencrawling-qdrant-test"
 START_LOCAL_CONTAINER=false
+FORCE_CLEANUP="${FORCE_CLEANUP:-false}"
 
 # Terminal Formatting
 RED='\033[0;31m'
@@ -43,6 +44,17 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
+
+# Cleanup trap
+cleanup() {
+    if [ "${START_LOCAL_CONTAINER}" = true ] || [ "${FORCE_CLEANUP}" = true ]; then
+        log_info "Cleaning up temporary Qdrant docker container '${CONTAINER_NAME}'..."
+        docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        log_success "Temporary container removed."
+    fi
+}
+trap cleanup EXIT
 
 # 1. Dependency Checks
 log_info "Checking required tools (curl, jq)..."
@@ -228,13 +240,8 @@ else
     exit 1
 fi
 
-# 9. Clean up temporary test container if launched by script
-if [ "${START_LOCAL_CONTAINER}" = true ]; then
-    log_info "Cleaning up temporary Qdrant docker container '${CONTAINER_NAME}'..."
-    docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    log_success "Temporary container removed."
-fi
+# 9. Clean up temporary test container
+cleanup
 
 echo -e "\n=========================================================================="
 log_success "All Qdrant Output Connector Integration Tests Passed Successfully! 🎉"

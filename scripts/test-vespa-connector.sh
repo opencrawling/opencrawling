@@ -20,6 +20,7 @@ VESPA_PORT="${VESPA_PORT:-8080}"
 VESPA_CONFIG_PORT="${VESPA_CONFIG_PORT:-19071}"
 CONTAINER_NAME="opencrawling-vespa-test"
 START_LOCAL_CONTAINER=false
+FORCE_CLEANUP="${FORCE_CLEANUP:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VESPA_APP_DIR="${SCRIPT_DIR}/../oc-vespa-output-connector/vespa-app"
@@ -35,6 +36,17 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Cleanup trap
+cleanup() {
+    if [ "${START_LOCAL_CONTAINER}" = true ] || [ "${FORCE_CLEANUP}" = true ]; then
+        log_info "Cleaning up temporary Vespa docker container '${CONTAINER_NAME}'..."
+        docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        log_success "Temporary container removed."
+    fi
+}
+trap cleanup EXIT
 
 # 1. Dependency Checks
 log_info "Checking required tools (curl, jq, tar)..."
@@ -201,13 +213,8 @@ else
     exit 1
 fi
 
-# 9. Clean up temporary test container if launched by script
-if [ "${START_LOCAL_CONTAINER}" = true ]; then
-    log_info "Cleaning up temporary Vespa docker container '${CONTAINER_NAME}'..."
-    docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    log_success "Temporary container removed."
-fi
+# 9. Clean up temporary test container
+cleanup
 
 echo -e "\n=========================================================================="
 log_success "All Vespa Output Connector Integration Tests Passed Successfully!"
