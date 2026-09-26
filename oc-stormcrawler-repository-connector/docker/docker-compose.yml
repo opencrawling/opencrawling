@@ -18,58 +18,56 @@ services:
   zookeeper:
     image: zookeeper:3.9
     container_name: storm-zookeeper
+    hostname: zookeeper
     ports:
       - "2181:2181"
     environment:
       ZOO_MY_ID: 1
     healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 || exit 0"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/2181 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
-  storm-nimbus:
+  nimbus:
     image: storm:2.8.0
     container_name: storm-nimbus
+    hostname: nimbus
     command: storm nimbus
     ports:
       - "6627:6627"
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 6627 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6627 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  storm-supervisor:
+  supervisor:
     image: storm:2.8.0
     container_name: storm-supervisor
     command: storm supervisor
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - storm-nimbus
-      - zookeeper
+      nimbus:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
 
-  storm-ui:
+  ui:
     image: storm:2.8.0
     container_name: storm-ui
     command: storm ui
     ports:
       - "8088:8080"
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - storm-nimbus
-      - zookeeper
+      nimbus:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

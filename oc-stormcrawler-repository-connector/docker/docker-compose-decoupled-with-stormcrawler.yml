@@ -19,67 +19,75 @@ services:
   zookeeper:
     image: zookeeper:3.9
     container_name: storm-zookeeper-decoupled
+    hostname: zookeeper
     environment:
       ZOO_MY_ID: 1
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - zookeeper
     healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 || exit 0"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/2181 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
   storm-nimbus:
     image: storm:2.8.0
     container_name: storm-nimbus-decoupled
+    hostname: nimbus
     command: storm nimbus
     ports:
       - "6627:6627"
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - nimbus
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 6627 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6627 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   storm-supervisor:
     image: storm:2.8.0
     container_name: storm-supervisor-decoupled
+    hostname: supervisor
     command: storm supervisor
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - storm-nimbus
-      - zookeeper
+      storm-nimbus:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - supervisor
 
   storm-ui:
     image: storm:2.8.0
     container_name: storm-ui-decoupled
+    hostname: ui
     command: storm ui
     ports:
       - "8088:8080"
-    environment:
-      STORM_ZOOKEEPER_SERVERS: "zookeeper"
-      STORM_NIMBUS_SEEDS: "[\"storm-nimbus\"]"
     depends_on:
-      - storm-nimbus
-      - zookeeper
+      storm-nimbus:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - ui
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && exec 3<&- && exec 3>&-' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:
@@ -186,9 +194,9 @@ services:
       - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=stormcrawler
       - OPENCRAWLING_CONNECTOR_TYPE=stormcrawler
       - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_ENABLED=true
-      - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_NIMBUS_HOST=storm-nimbus
+      - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_NIMBUS_HOST=nimbus
       - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_NIMBUS_PORT=6627
-      - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_NIMBUS_REST_URL=http://storm-ui:8080
+      - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_NIMBUS_REST_URL=http://ui:8080
       - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_TOPOLOGY_NAME=opencrawling-web-crawler
       - SPRING_OPENCRAWLING_CONNECTOR_STORMCRAWLER_SEEDS=https://docs.example.com
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
