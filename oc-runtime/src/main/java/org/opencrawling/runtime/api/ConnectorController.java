@@ -45,6 +45,15 @@ public class ConnectorController {
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));
         defaults.add(new ConnectorDTO("Camunda_7_REST_Engine", "Camunda 7 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://localhost:8080/engine-rest", "username", "demo", "password", "demo")));
+        defaults.add(new ConnectorDTO("StormCrawler_Web_Engine", "Apache StormCrawler Engine", "repository", "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(
+            "nimbusHost", "localhost",
+            "nimbusPort", "6627",
+            "nimbusRestUrl", "http://localhost:8080",
+            "topologyName", "opencrawling-web-crawler",
+            "seeds", "https://docs.example.com",
+            "delayMs", "1000",
+            "customUserAgent", "OpenCrawling-StormCrawler-Bot/1.0"
+        )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
             "pgVectorUsername", "opencrawling",

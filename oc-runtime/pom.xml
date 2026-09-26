@@ -74,6 +74,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-stormcrawler-repository-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-vector-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>

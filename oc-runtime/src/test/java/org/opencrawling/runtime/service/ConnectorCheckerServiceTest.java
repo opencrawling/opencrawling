@@ -76,4 +76,17 @@ class ConnectorCheckerServiceTest {
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to Luxir"));
     }
+
+    @Test
+    void testCheckStormCrawlerConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("StormCrawler_Test", "Test StormCrawler", "repository",
+                "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(
+                        "nimbusRestUrl", "http://127.0.0.1:59999",
+                        "nimbusHost", "127.0.0.1",
+                        "nimbusPort", "59999"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Apache Storm"));
+    }
 }
