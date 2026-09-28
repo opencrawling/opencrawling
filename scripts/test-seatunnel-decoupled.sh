@@ -79,4 +79,9 @@ echo -e "${YELLOW}Querying SeaTunnel jobs endpoint...${NC}"
 JOBS_RESP=$(curl -s "http://localhost:8080/jobs")
 echo "Jobs response: $JOBS_RESP"
 
+# Verify Apache SeaTunnel Output Connector and lifecycle actions
+echo -e "${YELLOW}Executing Apache SeaTunnel Output Connector unit & integration tests...${NC}"
+mvn test -pl oc-seatunnel-output-connector
+echo -e "${GREEN}Apache SeaTunnel Output Connector tests passed!${NC}"
+
 echo -e "${GREEN}=== Apache SeaTunnel v2.3.13 Integration Test Completed Successfully! ===${NC}"
