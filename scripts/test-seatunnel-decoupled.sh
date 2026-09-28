@@ -176,6 +176,48 @@ echo -e "${YELLOW}Querying SeaTunnel Zeta running jobs...${NC}"
 RUNNING_JOBS=$(curl -s "http://localhost:8088/running-jobs" || echo "[]")
 echo "Running jobs response: $RUNNING_JOBS"
 
+# Submit an active SeaTunnel job to verify DAG deployment on Zeta
+echo -e "${YELLOW}Submitting OpenCrawling verification DAG to SeaTunnel Zeta engine...${NC}"
+HOCON_CONFIG='env {
+  parallelism = 1
+  job.mode = "BATCH"
+}
+source {
+  FakeSource {
+    result_table_name = "opencrawling_sample"
+    schema = {
+      fields {
+        doc_id = "string"
+        chunk_id = "string"
+        content = "string"
+      }
+    }
+    rows = [
+      {
+        fields = ["seatunnel-decoupled-test-doc", "chunk-0", "OpenCrawling SeaTunnel Decoupled Verified"]
+      }
+    ]
+  }
+}
+sink {
+  Console {
+    source_table_name = "opencrawling_sample"
+  }
+}'
+
+SUBMIT_RESP=$(curl -s -X POST "http://localhost:8088/submit-job?jobName=opencrawling_e2e_verification" \
+  -H "Content-Type: text/plain" \
+  --data-binary "$HOCON_CONFIG")
+echo "SeaTunnel job submission response: $SUBMIT_RESP"
+
+JOB_ID=$(echo "$SUBMIT_RESP" | jq -r '.jobId // empty' 2>/dev/null || echo "")
+if [ -n "$JOB_ID" ]; then
+  echo -e "${GREEN}SeaTunnel job successfully accepted by Zeta engine! Job ID: $JOB_ID${NC}"
+  # Check job info
+  JOB_INFO=$(curl -s "http://localhost:8088/job-info/$JOB_ID" || echo "{}")
+  echo "Job Info response: $JOB_INFO"
+fi
+
 # Verify MCP server endpoint
 echo -e "${YELLOW}Waiting for MCP Server health endpoint to be ready...${NC}"
 HTTP_STATUS="000"
