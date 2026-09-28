@@ -50,6 +50,8 @@ COPY oc-opensearch3-output-connector/src/ /app/oc-opensearch3-output-connector/s
 COPY oc-qdrant-output-connector/src/ /app/oc-qdrant-output-connector/src/
 COPY oc-vespa-output-connector/src/ /app/oc-vespa-output-connector/src/
 COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
+COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
+COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
 COPY oc-flowable-repository-connector/src/ /app/oc-flowable-repository-connector/src/
 COPY oc-camunda-repository-connector/src/ /app/oc-camunda-repository-connector/src/
 COPY oc-stormcrawler-bolt/src/ /app/oc-stormcrawler-bolt/src/
