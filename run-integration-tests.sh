@@ -347,7 +347,7 @@ cleanup_on_interrupt() {
   fi
   # Clean up any lingering containers publishing integration test ports
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 9092 5432 5433 6379 11434 5801; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
       local c_ids
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
@@ -437,7 +437,7 @@ for test_path in ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"}; do
 
   # Ensure common integration test ports are not blocked by lingering containers from aborted/prior runs
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 9092 5432 5433 6379 11434 5801; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
         docker stop $c_ids >/dev/null 2>&1 || true

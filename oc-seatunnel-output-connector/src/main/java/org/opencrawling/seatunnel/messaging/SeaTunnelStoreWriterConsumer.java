@@ -32,8 +32,8 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
-@ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "seatunnel")
-@ConditionalOnExpression("'${opencrawling.consumer.writer.enabled:false}' == 'true'")
+@ConditionalOnProperty(name = "opencrawling.consumer.writer.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnExpression("'${spring.opencrawling.output.type:pgvector}' == 'seatunnel'")
 public class SeaTunnelStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(SeaTunnelStoreWriterConsumer.class);
