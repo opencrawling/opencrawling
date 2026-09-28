@@ -25,6 +25,7 @@
 [![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x%20%7C%203.x-005EB8.svg?style=flat&logo=opensearch&logoColor=white)](https://opensearch.org/)
 [![Vespa](https://img.shields.io/badge/Vespa-8-4E9BFA.svg?style=flat&logo=vespa&logoColor=white)](https://vespa.ai/)
 [![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
+[![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
 [![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![OIS](https://img.shields.io/badge/OIS-Open_Ingestion_Standard-0052CC.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
@@ -77,7 +78,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir]
+        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir / Apache SeaTunnel]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
@@ -734,6 +735,19 @@ To run the complete decoupled pipeline configured to use Luxir instead of Postgr
    ```
 
 This starts a standalone Luxir search engine instance alongside the decoupled OpenCrawling services. Key configuration properties (see `spring.opencrawling.output.luxir.*`): `endpoint`, `collection`, `vector-field` (`embedding_v`), `dimensions` (`384` / `768` / `1024`), `similarity` (`cosine`), and `auto-commit` (`true`). Luxir automatically handles dense vector kNN search, dynamic typing schemas (`_t`, `_s`, `_ss`, `_v`), OIS v1.1 tombstone deletions via `delete_ids`, and zero-trust ACL token filtering.
+
+### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
+
+[![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
+
+To run the complete decoupled pipeline configured to fan out document chunks, dense vectors, and security ACLs across 100+ target sinks using **Apache SeaTunnel v2.3.13** (Zeta Engine):
+
+1. **Start the SeaTunnel Zeta cluster**:
+   ```bash
+   docker compose -f oc-seatunnel-output-connector/docker/docker-compose.yml up -d
+   ```
+
+This launches a SeaTunnel Zeta cluster alongside OpenCrawling's streaming pipeline. OpenCrawling emits Open Ingestion Standard (OIS) embedded chunks to Apache Kafka (`opencrawling-embedded`), while `SeaTunnelOutputConnector` dynamically synthesizes and submits HOCON streaming execution jobs to the SeaTunnel Zeta cluster via its HTTP REST API v2 (`http://<master>:8080/submit-job`). SeaTunnel fans out document chunks, dense vectors, and security ACLs across target sinks (ClickHouse, Apache Iceberg, Milvus, Qdrant, StarRocks, etc.) with automatic Change Data Capture (`RowKind.DELETE`) for tombstone purges. Key configuration properties (see `spring.opencrawling.output.seatunnel.*`): `rest-url`, `job-name`, `job-mode` (`STREAMING` / `BATCH`), `checkpoint-interval-ms` (`5000`), `parallelism` (`4`), `kafka-bootstrap-servers`, `kafka-topic`, and `target-sinks`.
 
 ---
 

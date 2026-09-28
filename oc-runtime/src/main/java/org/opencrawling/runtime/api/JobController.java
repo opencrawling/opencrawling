@@ -259,6 +259,19 @@ public class JobController {
                         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
                         resolvedOutputConnector = new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper, null);
                         log.info("Successfully resolved dynamic Vespa output connector at endpoint '{}'", endpoint);
+                    } else if (cls.contains("SeaTunnel") || cls.contains("seatunnel")) {
+                        String restUrl = outConfig.configuration().getOrDefault("seatunnelRestUrl", "http://localhost:8080");
+                        String jobName = outConfig.configuration().getOrDefault("seatunnelJobName", "opencrawling_ingestion_pipeline");
+                        String kafkaBootstrap = outConfig.configuration().getOrDefault("seatunnelKafkaBootstrapServers", "localhost:9092");
+                        String targetSinks = outConfig.configuration().getOrDefault("seatunnelTargetSinks", "console");
+                        org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
+                                restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
+                                "opencrawling-embedded", "opencrawling-seatunnel-group",
+                                targetSinks, 1024, true, 30
+                        );
+                        org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
+                        resolvedOutputConnector = new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
+                        log.info("Successfully resolved dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
                     }
                 }
             } catch (Exception e) {

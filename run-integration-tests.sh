@@ -104,7 +104,7 @@ ${BOLD}OPTIONS:${NC}
 ${BOLD}POSITIONAL ARGUMENTS:${NC}
   Any positional argument can be:
   1. A file path to a specific test script (e.g., ${CYAN}scripts/test-cli.sh${NC} or ${CYAN}test-alfresco-decoupled.sh${NC})
-  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
+  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}seatunnel${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
 
 ${BOLD}EXAMPLES:${NC}
   ${DIM}# Run all integration tests${NC}
@@ -115,6 +115,9 @@ ${BOLD}EXAMPLES:${NC}
 
   ${DIM}# Run only Alfresco tests (matching test-alfresco-*.sh)${NC}
   ./run-integration-tests.sh alfresco
+
+  ${DIM}# Run only SeaTunnel tests (matching test-seatunnel-*.sh)${NC}
+  ./run-integration-tests.sh seatunnel
 
   ${DIM}# Run a single specific test with live output streaming${NC}
   ./run-integration-tests.sh -v scripts/test-alfresco-decoupled.sh
@@ -344,7 +347,7 @@ cleanup_on_interrupt() {
   fi
   # Clean up any lingering containers publishing integration test ports
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 9092 5432 5433 6379 11434; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
       local c_ids
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
@@ -434,7 +437,7 @@ for test_path in ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"}; do
 
   # Ensure common integration test ports are not blocked by lingering containers from aborted/prior runs
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 9092 5432 5433 6379 11434; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
         docker stop $c_ids >/dev/null 2>&1 || true

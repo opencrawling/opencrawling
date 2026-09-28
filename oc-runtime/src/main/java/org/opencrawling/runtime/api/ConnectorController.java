@@ -122,6 +122,14 @@ public class ConnectorController {
             "luxirDimensions", "1024",
             "luxirSimilarity", "cosine"
         )));
+        defaults.add(new ConnectorDTO("SeaTunnel_Output", "Apache SeaTunnel Distributed Fan-Out", "output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector", 10, Map.of(
+            "seaTunnelRestUrl", "http://localhost:8080",
+            "seaTunnelJobName", "opencrawling_ingestion_pipeline",
+            "seaTunnelJobMode", "STREAMING",
+            "seaTunnelKafkaBootstrapServers", "localhost:9092",
+            "seaTunnelKafkaTopic", "opencrawling-embedded",
+            "seaTunnelTargetSinks", "clickhouse,milvus"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         

@@ -79,6 +79,11 @@ public class ConnectorCheckerService {
                 return checkLuxir(config);
             }
 
+            // --- Apache SeaTunnel Output Connector ---
+            if (className.contains("SeaTunnelOutputConnector") || className.contains("SeaTunnel") || className.contains("seatunnel")) {
+                return checkSeaTunnel(config);
+            }
+
             // --- Camunda Repository Connector ---
             if (className.contains("CamundaRepositoryConnector") || className.contains("Camunda")) {
                 return checkCamunda(config);
@@ -516,6 +521,40 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Luxir at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkSeaTunnel(Map<String, String> config) {
+        String endpoint = config.getOrDefault("seaTunnelRestUrl", config.getOrDefault("restUrl", "http://localhost:8080"));
+        String cleanEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            String overviewUrl = cleanEndpoint + "/overview";
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(overviewUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Apache SeaTunnel Zeta cluster at " + cleanEndpoint + " (HTTP " + response.statusCode() + ").", response.body());
+            }
+
+            // Fallback to /jobs
+            HttpRequest jobsReq = HttpRequest.newBuilder()
+                    .uri(URI.create(cleanEndpoint + "/jobs"))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+            HttpResponse<String> jobsResp = client.send(jobsReq, HttpResponse.BodyHandlers.ofString());
+            if (jobsResp.statusCode() >= 200 && jobsResp.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Apache SeaTunnel Zeta cluster at " + cleanEndpoint + " (HTTP " + jobsResp.statusCode() + ").", jobsResp.body());
+            } else {
+                return new ConnectionCheckResult(false, "Apache SeaTunnel cluster returned HTTP status " + response.statusCode() + " from " + overviewUrl, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Apache SeaTunnel cluster at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
         }
     }
 

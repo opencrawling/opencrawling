@@ -89,4 +89,14 @@ class ConnectorCheckerServiceTest {
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to Apache Storm"));
     }
+
+    @Test
+    void testCheckSeaTunnelConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("SeaTunnel_Test", "Test SeaTunnel", "output",
+                "org.opencrawling.seatunnel.SeaTunnelOutputConnector", 10, Map.of("seaTunnelRestUrl", "http://127.0.0.1:59999"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Apache SeaTunnel"));
+    }
 }
