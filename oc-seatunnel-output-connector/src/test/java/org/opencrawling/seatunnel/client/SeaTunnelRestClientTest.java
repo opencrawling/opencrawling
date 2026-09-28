@@ -84,7 +84,21 @@ class SeaTunnelRestClientTest {
 
         RecordedRequest req = server.takeRequest();
         assertThat(req.getMethod()).isEqualTo("GET");
-        assertThat(req.getPath()).isEqualTo("/jobs");
+        assertThat(req.getPath()).isEqualTo("/running-jobs");
+    }
+
+    @Test
+    void getFinishedJobs_successful() throws Exception {
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody("[{\"jobId\":\"123\",\"jobStatus\":\"FINISHED\"}]"));
+
+        String jobs = client.getFinishedJobs();
+        assertThat(jobs).contains("FINISHED");
+
+        RecordedRequest req = server.takeRequest();
+        assertThat(req.getMethod()).isEqualTo("GET");
+        assertThat(req.getPath()).isEqualTo("/finished-jobs");
     }
 
     @Test

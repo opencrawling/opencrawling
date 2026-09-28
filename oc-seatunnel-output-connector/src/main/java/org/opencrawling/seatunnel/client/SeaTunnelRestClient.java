@@ -72,7 +72,7 @@ public class SeaTunnelRestClient implements Closeable {
     }
 
     public String getJobs() throws IOException, InterruptedException {
-        String jobsUrl = baseUrl + "/jobs";
+        String jobsUrl = baseUrl + "/running-jobs";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(jobsUrl))
                 .timeout(timeout)
@@ -84,6 +84,22 @@ public class SeaTunnelRestClient implements Closeable {
             return response.body();
         } else {
             throw new IOException("Failed to fetch SeaTunnel jobs with HTTP " + response.statusCode() + ": " + response.body());
+        }
+    }
+
+    public String getFinishedJobs() throws IOException, InterruptedException {
+        String jobsUrl = baseUrl + "/finished-jobs";
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(jobsUrl))
+                .timeout(timeout)
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            return response.body();
+        } else {
+            throw new IOException("Failed to fetch SeaTunnel finished jobs with HTTP " + response.statusCode() + ": " + response.body());
         }
     }
 

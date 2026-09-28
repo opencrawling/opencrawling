@@ -2,6 +2,7 @@ services:
   seatunnel:
     image: apache/seatunnel:2.3.13
     container_name: seatunnel-zeta
+    command: ["/opt/seatunnel/bin/seatunnel-cluster.sh"]
     ports:
       - "5801:5801"
       - "8080:8080"

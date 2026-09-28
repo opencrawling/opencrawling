@@ -75,9 +75,9 @@ echo -e "${YELLOW}Querying SeaTunnel cluster overview...${NC}"
 OVERVIEW_RESP=$(curl -s "http://localhost:8080/overview")
 echo "Overview response: $OVERVIEW_RESP"
 
-echo -e "${YELLOW}Querying SeaTunnel jobs endpoint...${NC}"
-JOBS_RESP=$(curl -s "http://localhost:8080/jobs")
-echo "Jobs response: $JOBS_RESP"
+echo -e "${YELLOW}Querying SeaTunnel running jobs endpoint...${NC}"
+JOBS_RESP=$(curl -s "http://localhost:8080/running-jobs")
+echo "Running jobs response: $JOBS_RESP"
 
 # Verify Apache SeaTunnel Output Connector and lifecycle actions
 echo -e "${YELLOW}Executing Apache SeaTunnel Output Connector unit & integration tests...${NC}"
