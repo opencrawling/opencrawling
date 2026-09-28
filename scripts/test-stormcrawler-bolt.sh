@@ -46,7 +46,7 @@ compose() {
 
 cleanup() {
   echo -e "${YELLOW}Cleaning up StormCrawler bolt test containers...${NC}"
-  compose down -v --remove-orphans >/dev/null 2>&1 || true
+  compose down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -63,7 +63,7 @@ echo -e "${GREEN}[OK] Verified topology JAR: $TOPOLOGY_JAR ($(du -h "$TOPOLOGY_J
 
 # Step 2: Clean up previous test containers
 echo -e "${YELLOW}[STEP 2/5] Resetting test environment containers...${NC}"
-compose down -v --remove-orphans || true
+compose down --remove-orphans || true
 
 # Step 3: Start Apache Storm cluster for StormCrawler 3.7.0
 echo -e "${YELLOW}[STEP 3/5] Starting Apache Storm cluster (Zookeeper, Nimbus, Supervisor, UI)...${NC}"

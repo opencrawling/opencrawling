@@ -50,7 +50,7 @@ CLEANUP_REQUIRED=false
 cleanup() {
   if [ "$CLEANUP_REQUIRED" = true ]; then
     echo -e "${YELLOW}Cleaning up Storm test containers...${NC}"
-    compose down -v --remove-orphans >/dev/null 2>&1 || true
+    compose down --remove-orphans >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -61,7 +61,7 @@ if curl -fsSL -o /dev/null -m 2 "${STORM_UI_URL}/api/v1/cluster/summary" 2>/dev/
 else
   echo -e "${YELLOW}Starting Apache Storm cluster (Zookeeper, Nimbus, Supervisor, UI) via ${COMPOSE_FILE}...${NC}"
   CLEANUP_REQUIRED=true
-  compose down -v --remove-orphans >/dev/null 2>&1 || true
+  compose down --remove-orphans >/dev/null 2>&1 || true
   compose up -d
 
   echo -e "${YELLOW}Waiting for Storm UI REST API to become ready at ${STORM_UI_URL}/api/v1/cluster/summary ...${NC}"

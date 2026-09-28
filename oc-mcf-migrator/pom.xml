@@ -51,7 +51,7 @@
         <snakeyaml.version>2.3</snakeyaml.version>
         <slf4j.version>2.0.18</slf4j.version>
         <picocli.version>4.7.7</picocli.version>
-        <opencrawling-sdk.version>1.0.1</opencrawling-sdk.version>
+        <opencrawling-sdk.version>1.0.2</opencrawling-sdk.version>
 
         <junit.version>5.11.4</junit.version>
         <assertj.version>3.27.3</assertj.version>

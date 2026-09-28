@@ -70,7 +70,7 @@ AUTH_HEADER="Basic $(printf "%s:%s" "${ALFRESCO_USERNAME}" "${ALFRESCO_PASSWORD}
 cleanup() {
   if [ "${START_LOCAL_CONTAINER}" = true ] || [ "${FORCE_CLEANUP}" = true ]; then
     log_info "Tearing down temporary Alfresco Community Docker Compose environment..."
-    docker compose -f "${COMPOSE_FILE}" down -v >/dev/null 2>&1 || true
+    docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
     log_success "Cleanup complete."
   fi
 }

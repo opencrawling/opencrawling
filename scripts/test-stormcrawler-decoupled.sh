@@ -47,11 +47,11 @@ compose() {
 
 # Clean up any existing containers
 echo -e "${YELLOW}Cleaning up previous StormCrawler decoupled containers...${NC}"
-compose down -v --remove-orphans || true
+compose down --remove-orphans || true
 
 cleanup() {
   echo -e "${YELLOW}Cleaning up StormCrawler decoupled containers on exit...${NC}"
-  compose down -v --remove-orphans >/dev/null 2>&1 || true
+  compose down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
