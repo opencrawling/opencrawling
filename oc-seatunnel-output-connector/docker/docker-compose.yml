@@ -1,0 +1,14 @@
+services:
+  seatunnel:
+    image: apache/seatunnel:2.3.13
+    container_name: seatunnel-zeta
+    ports:
+      - "5801:5801"
+      - "8080:8080"
+    environment:
+      - SEATUNNEL_HOME=/opt/seatunnel
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8080/overview > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

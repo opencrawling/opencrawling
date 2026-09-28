@@ -85,6 +85,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('luxir') || className.includes('Luxir')) {
     return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
   }
+  if (className.includes('seatunnel') || className.includes('SeaTunnel')) {
+    return { icon: Network, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
@@ -235,6 +238,7 @@ export default function ConnectorForm() {
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
+      { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -1479,6 +1483,104 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                         <p className="text-xs text-muted-foreground">HTTP socket and connection timeout.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache SeaTunnel Output Connector */}
+                  {selectedClass === 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">SeaTunnel Zeta REST URL</label>
+                        <input 
+                          {...register('configuration.seaTunnelRestUrl', { required: true })}
+                          placeholder="http://localhost:8080"
+                          defaultValue="http://localhost:8080"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">HTTP REST API endpoint for SeaTunnel Zeta Engine (default port 8080).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Pipeline Job Name</label>
+                        <input 
+                          {...register('configuration.seaTunnelJobName', { required: true })}
+                          placeholder="opencrawling_ingestion_pipeline"
+                          defaultValue="opencrawling_ingestion_pipeline"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Unique identifier for the SeaTunnel execution job.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Execution Job Mode</label>
+                        <select 
+                          {...register('configuration.seaTunnelJobMode')}
+                          defaultValue="STREAMING"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="STREAMING">STREAMING (Continuous Real-time)</option>
+                          <option value="BATCH">BATCH (Bounded Run)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Pipeline execution mode for SeaTunnel runtime.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Checkpoint Interval (ms)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.seaTunnelCheckpointIntervalMs', { valueAsNumber: true })}
+                          placeholder="5000"
+                          defaultValue={5000}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Zeta engine distributed checkpointing interval in milliseconds.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Kafka Bootstrap Servers</label>
+                        <input 
+                          {...register('configuration.seaTunnelKafkaBootstrapServers')}
+                          placeholder="localhost:9092"
+                          defaultValue="localhost:9092"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Kafka brokers streaming OIS embedded chunks to SeaTunnel.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Kafka Topic</label>
+                        <input 
+                          {...register('configuration.seaTunnelKafkaTopic')}
+                          placeholder="opencrawling-embedded"
+                          defaultValue="opencrawling-embedded"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Stream topic source consumed by SeaTunnel pipeline.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Target Fan-Out Sinks</label>
+                        <input 
+                          {...register('configuration.seaTunnelTargetSinks')}
+                          placeholder="clickhouse,milvus"
+                          defaultValue="clickhouse,milvus"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Comma-separated target sinks (e.g. clickhouse, milvus, qdrant, iceberg, console).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Auto-Submit Pipeline</label>
+                        <select 
+                          {...register('configuration.seaTunnelAutoSubmitJob')}
+                          defaultValue="true"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="true">Enabled (Deploy on Connect)</option>
+                          <option value="false">Disabled (Manual Deployment)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Automatically deploy generated HOCON job to Zeta cluster on startup.</p>
                       </div>
                     </div>
                   )}
