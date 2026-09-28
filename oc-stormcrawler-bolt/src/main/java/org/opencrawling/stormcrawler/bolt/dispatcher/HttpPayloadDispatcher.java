@@ -41,7 +41,7 @@ public class HttpPayloadDispatcher implements PayloadDispatcher {
     private String endpoint = "http://localhost:8080/api/v1/ingest/ois";
     private int timeoutMs = 5000;
     private String authHeader = null;
-    private HttpClient httpClient;
+    private transient HttpClient httpClient;
 
     public HttpPayloadDispatcher() {
     }

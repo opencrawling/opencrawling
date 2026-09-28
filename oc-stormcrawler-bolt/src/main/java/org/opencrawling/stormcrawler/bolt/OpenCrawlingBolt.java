@@ -60,7 +60,7 @@ public class OpenCrawlingBolt extends BaseRichBolt {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private OutputCollector collector;
+    private transient OutputCollector collector;
     private PayloadDispatcher dispatcher;
 
     private String targetEndpoint = "http://localhost:8080/api/v1/ingest/ois";

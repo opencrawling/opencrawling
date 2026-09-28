@@ -30,7 +30,7 @@ services:
       retries: 5
 
   nimbus:
-    image: storm:2.8.0
+    image: storm:3.1.0
     container_name: storm-nimbus
     hostname: nimbus
     command: storm nimbus
@@ -46,7 +46,7 @@ services:
       retries: 10
 
   supervisor:
-    image: storm:2.8.0
+    image: storm:3.1.0
     container_name: storm-supervisor
     command: storm supervisor
     depends_on:
@@ -56,7 +56,7 @@ services:
         condition: service_healthy
 
   ui:
-    image: storm:2.8.0
+    image: storm:3.1.0
     container_name: storm-ui
     command: storm ui
     ports:

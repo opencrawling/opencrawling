@@ -16,13 +16,14 @@
 package org.opencrawling.stormcrawler.bolt.dispatcher;
 
 import java.io.Closeable;
+import java.io.Serializable;
 import java.util.Map;
 
 /**
  * Strategy interface for dispatching Open Ingestion Standard (OIS) payloads
  * from OpenCrawlingBolt to OpenCrawling endpoints, event buses, or test sinks.
  */
-public interface PayloadDispatcher extends Closeable {
+public interface PayloadDispatcher extends Closeable, Serializable {
 
     /**
      * Initializes the dispatcher with topology configuration.
