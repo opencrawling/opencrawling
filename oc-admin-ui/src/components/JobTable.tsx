@@ -350,6 +350,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. invoice-process or / for all',
           description: 'Process definition key filter (e.g. invoice-process) or / to scan all historic process instances.'
         };
+      case 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector':
+        return {
+          label: 'Seed URLs / Crawl Targets',
+          placeholder: 'e.g. https://docs.example.com or / for default seeds',
+          description: 'Web seed URLs to crawl (comma-separated), or / to use configured seeds.'
+        };
       default:
         return {
           label: 'Crawl Scan Path / URL',

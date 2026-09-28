@@ -23,7 +23,7 @@
 
     <groupId>org.opencrawling</groupId>
     <artifactId>oc-java-client-sdk</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <packaging>jar</packaging>
 
     <name>OpenCrawling - Java Client SDK</name>

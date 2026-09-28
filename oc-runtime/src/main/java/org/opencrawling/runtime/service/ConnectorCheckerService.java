@@ -84,6 +84,11 @@ public class ConnectorCheckerService {
                 return checkCamunda(config);
             }
 
+            // --- StormCrawler Repository Connector ---
+            if (className.contains("StormCrawlerRepositoryConnector") || className.contains("StormCrawler")) {
+                return checkStormCrawler(config);
+            }
+
             // --- Flowable Repository Connector ---
             if (className.contains("FlowableRepositoryConnector") || className.contains("Flowable")) {
                 return checkFlowable(config);
@@ -310,6 +315,39 @@ public class ConnectorCheckerService {
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Camunda REST engine at " + cleanUrl + ": " + e.getMessage(), e.toString());
         }
+    }
+
+    private ConnectionCheckResult checkStormCrawler(Map<String, String> config) {
+        String nimbusRestUrl = config.getOrDefault("nimbusRestUrl", "http://localhost:8080");
+        String nimbusHost = config.getOrDefault("nimbusHost", "localhost");
+        String nimbusPortStr = config.getOrDefault("nimbusPort", "6627");
+
+        String cleanUrl = nimbusRestUrl.endsWith("/") ? nimbusRestUrl.substring(0, nimbusRestUrl.length() - 1) : nimbusRestUrl;
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(3))
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(cleanUrl + "/api/v1/cluster/summary"))
+                    .timeout(Duration.ofSeconds(3))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                return new ConnectionCheckResult(true, "Successfully connected to Apache Storm Nimbus REST API at " + cleanUrl + ".", response.body());
+            }
+        } catch (Exception e) {
+            // Fallback: check raw socket to Nimbus Thrift port
+            try (Socket socket = new Socket()) {
+                int port = Integer.parseInt(nimbusPortStr);
+                socket.connect(new InetSocketAddress(nimbusHost, port), 2000);
+                return new ConnectionCheckResult(true, "Successfully connected to Apache Storm Nimbus socket at " + nimbusHost + ":" + port + ".", null);
+            } catch (Exception socketEx) {
+                return new ConnectionCheckResult(false, "Failed to connect to Apache Storm Nimbus at " + cleanUrl + " or " + nimbusHost + ":" + nimbusPortStr + ": " + e.getMessage(), e.toString());
+            }
+        }
+        return new ConnectionCheckResult(false, "Failed to connect to Apache Storm Nimbus cluster summary at " + cleanUrl, null);
     }
 
     private ConnectionCheckResult checkFlowable(Map<String, String> config) {

@@ -33,7 +33,8 @@ import {
   Sparkles,
   Key,
   Network,
-  Layers
+  Layers,
+  Globe
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -83,6 +84,9 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.includes('luxir') || className.includes('Luxir')) {
     return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
+  if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
+    return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
   if (className.includes('Ollama')) {
     return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
@@ -216,6 +220,7 @@ export default function ConnectorForm() {
       { label: 'Apache Iceberg Catalog Table', value: 'org.opencrawling.iceberg.IcebergRepositoryConnector' },
       { label: 'Flowable Repository Connector', value: 'org.opencrawling.flowable.FlowableRepositoryConnector' },
       { label: 'Camunda Repository Connector', value: 'org.opencrawling.camunda.CamundaRepositoryConnector' },
+      { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -638,6 +643,77 @@ export default function ConnectorForm() {
                         <label htmlFor="includeVariablesCamunda" className="text-sm font-medium cursor-pointer">
                           Include Historic BPMN Variables
                         </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache StormCrawler Repository Connector */}
+                  {selectedClass === 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Apache Storm Nimbus UI / REST API URL</label>
+                        <input 
+                          {...register('configuration.nimbusRestUrl', { required: true })}
+                          placeholder="http://localhost:8080"
+                          defaultValue="http://localhost:8080"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Nimbus Host</label>
+                        <input 
+                          {...register('configuration.nimbusHost', { required: true })}
+                          placeholder="localhost"
+                          defaultValue="localhost"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Nimbus Thrift Port</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.nimbusPort', { required: true })}
+                          placeholder="6627"
+                          defaultValue="6627"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">StormCrawler Topology Name</label>
+                        <input 
+                          {...register('configuration.topologyName', { required: true })}
+                          placeholder="opencrawling-web-crawler"
+                          defaultValue="opencrawling-web-crawler"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Politeness Crawl Delay (ms)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.delayMs')}
+                          placeholder="1000"
+                          defaultValue="1000"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Seed URLs (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.seeds', { required: true })}
+                          placeholder="https://docs.example.com, https://developer.example.com"
+                          defaultValue="https://docs.example.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Custom User Agent</label>
+                        <input 
+                          {...register('configuration.customUserAgent')}
+                          placeholder="OpenCrawling-StormCrawler-Bot/1.0"
+                          defaultValue="OpenCrawling-StormCrawler-Bot/1.0"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
                       </div>
                     </div>
                   )}
