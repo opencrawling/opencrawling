@@ -78,6 +78,8 @@ jobs:
             script: "test-qdrant-decoupled.sh"
           - name: "Apache Solr Decoupled Pipeline Test Suite"
             script: "test-solr-decoupled.sh"
+          - name: "StormCrawler Bolt Test Suite"
+            script: "test-stormcrawler-bolt.sh"
           - name: "StormCrawler Connector Test Suite"
             script: "test-stormcrawler-connector.sh"
           - name: "StormCrawler Decoupled Pipeline Test Suite"
