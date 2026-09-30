@@ -37,7 +37,8 @@ APS_URL="${APS_URL:-http://${APS_HOST}:${APS_PORT}/activiti-app/api/enterprise}"
 COMPOSE_FILE="oc-aps-repository-connector/docker/docker-compose-aps.yml"
 TIMEOUT="${TIMEOUT:-240}"
 START_LOCAL_CONTAINER=false
-FORCE_CLEANUP="${FORCE_CLEANUP:-false}"
+CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 
 # Terminal Formatting
 RED='\033[0;31m'
@@ -124,13 +125,21 @@ fi
 
 # Cleanup trap
 cleanup() {
+  if [ "${KEEP_CONTAINERS}" = true ]; then
+    log_info "KEEP_CONTAINERS=true: Leaving APS Docker containers running."
+    if [ -n "${TEMP_LIC_DIR}" ] && [ -d "${TEMP_LIC_DIR}" ]; then
+      rm -rf "${TEMP_LIC_DIR}"
+    fi
+    return 0
+  fi
+  if [ "${CLEANUP_ON_EXIT}" = true ] || [ "${START_LOCAL_CONTAINER}" = true ]; then
+    log_info "Tearing down temporary APS Docker environment..."
+    docker compose -f "${COMPOSE_FILE}" down -v >/dev/null 2>&1 || true
+    docker rm -f opencrawling-aps-it opencrawling-postgres-aps-it >/dev/null 2>&1 || true
+    log_success "Cleanup complete."
+  fi
   if [ -n "${TEMP_LIC_DIR}" ] && [ -d "${TEMP_LIC_DIR}" ]; then
     rm -rf "${TEMP_LIC_DIR}"
-  fi
-  if [ "${START_LOCAL_CONTAINER}" = true ] || [ "${FORCE_CLEANUP}" = true ]; then
-    log_info "Tearing down temporary APS Docker environment..."
-    docker compose "${COMPOSE_ARGS[@]}" down >/dev/null 2>&1 || true
-    log_success "Cleanup complete."
   fi
 }
 trap cleanup EXIT
