@@ -47,6 +47,8 @@ command -v docker >/dev/null 2>&1 || { echo -e "${RED}Docker is required but not
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl is required but not installed. Aborting.${NC}" >&2; exit 1; }
 
 COMPOSE_FILE="oc-aps-repository-connector/docker/docker-compose-decoupled-with-aps.yml"
+CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 
 # Auto-detect enterprise license from user home or workspace
 DETECTED_LICENSE=""
@@ -105,11 +107,19 @@ compose() {
 
 cleanup() {
   echo -e "\n${YELLOW}Tearing down APS decoupled test environment...${NC}"
-  docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true
   docker compose -f oc-aps-repository-connector/docker/docker-compose-aps.yml down -v >/dev/null 2>&1 || true
+  docker rm -f aps-decoupled postgres-aps-decoupled postgres-vector-decoupled-aps redis-stack-decoupled-aps ollama-decoupled-aps ollama-pull-model-aps kafka-decoupled-aps oc-crawler-service-aps oc-ingestion-consumer-service-aps oc-embedding-consumer-service-aps oc-writer-service-aps oc-mcp-server-service-aps >/dev/null 2>&1 || true
 }
 
 on_exit() {
+  if [ "${KEEP_CONTAINERS}" = true ] || [ "${CLEANUP_ON_EXIT}" = false ]; then
+    echo -e "\n${YELLOW}KEEP_CONTAINERS=true: Leaving APS decoupled environment active.${NC}"
+    if [ -n "${TEMP_LIC_DIR}" ] && [ -d "${TEMP_LIC_DIR}" ]; then
+      rm -rf "${TEMP_LIC_DIR}"
+    fi
+    return 0
+  fi
   cleanup
   if [ -n "${TEMP_LIC_DIR}" ] && [ -d "${TEMP_LIC_DIR}" ]; then
     rm -rf "${TEMP_LIC_DIR}"
