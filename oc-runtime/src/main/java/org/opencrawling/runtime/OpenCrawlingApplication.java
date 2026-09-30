@@ -99,7 +99,8 @@ public class OpenCrawlingApplication {
                 if ((scanPath == null || scanPath.isBlank()) && 
                     !"camunda".equalsIgnoreCase(repositoryConnectorType) && 
                     !"flowable".equalsIgnoreCase(repositoryConnectorType) &&
-                    !"alfresco".equalsIgnoreCase(repositoryConnectorType)) {
+                    !"alfresco".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"aps".equalsIgnoreCase(repositoryConnectorType)) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
                     log.info("Triggering sample crawl job on target: {} with transformation connector: {}", targetPath, transformationConnector);

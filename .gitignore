@@ -44,6 +44,8 @@ logs/
 .env*.local
 application-local.yml
 application-local.properties
+*.lic
+activiti.lic
 
 # Crash dumps
 drwtsn32.log

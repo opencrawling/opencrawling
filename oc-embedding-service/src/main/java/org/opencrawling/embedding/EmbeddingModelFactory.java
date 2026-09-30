@@ -34,6 +34,9 @@ public class EmbeddingModelFactory {
     @org.springframework.beans.factory.annotation.Value("${spring.ai.ollama.base-url:http://localhost:11434}")
     private String ollamaBaseUrl;
 
+    @org.springframework.beans.factory.annotation.Value("${spring.ai.ollama.embedding.options.model:mxbai-embed-large}")
+    private String defaultOllamaModel = "mxbai-embed-large";
+
     public EmbeddingModelFactory(@org.springframework.beans.factory.annotation.Qualifier("ollamaEmbeddingModel") EmbeddingModel defaultModel) {
         this.defaultModel = defaultModel;
     }
@@ -44,7 +47,9 @@ public class EmbeddingModelFactory {
             return defaultModel;
         }
 
-        String modelName = config != null ? config.getOrDefault("model", "default") : "default";
+        String rawModelName = config != null ? config.getOrDefault("model", defaultOllamaModel) : defaultOllamaModel;
+        final String modelName = (rawModelName == null || rawModelName.isBlank() || "default".equalsIgnoreCase(rawModelName))
+            ? defaultOllamaModel : rawModelName;
         String cacheKey = engineType.toLowerCase() + "-" + modelName;
 
         return activeClients.computeIfAbsent(cacheKey, key -> {

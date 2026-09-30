@@ -55,7 +55,7 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('filesystem.FileConnector') || className.includes('FileSystem')) {
     return { icon: HardDrive, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
   }
-  if (className.includes('Alfresco')) {
+  if (className.includes('Alfresco') || className.includes('Aps') || className.includes('aps')) {
     return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
   }
   if (className.includes('Iceberg')) {
@@ -223,6 +223,7 @@ export default function ConnectorForm() {
       { label: 'Apache Iceberg Catalog Table', value: 'org.opencrawling.iceberg.IcebergRepositoryConnector' },
       { label: 'Flowable Repository Connector', value: 'org.opencrawling.flowable.FlowableRepositoryConnector' },
       { label: 'Camunda Repository Connector', value: 'org.opencrawling.camunda.CamundaRepositoryConnector' },
+      { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
     ],
     transformation: [
@@ -647,6 +648,133 @@ export default function ConnectorForm() {
                         <label htmlFor="includeVariablesCamunda" className="text-sm font-medium cursor-pointer">
                           Include Historic BPMN Variables
                         </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alfresco Process Services (APS) Repository Connector */}
+                  {selectedClass === 'org.opencrawling.aps.ApsRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">APS Enterprise REST API URL</label>
+                        <input 
+                          {...register('configuration.url', { required: true })}
+                          placeholder="http://localhost:8080/activiti-app/api/enterprise"
+                          defaultValue="http://localhost:8080/activiti-app/api/enterprise"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.username')}
+                          placeholder="admin@app.activiti.com"
+                          defaultValue="admin@app.activiti.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder="admin"
+                          defaultValue="admin"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.batchSize', { valueAsNumber: true })}
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Process Definition Key (Optional)</label>
+                        <input 
+                          {...register('configuration.processDefinitionKey')}
+                          placeholder="e.g. loanApplication"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Tenant ID (Optional)</label>
+                        <input 
+                          {...register('configuration.tenantId')}
+                          placeholder="e.g. enterprise-tenant-1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Workflow Instance Scope</label>
+                        <select 
+                          {...register('configuration.scope')}
+                          defaultValue="all"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="all">All (Active & Completed)</option>
+                          <option value="completed">Completed Only</option>
+                          <option value="active">Active Only</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeVariablesAps"
+                          {...register('configuration.includeVariables')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeVariablesAps" className="text-sm font-medium cursor-pointer">
+                          Include Process Variables
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeTasksAps"
+                          {...register('configuration.includeTasks')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeTasksAps" className="text-sm font-medium cursor-pointer">
+                          Include Tasks & Candidate ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAttachmentsAps"
+                          {...register('configuration.includeAttachments')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAttachmentsAps" className="text-sm font-medium cursor-pointer">
+                          Include Workflow Attachments & Documents
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="mcpEnabledAps"
+                          {...register('configuration.mcpEnabled')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="mcpEnabledAps" className="text-sm font-medium cursor-pointer">
+                          Enable APS MCP Server Discovery
+                        </label>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">APS MCP Server Endpoint (Optional)</label>
+                        <input 
+                          {...register('configuration.mcpUrl')}
+                          placeholder="http://localhost:8080/activiti-app/mcp"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
                       </div>
                     </div>
                   )}

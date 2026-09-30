@@ -94,6 +94,11 @@ public class ConnectorCheckerService {
                 return checkStormCrawler(config);
             }
 
+            // --- Alfresco Process Services (APS) Repository Connector ---
+            if (className.contains("ApsRepositoryConnector") || className.contains("Aps")) {
+                return checkAps(config);
+            }
+
             // --- Flowable Repository Connector ---
             if (className.contains("FlowableRepositoryConnector") || className.contains("Flowable")) {
                 return checkFlowable(config);
@@ -386,6 +391,38 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Flowable REST engine at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkAps(Map<String, String> config) {
+        String endpoint = config.getOrDefault("url", config.getOrDefault("endpoint", "http://localhost:8080/activiti-app/api/enterprise"));
+        String user = config.getOrDefault("username", "admin@app.activiti.com");
+        String pass = config.getOrDefault("password", "admin");
+
+        String cleanEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
+        String testUrl = cleanEndpoint + "/profile";
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(testUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
+                    .GET();
+
+            if (user != null && !user.isBlank()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                return new ConnectionCheckResult(true, "Successfully connected to Alfresco Process Services (APS) at " + cleanEndpoint + ".", null);
+            } else {
+                return new ConnectionCheckResult(false, "Alfresco Process Services returned HTTP status " + response.statusCode() + " from " + testUrl, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Process Services at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
         }
     }
 
