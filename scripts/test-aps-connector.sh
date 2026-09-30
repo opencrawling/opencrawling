@@ -220,7 +220,7 @@ log_success "Query verified! Total available process instances in APS: ${TOTAL_I
 
 # 5. Execute Maven Integration Tests for APS Repository Connector
 log_info "Running Maven integration test suite (ApsRepositoryConnectorIT) with live endpoint properties..."
-mvn test -pl oc-aps-repository-connector \
+mvn clean test -pl oc-aps-repository-connector \
   -Dtest="*Test,*IT" \
   -Daps.live.test=true \
   -Dspring.opencrawling.connector.aps.url="${APS_URL}" \
