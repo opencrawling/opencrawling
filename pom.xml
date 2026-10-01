@@ -107,6 +107,7 @@
         <module>oc-seatunnel-output-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
+        <module>oc-aps-repository-connector</module>
         <module>oc-stormcrawler-bolt</module>
         <module>oc-stormcrawler-repository-connector</module>
         <module>oc-connector-archetypes</module>

@@ -1,0 +1,53 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  aps:
+    image: alfresco/process-services:26.2.0
+    container_name: opencrawling-aps-it
+    ports:
+      - "${APS_PORT:-8088}:8080"
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=postgres-aps
+      - DB_PORT=5432
+      - DB_NAME=activiti
+      - DB_USERNAME=activiti
+      - DB_PASSWORD=activiti
+    depends_on:
+      postgres-aps:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f -u ${APS_USERNAME:-admin@app.activiti.com}:${APS_PASSWORD:-admin} http://localhost:8080/activiti-app/api/enterprise/profile || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  postgres-aps:
+    image: postgres:16-alpine
+    container_name: opencrawling-postgres-aps-it
+    environment:
+      POSTGRES_DB: activiti
+      POSTGRES_USER: activiti
+      POSTGRES_PASSWORD: activiti
+    ports:
+      - "${APS_DB_PORT:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U activiti -d activiti"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

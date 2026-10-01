@@ -1,0 +1,11 @@
+{
+  "theme": "theme-1",
+  "icon": "glyphicon-asterisk",
+  "models": [
+    {
+      "name": "Invoice Approval Process",
+      "description": "Invoice Approval Workflow with Variables and User Tasks",
+      "modelType": 0
+    }
+  ]
+}

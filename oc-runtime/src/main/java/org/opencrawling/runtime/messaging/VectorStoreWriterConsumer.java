@@ -49,10 +49,10 @@ public class VectorStoreWriterConsumer {
     private final TelemetryTraceStore traceStore;
 
     public VectorStoreWriterConsumer(
-            PgVectorStore vectorStore,
-            PgVectorStore vectorStore384,
-            PgVectorStore vectorStore768,
-            PgVectorStore vectorStore1024,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore") PgVectorStore vectorStore,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore384") PgVectorStore vectorStore384,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore768") PgVectorStore vectorStore768,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore1024") PgVectorStore vectorStore1024,
             @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
         this.vectorStore = vectorStore;
         this.vectorStore384 = vectorStore384;

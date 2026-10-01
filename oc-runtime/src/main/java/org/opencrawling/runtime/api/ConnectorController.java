@@ -45,6 +45,13 @@ public class ConnectorController {
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));
         defaults.add(new ConnectorDTO("Camunda_7_REST_Engine", "Camunda 7 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://localhost:8080/engine-rest", "username", "demo", "password", "demo")));
+        defaults.add(new ConnectorDTO("APS_REST_Engine", "Alfresco Process Services (APS) Engine", "repository", "org.opencrawling.aps.ApsRepositoryConnector", 10, Map.of(
+            "url", "http://localhost:8080/activiti-app/api/enterprise",
+            "username", "admin@app.activiti.com",
+            "password", "admin",
+            "includeVariables", "true",
+            "includeTasks", "true"
+        )));
         defaults.add(new ConnectorDTO("StormCrawler_Web_Engine", "Apache StormCrawler Engine", "repository", "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(
             "nimbusHost", "localhost",
             "nimbusPort", "6627",

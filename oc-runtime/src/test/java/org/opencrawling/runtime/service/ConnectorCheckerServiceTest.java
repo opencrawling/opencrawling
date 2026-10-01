@@ -99,4 +99,14 @@ class ConnectorCheckerServiceTest {
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to Apache SeaTunnel"));
     }
+
+    @Test
+    void testCheckApsConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("APS_Test", "Test APS", "repository",
+                "org.opencrawling.aps.ApsRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/activiti-app/api/enterprise"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Alfresco Process Services"));
+    }
 }

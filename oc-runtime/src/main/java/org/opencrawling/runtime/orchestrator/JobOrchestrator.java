@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 
 @Service
 public class JobOrchestrator {
@@ -53,6 +54,9 @@ public class JobOrchestrator {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ClaimCheckStore claimCheckStore;
     private final TelemetryTraceStore traceStore;
+
+    @Value("${spring.ai.ollama.embedding.options.model:mxbai-embed-large}")
+    private String defaultOllamaModel = "mxbai-embed-large";
 
     public JobOrchestrator(
             KafkaTemplate<String, Object> kafkaTemplate,
@@ -105,7 +109,7 @@ public class JobOrchestrator {
         String currentJobId = jobId != null ? jobId : "1";
         
         String engine = "ollama";
-        java.util.Map<String, String> config = java.util.Map.of("model", "mxbai-embed-large");
+        java.util.Map<String, String> config = java.util.Map.of("model", defaultOllamaModel != null && !defaultOllamaModel.isBlank() ? defaultOllamaModel : "mxbai-embed-large");
 
         if (transformationConnector != null && !transformationConnector.isBlank()) {
             try {
@@ -114,7 +118,10 @@ public class JobOrchestrator {
                 for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
                     if (conn.name().equals(transformationConnector)) {
                         engine = conn.configuration().getOrDefault("engine", "ollama");
-                        config = conn.configuration();
+                        config = new java.util.HashMap<>(conn.configuration());
+                        if (defaultOllamaModel != null && !defaultOllamaModel.isBlank() && "Ollama_Embedding_Default".equals(transformationConnector)) {
+                            config.put("model", defaultOllamaModel);
+                        }
                         break;
                     }
                 }

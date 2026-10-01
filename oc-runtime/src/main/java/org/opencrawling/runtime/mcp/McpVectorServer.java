@@ -51,10 +51,10 @@ public class McpVectorServer {
 
     @org.springframework.beans.factory.annotation.Autowired
     public McpVectorServer(
-            VectorStore vectorStore,
-            VectorStore vectorStore384,
-            VectorStore vectorStore768,
-            VectorStore vectorStore1024) {
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore") VectorStore vectorStore,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore384") VectorStore vectorStore384,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore768") VectorStore vectorStore768,
+            @org.springframework.beans.factory.annotation.Qualifier("vectorStore1024") VectorStore vectorStore1024) {
         this.vectorStore = vectorStore;
         this.vectorStore384 = vectorStore384;
         this.vectorStore768 = vectorStore768;
