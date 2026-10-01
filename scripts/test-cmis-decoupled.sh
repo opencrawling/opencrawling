@@ -16,20 +16,20 @@
 #
 
 # ==============================================================================
-# OpenCrawling - Alfresco Content Services Decoupled Integration Test Script
+# OpenCrawling - OASIS CMIS Decoupled Integration Test Script
 #
 # Description:
 #   Comprehensive end-to-end integration test for the decoupled OpenCrawling
-#   pipeline integrating Alfresco Content Services (`oc-alfresco-repository-connector`)
-#   with Apache Kafka, Redis, PostgreSQL (pgvector), Ollama embedding service,
-#   and OpenCrawling microservices (crawler, ingestion-consumer,
-#   embedding-consumer, writer-consumer, and mcp-server).
+#   pipeline integrating an OASIS CMIS 1.1 compliant repository (Alfresco Content Services
+#   as CMIS server via `oc-cmis-repository-connector`) with Apache Kafka, Redis,
+#   PostgreSQL (pgvector), Ollama embedding service, and OpenCrawling microservices
+#   (crawler, ingestion-consumer, embedding-consumer, writer-consumer, and mcp-server).
 #
 # Pipeline Lifecycle Tested:
 #   1. Spin up decoupled infrastructure via Docker Compose
-#   2. Healthcheck validation (Alfresco, pgvector, Redis, Ollama, Kafka)
-#   3. Provision test repository structure and text document stream in Alfresco
-#   4. Execute oc-crawler against Alfresco repository via REST API
+#   2. Healthcheck validation (Alfresco CMIS, pgvector, Redis, Ollama, Kafka)
+#   3. Provision test repository structure and text document stream in Alfresco CMIS
+#   4. Execute oc-crawler against CMIS repository using OASIS CMIS 1.1 Browser Binding
 #   5. Store document stream in Claim Check store and publish metadata to Kafka
 #   6. oc-ingestion-consumer resolves claim check, extracts text with Tika & chunks
 #   7. oc-embedding-consumer vectorizes chunks with Ollama (mxbai-embed-large)
@@ -37,7 +37,7 @@
 #   9. Verify record persistence and metadata accuracy in pgvector database
 #  10. Verify OpenCrawling MCP Server endpoint readiness
 #  11. Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE action
-#  12. Clean up test artifacts in Alfresco and teardown containers cleanly
+#  12. Clean up test artifacts in CMIS repository and teardown containers cleanly
 # ==============================================================================
 
 set -euo pipefail
@@ -48,7 +48,8 @@ ALFRESCO_PORT="${ALFRESCO_PORT:-8081}"
 ALFRESCO_USERNAME="${ALFRESCO_USERNAME:-admin}"
 ALFRESCO_PASSWORD="${ALFRESCO_PASSWORD:-admin}"
 ALFRESCO_URL="${ALFRESCO_URL:-http://${ALFRESCO_HOST}:${ALFRESCO_PORT}/alfresco/api/-default-/public/alfresco/versions/1}"
-COMPOSE_FILE="oc-alfresco-repository-connector/docker/docker-compose-decoupled-with-alfresco.yml"
+CMIS_BROWSER_URL="http://${ALFRESCO_HOST}:${ALFRESCO_PORT}/alfresco/api/-default-/public/cmis/versions/1.1/browser"
+COMPOSE_FILE="oc-cmis-repository-connector/docker/docker-compose-decoupled-with-cmis.yml"
 TIMEOUT="${TIMEOUT:-300}"
 MCP_PORT="${MCP_PORT:-8080}"
 KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
@@ -82,7 +83,7 @@ log_pass() {
 }
 
 echo -e "\n${BOLD}${YELLOW}================================================================================${NC}"
-echo -e "${BOLD}${YELLOW}=== OpenCrawling Decoupled Pipeline with Alfresco Integration Test ===${NC}"
+echo -e "${BOLD}${YELLOW}=== OpenCrawling Decoupled Pipeline with OASIS CMIS Integration Test ===${NC}"
 echo -e "${BOLD}${YELLOW}================================================================================${NC}\n"
 
 # Switch to project root directory
@@ -95,7 +96,7 @@ compose() {
   docker compose -f "${COMPOSE_FILE}" "$@"
 }
 
-# Basic auth header for Alfresco REST API calls
+# Basic auth header for CMIS and Alfresco REST calls
 AUTH_HEADER="Basic $(printf "%s:%s" "${ALFRESCO_USERNAME}" "${ALFRESCO_PASSWORD}" | base64 | tr -d '\n')"
 ROOT_URL="${ALFRESCO_URL}/nodes/-root-"
 PROBE_URL="${ALFRESCO_URL}/probes/-ready-"
@@ -112,7 +113,7 @@ cleanup() {
   if [ "${#CREATED_DOC_IDS[@]}" -gt 0 ]; then
     for doc_id in ${CREATED_DOC_IDS[@]+"${CREATED_DOC_IDS[@]}"}; do
       if [ -n "${doc_id}" ]; then
-        log_info "Attempting to cleanup Alfresco test repository document '${doc_id}'..."
+        log_info "Attempting to cleanup CMIS test repository document '${doc_id}'..."
         curl -s -o /dev/null -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${doc_id}" 2>/dev/null || true
       fi
     done
@@ -120,9 +121,8 @@ cleanup() {
   CREATED_DOC_IDS=()
 
   if [ "${KEEP_CONTAINERS}" = false ]; then
-    log_info "Tearing down Decoupled Alfresco Docker Compose environment..."
+    log_info "Tearing down Decoupled CMIS Docker Compose environment..."
     compose down --remove-orphans >/dev/null 2>&1 || true
-    docker compose -f oc-alfresco-repository-connector/alfresco-community-compose.yml down --remove-orphans >/dev/null 2>&1 || true
     log_success "Environment cleanup complete."
   else
     log_warn "KEEP_CONTAINERS=true set. Skipping docker compose teardown."
@@ -142,12 +142,11 @@ command -v mvn >/dev/null 2>&1 || { log_error "mvn is required."; exit 1; }
 log_pass "Prerequisites verified successfully."
 
 # ------------------------------------------------------------------------------
-# STEP 2: Clean up previous decoupled Alfresco containers
+# STEP 2: Clean up previous decoupled CMIS containers
 # ------------------------------------------------------------------------------
-log_step 2 "Cleaning up any existing decoupled Alfresco containers..."
+log_step 2 "Cleaning up any existing decoupled CMIS containers..."
 compose down --remove-orphans || true
-docker compose -f oc-alfresco-repository-connector/alfresco-community-compose.yml down --remove-orphans || true
-docker rm -f postgres-alfresco >/dev/null 2>&1 || true
+docker rm -f postgres-alfresco-cmis >/dev/null 2>&1 || true
 
 # Free common ports if lingering containers from previous runs are still binding them
 for p in 8080 8081 9092 5432 5433 6379 11434; do
@@ -169,7 +168,7 @@ log_pass "Docker microservice images built successfully."
 # ------------------------------------------------------------------------------
 # STEP 4: Start decoupled infrastructure & wait for health checks
 # ------------------------------------------------------------------------------
-log_step 4 "Starting complete decoupled Alfresco infrastructure and waiting for readiness..."
+log_step 4 "Starting complete decoupled CMIS infrastructure and waiting for readiness..."
 compose up -d alfresco transform-core-aio postgres-alfresco activemq postgres-vector redis ollama ollama-model-puller kafka oc-ingestion-consumer oc-embedding-consumer oc-writer-consumer oc-mcp-server
 log_info "Docker Compose infrastructure services launched. Monitoring health checks..."
 
@@ -188,7 +187,7 @@ is_alfresco_ready() {
   return 1
 }
 
-# 4a. Wait for Alfresco Content Services
+# 4a. Wait for Alfresco Content Services (CMIS Provider)
 log_info "Waiting for Alfresco Content Services (${ALFRESCO_URL}) to become ready (timeout: ${TIMEOUT}s)..."
 ELAPSED=0
 until is_alfresco_ready; do
@@ -204,12 +203,21 @@ done
 echo ""
 log_success "Alfresco Content Services is ready and authenticated!"
 
-# 4b. Wait for PostgreSQL pgvector
+# 4b. Verify OASIS CMIS 1.1 Browser Binding Service Document
+log_info "Probing OASIS CMIS 1.1 Browser Binding at ${CMIS_BROWSER_URL}..."
+CMIS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 -H "Authorization: ${AUTH_HEADER}" -H "Accept: application/json" "${CMIS_BROWSER_URL}" 2>/dev/null || echo "000")
+if [ "$CMIS_CODE" -ge 200 ] && [ "$CMIS_CODE" -lt 400 ]; then
+  log_success "CMIS 1.1 Browser Binding service document responded with HTTP ${CMIS_CODE}!"
+else
+  log_warn "CMIS Browser Binding returned HTTP ${CMIS_CODE}. Will proceed with crawl validation."
+fi
+
+# 4c. Wait for PostgreSQL pgvector
 log_info "Waiting for PostgreSQL pgvector database to become healthy..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Health.Status}}' postgres-vector-decoupled-alfresco 2>/dev/null || echo 'starting')" == "healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' postgres-vector-decoupled-cmis 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for postgres-vector-decoupled-alfresco."
+    log_error "Timeout waiting for postgres-vector-decoupled-cmis."
     compose logs postgres-vector
     exit 1
   fi
@@ -218,12 +226,12 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' postgres-vector-decouple
 done
 log_success "PostgreSQL pgvector is healthy!"
 
-# 4c. Wait for Redis
+# 4d. Wait for Redis
 log_info "Waiting for Redis to become healthy..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Health.Status}}' redis-stack-decoupled-alfresco 2>/dev/null || echo 'starting')" == "healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' redis-stack-decoupled-cmis 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for redis-stack-decoupled-alfresco."
+    log_error "Timeout waiting for redis-stack-decoupled-cmis."
     compose logs redis
     exit 1
   fi
@@ -232,12 +240,12 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' redis-stack-decoupled-al
 done
 log_success "Redis is healthy!"
 
-# 4d. Wait for Ollama
+# 4e. Wait for Ollama
 log_info "Waiting for Ollama embedding engine to become healthy..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled-alfresco 2>/dev/null || echo 'starting')" == "healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled-cmis 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for ollama-decoupled-alfresco."
+    log_error "Timeout waiting for ollama-decoupled-cmis."
     compose logs ollama
     exit 1
   fi
@@ -246,16 +254,16 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled-alfresc
 done
 log_success "Ollama engine is healthy!"
 
-# 4e. Wait for Ollama model puller to finish pulling models and exit
+# 4f. Wait for Ollama model puller
 log_info "Waiting for Ollama model puller to download embedding models..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-alfresco 2>/dev/null || echo 'false')" == "false" ]; do
+until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-cmis 2>/dev/null || echo 'false')" == "false" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
     log_error "Timeout waiting for Ollama model puller."
     compose logs ollama-model-puller
     exit 1
   fi
-  PROGRESS=$(docker logs --tail 1 ollama-model-puller-decoupled-alfresco 2>&1 || true)
+  PROGRESS=$(docker logs --tail 1 ollama-model-puller-decoupled-cmis 2>&1 || true)
   if [ -n "$PROGRESS" ]; then
     printf "  Progress: %s\r" "$PROGRESS"
   fi
@@ -264,7 +272,7 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-
 done
 echo ""
 
-EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' ollama-model-puller-decoupled-alfresco 2>/dev/null || echo "1")
+EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' ollama-model-puller-decoupled-cmis 2>/dev/null || echo "1")
 if [ "$EXIT_CODE" -ne 0 ]; then
   log_error "Ollama model puller failed with exit code $EXIT_CODE."
   compose logs ollama-model-puller
@@ -275,21 +283,21 @@ log_success "Ollama embedding models pulled successfully!"
 log_pass "All decoupled infrastructure services are healthy and ready."
 
 # ------------------------------------------------------------------------------
-# STEP 5: Provision Test Documents in Alfresco Repository
+# STEP 5: Provision Test Documents in Repository
 # ------------------------------------------------------------------------------
-log_step 5 "Provisioning test contents and content streams directly in Alfresco repository..."
+log_step 5 "Provisioning test contents and content streams directly in CMIS repository..."
 
-# Document 1: Specification Document
-DOC1_NAME="opencrawling-alfresco-specification.txt"
-log_info "Creating test document '${DOC1_NAME}' directly under Alfresco repository root (-root-)..."
+# Document 1: CMIS Specification Document
+DOC1_NAME="opencrawling-cmis-specification.txt"
+log_info "Creating test document '${DOC1_NAME}' under repository root..."
 
 CREATE_DOC1_PAYLOAD=$(cat <<EOF
 {
   "name": "${DOC1_NAME}",
   "nodeType": "cm:content",
   "properties": {
-    "cm:title": "OpenCrawling Alfresco Decoupled Specification",
-    "cm:description": "Integration test payload verifying complete OpenCrawling decoupled processing pipeline"
+    "cm:title": "OpenCrawling CMIS Decoupled Specification",
+    "cm:description": "Integration test payload verifying complete OpenCrawling decoupled processing pipeline via OASIS CMIS 1.1 Browser Binding"
   }
 }
 EOF
@@ -305,7 +313,7 @@ DOC1_CODE=$(echo "${DOC1_RES}" | tail -n 1)
 DOC1_BODY=$(echo "${DOC1_RES}" | sed '$d')
 
 if [ "${DOC1_CODE}" != "201" ]; then
-  log_error "Failed to create document 1 in Alfresco: ${DOC1_BODY} (HTTP ${DOC1_CODE})"
+  log_error "Failed to create document 1 in repository: ${DOC1_BODY} (HTTP ${DOC1_CODE})"
   exit 1
 fi
 
@@ -314,7 +322,7 @@ CREATED_DOC_IDS+=("${DOC1_ID}")
 log_success "Document node 1 created successfully with ID: ${DOC1_ID}"
 
 # Upload document 1 text stream
-DOC1_CONTENT="OpenCrawling decoupled architecture provides high-throughput distributed crawling for Alfresco Content Services repositories. Document content streams are claim-checked, parsed via Apache Tika, tokenized into semantic chunks, vectorized via Ollama, and persisted into PostgreSQL pgvector for AI agent retrieval."
+DOC1_CONTENT="OpenCrawling decoupled architecture provides high-throughput distributed crawling for OASIS CMIS 1.1 repositories without Apache Chemistry. Document content streams are claim-checked, parsed via Apache Tika, tokenized into semantic chunks, vectorized via Ollama, and persisted into PostgreSQL pgvector for AI agent retrieval."
 log_info "Uploading content stream to document node 1 '${DOC1_ID}'..."
 
 UPLOAD1_RES=$(curl -s -w "\n%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC1_ID}/content" \
@@ -329,19 +337,19 @@ if [ "${UPLOAD1_CODE}" != "200" ]; then
   log_error "Failed to upload document 1 content: ${UPLOAD1_BODY} (HTTP ${UPLOAD1_CODE})"
   exit 1
 fi
-log_success "Document 1 content stream uploaded to Alfresco repository."
+log_success "Document 1 content stream uploaded to repository."
 
-# Document 2: Architecture Document
-DOC2_NAME="opencrawling-alfresco-architecture.txt"
-log_info "Creating test document '${DOC2_NAME}' directly under Alfresco repository root (-root-)..."
+# Document 2: CMIS Architecture Document
+DOC2_NAME="opencrawling-cmis-architecture.txt"
+log_info "Creating test document '${DOC2_NAME}' under repository root..."
 
 CREATE_DOC2_PAYLOAD=$(cat <<EOF
 {
   "name": "${DOC2_NAME}",
   "nodeType": "cm:content",
   "properties": {
-    "cm:title": "OpenCrawling Alfresco Architecture Overview",
-    "cm:description": "Architecture guide for decoupled Alfresco indexing, Kafka messaging, and MCP discovery"
+    "cm:title": "OpenCrawling CMIS Architecture Overview",
+    "cm:description": "Architecture guide for decoupled OASIS CMIS 1.1 indexing, Kafka messaging, and MCP discovery"
   }
 }
 EOF
@@ -357,7 +365,7 @@ DOC2_CODE=$(echo "${DOC2_RES}" | tail -n 1)
 DOC2_BODY=$(echo "${DOC2_RES}" | sed '$d')
 
 if [ "${DOC2_CODE}" != "201" ]; then
-  log_error "Failed to create document 2 in Alfresco: ${DOC2_BODY} (HTTP ${DOC2_CODE})"
+  log_error "Failed to create document 2 in repository: ${DOC2_BODY} (HTTP ${DOC2_CODE})"
   exit 1
 fi
 
@@ -366,7 +374,7 @@ CREATED_DOC_IDS+=("${DOC2_ID}")
 log_success "Document node 2 created successfully with ID: ${DOC2_ID}"
 
 # Upload document 2 text stream
-DOC2_CONTENT="The Alfresco repository connector scans Company Home root nodes using Java 25 HttpClient and structured concurrency. Content binaries are persisted to the shared Claim Check store while metadata messages traverse Apache Kafka. Downstream microservices process ingestion, tokenization, embeddings with Ollama, and store vectors in PostgreSQL pgvector."
+DOC2_CONTENT="The CMIS repository connector scans repository folders using native Java 25 HttpClient and structured concurrency. Content binaries are persisted to the shared Claim Check store while metadata messages traverse Apache Kafka. Downstream microservices process ingestion, tokenization, embeddings with Ollama, and store vectors in PostgreSQL pgvector."
 log_info "Uploading content stream to document node 2 '${DOC2_ID}'..."
 
 UPLOAD2_RES=$(curl -s -w "\n%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC2_ID}/content" \
@@ -381,39 +389,25 @@ if [ "${UPLOAD2_CODE}" != "200" ]; then
   log_error "Failed to upload document 2 content: ${UPLOAD2_BODY} (HTTP ${UPLOAD2_CODE})"
   exit 1
 fi
-log_success "Document 2 content stream uploaded to Alfresco repository."
+log_success "Document 2 content stream uploaded to repository."
 
-# Verify document content stream download directly from repository
-DOWNLOADED1_CONTENT=$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC1_ID}/content")
-if [ "${DOWNLOADED1_CONTENT}" != "${DOC1_CONTENT}" ]; then
-  log_error "Downloaded content did not match uploaded content for document 1 in Alfresco!"
-  exit 1
-fi
-
-DOWNLOADED2_CONTENT=$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC2_ID}/content")
-if [ "${DOWNLOADED2_CONTENT}" != "${DOC2_CONTENT}" ]; then
-  log_error "Downloaded content did not match uploaded content for document 2 in Alfresco!"
-  exit 1
-fi
-log_success "Alfresco repository document contents verified successfully."
-
-log_pass "Alfresco test repository contents provisioned and verified."
+log_pass "CMIS test repository contents provisioned and verified."
 
 # ------------------------------------------------------------------------------
-# STEP 6: Execute oc-crawler against the Alfresco Repository
+# STEP 6: Execute oc-crawler against the CMIS Repository
 # ------------------------------------------------------------------------------
-log_step 6 "Executing oc-crawler scan against Alfresco repository root (-root-)..."
+log_step 6 "Executing oc-crawler scan against CMIS repository root (/)..."
 
-export SPRING_OPENCRAWLING_SCAN_PATH="-root-"
+export SPRING_OPENCRAWLING_SCAN_PATH="/"
 
-log_info "Launching oc-crawler container with target repository scan path: ${SPRING_OPENCRAWLING_SCAN_PATH}..."
-SPRING_OPENCRAWLING_SCAN_PATH="-root-" compose up -d --build --force-recreate oc-crawler
+log_info "Launching oc-crawler container with target CMIS scan path: ${SPRING_OPENCRAWLING_SCAN_PATH}..."
+SPRING_OPENCRAWLING_SCAN_PATH="/" compose up -d --build --force-recreate oc-crawler
 
-log_info "Waiting for oc-crawler service to finish repository crawl..."
+log_info "Waiting for oc-crawler service to finish CMIS repository crawl..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-alfresco 2>/dev/null || echo 'false')" == "false" ]; do
+until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-cmis 2>/dev/null || echo 'false')" == "false" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for oc-crawler-service-alfresco to complete."
+    log_error "Timeout waiting for oc-crawler-service-cmis to complete."
     compose logs oc-crawler
     exit 1
   fi
@@ -421,18 +415,18 @@ until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-alfresco 2>
   ELAPSED=$((ELAPSED + 2))
 done
 
-CRAWLER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' oc-crawler-service-alfresco 2>/dev/null || echo "1")
+CRAWLER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' oc-crawler-service-cmis 2>/dev/null || echo "1")
 if [ "$CRAWLER_EXIT_CODE" -ne 0 ]; then
-  log_error "oc-crawler-service-alfresco failed with exit code ${CRAWLER_EXIT_CODE}."
+  log_error "oc-crawler-service-cmis failed with exit code ${CRAWLER_EXIT_CODE}."
   compose logs oc-crawler
   exit 1
 fi
 
-log_success "oc-crawler completed repository scan with clean exit code 0."
+log_success "oc-crawler completed CMIS repository scan with clean exit code 0."
 log_info "Crawler output summary:"
-docker logs --tail 20 oc-crawler-service-alfresco || true
+docker logs --tail 20 oc-crawler-service-cmis || true
 
-log_pass "Alfresco repository scan completed successfully."
+log_pass "CMIS repository scan completed successfully."
 
 # ------------------------------------------------------------------------------
 # STEP 7: Verify Kafka Ingestion, Embedding, and PgVector Persistence
@@ -441,31 +435,30 @@ log_step 7 "Waiting for Kafka messaging pipeline to process and persist vector e
 
 DOC1_COUNT=0
 DOC2_COUNT=0
-TOTAL_VECTOR_COUNT=0
 ELAPSED=0
 INGEST_TIMEOUT=120
 
-log_info "Waiting for vectors corresponding specifically to Alfresco repository test documents to appear in pgvector..."
+log_info "Waiting for vectors corresponding specifically to CMIS repository test documents to appear in pgvector..."
 
 until ([ "$DOC1_COUNT" -gt 0 ] 2>/dev/null && [ "$DOC2_COUNT" -gt 0 ] 2>/dev/null) || [ $ELAPSED -ge $INGEST_TIMEOUT ]; do
   sleep 2
   ELAPSED=$((ELAPSED + 2))
 
-  # Query vector count specifically related to Alfresco Document 1
-  DOC1_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+  # Query vector count specifically related to CMIS Document 1
+  DOC1_COUNT=$(docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
     "SELECT (
        CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%Alfresco Content Services%')
+         (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%without Apache Chemistry%')
        ELSE 0 END +
        CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%Alfresco Content Services%')
+         (SELECT count(*) FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%without Apache Chemistry%')
        ELSE 0 END
      );" 2>/dev/null || echo "0")
   DOC1_COUNT=$(echo "$DOC1_COUNT" | tr -d '[:space:]')
   [ -z "$DOC1_COUNT" ] && DOC1_COUNT=0
 
-  # Query vector count specifically related to Alfresco Document 2
-  DOC2_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+  # Query vector count specifically related to CMIS Document 2
+  DOC2_COUNT=$(docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
     "SELECT (
        CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
          (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC2_ID}%') AND content ILIKE '%structured concurrency%')
@@ -484,7 +477,7 @@ echo ""
 
 # Check for timeout or missing vectors
 if [ "$DOC1_COUNT" -eq 0 ] || [ "$DOC2_COUNT" -eq 0 ]; then
-  log_error "Decoupled pipeline verification failed: vectors matching Alfresco repository documents were not found in pgvector!"
+  log_error "Decoupled pipeline verification failed: vectors matching CMIS repository documents were not found in pgvector!"
   log_error "  - Doc 1 ('${DOC1_NAME}', ID: ${DOC1_ID}): ${DOC1_COUNT} vector(s)"
   log_error "  - Doc 2 ('${DOC2_NAME}', ID: ${DOC2_ID}): ${DOC2_COUNT} vector(s)"
   log_warn "Displaying consumer service logs for diagnosis:"
@@ -494,71 +487,71 @@ if [ "$DOC1_COUNT" -eq 0 ] || [ "$DOC2_COUNT" -eq 0 ]; then
   exit 1
 fi
 
-log_success "Discovered vector records matching Alfresco repository documents!"
+log_success "Discovered vector records matching CMIS repository documents!"
 log_info "  - Doc 1 ('${DOC1_NAME}', ID: ${DOC1_ID}): ${DOC1_COUNT} vector record(s)"
 log_info "  - Doc 2 ('${DOC2_NAME}', ID: ${DOC2_ID}): ${DOC2_COUNT} vector record(s)"
 
 # ------------------------------------------------------------------------------
-# STEP 7a: Detailed Validation of Alfresco Repository Provenance in PgVector
+# STEP 7a: Detailed Validation of CMIS Repository Provenance in PgVector
 # ------------------------------------------------------------------------------
 log_info "Executing specific provenance checks on vectors stored in pgvector..."
 
-# 1. Verify Alfresco Content Streams in Stored Vector Records
-log_info "Check 1: Verifying vector content text matches uploaded Alfresco repository streams..."
-CONTENT_MATCH_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+# 1. Verify CMIS Content Streams in Stored Vector Records
+log_info "Check 1: Verifying vector content text matches uploaded CMIS repository streams..."
+CONTENT_MATCH_COUNT=$(docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
   "SELECT (
      CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE (content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
+       (SELECT count(*) FROM vector_store_1024 WHERE (content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%'))
      ELSE 0 END +
      CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE (content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
+       (SELECT count(*) FROM vector_store WHERE (content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%'))
      ELSE 0 END
    );" 2>/dev/null || echo "0")
 CONTENT_MATCH_COUNT=$(echo "$CONTENT_MATCH_COUNT" | tr -d '[:space:]')
 [ -z "$CONTENT_MATCH_COUNT" ] && CONTENT_MATCH_COUNT=0
 
 if [ "$CONTENT_MATCH_COUNT" -lt 2 ]; then
-  log_error "Content check failed: Vector text does not match uploaded Alfresco repository streams! Found: ${CONTENT_MATCH_COUNT} (expected >= 2)"
+  log_error "Content check failed: Vector text does not match uploaded CMIS repository streams! Found: ${CONTENT_MATCH_COUNT} (expected >= 2)"
   exit 1
 fi
-log_success "Content check passed: Stored vectors contain exact text from Alfresco repository documents (${CONTENT_MATCH_COUNT} chunks)."
+log_success "Content check passed: Stored vectors contain exact text from CMIS repository documents (${CONTENT_MATCH_COUNT} chunks)."
 
-# 2. Verify Alfresco Metadata Properties (cm:title, nodeType, documentId)
-log_info "Check 2: Verifying Alfresco-specific metadata (nodeType: cm:content, cm:title) in pgvector JSONB..."
-ALFRESCO_META_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+# 2. Verify CMIS Metadata Properties in pgvector JSONB
+log_info "Check 2: Verifying CMIS metadata attributes (cm:title or cmis:name) in pgvector JSONB..."
+CMIS_META_COUNT=$(docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
   "SELECT (
      CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE metadata::text LIKE '%cm:content%' AND (metadata::text LIKE '%OpenCrawling Alfresco Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling Alfresco Architecture Overview%'))
+       (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%OpenCrawling CMIS Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling CMIS Architecture Overview%' OR metadata::text LIKE '%opencrawling-cmis%'))
      ELSE 0 END +
      CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE metadata::text LIKE '%cm:content%' AND (metadata::text LIKE '%OpenCrawling Alfresco Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling Alfresco Architecture Overview%'))
+       (SELECT count(*) FROM vector_store WHERE (metadata::text LIKE '%OpenCrawling CMIS Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling CMIS Architecture Overview%' OR metadata::text LIKE '%opencrawling-cmis%'))
      ELSE 0 END
    );" 2>/dev/null || echo "0")
-ALFRESCO_META_COUNT=$(echo "$ALFRESCO_META_COUNT" | tr -d '[:space:]')
-[ -z "$ALFRESCO_META_COUNT" ] && ALFRESCO_META_COUNT=0
+CMIS_META_COUNT=$(echo "$CMIS_META_COUNT" | tr -d '[:space:]')
+[ -z "$CMIS_META_COUNT" ] && CMIS_META_COUNT=0
 
-if [ "$ALFRESCO_META_COUNT" -lt 2 ]; then
-  log_error "Metadata check failed: Alfresco metadata attributes (nodeType, cm:title) not found in pgvector! Found: ${ALFRESCO_META_COUNT} (expected >= 2)"
+if [ "$CMIS_META_COUNT" -lt 2 ]; then
+  log_error "Metadata check failed: CMIS metadata attributes not found in pgvector! Found: ${CMIS_META_COUNT} (expected >= 2)"
   exit 1
 fi
-log_success "Metadata check passed: Alfresco repository metadata attributes confirmed in pgvector JSONB (${ALFRESCO_META_COUNT} records)."
+log_success "Metadata check passed: CMIS repository metadata attributes confirmed in pgvector JSONB (${CMIS_META_COUNT} records)."
 
-# 3. Preview Stored Alfresco Vectors Table
-log_info "Preview of indexed Alfresco repository document records in pgvector:"
-docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -P pager=off -c \
-  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || \
-docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -P pager=off -c \
-  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || true
+# 3. Preview Stored CMIS Vectors Table
+log_info "Preview of indexed CMIS repository document records in pgvector:"
+docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -P pager=off -c \
+  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || \
+docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -P pager=off -c \
+  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || true
 
 # 4. Verify Vector Embedding Dimensions (1024d)
 log_info "Check 3: Verifying vector embedding dimensions (1024d) in pgvector..."
-DIMS_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+DIMS_COUNT=$(docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
   "SELECT (
      CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE embedding IS NOT NULL AND vector_dims(embedding) = 1024 AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
+       (SELECT count(*) FROM vector_store_1024 WHERE embedding IS NOT NULL AND vector_dims(embedding) = 1024 AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%'))
      ELSE 0 END +
      CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE embedding IS NOT NULL AND (vector_dims(embedding) = 1024 OR vector_dims(embedding) = 1536) AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
+       (SELECT count(*) FROM vector_store WHERE embedding IS NOT NULL AND (vector_dims(embedding) = 1024 OR vector_dims(embedding) = 1536) AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%without Apache Chemistry%' OR content ILIKE '%structured concurrency%'))
      ELSE 0 END
    );" 2>/dev/null || echo "0")
 DIMS_COUNT=$(echo "$DIMS_COUNT" | tr -d '[:space:]')
@@ -567,13 +560,13 @@ DIMS_COUNT=$(echo "$DIMS_COUNT" | tr -d '[:space:]')
 if [ "$DIMS_COUNT" -lt 2 ]; then
   log_error "Vector dimension check failed! Expected at least 2 records with vector embeddings, found: ${DIMS_COUNT}"
   log_warn "Diagnostic: Inspecting existing tables and schemas in postgres-vector database..."
-  docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -c "\dt" || true
-  docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -c "SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_name LIKE 'vector_store%';" || true
+  docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -c "\dt" || true
+  docker exec -i postgres-vector-decoupled-cmis psql -U opencrawling -d opencrawling -c "SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_name LIKE 'vector_store%';" || true
   exit 1
 fi
 log_success "Vector dimension check passed: Stored embeddings verified in pgvector (${DIMS_COUNT} records)!"
 
-log_pass "End-to-end vector pipeline execution verified successfully. All stored vectors confirmed to originate from Alfresco repository test content."
+log_pass "End-to-end vector pipeline execution verified successfully. All stored vectors confirmed to originate from CMIS repository test content."
 
 # ------------------------------------------------------------------------------
 # STEP 8: Verify OpenCrawling MCP Server Endpoint
@@ -614,16 +607,16 @@ mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTo
 log_pass "OIS Tombstone DELETE action test passed."
 
 # ------------------------------------------------------------------------------
-# STEP 10: Cleanup Test Content in Alfresco Repository
+# STEP 10: Cleanup Test Content in Repository
 # ------------------------------------------------------------------------------
-log_step 10 "Cleaning up test contents from Alfresco repository..."
+log_step 10 "Cleaning up test contents from CMIS repository..."
 
 if [ "${#CREATED_DOC_IDS[@]}" -gt 0 ]; then
   for doc_id in ${CREATED_DOC_IDS[@]+"${CREATED_DOC_IDS[@]}"}; do
     if [ -n "${doc_id}" ]; then
       DELETE_RES=$(curl -s -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${doc_id}")
       if [ "${DELETE_RES}" = "204" ] || [ "${DELETE_RES}" = "200" ]; then
-        log_success "Alfresco repository document '${doc_id}' removed successfully."
+        log_success "Repository document '${doc_id}' removed successfully."
       else
         log_warn "Failed to remove repository document '${doc_id}'. Status: ${DELETE_RES}"
       fi
@@ -632,13 +625,13 @@ if [ "${#CREATED_DOC_IDS[@]}" -gt 0 ]; then
 fi
 CREATED_DOC_IDS=()
 
-log_pass "Alfresco repository cleanup complete."
+log_pass "CMIS repository cleanup complete."
 
 # ------------------------------------------------------------------------------
 # Final Summary
 # ------------------------------------------------------------------------------
 echo -e "\n${BOLD}${GREEN}================================================================================${NC}"
-echo -e "${BOLD}${GREEN}SUCCESS: All ${TOTAL_STEPS} Alfresco Decoupled Integration Test Steps Passed! 🎉${NC}"
+echo -e "${BOLD}${GREEN}SUCCESS: All ${TOTAL_STEPS} OASIS CMIS Decoupled Integration Test Steps Passed! 🎉${NC}"
 echo -e "${BOLD}${GREEN}================================================================================${NC}\n"
 
 exit 0

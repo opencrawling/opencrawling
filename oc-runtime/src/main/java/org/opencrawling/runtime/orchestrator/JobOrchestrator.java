@@ -68,22 +68,22 @@ public class JobOrchestrator {
     }
 
     @SuppressWarnings("preview")
-    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path) {
-        runJob(repositoryConnector, outputConnector, path, null);
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path) {
+        return runJob(repositoryConnector, outputConnector, path, null);
     }
 
     @SuppressWarnings("preview")
-    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector) {
-        runJob(repositoryConnector, outputConnector, path, transformationConnector, "1");
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, "1");
     }
 
     @SuppressWarnings("preview")
-    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector, String jobId) {
-        runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, null);
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path, String transformationConnector, String jobId) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, null);
     }
 
     @SuppressWarnings("preview")
-    public void runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, NarrativizationConfig narrativization) {
         
         final MustacheTransformationConnector mustacheConnector =
@@ -97,11 +97,11 @@ public class JobOrchestrator {
                 narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
         }
 
-        runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector);
+        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector);
     }
 
     @SuppressWarnings("preview")
-    private void runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+    private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector) {
         log.info("Starting job {} for path: {} with transformation connector: {}", jobId, path, transformationConnector);
         long startTime = System.currentTimeMillis();
@@ -258,13 +258,15 @@ public class JobOrchestrator {
             ));
 
             log.info("Job scanning phase completed in {} ms. Documents published to Kafka.", duration);
-            
+            return true;
         } catch (StructuredTaskScope.FailedException e) {
             log.error("Job execution failed due to subtask failure: ", e.getCause());
             traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + e.getCause().getMessage(), e.toString());
+            return false;
         } catch (Exception e) {
             log.error("Job execution failed: ", e);
             traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + e.getMessage(), e.toString());
+            return false;
         }
     }
 

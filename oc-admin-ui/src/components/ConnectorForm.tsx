@@ -58,6 +58,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Alfresco') || className.includes('Aps') || className.includes('aps')) {
     return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
   }
+  if (className.includes('Cmis') || className.includes('cmis')) {
+    return { icon: Layers, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
+  }
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
@@ -225,6 +228,7 @@ export default function ConnectorForm() {
       { label: 'Camunda Repository Connector', value: 'org.opencrawling.camunda.CamundaRepositoryConnector' },
       { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
+      { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -846,6 +850,203 @@ export default function ConnectorForm() {
                           defaultValue="OpenCrawling-StormCrawler-Bot/1.0"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OASIS CMIS 1.1 Repository Connector */}
+                  {selectedClass === 'org.opencrawling.cmis.CmisRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">CMIS Endpoint URL</label>
+                        <input 
+                          {...register('configuration.endpointUrl', { required: true })}
+                          placeholder="http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"
+                          defaultValue="http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Binding Type</label>
+                        <select 
+                          {...register('configuration.bindingType')}
+                          defaultValue="browser"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="browser">Browser Binding (JSON, CMIS 1.1)</option>
+                          <option value="atompub">AtomPub Binding (XML, CMIS 1.0/1.1)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Repository ID (Optional)</label>
+                        <input 
+                          {...register('configuration.repositoryId')}
+                          placeholder="Leave blank for auto-discovery"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.username')}
+                          placeholder="admin"
+                          defaultValue="admin"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder="admin"
+                          defaultValue="admin"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select 
+                          {...register('configuration.crawlMode')}
+                          defaultValue="folder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="folder">Folder Tree Traversal</option>
+                          <option value="query">CMISQL Query</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Versions Mode</label>
+                        <select 
+                          {...register('configuration.versionsMode')}
+                          defaultValue="latest_major"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="latest_major">Latest Major Version Only</option>
+                          <option value="latest">Latest Version (including minor)</option>
+                          <option value="all">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder Path</label>
+                        <input 
+                          {...register('configuration.rootFolderPath')}
+                          placeholder="/"
+                          defaultValue="/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder ID (Optional)</label>
+                        <input 
+                          {...register('configuration.rootFolderId')}
+                          placeholder="e.g. workspace://SpacesStore/..."
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">CMISQL Query (For Query Mode)</label>
+                        <input 
+                          {...register('configuration.cmisQuery')}
+                          placeholder="SELECT * FROM cmis:document"
+                          defaultValue="SELECT * FROM cmis:document"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Folder Paths (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.excludedFolderPaths')}
+                          placeholder="/Sites/trash,/System"
+                          defaultValue="/Sites/trash,/System"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.batchSize', { valueAsNumber: true })}
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.maxContentSizeBytes', { valueAsNumber: true })}
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Initial Change Log Token (Optional)</label>
+                        <input 
+                          {...register('configuration.changeLogToken')}
+                          placeholder="token string"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeSubfoldersCmis"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersCmis" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders Recursively
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeContentStreamCmis"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamCmis" className="text-sm font-medium cursor-pointer">
+                          Fetch Binary Content Stream
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsCmis"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsCmis" className="text-sm font-medium cursor-pointer">
+                          Include Access Control Lists (ACLs)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeSecondaryTypesCmis"
+                          {...register('configuration.includeSecondaryTypes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSecondaryTypesCmis" className="text-sm font-medium cursor-pointer">
+                          Include Secondary Object Types / Aspects
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="changeLogEnabledCmis"
+                          {...register('configuration.changeLogEnabled')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="changeLogEnabledCmis" className="text-sm font-medium cursor-pointer">
+                          Enable Change Log Delta Processing
+                        </label>
                       </div>
                     </div>
                   )}
