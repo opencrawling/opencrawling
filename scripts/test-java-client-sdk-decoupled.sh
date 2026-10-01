@@ -66,12 +66,23 @@ compose() {
   docker compose -f docker-compose-decoupled.yml "$@"
 }
 
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
+
 # Teardown cleanup handler
 cleanup() {
   echo -e "\n${CYAN}[INFO] Cleaning up decoupled Docker container cluster...${NC}"
   compose down --remove-orphans >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+
+on_exit() {
+  if [ "${KEEP_CONTAINERS}" = true ] || [ "${CLEANUP_ON_EXIT}" = false ]; then
+    echo -e "\n${YELLOW}KEEP_CONTAINERS=true: Leaving decoupled environment active.${NC}"
+    return 0
+  fi
+  cleanup
+}
+trap on_exit EXIT
 
 # ------------------------------------------------------------------------------
 # STEP 1: Maven Build & Unit Tests for SDK
@@ -83,8 +94,8 @@ log_pass "Compiled and passed offline SDK unit tests (JobClient, ConnectorClient
 # ------------------------------------------------------------------------------
 # STEP 2: Boot Decoupled Container Cluster
 # ------------------------------------------------------------------------------
-log_step "2" "Booting decoupled container cluster (PostgreSQL, Redis, Ollama, Kafka, oc-runtime, oc-embedding-service)..."
-compose down --remove-orphans || true
+log_step "2" "Booting decoupled container cluster (PostgreSQL, Redis, Ollama, Kafka, oc-mcp-server, oc-embedding-service)..."
+cleanup
 compose build
 compose up -d
 log_pass "Built and started decoupled container cluster"
@@ -109,6 +120,32 @@ done
 echo -e "${GREEN}  ✔ postgres-vector database container is healthy!${NC}"
 
 ELAPSED=0
+echo -e "${YELLOW}Waiting for Redis container to report healthy...${NC}"
+until [ "$(docker inspect -f '{{.State.Health.Status}}' redis-stack-decoupled 2>/dev/null || echo 'starting')" == "healthy" ]; do
+  if [ $ELAPSED -ge $TIMEOUT ]; then
+    log_fail "Timeout waiting for Redis container."
+    compose logs redis
+    exit 1
+  fi
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+done
+echo -e "${GREEN}  ✔ Redis container is healthy!${NC}"
+
+ELAPSED=0
+echo -e "${YELLOW}Waiting for Ollama container to report healthy...${NC}"
+until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled 2>/dev/null || echo 'starting')" == "healthy" ]; do
+  if [ $ELAPSED -ge $TIMEOUT ]; then
+    log_fail "Timeout waiting for Ollama container."
+    compose logs ollama
+    exit 1
+  fi
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+done
+echo -e "${GREEN}  ✔ Ollama container is healthy!${NC}"
+
+ELAPSED=0
 echo -e "${YELLOW}Waiting for OpenCrawling Runtime REST API (http://localhost:8080) to respond 200 OK...${NC}"
 HEALTHY=false
 until [ "$HEALTHY" = true ] || [ $ELAPSED -ge $TIMEOUT ]; do
@@ -125,7 +162,7 @@ echo ""
 
 if [ "$HEALTHY" != true ]; then
   log_fail "Timeout waiting for OpenCrawling Runtime REST API."
-  compose logs oc-runtime
+  compose logs oc-mcp-server
   exit 1
 fi
 log_pass "Decoupled cluster REST API is live and healthy (HTTP 200)"

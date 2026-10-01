@@ -284,12 +284,17 @@ services:
       - "8080:8080"
       - "9095:9095"
     environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0

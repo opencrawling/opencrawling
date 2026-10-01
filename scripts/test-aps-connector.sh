@@ -134,7 +134,7 @@ cleanup() {
   fi
   if [ "${CLEANUP_ON_EXIT}" = true ] || [ "${START_LOCAL_CONTAINER}" = true ]; then
     log_info "Tearing down temporary APS Docker environment..."
-    docker compose -f "${COMPOSE_FILE}" down -v >/dev/null 2>&1 || true
+    docker compose -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
     docker rm -f opencrawling-aps-it opencrawling-postgres-aps-it >/dev/null 2>&1 || true
     log_success "Cleanup complete."
   fi

@@ -79,7 +79,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     private String authHeader;
 
     public FlowableRepositoryConnector(
-            @Value("${spring.opencrawling.connector.flowable.url:http://localhost:8080/flowable-rest/service}") String url,
+            @Value("${spring.opencrawling.connector.flowable.url:${spring.opencrawling.connector.flowable.endpoint:http://localhost:8080/flowable-rest/service}}") String url,
             @Value("${spring.opencrawling.connector.flowable.username:admin}") String username,
             @Value("${spring.opencrawling.connector.flowable.password:test}") String password,
             @Value("${spring.opencrawling.connector.flowable.batch-size:100}") int batchSize,

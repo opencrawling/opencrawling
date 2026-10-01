@@ -29,10 +29,11 @@ services:
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://rest-admin:test@localhost:8080/flowable-rest/service/management/engine || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://rest-admin:test@localhost:8080/flowable-rest/service/management/engine || curl -s -u rest-admin:test http://localhost:8080/flowable-rest/service/management/engine || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:
@@ -47,7 +48,10 @@ services:
     volumes:
       - opencrawling-pgdata-flowable:/var/lib/postgresql/data
     networks:
-      - opencrawling-network
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
       interval: 5s
@@ -131,29 +135,43 @@ services:
     container_name: oc-crawler-service-flowable
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=flowable
       - OPENCRAWLING_CONNECTOR_TYPE=flowable
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_ENABLED=true
+      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_URL=http://flowable:8080/flowable-rest/service
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_ENDPOINT=http://flowable:8080/flowable-rest/service
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_USERNAME=rest-admin
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_PASSWORD=test
-      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_SCAN_HISTORY=true
-      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_INCLUDE_PROCESS_VARIABLES=true
+      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_INCLUDE_VARIABLES=true
+      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_SCOPE=all
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+    volumes:
+      - opencrawling-claims-flowable:/data/claims
     depends_on:
-      - kafka
-      - flowable
-      - postgres-vector
+      kafka:
+        condition: service_started
+      flowable:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
-    restart: on-failure
+    restart: "no"
 
   oc-ingestion-consumer:
     build:
@@ -163,15 +181,31 @@ services:
     container_name: oc-ingestion-consumer-service-flowable
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+    volumes:
+      - opencrawling-claims-flowable:/data/claims
     depends_on:
-      - kafka
-      - postgres-vector
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -186,7 +220,16 @@ services:
       - "8082:8082"
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=true
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
@@ -194,9 +237,14 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - ollama
-      - postgres-vector
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama-model-puller:
+        condition: service_completed_successfully
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -209,6 +257,14 @@ services:
     container_name: oc-writer-service-flowable
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
@@ -216,8 +272,12 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
     depends_on:
-      - kafka
-      - postgres-vector
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -241,9 +301,13 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
     depends_on:
-      - redis
-      - postgres-vector
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       opencrawling-network:
         aliases:
@@ -266,3 +330,5 @@ volumes:
     name: opencrawling-kafkadata-flowable
   opencrawling-flowabledata:
     name: opencrawling-flowabledata
+  opencrawling-claims-flowable:
+    name: opencrawling-claims-flowable
