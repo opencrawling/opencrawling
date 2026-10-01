@@ -407,7 +407,7 @@ log_step 6 "Executing oc-crawler scan against Alfresco repository root (-root-).
 export SPRING_OPENCRAWLING_SCAN_PATH="-root-"
 
 log_info "Launching oc-crawler container with target repository scan path: ${SPRING_OPENCRAWLING_SCAN_PATH}..."
-SPRING_OPENCRAWLING_SCAN_PATH="-root-" compose up -d --force-recreate oc-crawler
+SPRING_OPENCRAWLING_SCAN_PATH="-root-" compose up -d --build --force-recreate oc-crawler
 
 log_info "Waiting for oc-crawler service to finish repository crawl..."
 ELAPSED=0

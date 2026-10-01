@@ -109,6 +109,11 @@ public class ConnectorCheckerService {
                 return checkAlfresco(config);
             }
 
+            // --- CMIS Repository Connector ---
+            if (className.contains("CmisRepositoryConnector") || className.contains("Cmis") || className.contains("cmis")) {
+                return checkCmis(config);
+            }
+
             // --- FileSystem Repository Connector ---
             if (className.contains("FileConnector") || className.contains("FileSystem")) {
                 return checkFileSystem(config);
@@ -451,6 +456,36 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + url + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkCmis(Map<String, String> config) {
+        String endpointUrl = config.getOrDefault("endpointUrl",
+                config.getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"));
+        String user = config.getOrDefault("username", "admin");
+        String pass = config.getOrDefault("password", "admin");
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(endpointUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json, application/atom+xml, text/html, */*")
+                    .GET();
+
+            if (user != null && !user.isBlank()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 400) {
+                return new ConnectionCheckResult(true, "Successfully connected to CMIS endpoint at " + endpointUrl + ".", response.body());
+            } else {
+                return new ConnectionCheckResult(false, "CMIS endpoint returned HTTP status " + response.statusCode() + " from " + endpointUrl, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to CMIS endpoint at " + endpointUrl + ": " + e.getMessage(), e.toString());
         }
     }
 

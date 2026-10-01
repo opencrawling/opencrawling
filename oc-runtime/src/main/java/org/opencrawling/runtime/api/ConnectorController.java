@@ -61,6 +61,20 @@ public class ConnectorController {
             "delayMs", "1000",
             "customUserAgent", "OpenCrawling-StormCrawler-Bot/1.0"
         )));
+        defaults.add(new ConnectorDTO("CMIS_Repository", "OASIS CMIS 1.1 Repository", "repository", "org.opencrawling.cmis.CmisRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("endpointUrl", "http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"),
+            Map.entry("bindingType", "BROWSER"),
+            Map.entry("repositoryId", "-default-"),
+            Map.entry("username", "admin"),
+            Map.entry("password", "admin"),
+            Map.entry("crawlMode", "FOLDER"),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("cmisQuery", "SELECT * FROM cmis:document"),
+            Map.entry("versionsMode", "LATEST_MAJOR"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("batchSize", "100")
+        )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
             "pgVectorUsername", "opencrawling",

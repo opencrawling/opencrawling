@@ -104,7 +104,7 @@ ${BOLD}OPTIONS:${NC}
 ${BOLD}POSITIONAL ARGUMENTS:${NC}
   Any positional argument can be:
   1. A file path to a specific test script (e.g., ${CYAN}scripts/test-cli.sh${NC} or ${CYAN}test-alfresco-decoupled.sh${NC})
-  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}seatunnel${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
+  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}aps${NC}, ${CYAN}cmis${NC}, ${CYAN}seatunnel${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
 
 ${BOLD}EXAMPLES:${NC}
   ${DIM}# Run all integration tests${NC}
@@ -115,6 +115,12 @@ ${BOLD}EXAMPLES:${NC}
 
   ${DIM}# Run only Alfresco tests (matching test-alfresco-*.sh)${NC}
   ./run-integration-tests.sh alfresco
+
+  ${DIM}# Run only Alfresco Process Services tests (matching test-aps-*.sh)${NC}
+  ./run-integration-tests.sh aps
+
+  ${DIM}# Run only CMIS tests (matching test-cmis-*.sh)${NC}
+  ./run-integration-tests.sh cmis
 
   ${DIM}# Run only SeaTunnel tests (matching test-seatunnel-*.sh)${NC}
   ./run-integration-tests.sh seatunnel

@@ -107,8 +107,8 @@ compose() {
 
 cleanup() {
   echo -e "\n${YELLOW}Tearing down APS decoupled test environment...${NC}"
-  docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true
-  docker compose -f oc-aps-repository-connector/docker/docker-compose-aps.yml down -v >/dev/null 2>&1 || true
+  docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  docker compose -f oc-aps-repository-connector/docker/docker-compose-aps.yml down >/dev/null 2>&1 || true
   docker rm -f aps-decoupled postgres-aps-decoupled postgres-vector-decoupled-aps redis-stack-decoupled-aps ollama-decoupled-aps ollama-pull-model-aps kafka-decoupled-aps oc-crawler-service-aps oc-ingestion-consumer-service-aps oc-embedding-consumer-service-aps oc-writer-service-aps oc-mcp-server-service-aps >/dev/null 2>&1 || true
 }
 

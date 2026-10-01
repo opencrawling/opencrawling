@@ -109,4 +109,14 @@ class ConnectorCheckerServiceTest {
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to Alfresco Process Services"));
     }
+
+    @Test
+    void testCheckCmisConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("CMIS_Test", "Test CMIS", "repository",
+                "org.opencrawling.cmis.CmisRepositoryConnector", 10, Map.of("endpointUrl", "http://127.0.0.1:59999/browser"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to CMIS endpoint"));
+    }
 }

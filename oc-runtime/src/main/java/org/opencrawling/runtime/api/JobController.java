@@ -178,6 +178,52 @@ public class JobController {
                         String warehouse = connConfig.configuration().getOrDefault("warehouse", "tmp/iceberg-warehouse");
                         String idColumn = connConfig.configuration().getOrDefault("idColumn", "");
                         resolvedConnector = new org.opencrawling.iceberg.IcebergRepositoryConnector(catalogType, catalogUri, warehouse, idColumn);
+                    } else if (connConfig.className().contains("Cmis") || connConfig.className().contains("cmis")) {
+                        String endpointUrl = connConfig.configuration().getOrDefault("endpointUrl",
+                                connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"));
+                        String repositoryId = connConfig.configuration().getOrDefault("repositoryId", "");
+                        String username = connConfig.configuration().getOrDefault("username", "admin");
+                        String password = connConfig.configuration().getOrDefault("password", "admin");
+                        String bindingTypeStr = connConfig.configuration().getOrDefault("bindingType", "browser");
+                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
+                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
+                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
+                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
+                        String excludedFolderPathsStr = connConfig.configuration().getOrDefault("excludedFolderPaths", "");
+                        java.util.Set<String> excluded = java.util.Arrays.stream(excludedFolderPathsStr.split(","))
+                                .map(String::trim)
+                                .filter(s -> !s.isEmpty())
+                                .collect(java.util.stream.Collectors.toSet());
+                        String cmisQuery = connConfig.configuration().getOrDefault("cmisQuery", "SELECT * FROM cmis:document");
+                        String versionsModeStr = connConfig.configuration().getOrDefault("versionsMode", "latest_major");
+                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
+                        long maxContentSizeBytes = 52428800L;
+                        try {
+                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
+                        } catch (Exception ignored) {}
+                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
+                        boolean includeSecondaryTypes = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSecondaryTypes", "true"));
+                        boolean changeLogEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("changeLogEnabled", "false"));
+                        String changeLogToken = connConfig.configuration().getOrDefault("changeLogToken", "");
+                        int batchSize = 100;
+                        try {
+                            batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
+                        } catch (Exception ignored) {}
+                        int timeoutSeconds = 30;
+                        try {
+                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
+                        } catch (Exception ignored) {}
+
+                        resolvedConnector = new org.opencrawling.cmis.CmisRepositoryConnector(
+                                endpointUrl, repositoryId, username, password,
+                                org.opencrawling.cmis.CmisBindingType.fromString(bindingTypeStr),
+                                org.opencrawling.cmis.CmisCrawlMode.fromString(crawlModeStr),
+                                rootFolderPath, rootFolderId, includeSubfolders, excluded,
+                                cmisQuery, org.opencrawling.cmis.CmisVersionsMode.fromString(versionsModeStr),
+                                includeContentStream, maxContentSizeBytes, includeAcls, includeSecondaryTypes,
+                                changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
+                        );
+                        log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
                     } else {
                         resolvedConnector = fileSystemRepositoryConnector;
                     }

@@ -38,28 +38,44 @@ command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl is required but not installed. Aborting.${NC}" >&2; exit 1; }
 
 COMPOSE_FILE="oc-flowable-repository-connector/docker/docker-compose-decoupled-with-flowable.yml"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
 
 # Helper function for docker compose commands
 compose() {
   docker compose -f "${COMPOSE_FILE}" "$@"
 }
 
-# Clean up any existing containers
-echo -e "${YELLOW}Cleaning up previous Flowable decoupled containers...${NC}"
-compose down --remove-orphans || true
+cleanup() {
+  echo -e "\n${YELLOW}Tearing down Flowable decoupled test environment...${NC}"
+  docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  docker rm -f flowable-rest-decoupled postgres-vector-decoupled-flowable redis-stack-decoupled-flowable ollama-decoupled-flowable ollama-model-puller-decoupled-flowable kafka-decoupled-flowable oc-crawler-service-flowable oc-ingestion-consumer-service-flowable oc-embedding-consumer-service-flowable oc-writer-service-flowable oc-mcp-server-service-flowable >/dev/null 2>&1 || true
+}
 
-# Build microservices images
+on_exit() {
+  if [ "${KEEP_CONTAINERS}" = true ] || [ "${CLEANUP_ON_EXIT}" = false ]; then
+    echo -e "\n${YELLOW}KEEP_CONTAINERS=true: Leaving Flowable decoupled environment active.${NC}"
+    return 0
+  fi
+  cleanup
+}
+trap on_exit EXIT
+
+# 1. Clean up previous containers
+echo -e "${YELLOW}Cleaning up previous Flowable decoupled containers...${NC}"
+cleanup
+
+# 2. Build microservices images
 echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source...${NC}"
 compose build
 
-# Start services
+# 3. Start services
 echo -e "${YELLOW}Starting complete decoupled Flowable-based multi-service infrastructure...${NC}"
 compose up -d
 
-# Define timeout (in seconds)
+# 4. Wait for Flowable REST engine to be healthy
 TIMEOUT=180
 ELAPSED=0
-
 echo -e "${YELLOW}Waiting for Flowable REST engine to be healthy...${NC}"
 until [ "$(docker inspect -f '{{.State.Health.Status}}' flowable-rest-decoupled 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
@@ -72,7 +88,7 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' flowable-rest-decoupled 
 done
 echo -e "${GREEN}Flowable REST engine is healthy!${NC}"
 
-# Reset elapsed timer
+# 5. Wait for Ollama to be healthy
 ELAPSED=0
 echo -e "${YELLOW}Waiting for Ollama to be healthy...${NC}"
 until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled-flowable 2>/dev/null || echo 'starting')" == "healthy" ]; do
@@ -86,7 +102,7 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' ollama-decoupled-flowabl
 done
 echo -e "${GREEN}Ollama is healthy!${NC}"
 
-# Reset elapsed timer
+# 6. Wait for Ollama model puller to pull embedding models and exit
 ELAPSED=0
 echo -e "${YELLOW}Waiting for Ollama model puller to pull embedding models and exit...${NC}"
 until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-flowable 2>/dev/null || echo 'false')" == "false" ]; do
@@ -96,7 +112,7 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-
     exit 1
   fi
   PROGRESS=$(docker logs --tail 1 ollama-model-puller-decoupled-flowable 2>&1 || true)
-  if [ ! -z "$PROGRESS" ]; then
+  if [ -n "$PROGRESS" ]; then
     printf "  Progress: %s\r" "$PROGRESS"
   fi
   sleep 2
@@ -104,7 +120,6 @@ until [ "$(docker inspect -f '{{.State.Running}}' ollama-model-puller-decoupled-
 done
 echo ""
 
-# Check exit code of model puller
 EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' ollama-model-puller-decoupled-flowable 2>/dev/null || echo "1")
 if [ "$EXIT_CODE" -ne 0 ]; then
   echo -e "${RED}Ollama model puller failed with exit code $EXIT_CODE.${NC}"
@@ -113,12 +128,18 @@ if [ "$EXIT_CODE" -ne 0 ]; then
 fi
 echo -e "${GREEN}Ollama embedding models pulled successfully!${NC}"
 
-# Trigger Flowable repository connector scan via crawler restart
+# 7. Seed Sample Workflows into Flowable REST Engine
+echo -e "${YELLOW}Deploying sample BPMN workflow ('invoiceApproval') and seeding process instances into Flowable...${NC}"
+FLOWABLE_URL="http://localhost:8088/flowable-rest/service" \
+  "${SCRIPT_DIR}/seed-flowable-workflows.sh"
+
+# 8. Trigger Flowable repository connector scan via crawler restart
 echo -e "${YELLOW}Triggering oc-crawler-service scan against Flowable REST API...${NC}"
 compose restart oc-crawler
 
-# Wait for crawler completion
+# 9. Wait for crawler completion
 ELAPSED=0
+TIMEOUT=180
 echo -e "${YELLOW}Waiting for oc-crawler service to finish scanning Flowable engine...${NC}"
 until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-flowable 2>/dev/null || echo 'false')" == "false" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
@@ -129,9 +150,56 @@ until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-flowable 2>
   sleep 2
   ELAPSED=$((ELAPSED + 2))
 done
-echo -e "${GREEN}oc-crawler-service-flowable finished scanning Flowable engine!${NC}"
 
-# Verify MCP server endpoint
+# Check crawler exit code
+CRAWLER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' oc-crawler-service-flowable 2>/dev/null || echo "1")
+echo -e "${YELLOW}Crawler Execution Logs:${NC}"
+compose logs --tail 30 oc-crawler
+
+if [ "$CRAWLER_EXIT_CODE" -ne 0 ]; then
+  echo -e "${RED}oc-crawler-service-flowable failed with exit code $CRAWLER_EXIT_CODE.${NC}"
+  exit 1
+fi
+echo -e "${GREEN}oc-crawler-service-flowable finished scanning Flowable engine successfully!${NC}"
+
+# 10. Verify Persisted Vector Embeddings in pgvector
+echo -e "${YELLOW}Waiting for ingestion & embedding consumers to persist vector chunks in pgvector...${NC}"
+ELAPSED=0
+VECTOR_TIMEOUT=60
+VECTOR_COUNT=0
+
+until [ "$VECTOR_COUNT" -gt 0 ] || [ $ELAPSED -ge $VECTOR_TIMEOUT ]; do
+  VECTOR_COUNT=$(docker exec -i postgres-vector-decoupled-flowable psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+    "SELECT (
+       CASE WHEN to_regclass('public.vector_store_384') IS NOT NULL THEN
+         (SELECT count(*) FROM vector_store_384 WHERE metadata::text LIKE '%invoiceApproval%' OR metadata::text LIKE '%flowable%' OR content ILIKE '%INV-2026%')
+       ELSE 0 END +
+       CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
+         (SELECT count(*) FROM vector_store WHERE metadata::text LIKE '%invoiceApproval%' OR metadata::text LIKE '%flowable%' OR content ILIKE '%INV-2026%')
+       ELSE 0 END +
+       CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
+         (SELECT count(*) FROM vector_store_1024 WHERE metadata::text LIKE '%invoiceApproval%' OR metadata::text LIKE '%flowable%' OR content ILIKE '%INV-2026%')
+       ELSE 0 END
+     );" 2>/dev/null || echo "0")
+  VECTOR_COUNT=$(echo "$VECTOR_COUNT" | tr -d '[:space:]')
+  [ -z "$VECTOR_COUNT" ] && VECTOR_COUNT=0
+
+  if [ "$VECTOR_COUNT" -gt 0 ]; then
+    break
+  fi
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+  echo -n "."
+done
+echo ""
+
+if [ "$VECTOR_COUNT" -gt 0 ]; then
+  echo -e "${GREEN}Verified: ${VECTOR_COUNT} vector chunk(s) successfully persisted in pgvector!${NC}"
+else
+  echo -e "${YELLOW}Warning: No vector chunks found in pgvector within timeout (continuing to MCP check).${NC}"
+fi
+
+# 11. Verify MCP server endpoint
 echo -e "${YELLOW}Waiting for MCP Server health endpoint to be ready...${NC}"
 HTTP_STATUS="000"
 ELAPSED=0
@@ -158,9 +226,5 @@ echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 echo -e "${GREEN}================================================================================${NC}"
 echo -e "${GREEN}SUCCESS: Flowable Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}================================================================================${NC}"
-
-# Tear down the test environment
-echo -e "${YELLOW}Tearing down test environment...${NC}"
-compose down
 
 exit 0
