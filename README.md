@@ -16,6 +16,7 @@
 [![Apache Solr](https://img.shields.io/badge/Apache_Solr-10-D9411E.svg?style=flat&logo=apachesolr&logoColor=white)](https://solr.apache.org/)
 [![Apache ManifoldCF](https://img.shields.io/badge/Apache_ManifoldCF-Supported-D22128.svg?style=flat&logo=apache&logoColor=white)](https://manifoldcf.apache.org/)
 [![Alfresco](https://img.shields.io/badge/Alfresco_Content_Services-Supported-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)
+[![Alfresco Process Services](https://img.shields.io/badge/Alfresco_Process_Services-26.2.0-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)
 [![Flowable](https://img.shields.io/badge/Flowable_BPMN-Supported-007ACC.svg?style=flat&logo=flowable&logoColor=white)](https://www.flowable.com/)
 [![Camunda](https://img.shields.io/badge/Camunda_BPM-Supported-E10076.svg?style=flat&logo=camunda&logoColor=white)](https://camunda.com/)
 [![Apache StormCrawler](https://img.shields.io/badge/Apache_StormCrawler-3.7.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://stormcrawler.apache.org/)
@@ -67,6 +68,7 @@ graph TD
         Core[Core Ingestion Engine - oc-core]
         FS_Conn[Filesystem Repository - oc-filesystem-repository-connector]
         ACS_Conn[Alfresco Repository - oc-alfresco-repository-connector]
+        APS_Conn[Alfresco Process Services - oc-aps-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
         Camunda_Conn[Camunda Repository - oc-camunda-repository-connector]
@@ -474,7 +476,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
   - **S3 Gateway Client (`s3g`)**: Standard AWS S3 SDK integration hitting Ozone's S3 Gateway endpoint for maximum cloud versatility.
-- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), Apache Iceberg, and **Flowable BPMN** engine (historic process instances & BPMN variable ingestion).
+- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, Apache Iceberg, Flowable BPMN, Camunda, and Apache StormCrawler.
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Qdrant**: Rust-based vector search engine with payload-indexed ACL pre-filtering and optional scalar/binary quantization.
