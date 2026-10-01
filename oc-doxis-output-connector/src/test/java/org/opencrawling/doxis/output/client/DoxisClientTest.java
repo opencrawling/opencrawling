@@ -158,6 +158,20 @@ class DoxisClientTest {
     }
 
     @Test
+    void createDocumentCanFileIntoARecordViaRelationshipParams() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("document-created.json"));
+
+        client.createDocument("D_TEXTER", Map.of("mimeTypeName", "text/plain"),
+                Map.of("sourceObjectUUID", "efile-4711", "sourceObjectType", "RECORD"), null);
+
+        server.takeRequest();
+        String body = server.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("Content-Disposition: form-data; name=\"relationshipParams\""));
+        assertTrue(body.contains("\"sourceObjectUUID\":\"efile-4711\""));
+    }
+
+    @Test
     void createDocumentWithPredefinedLocatorSendsNoContentPart() throws Exception {
         enqueueLogin();
         enqueueJson(200, Fixtures.text("document-created.json"));
@@ -218,6 +232,17 @@ class DoxisClientTest {
     }
 
     @Test
+    void storageSystemRefusingPredefinedLocatorsIsSurfaced() {
+        enqueueLogin();
+        enqueueJson(500, Fixtures.text("error-predefined-locator-not-allowed.json"));
+
+        DoxisApiException e = assertThrows(DoxisApiException.class,
+                () -> client.createDocument("D_TEXTER", Map.of("predefinedLocator", "oc-test/e1.pdf"), null));
+
+        assertTrue(e.getMessage().contains("predefined locators are not allowed for repository sb1"));
+    }
+
+    @Test
     void logicalRemoveAndPhysicalDeleteTolerateMissingDocuments() throws Exception {
         enqueueLogin();
         server.enqueue(new MockResponse().setResponseCode(204));
@@ -242,6 +267,7 @@ class DoxisClientTest {
 
         List<JsonNode> versions = client.getVersions("D_TEXTER", "doc-0001");
 
+        assertEquals(1, versions.size());
         assertEquals("co-0001", versions.getFirst().path("representations").get(0).path("contentObjects").get(0).path("uuid").asText());
         server.takeRequest();
         assertEquals(BASE + "/dmsRepositories/D_TEXTER/documents/doc-0001/versions?initializeRepresentations=true",

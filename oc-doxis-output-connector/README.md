@@ -20,24 +20,26 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
 4. **Locator resolution** (`LocatorResolver`, pluggable as a Spring bean):
    - An explicit locator in the metadata (`doxisLocator`) wins.
    - Otherwise a document URI under `locator.uri-prefix` (e.g. a mounted Doxis file data store) maps its remainder to the locator.
-5. **Content verification**: after each write the connector reads back the current version's content object (`GET …/versions?initializeRepresentations=true`). It fails the document if the length or SHA-256 differs from the source, which is how in-place registrations are confirmed without touching the binary.
+5. **Content verification**: after each write the connector reads back the current version's content object (`GET …/versions?initializeRepresentations=true`). It fails the document if there is no content object (CSB silently stores a version as `NO_CONTENT` when a `predefinedLocator` is not applied), or if the length or SHA-256 differs from the source. A newly created document that fails verification is physically deleted again, so no empty documents are left behind.
 6. **Upsert by external id**: the document id is stored in `external-id-attribute` (default `ObjectNumber`) and looked up with CQL (`SELECT * FROM <repo> WHERE OBJECTNUMBER = '…'`). Ids longer than the descriptor allows are stored as a deterministic `h:<sha256>` prefix. When the id already exists, `conflict-resolution` decides what happens:
    - `NEW_VERSION` (default) adds a version with the new content and descriptors.
    - `UPDATE_METADATA` patches only the current version's descriptors.
    - `SKIP` leaves the document unchanged.
 7. **Descriptor mapping**: the title goes to `title-attribute` (default `ObjectName`). `attribute-mapping` maps any OIS metadata key, or the pseudo-keys `id` / `uri` / `lastModified`, to a Doxis descriptor. Values are converted to the descriptor's type: STRING is truncated to its length, DATE/DATETIME becomes epoch millis, numbers and BOOL are converted, and multi-value descriptors take every value.
-8. **OIS security mapping** (`DoxisAclMapper`): OIS permissions become `DocumentAceParams` on creation.
+8. **OIS security mapping** (`DoxisAclMapper`): OIS permissions become `DocumentAceParams` on creation. On re-crawls they are synced additively: permissions missing on the document are added, and existing entries (including ones set by Doxis administrators) are never removed.
    - `read` grants `VIEW_DOCUMENT_CONTENTS`.
    - `write` grants view plus `UPDATE_DOCUMENT` and `VERSION_DOCUMENT`.
    - `deny` denies `VIEW_DOCUMENT_CONTENTS`.
    - Identities resolve to Doxis users (login name or name) or groups; `public` maps to `everybody`.
-9. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
+   - Document types whose security object type forbids per-document rights (`SECU0050`) keep the type's ACL; the connector logs a warning.
+9. **Filing into e-files**: new documents can be filed into a record (e-file / dossier) and optionally a folder node of it, in the same create transaction (`relationshipParams`). Use a fixed `filing.record-id`, or a per-document record id in metadata (`doxisRecordId` / `doxisFolderNodeId`).
+10. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
    - `LOGICAL` (default) uses `POST …/remove`, which is reversible and leaves the binary in the data store.
    - `PHYSICAL` uses `DELETE …`, which is irrevocable.
-10. **Decoupled Kafka writer**: with `opencrawling.consumer.writer.enabled=true`, `DoxisStoreWriterConsumer` consumes `IngestionMessage`s from `opencrawling-documents` in its own consumer group (`opencrawling-doxis-writer`).
+11. **Decoupled Kafka writer**: with `opencrawling.consumer.writer.enabled=true`, `DoxisStoreWriterConsumer` consumes `IngestionMessage`s from `opencrawling-documents` in its own consumer group (`opencrawling-doxis-writer`).
     - The messages only carry a URI, never content.
     - Claim-check content is opened lazily, and only when the plan uploads it.
-11. **Resilience**: connection failures and HTTP `429` (honouring `Retry-After`) / `502` / `503` / `504` are retried with exponential backoff. This only applies to requests whose body can be rebuilt; a single-use upload stream is sent once. Errors carry the CSB error code (e.g. `SECU0014`, `INSTANCE0014`).
+12. **Resilience**: connection failures and HTTP `429` (honouring `Retry-After`) / `502` / `503` / `504` are retried with exponential backoff. This only applies to requests whose body can be rebuilt; a single-use upload stream is sent once. Errors carry the CSB error code (e.g. `SECU0014`, `INSTANCE0014`).
 
 ## Configuration Parameters
 
@@ -66,6 +68,9 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **Delete Mode** | `…doxis.delete-mode` | `LOGICAL` | `LOGICAL` or `PHYSICAL` |
 | **Apply Security ACLs** | `…doxis.apply-security-acls` | `true` | Map OIS permissions to Doxis permissions on creation |
 | **Max Retries / Timeout** | `…doxis.max-retries` / `…doxis.timeout-seconds` | `3` / `120` | HTTP resilience |
+| **Filing Record** | `…doxis.filing.record-id` | — | Record (e-file) new documents are filed into |
+| **Filing Record Repository** | `…doxis.filing.record-repository` | DMS repository | Repository of the record |
+| **Filing Folder Node** | `…doxis.filing.folder-node-id` | — | Optional folder node inside the record |
 | **Writer Consumer Group** | `…doxis.consumer-group` | `opencrawling-doxis-writer` | Kafka group of the decoupled writer |
 
 To select this connector, set `spring.opencrawling.output.type=doxis`.
@@ -134,19 +139,29 @@ Test classes and what they cover:
 - **`DoxisOutputConnectorTest`** covers create, in-place registration, verification, versions, `UPDATE_METADATA`, `SKIP` and tombstones.
 - **`DoxisStoreWriterConsumerTest`** and **`DoxisConnectorSettingsTest`** cover the Kafka writer and the admin UI settings.
 
-### 2. Connection Check
+### 2. Contract Smoke Test Against a Running CSB
+```bash
+DOXIS_BASE_URL=http://<csb-host>:8080/restws/publicws/rest/api/v1 DOXIS_CUSTOMER=<customer> \
+DOXIS_USER=<user> DOXIS_PASSWORD=<password> DOXIS_ROLE=admins DOXIS_REPOSITORY=<repo> \
+./scripts/test-doxis-connector.sh
+```
+The script checks liveness, customer discovery, login, repository and the CQL lookup, then logs out. With `DOXIS_WRITE_TEST=true` (plus `DOXIS_DOCUMENT_TYPE_UUID`, `DOXIS_EXTERNAL_ID_ATTRIBUTE_UUID`, `DOXIS_MIME_TYPE`) it also creates a document, verifies the stored length and physically deletes it. Without `DOXIS_*` variables it skips, so it is safe in `run-integration-tests.sh`.
+
+### 3. Connection Check
 `oc connector check --name <connector-name> --type output` (or **Test Connection** in the admin UI) logs in, reads the session user and checks that the repository is accessible.
 
 ## Known Limitations
 
-- **`predefinedLocator` behaviour:** the field is part of the CSB 14.4.1 REST contract, but its semantics are not documented by SER yet. Open questions (raised with SER engineering):
-  - the locator format and which data store it resolves against
-  - whether existence or the hash is checked at create time
-  - whether a physical delete removes the in-place binary
+Findings from live runs against a Doxis CSB 14.4.1 (SER training environment), recorded 2026-10-01:
 
-  Until confirmed, keep `delete-mode: LOGICAL` for in-place content.
-- **Repository must allow the document type:** the target repository must allow the configured document type (configured in cubeDesigner). Otherwise creation fails with `INSTANCE0014`.
-- **ACLs on existing documents:** ACLs are applied when a document is created. Permission changes on documents that are already archived are not synchronised.
-- **`storageLocators` not exposed:** the content-object metadata in CSB 14.4.1 does not include `storageLocators`, so verification compares length and SHA-256 rather than the locator itself.
+- **`predefinedLocator` is a storage-system feature that is off by default.**
+  - A create with `predefinedLocator` *and* content fails with `Archive operations with predefined locators are not allowed for repository sb1` (the storage repository). It has to be enabled on the storage system by the Doxis administrator.
+  - A create with `predefinedLocator` and *no* content is accepted, but stores the version as `NO_CONTENT`: the locator is ignored. The connector detects this, fails the document and rolls it back.
+  - Whether an enabled storage system can register an already-existing binary without upload, and what a physical delete then does to it, is still to be confirmed by SER. Keep `delete-mode: LOGICAL` for in-place content.
+- **Document types restrict MIME types** (`allowedMimeTypes`, otherwise `SEDNA0204`). The connector falls back to `application/octet-stream` when the type allows it, and fails before writing otherwise.
+- **The repository must allow the document type**; otherwise creation fails with `INSTANCE0014`. This is configured in cubeDesigner; the REST API cannot change it.
+- **The client-supplied SHA-256 is not stored** by CSB 14.4.1 (`hashValue` is `null` on read-back), so verification compares the length; the hash is compared only when Doxis reports one. The content-object metadata does not include `storageLocators` either.
+- **CQL needs the repository short name**; full names may contain dots, which the parser rejects (`INSTANCE0107`). The connector resolves the short name automatically. Wildcards are `*`, not `%`.
+- **Filing into records and the additive ACL sync are implemented against the REST contract**, but have not been exercised live yet: the training environment has no record type and no document type with per-document rights.
 - **Decoupled upload mode and claim-check cleanup:** for claim-check content, `IngestionConsumer` may delete the claim-check object (`claimcheck.cleanup-on-consume`) before the writer reads it. Use the direct `send()` path, a locator, or disable cleanup.
-- **No local Doxis container:** there is none and no `scripts/test-doxis-*.sh`. Live verification runs against a Doxis CSB (e.g. the SER-hosted training environment).
+- **No local Doxis container:** run `scripts/test-doxis-connector.sh` against a CSB.

@@ -41,7 +41,9 @@ class DoxisConnectorSettingsTest {
                 Map.entry("doxisLocatorUriPrefix", "file:///mnt/doxis-store/"),
                 Map.entry("doxisConflictResolution", "UPDATE_METADATA"),
                 Map.entry("doxisDeleteMode", "PHYSICAL"),
-                Map.entry("doxisApplySecurityAcls", "false")));
+                Map.entry("doxisApplySecurityAcls", "false"),
+                Map.entry("doxisFilingRecordId", "efile-4711"),
+                Map.entry("doxisFilingFolderNodeId", "node-contracts")));
 
         assertEquals("faststarter", props.customerName());
         assertEquals("admins", props.role());
@@ -56,6 +58,10 @@ class DoxisConnectorSettingsTest {
         assertEquals(ConflictResolution.UPDATE_METADATA, props.conflictResolution());
         assertEquals(DeleteMode.PHYSICAL, props.deleteMode());
         assertFalse(props.applySecurityAcls());
+        assertEquals("efile-4711", props.filing().recordId());
+        assertEquals("node-contracts", props.filing().folderNodeId());
+        assertNull(props.filing().recordRepository());
+        assertEquals("doxisRecordId", props.filing().recordIdMetadataKey());
     }
 
     @Test

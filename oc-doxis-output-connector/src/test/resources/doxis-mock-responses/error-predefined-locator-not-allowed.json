@@ -1,0 +1,1 @@
+{"type":"StorageSystemServerException","message":"The storage system request with the URL http://csb:8080/storagesystem/archive.do?repositoryId=sb1&id=oc-test%2Fe1%2Foc-test-e1.pdf caused an storage system server exception with the message: Archive operations with predefined locators are not allowed for repository sb1.","errorCode":"RESTWS0000"}

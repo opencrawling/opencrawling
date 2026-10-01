@@ -40,6 +40,7 @@ public class DoxisSchema {
     private final ReentrantLock lock = new ReentrantLock();
     private volatile Map<String, Attribute> attributesByName;
     private volatile Map<String, String> documentTypeIdsByName;
+    private volatile Map<String, Set<String>> allowedMimeTypesByType;
     private volatile Map<String, String> principalsByName;
     private volatile Set<String> mimeTypes;
 
@@ -124,11 +125,29 @@ public class DoxisSchema {
     }
 
     /**
+     * Checks {@code mimeType} against the document type's {@code allowedMimeTypes} (an empty list allows every type). Doxis
+     * rejects other MIME types with {@code SEDNA0204}; {@code application/octet-stream} is used when it is allowed instead.
+     */
+    public String allowedMimeType(String documentType, String mimeType) throws IOException, InterruptedException {
+        String typeId = documentTypeId(documentType);
+        Set<String> allowed = allowedMimeTypesByType.getOrDefault(typeId, Set.of());
+        if (allowed.isEmpty() || allowed.contains(mimeType)) {
+            return mimeType;
+        }
+        if (allowed.contains("application/octet-stream")) {
+            return "application/octet-stream";
+        }
+        throw new IOException("MIME type '" + mimeType + "' is not allowed by Doxis document type '" + documentType
+                + "' (allowed: " + allowed + ")");
+    }
+
+    /**
      * Drops cached schema and organisation data (e.g. after a schema change in cubeDesigner).
      */
     public void invalidate() {
         attributesByName = null;
         documentTypeIdsByName = null;
+        allowedMimeTypesByType = null;
         principalsByName = null;
         mimeTypes = null;
     }
@@ -170,9 +189,15 @@ public class DoxisSchema {
         try {
             if (documentTypeIdsByName == null) {
                 Map<String, String> map = new LinkedHashMap<>();
+                Map<String, Set<String>> mimes = new HashMap<>();
                 for (JsonNode node : client.listDocumentTypes()) {
-                    map.put(node.path("name").asText().toLowerCase(Locale.ROOT), node.path("uuid").asText());
+                    String uuid = node.path("uuid").asText();
+                    map.put(node.path("name").asText().toLowerCase(Locale.ROOT), uuid);
+                    Set<String> allowed = new LinkedHashSet<>();
+                    node.path("allowedMimeTypes").forEach(m -> allowed.add(m.path("mimeName").asText().toLowerCase(Locale.ROOT)));
+                    mimes.put(uuid, allowed);
                 }
+                allowedMimeTypesByType = mimes;
                 documentTypeIdsByName = map;
             }
             return documentTypeIdsByName;

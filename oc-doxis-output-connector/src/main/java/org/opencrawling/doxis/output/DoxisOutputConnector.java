@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.doxis.output.client.DoxisApiException;
 import org.opencrawling.doxis.output.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
@@ -37,8 +38,12 @@ import reactor.core.publisher.Mono;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Archives OpenCrawling documents into a Doxis 4 repository through the CSB REST API.
@@ -61,6 +66,7 @@ public class DoxisOutputConnector implements OutputConnector {
     private final DoxisAclMapper aclMapper;
     private volatile String repositoryName;
     private volatile String documentTypeId;
+    private final Map<String, JsonNode> recordCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * No-arg constructor for {@link java.util.ServiceLoader} discovery; such an instance is not connected.
@@ -127,7 +133,7 @@ public class DoxisOutputConnector implements OutputConnector {
     }
 
     /**
-     * Logs in, resolves the repository name (used in CQL) and the document type, and checks the external-id descriptor.
+     * Logs in, resolves the repository short name (used in CQL) and the document type, and checks the external-id descriptor.
      */
     public void initialize() throws IOException, InterruptedException {
         if (repositoryName != null && documentTypeId != null) {
@@ -139,7 +145,10 @@ public class DoxisOutputConnector implements OutputConnector {
         JsonNode repository = client.getRepository(properties.repository());
         String typeId = schema.documentTypeId(properties.documentType());
         schema.attribute(properties.externalIdAttribute());
-        repositoryName = repository.path("name").asText(properties.repository());
+        // CQL needs the repository short name: full names may contain dots (e.g. "de.ser.doxis4.sp.common.templates"),
+        // which the CQL parser rejects (INSTANCE0107).
+        String shortName = repository.path("shortName").asText("");
+        repositoryName = !shortName.isBlank() ? shortName : repository.path("name").asText(properties.repository());
         documentTypeId = typeId;
         log.info("Doxis output ready: repository '{}', document type '{}' ({}), external id descriptor '{}', content strategy {}.",
                 repositoryName, properties.documentType(), typeId, properties.externalIdAttribute(), properties.content().strategy());
@@ -175,12 +184,23 @@ public class DoxisOutputConnector implements OutputConnector {
 
         if (existing.isEmpty()) {
             Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
-            JsonNode created = client.createDocument(properties.repository(), params, plan.body());
+            JsonNode created = client.createDocument(properties.repository(), params, relationshipParams(document), plan.body());
             String documentId = created.path("uuid").asText();
             if (properties.applySecurityAcls()) {
-                client.addPermissions(properties.repository(), documentId, aclMapper.aces(document.security()));
+                applyPermissions(documentId, document);
             }
-            verify(documentId, plan);
+            try {
+                verify(documentId, plan);
+            } catch (IOException e) {
+                // Do not leave an empty or inconsistent document behind: remove what this call just created.
+                log.warn("Rolling back Doxis document {} for {}: {}", documentId, document.id(), e.getMessage());
+                try {
+                    client.deleteDocumentPhysically(properties.repository(), documentId);
+                } catch (IOException rollback) {
+                    log.error("Rollback of Doxis document {} failed: {}", documentId, rollback.getMessage());
+                }
+                throw e;
+            }
             log.info("Archived document {} into Doxis repository '{}' as {} (content: {}).",
                     document.id(), repositoryName, documentId, describe(plan));
             return;
@@ -199,13 +219,109 @@ public class DoxisOutputConnector implements OutputConnector {
                 discard(plan);
                 String versionNr = currentVersionNumber(documentId);
                 client.updateAttributes(properties.repository(), documentId, versionNr, mapper.attributes(document, plan));
+                syncPermissions(documentId, document);
                 log.info("Updated descriptors of Doxis document {} (version {}) for {}.", documentId, versionNr, document.id());
             }
             case NEW_VERSION -> {
                 client.addVersion(properties.repository(), documentId, mapper.versionParams(document, plan), plan.body());
                 verify(documentId, plan);
+                syncPermissions(documentId, document);
                 log.info("Added a new version to Doxis document {} for {} (content: {}).", documentId, document.id(), describe(plan));
             }
+        }
+    }
+
+    /**
+     * Additive ACL sync for documents that already exist: source permissions missing on the document are added; existing
+     * entries (including ones set by Doxis administrators) are never removed. Best effort — failures are logged.
+     */
+    private void syncPermissions(String documentId, RepositoryDocument document) throws InterruptedException {
+        if (!properties.applySecurityAcls()) {
+            return;
+        }
+        try {
+            Set<String> existing = new HashSet<>();
+            for (JsonNode ace : client.getPermissions(properties.repository(), documentId)) {
+                existing.add(ace.path("organizationalElementId").asText() + "|" + ace.path("permissionName").asText()
+                        + "|" + ace.path("authorizationVariant").asText());
+            }
+            List<Map<String, Object>> missing = new ArrayList<>();
+            for (Map<String, Object> ace : aclMapper.aces(document.security())) {
+                if (!existing.contains(ace.get("organizationalElementId") + "|" + ace.get("permission") + "|"
+                        + ace.get("authorizationVariant"))) {
+                    missing.add(ace);
+                }
+            }
+            if (!missing.isEmpty()) {
+                client.addPermissions(properties.repository(), documentId, missing);
+                log.info("Added {} missing permission(s) to Doxis document {} for {}.", missing.size(), documentId, document.id());
+            }
+        } catch (DoxisApiException e) {
+            if ("SECU0050".equals(e.getErrorCode())) {
+                log.debug("Document type does not allow per-document permissions; ACL sync skipped for {}.", documentId);
+            } else {
+                log.warn("ACL sync for Doxis document {} failed: {}", documentId, e.getMessage());
+            }
+        } catch (IOException e) {
+            log.warn("ACL sync for Doxis document {} failed: {}", documentId, e.getMessage());
+        }
+    }
+
+    /**
+     * {@code relationshipParams} filing the new document into a record (e-file): the record id comes from the document metadata
+     * ({@code filing.record-id-metadata-key}) or {@code filing.record-id}; the folder node likewise. The record's repository and
+     * instance date are looked up once per record.
+     */
+    private Map<String, Object> relationshipParams(RepositoryDocument document) throws IOException, InterruptedException {
+        DoxisOutputProperties.Filing filing = properties.filing();
+        String recordId = metadataValue(document, filing.recordIdMetadataKey());
+        if (recordId == null) {
+            recordId = filing.recordId();
+        }
+        if (recordId == null) {
+            return null;
+        }
+        String folderNodeId = metadataValue(document, filing.folderNodeMetadataKey());
+        if (folderNodeId == null) {
+            folderNodeId = filing.folderNodeId();
+        }
+        String recordRepository = filing.recordRepository() != null ? filing.recordRepository() : properties.repository();
+        final String key = recordRepository + "/" + recordId;
+        JsonNode record = recordCache.get(key);
+        if (record == null) {
+            record = client.getRecord(recordRepository, recordId);
+            recordCache.put(key, record);
+        }
+        Map<String, Object> relationship = new LinkedHashMap<>();
+        relationship.put("sourceObjectUUID", recordId);
+        if (folderNodeId != null) {
+            relationship.put("sourceFolderNodeUUID", folderNodeId);
+        }
+        relationship.put("sourceContentRepositoryUUID", record.path("contentRepositoryUUID").asText(recordRepository));
+        relationship.put("sourceObjectInstanceDate", record.path("instanceDate").asText());
+        relationship.put("sourceObjectType", "RECORD");
+        return relationship;
+    }
+
+    private static String metadataValue(RepositoryDocument document, String key) {
+        if (document.metadata() == null) {
+            return null;
+        }
+        List<String> values = document.metadata().get(key);
+        return values == null || values.isEmpty() || values.getFirst() == null || values.getFirst().isBlank()
+                ? null : values.getFirst().strip();
+    }
+
+    private void applyPermissions(String documentId, RepositoryDocument document) throws IOException, InterruptedException {
+        try {
+            client.addPermissions(properties.repository(), documentId, aclMapper.aces(document.security()));
+        } catch (DoxisApiException e) {
+            if (!"SECU0050".equals(e.getErrorCode())) {
+                throw e;
+            }
+            // The document type's security object type does not allow instance-level rights: the type's ACL applies.
+            log.warn("Document type '{}' does not allow per-document permissions; source ACLs of {} were not applied.",
+                    properties.documentType(), document.id());
         }
     }
 
@@ -228,14 +344,14 @@ public class DoxisOutputConnector implements OutputConnector {
      * This is how in-place registrations are confirmed without touching the binary.
      */
     private void verify(String documentId, ContentPlan plan) throws IOException, InterruptedException {
-        if (!properties.content().verify() || plan.strategy() == ContentStrategy.REFERENCE_ONLY
-                || (plan.length() == null && plan.sha256() == null)) {
+        if (!properties.content().verify() || plan.strategy() == ContentStrategy.REFERENCE_ONLY) {
             return;
         }
         JsonNode contentObject = currentContentObject(documentId);
         if (contentObject == null) {
-            log.warn("Could not read back the content object of Doxis document {} for verification.", documentId);
-            return;
+            // e.g. CSB silently ignores a predefinedLocator sent without content and stores the version as NO_CONTENT
+            throw new IOException("Doxis document " + documentId + " has no content object after a " + plan.strategy()
+                    + " write (content status NO_CONTENT)");
         }
         if (plan.length() != null && contentObject.has("length") && contentObject.path("length").asLong() != plan.length()) {
             throw new IOException("Doxis document " + documentId + " content length " + contentObject.path("length").asLong()
@@ -290,7 +406,7 @@ public class DoxisOutputConnector implements OutputConnector {
     }
 
     private ContentPlan withKnownMimeType(ContentPlan plan) throws IOException, InterruptedException {
-        String mimeType = schema.knownMimeType(plan.mimeType());
+        String mimeType = schema.allowedMimeType(properties.documentType(), schema.knownMimeType(plan.mimeType()));
         if (mimeType.equals(plan.mimeType())) {
             return plan;
         }
