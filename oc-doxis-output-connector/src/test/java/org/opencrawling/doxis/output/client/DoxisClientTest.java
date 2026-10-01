@@ -23,21 +23,23 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.opencrawling.doxis.output.Fixtures;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class DoxisClientTest {
 
-    private static final String API_KEY = "test-api-key";
+    private static final String JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJTdXBlcnZpc29yIiwiY3VzdG9tZXIiOiJmYXN0c3RhcnRlciJ9.c2lnbmF0dXJl";
+    private static final String BASE = "/restws/publicws/rest/api/v1";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private MockWebServer server;
@@ -47,188 +49,217 @@ class DoxisClientTest {
     void setUp() throws Exception {
         server = new MockWebServer();
         server.start();
-        client = new DoxisClient(server.url("/").toString(), API_KEY, Duration.ofSeconds(5), 2,
-                Duration.ofMillis(1), HttpClient.newHttpClient(), objectMapper);
+        client = new DoxisClient(server.url(BASE).toString(), "faststarter", "Supervisor", "secret#1", "admins",
+                "OpenCrawling-Test", Duration.ofSeconds(5), 2, Duration.ofMillis(1), HttpClient.newHttpClient(), objectMapper);
     }
 
     @AfterEach
     void tearDown() throws Exception {
-        client.close();
         server.shutdown();
     }
 
-    static String fixture(String name) throws IOException {
-        try (InputStream is = DoxisClientTest.class.getResourceAsStream("/doxis-mock-responses/" + name)) {
-            assertNotNull(is, "missing fixture " + name);
-            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        }
+    private void enqueueJson(int status, String body) {
+        server.enqueue(new MockResponse().setResponseCode(status).setHeader("Content-Type", "application/json").setBody(body));
     }
 
-    private void enqueue(int status, String fixture) throws IOException {
-        server.enqueue(new MockResponse().setResponseCode(status)
-                .setHeader("Content-Type", "application/json").setBody(fixture(fixture)));
+    private void enqueueLogin() {
+        enqueueJson(200, Fixtures.text("login.json"));
     }
 
     @Test
-    void authInfoSendsApiKeyHeader() throws Exception {
-        enqueue(200, "auth-info.json");
+    void loginSendsLoginParamsWithRoleAndStripsQuotedJwt() throws Exception {
+        enqueueLogin();
 
-        JsonNode info = client.authInfo();
+        assertEquals(JWT, client.login());
 
-        assertEquals("Contoso", info.path("organization").path("name").asText());
-        RecordedRequest req = server.takeRequest();
-        assertEquals("GET", req.getMethod());
-        assertEquals("/api/services/auth/v1/info", req.getPath());
-        assertEquals(API_KEY, req.getHeader("x-api-key"));
-    }
-
-    @Test
-    void unauthorizedSurfacesPlatformErrorEnvelope() throws Exception {
-        enqueue(401, "error-unauthorized.json");
-
-        DoxisApiException e = assertThrows(DoxisApiException.class, () -> client.authInfo());
-
-        assertEquals(401, e.getStatusCode());
-        assertEquals(10003, e.getErrorCode());
-        assertEquals("1235", e.getRequestId());
-        assertTrue(e.getMessage().contains("API key invalid"));
-    }
-
-    @Test
-    void listDatasetsFollowsCursorPagination() throws Exception {
-        enqueue(200, "datasets-page-1.json");
-        enqueue(200, "datasets-page-2.json");
-
-        List<JsonNode> datasets = client.listDatasets();
-
-        assertEquals(List.of("ds-other", "ds-1"), datasets.stream().map(d -> d.path("id").asText()).toList());
-        assertEquals("/api/services/datasets/v3/datasets?limit=100", server.takeRequest().getPath());
-        assertEquals("/api/services/datasets/v3/datasets?limit=100&cursor=cur-2", server.takeRequest().getPath());
-    }
-
-    @Test
-    void createDatasetPostsTypedColumns() throws Exception {
-        enqueue(201, "dataset-created.json");
-
-        Map<String, String> columns = new LinkedHashMap<>();
-        columns.put("external_id", "text");
-        columns.put("document", "document");
-        String id = client.createDataset("OpenCrawling Ingestion", columns);
-
-        assertEquals("ds-new", id);
         RecordedRequest req = server.takeRequest();
         assertEquals("POST", req.getMethod());
-        assertEquals("/api/services/datasets/v3/datasets", req.getPath());
-        assertEquals("application/json", req.getHeader("Content-Type"));
+        assertEquals(BASE + "/login", req.getPath());
+        assertNull(req.getHeader("Authorization"));
         JsonNode body = objectMapper.readTree(req.getBody().readUtf8());
-        assertEquals("OpenCrawling Ingestion", body.path("name").asText());
-        assertEquals("external_id", body.path("columns").get(0).path("slug").asText());
-        assertEquals("text", body.path("columns").get(0).path("data_type").asText());
-        assertEquals("document", body.path("columns").get(1).path("data_type").asText());
+        assertEquals("faststarter", body.path("customerName").asText());
+        assertEquals("Supervisor", body.path("userName").asText());
+        assertEquals("secret#1", body.path("password").asText());
+        assertEquals("admins", body.path("role").asText());
     }
 
     @Test
-    void addColumnPostsToColumnsEndpoint() throws Exception {
-        server.enqueue(new MockResponse().setResponseCode(201).setBody("{\"result\":\"success\",\"data\":{}}"));
+    void authenticatedCallsUseBearerJwtAndLoginOnce() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("repository.json"));
+        enqueueJson(200, Fixtures.text("document-types.json"));
 
-        client.addColumn("ds-1", "chunk_text", "text");
+        assertEquals("D_TEXTER", client.getRepository("D_TEXTER").path("name").asText());
+        assertEquals(2, client.listDocumentTypes().size());
 
-        RecordedRequest req = server.takeRequest();
-        assertEquals("/api/services/datasets/v3/datasets/ds-1/columns", req.getPath());
-        JsonNode body = objectMapper.readTree(req.getBody().readUtf8());
-        assertEquals("chunk_text", body.path("slug").asText());
-        assertEquals("text", body.path("data_type").asText());
-    }
-
-    @Test
-    void insertRowsUsesAbortModeAndReturnsIds() throws Exception {
-        enqueue(201, "rows-created.json");
-
-        List<String> ids = client.insertRows("ds-1", List.of(Map.of("external_id", "doc-1",
-                "document", Map.of("data", "aGVsbG8=", "filename", "hello.txt"))));
-
-        assertEquals(List.of("row-new"), ids);
-        RecordedRequest req = server.takeRequest();
-        assertEquals("POST", req.getMethod());
-        assertEquals("/api/services/datasets/v3/datasets/ds-1/rows?on_error=abort", req.getPath());
-        JsonNode row = objectMapper.readTree(req.getBody().readUtf8()).path("rows").get(0);
-        assertEquals("doc-1", row.path("external_id").asText());
-        assertEquals("aGVsbG8=", row.path("document").path("data").asText());
-    }
-
-    @Test
-    void insertRowsRejectsPartialRows() throws Exception {
-        enqueue(207, "rows-partial.json");
-
-        IOException e = assertThrows(IOException.class, () -> client.insertRows("ds-1", List.of(Map.of("external_id", "doc-1"))));
-        assertTrue(e.getMessage().contains("partial"));
-    }
-
-    @Test
-    void findRowIdsFiltersByColumnAndPaginates() throws Exception {
-        enqueue(200, "search-page-1.json");
-        enqueue(200, "search-page-2.json");
-
-        List<String> ids = client.findRowIds("ds-1", "external_id", "doc-1");
-
-        assertEquals(List.of("row-1", "row-2"), ids);
-        RecordedRequest first = server.takeRequest();
-        assertEquals("/api/services/datasets/v3/datasets/ds-1/rows/views/detailed/search", first.getPath());
-        JsonNode firstBody = objectMapper.readTree(first.getBody().readUtf8());
-        assertEquals("external_id", firstBody.path("filter").path("column_slug").asText());
-        assertEquals("equals", firstBody.path("filter").path("operator").asText());
-        assertEquals("doc-1", firstBody.path("filter").path("value").asText());
-        assertFalse(firstBody.has("cursor"));
-        JsonNode secondBody = objectMapper.readTree(server.takeRequest().getBody().readUtf8());
-        assertEquals("s-cur-2", secondBody.path("cursor").asText());
-    }
-
-    @Test
-    void patchRowSendsCellUpdates() throws Exception {
-        server.enqueue(new MockResponse().setResponseCode(204));
-
-        client.patchRow("ds-1", "row-1", Map.of("title", "New title"));
-
-        RecordedRequest req = server.takeRequest();
-        assertEquals("PATCH", req.getMethod());
-        assertEquals("/api/services/datasets/v3/datasets/ds-1/rows/row-1", req.getPath());
-        JsonNode cell = objectMapper.readTree(req.getBody().readUtf8()).path("cells").get(0);
-        assertEquals("title", cell.path("column_slug").asText());
-        assertEquals("New title", cell.path("value").asText());
-    }
-
-    @Test
-    void deleteRowToleratesNotFound() throws Exception {
-        server.enqueue(new MockResponse().setResponseCode(204));
-        enqueue(404, "error-not-found.json");
-
-        client.deleteRow("ds-1", "row-1");
-        client.deleteRow("ds-1", "row-gone");
-
-        RecordedRequest req = server.takeRequest();
-        assertEquals("DELETE", req.getMethod());
-        assertEquals("/api/services/datasets/v3/datasets/ds-1/rows/row-1", req.getPath());
-    }
-
-    @Test
-    void retriesThrottledRequestsWithBackoff() throws Exception {
-        server.enqueue(new MockResponse().setResponseCode(429));
-        server.enqueue(new MockResponse().setResponseCode(503));
-        enqueue(200, "auth-info.json");
-
-        client.authInfo();
-
+        server.takeRequest(); // login
+        RecordedRequest repo = server.takeRequest();
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER", repo.getPath());
+        assertEquals("Bearer " + JWT, repo.getHeader("Authorization"));
+        assertEquals(BASE + "/documentTypes", server.takeRequest().getPath());
         assertEquals(3, server.getRequestCount());
     }
 
     @Test
-    void stopsRetryingAfterMaxRetries() {
-        server.enqueue(new MockResponse().setResponseCode(503));
-        server.enqueue(new MockResponse().setResponseCode(503));
-        server.enqueue(new MockResponse().setResponseCode(503));
+    void expiredSessionTriggersOneRelogin() throws Exception {
+        enqueueLogin();
+        server.enqueue(new MockResponse().setResponseCode(401));
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("repository.json"));
 
-        DoxisApiException e = assertThrows(DoxisApiException.class, () -> client.authInfo());
+        assertEquals("D_TEXTER", client.getRepository("D_TEXTER").path("name").asText());
+
+        assertEquals(4, server.getRequestCount());
+    }
+
+    @Test
+    void searchUsesCqlAndClosesFollowUpSearch() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("search-hit.json"));
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        List<String> ids = client.searchDocumentIds("SELECT * FROM D_TEXTER WHERE OBJECTNUMBER = 'doc-1'", false);
+
+        assertEquals(List.of("doc-0001"), ids);
+        server.takeRequest();
+        RecordedRequest search = server.takeRequest();
+        assertEquals(BASE + "/documents/search", search.getPath());
+        JsonNode body = objectMapper.readTree(search.getBody().readUtf8());
+        assertEquals("SELECT * FROM D_TEXTER WHERE OBJECTNUMBER = 'doc-1'", body.path("cqlStatement").asText());
+        assertEquals("NON_DELETED_OBJECTS", body.path("logicallyDeletedFilter").asText());
+        RecordedRequest close = server.takeRequest();
+        assertEquals("DELETE", close.getMethod());
+        assertEquals(BASE + "/documents/searchResults/8b066885-7e73-4bca-b257-b1807012cdea", close.getPath());
+    }
+
+    @Test
+    void createDocumentStreamsMultipartWithParamsAndContent() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("document-created.json"));
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("documentTypeUUID", "b89f3e49-ff11-467f-aba0-03740736646f");
+        params.put("mimeTypeName", "application/pdf");
+        ContentBody content = new ContentBody("msa.pdf", "application/pdf",
+                () -> new ByteArrayInputStream("%PDF-1.7 contract".getBytes(StandardCharsets.UTF_8)), true);
+
+        JsonNode document = client.createDocument("D_TEXTER", params, content);
+
+        assertEquals("doc-0001", document.path("uuid").asText());
+        server.takeRequest();
+        RecordedRequest req = server.takeRequest();
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/documents", req.getPath());
+        assertTrue(req.getHeader("Content-Type").startsWith("multipart/form-data; boundary="));
+        String body = req.getBody().readUtf8();
+        assertTrue(body.contains("Content-Disposition: form-data; name=\"documentParams\""));
+        assertTrue(body.contains("\"documentTypeUUID\":\"b89f3e49-ff11-467f-aba0-03740736646f\""));
+        assertTrue(body.contains("Content-Disposition: form-data; name=\"inputStream\"; filename=\"msa.pdf\""));
+        assertTrue(body.contains("%PDF-1.7 contract"));
+    }
+
+    @Test
+    void createDocumentWithPredefinedLocatorSendsNoContentPart() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("document-created.json"));
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("documentTypeUUID", "b89f3e49-ff11-467f-aba0-03740736646f");
+        params.put("predefinedLocator", "2026/04/21/5a1e2f34.dat");
+        params.put("contentLength", 5_000_000_000_000L);
+        client.createDocument("D_TEXTER", params, null);
+
+        server.takeRequest();
+        String body = server.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"predefinedLocator\":\"2026/04/21/5a1e2f34.dat\""));
+        assertTrue(body.contains("\"contentLength\":5000000000000"));
+        assertFalse(body.contains("name=\"inputStream\""));
+    }
+
+    @Test
+    void singleUseUploadIsNotRetried() throws Exception {
+        enqueueLogin();
+        server.enqueue(new MockResponse().setResponseCode(503));
+        AtomicInteger opened = new AtomicInteger();
+        ContentBody content = new ContentBody("a.txt", "text/plain", () -> {
+            opened.incrementAndGet();
+            return new ByteArrayInputStream(new byte[]{1, 2, 3});
+        }, false);
+
+        DoxisApiException e = assertThrows(DoxisApiException.class,
+                () -> client.createDocument("D_TEXTER", Map.of("mimeTypeName", "text/plain"), content));
+
         assertEquals(503, e.getStatusCode());
+        assertEquals(2, server.getRequestCount());
+    }
+
+    @Test
+    void reopenableUploadIsRetriedAfterThrottling() throws Exception {
+        enqueueLogin();
+        server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", "0"));
+        enqueueJson(200, Fixtures.text("document-created.json"));
+        ContentBody content = new ContentBody("a.txt", "text/plain", () -> new ByteArrayInputStream(new byte[]{1}), true);
+
+        client.createDocument("D_TEXTER", Map.of("mimeTypeName", "text/plain"), content);
+
         assertEquals(3, server.getRequestCount());
+    }
+
+    @Test
+    void errorEnvelopeIsSurfaced() {
+        enqueueLogin();
+        enqueueJson(500, Fixtures.text("error-type-not-allowed.json"));
+
+        DoxisApiException e = assertThrows(DoxisApiException.class,
+                () -> client.createDocument("D_TEXTER", Map.of("mimeTypeName", "text/plain"), null));
+
+        assertEquals(500, e.getStatusCode());
+        assertEquals("INSTANCE0014", e.getErrorCode());
+        assertTrue(e.getMessage().contains("can't be stored within content repository"));
+    }
+
+    @Test
+    void logicalRemoveAndPhysicalDeleteTolerateMissingDocuments() throws Exception {
+        enqueueLogin();
+        server.enqueue(new MockResponse().setResponseCode(204));
+        server.enqueue(new MockResponse().setResponseCode(404));
+
+        client.removeDocumentLogically("D_TEXTER", "doc-0001");
+        client.deleteDocumentPhysically("D_TEXTER", "doc-gone");
+
+        server.takeRequest();
+        RecordedRequest remove = server.takeRequest();
+        assertEquals("POST", remove.getMethod());
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/documents/doc-0001/remove", remove.getPath());
+        RecordedRequest delete = server.takeRequest();
+        assertEquals("DELETE", delete.getMethod());
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/documents/doc-gone", delete.getPath());
+    }
+
+    @Test
+    void versionsAreRequestedWithRepresentations() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, Fixtures.text("versions.json"));
+
+        List<JsonNode> versions = client.getVersions("D_TEXTER", "doc-0001");
+
+        assertEquals("co-0001", versions.getFirst().path("representations").get(0).path("contentObjects").get(0).path("uuid").asText());
+        server.takeRequest();
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/documents/doc-0001/versions?initializeRepresentations=true",
+                server.takeRequest().getPath());
+    }
+
+    @Test
+    void logoutSendsJsonBodyAndForgetsSession() throws Exception {
+        enqueueLogin();
+        server.enqueue(new MockResponse().setResponseCode(204));
+        client.login();
+
+        client.logout();
+
+        server.takeRequest();
+        RecordedRequest logout = server.takeRequest();
+        assertEquals(BASE + "/logout", logout.getPath());
+        assertEquals("application/json", logout.getHeader("Content-Type"));
+        assertEquals("Bearer " + JWT, logout.getHeader("Authorization"));
     }
 }

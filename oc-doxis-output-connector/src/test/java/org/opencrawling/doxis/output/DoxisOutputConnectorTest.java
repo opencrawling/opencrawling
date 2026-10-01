@@ -15,23 +15,30 @@
  */
 package org.opencrawling.doxis.output;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
+import org.opencrawling.doxis.output.client.ContentBody;
 import org.opencrawling.doxis.output.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ConflictResolution;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties.Content;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties.DeleteMode;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties.Locator;
+import org.opencrawling.doxis.output.content.ContentPlanner;
+import org.opencrawling.doxis.output.content.PrefixLocatorResolver;
+import org.opencrawling.doxis.output.schema.DoxisSchema;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -41,136 +48,162 @@ import static org.mockito.Mockito.*;
 
 class DoxisOutputConnectorTest {
 
-    private static final String DATASET_ID = "ds-1";
+    private static final String REPO = "D_TEXTER";
+    private static final String TYPE_ID = "b89f3e49-ff11-467f-aba0-03740736646f";
+    private static final String LOOKUP = "SELECT * FROM D_TEXTER WHERE OBJECTNUMBER = 'doc-1'";
+
+    @TempDir
+    Path tmp;
 
     private DoxisClient client;
-    private DoxisDatasetManager datasetManager;
 
     @BeforeEach
     void setUp() throws Exception {
         client = mock(DoxisClient.class);
-        datasetManager = mock(DoxisDatasetManager.class);
-        when(datasetManager.datasetId()).thenReturn(DATASET_ID);
+        when(client.getRepository(REPO)).thenReturn(Fixtures.json("repository.json"));
+        when(client.listDocumentTypes()).thenReturn(Fixtures.list("document-types.json"));
+        when(client.listAttributeDefinitions()).thenReturn(Fixtures.list("attribute-definitions.json"));
+        when(client.listMimeTypes()).thenReturn(Fixtures.list("mime-types.json"));
+        when(client.listUsers()).thenReturn(Fixtures.list("users.json"));
+        when(client.listGroups()).thenReturn(Fixtures.list("groups.json"));
+        when(client.createDocument(eq(REPO), anyMap(), any())).thenReturn(Fixtures.json("document-created.json").path("documentWsTO"));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(Fixtures.list("versions.json"));
     }
 
-    private DoxisOutputConnector connector(ConflictResolution resolution) {
-        DoxisOutputProperties props = new DoxisOutputProperties(null, "key", DATASET_ID, null, true, true, true, true,
-                resolution, 0, 10);
-        return new DoxisOutputConnector(client, props, datasetManager, new DoxisRowMapper(props, new ObjectMapper()));
+    private DoxisOutputConnector connector(ConflictResolution conflict, DeleteMode deleteMode, ContentStrategy strategy, String uriPrefix) {
+        DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
+                null, null, null, null, null, conflict, deleteMode, true,
+                new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true),
+                new Locator(null, uriPrefix, ""), 0, 10);
+        DoxisSchema schema = new DoxisSchema(client);
+        return new DoxisOutputConnector(client, props, schema,
+                new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
+                new DoxisDocumentMapper(props, schema), new DoxisAclMapper(schema));
     }
 
-    private RepositoryDocument document(String content) {
+    private DoxisOutputConnector connector() {
+        return connector(ConflictResolution.NEW_VERSION, DeleteMode.LOGICAL, ContentStrategy.AUTO, null);
+    }
+
+    private RepositoryDocument document(String uri, Map<String, List<String>> metadata) {
         SecurityConfig security = new SecurityConfig(true, List.of(
-                new PermissionRule("elena.weber", "user", "Elena Weber", "write"),
-                new PermissionRule("group:legal-counsel", "group", "Legal", "read"),
+                new PermissionRule("elena.weber", "user", "Elena Weber", "read"),
                 new PermissionRule("contractors", "group", "Contractors", "deny")));
-        return new RepositoryDocument("doc-1", "file:///data/contracts/msa.pdf",
-                new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)),
-                Map.of("name", List.of("msa.pdf"), "title", List.of("Master Services Agreement"),
-                        "mimeType", List.of("application/pdf"), "department", List.of("Legal")),
-                "elena.weber,group:legal-counsel", security, Instant.parse("2026-09-30T08:00:00Z"));
+        return new RepositoryDocument("doc-1", uri, null, metadata, "elena.weber", security, Instant.parse("2026-09-30T08:00:00Z"));
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void upsertInsertsDocumentRowWithContentDescriptorsAndAcls() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-1")).thenReturn(List.of());
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenReturn(List.of("row-new"));
+    void newDocumentIsUploadedWithDescriptorsAclsAndVerified() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
 
-        connector(ConflictResolution.REPLACE).send(document("%PDF-1.7 contract")).block();
+        connector().send(document(file.toUri().toString(), Map.of("title", List.of("MSA 2026")))).block();
 
-        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
-        verify(client).insertRows(eq(DATASET_ID), captor.capture());
-        Map<String, Object> row = captor.getValue().getFirst();
-        assertEquals("doc-1", row.get("external_id"));
-        assertEquals("doc-1", row.get("document_id"));
-        assertEquals("document", row.get("record_type"));
-        assertEquals("Master Services Agreement", row.get("title"));
-        assertEquals("file", row.get("source_system"));
-        assertEquals("application/pdf", row.get("mime_type"));
-        assertEquals(17, row.get("content_length"));
-        assertEquals("2026-09-30T08:00:00Z", row.get("last_modified"));
-        assertEquals("elena.weber,group:legal-counsel", row.get("acl"));
-        assertEquals("elena.weber,group:legal-counsel", row.get("security_allowed_read"));
-        assertEquals("contractors", row.get("security_denied_read"));
-        assertEquals(true, row.get("security_inheritance"));
-        assertTrue(((String) row.get("security_json")).contains("\"access\":\"deny\""));
-        assertEquals("{\"department\":\"Legal\"}", row.get("metadata_json"));
+        ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<ContentBody> body = ArgumentCaptor.forClass(ContentBody.class);
+        verify(client).createDocument(eq(REPO), params.capture(), body.capture());
+        assertEquals(TYPE_ID, params.getValue().get("documentTypeUUID"));
+        assertEquals("application/pdf", params.getValue().get("mimeTypeName"));
+        assertEquals(17L, params.getValue().get("contentLength"));
+        assertFalse(params.getValue().containsKey("predefinedLocator"));
+        assertNotNull(body.getValue());
+        assertTrue(body.getValue().reopenable());
 
-        Map<String, Object> documentCell = (Map<String, Object>) row.get("document");
-        assertEquals("msa.pdf", documentCell.get("filename"));
-        assertEquals("application/pdf", documentCell.get("content_type"));
-        assertEquals("%PDF-1.7 contract", new String(Base64.getDecoder().decode((String) documentCell.get("data")), StandardCharsets.UTF_8));
-        verify(client, never()).deleteRow(any(), any());
-    }
-
-    @Test
-    void replaceInsertsNewRowBeforeDeletingPreviousRows() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-1")).thenReturn(List.of("row-old-1", "row-old-2"));
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenReturn(List.of("row-new"));
-
-        connector(ConflictResolution.REPLACE).send(document("v2")).block();
-
-        InOrder order = inOrder(client);
-        order.verify(client).insertRows(eq(DATASET_ID), anyList());
-        order.verify(client).deleteRow(DATASET_ID, "row-old-1");
-        order.verify(client).deleteRow(DATASET_ID, "row-old-2");
-    }
-
-    @Test
-    void failedInsertKeepsPreviousRows() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-1")).thenReturn(List.of("row-old"));
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenThrow(new IOException("HTTP 413"));
-
-        RuntimeException e = assertThrows(RuntimeException.class,
-                () -> connector(ConflictResolution.REPLACE).send(document("too big")).block());
-
-        assertTrue(e.getMessage().contains("doc-1"));
-        verify(client, never()).deleteRow(any(), any());
+        ArgumentCaptor<List<Map<String, Object>>> aces = ArgumentCaptor.forClass(List.class);
+        verify(client).addPermissions(eq(REPO), eq("doc-0001"), aces.capture());
+        assertEquals(2, aces.getValue().size());
+        verify(client).getVersions(REPO, "doc-0001");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void updateMetadataPatchesExistingRowsWithoutTouchingContent() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-1")).thenReturn(List.of("row-1"));
+    void hugeInPlaceFileIsRegisteredByLocatorWithoutTransferringBytes() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        JsonNode versions = new ObjectMapper().readTree(Fixtures.text("versions.json").replace("\"length\":17", "\"length\":5497558138880"));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(versions.get(0)));
 
-        connector(ConflictResolution.UPDATE_METADATA).send(document("same")).block();
+        connector(ConflictResolution.NEW_VERSION, DeleteMode.LOGICAL, ContentStrategy.AUTO, "file:///mnt/doxis-store/")
+                .send(document("file:///mnt/doxis-store/2026/10/master.mxf", Map.of("sizeInBytes", List.of("5497558138880")))).block();
 
-        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(client).patchRow(eq(DATASET_ID), eq("row-1"), captor.capture());
-        Map<String, Object> cells = captor.getValue();
-        assertEquals("Master Services Agreement", cells.get("title"));
-        assertFalse(cells.containsKey("document"));
-        assertFalse(cells.containsKey("external_id"));
-        verify(client, never()).insertRows(any(), any());
+        ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
+        verify(client).createDocument(eq(REPO), params.capture(), isNull());
+        assertEquals("2026/10/master.mxf", params.getValue().get("predefinedLocator"));
+        assertEquals(5_497_558_138_880L, params.getValue().get("contentLength"));
+        assertEquals("application/octet-stream", params.getValue().get("mimeTypeName"));
     }
 
     @Test
-    void updateMetadataInsertsWhenDocumentIsNew() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-1")).thenReturn(List.of());
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenReturn(List.of("row-new"));
+    void verificationFailsWhenDoxisReportsDifferentLength() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
 
-        connector(ConflictResolution.UPDATE_METADATA).send(document("new")).block();
+        RuntimeException e = assertThrows(RuntimeException.class, () ->
+                connector(ConflictResolution.NEW_VERSION, DeleteMode.LOGICAL, ContentStrategy.AUTO, "file:///mnt/doxis-store/")
+                        .send(document("file:///mnt/doxis-store/2026/a.pdf", Map.of("sizeInBytes", List.of("999")))).block());
 
-        verify(client).insertRows(eq(DATASET_ID), anyList());
-        verify(client, never()).patchRow(any(), any(), any());
+        assertTrue(e.getCause().getMessage().contains("does not match the source"));
     }
 
     @Test
-    void deleteTombstoneRemovesEveryRowOfTheDocument() throws Exception {
-        when(client.findRowIds(DATASET_ID, "document_id", "doc-1")).thenReturn(List.of("row-doc", "row-chunk-1"));
+    void existingDocumentGetsNewVersion() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
 
-        connector(ConflictResolution.REPLACE).send(RepositoryDocument.createTombstone("doc-1", "file:///data/msa.pdf")).block();
+        connector().send(document(file.toUri().toString(), Map.of())).block();
 
-        verify(client).deleteRow(DATASET_ID, "row-doc");
-        verify(client).deleteRow(DATASET_ID, "row-chunk-1");
-        verify(client, never()).insertRows(any(), any());
+        verify(client).addVersion(eq(REPO), eq("doc-0001"), anyMap(), notNull());
+        verify(client, never()).createDocument(any(), any(), any());
+        verify(client, never()).addPermissions(any(), any(), any());
+    }
+
+    @Test
+    void updateMetadataPatchesCurrentVersionOnly() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+
+        connector(ConflictResolution.UPDATE_METADATA, DeleteMode.LOGICAL, ContentStrategy.AUTO, null)
+                .send(document("https://example.org/msa.pdf", Map.of("title", List.of("New title")))).block();
+
+        verify(client).updateAttributes(eq(REPO), eq("doc-0001"), eq("1"), anyList());
+        verify(client, never()).addVersion(any(), any(), any(), any());
+    }
+
+    @Test
+    void skipLeavesExistingDocumentUntouched() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+
+        connector(ConflictResolution.SKIP, DeleteMode.LOGICAL, ContentStrategy.AUTO, null)
+                .send(document("https://example.org/msa.pdf", Map.of())).block();
+
+        verify(client, never()).addVersion(any(), any(), any(), any());
+        verify(client, never()).updateAttributes(any(), any(), any(), any());
+        verify(client, never()).createDocument(any(), any(), any());
+    }
+
+    @Test
+    void tombstoneRemovesLogicallyByDefault() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+
+        connector().send(RepositoryDocument.createTombstone("doc-1", "file:///x")).block();
+
+        verify(client).removeDocumentLogically(REPO, "doc-0001");
+        verify(client, never()).deleteDocumentPhysically(any(), any());
+    }
+
+    @Test
+    void tombstoneDeletesPhysicallyIncludingRemovedDocumentsWhenConfigured() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, true)).thenReturn(List.of("doc-0001", "doc-0002"));
+
+        connector(ConflictResolution.NEW_VERSION, DeleteMode.PHYSICAL, ContentStrategy.AUTO, null)
+                .send(RepositoryDocument.createTombstone("doc-1", "file:///x")).block();
+
+        verify(client).deleteDocumentPhysically(REPO, "doc-0001");
+        verify(client).deleteDocumentPhysically(REPO, "doc-0002");
     }
 
     @Test
     void spiInstanceRefusesToSend() {
         DoxisOutputConnector spi = new DoxisOutputConnector();
         assertEquals("DoxisOutputConnector", spi.getName());
-        assertThrows(IllegalStateException.class, () -> spi.send(document("x")).block());
+        assertThrows(IllegalStateException.class, () -> spi.send(RepositoryDocument.createTombstone("x", "y")).block());
     }
 }

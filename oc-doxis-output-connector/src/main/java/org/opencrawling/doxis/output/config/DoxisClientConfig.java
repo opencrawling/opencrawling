@@ -15,18 +15,21 @@
  */
 package org.opencrawling.doxis.output.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.opencrawling.doxis.output.DoxisDatasetManager;
-import org.opencrawling.doxis.output.DoxisRowMapper;
+import org.opencrawling.doxis.output.DoxisAclMapper;
+import org.opencrawling.doxis.output.DoxisDocumentMapper;
+import org.opencrawling.doxis.output.DoxisOutputConnector;
 import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.output.content.ContentPlanner;
+import org.opencrawling.doxis.output.content.LocatorResolver;
+import org.opencrawling.doxis.output.content.PrefixLocatorResolver;
+import org.opencrawling.doxis.output.schema.DoxisSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Duration;
 
 @Configuration
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "doxis")
@@ -37,21 +40,38 @@ public class DoxisClientConfig {
 
     @Bean(destroyMethod = "close")
     public DoxisClient doxisClient(DoxisOutputProperties properties) {
-        log.info("Initializing DoxisClient pointing to: {}", properties.baseUrl());
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            log.warn("spring.opencrawling.output.doxis.api-key is not set; Doxis requests will be rejected with HTTP 401.");
-        }
-        return new DoxisClient(properties.baseUrl(), properties.apiKey(),
-                Duration.ofSeconds(properties.timeoutSeconds()), properties.maxRetries());
+        log.info("Initializing DoxisClient for {} (customer {}, user {}).", properties.baseUrl(), properties.customerName(),
+                properties.username());
+        return DoxisOutputConnector.newClient(properties);
     }
 
     @Bean
-    public DoxisDatasetManager doxisDatasetManager(DoxisClient doxisClient, DoxisOutputProperties properties) {
-        return new DoxisDatasetManager(doxisClient, properties);
+    public DoxisSchema doxisSchema(DoxisClient doxisClient) {
+        return new DoxisSchema(doxisClient);
+    }
+
+    /**
+     * Replace this bean to plug in a custom way of deriving {@code predefinedLocator} values (e.g. from a staging service that
+     * places binaries into the Doxis data store).
+     */
+    @Bean
+    @ConditionalOnMissingBean(LocatorResolver.class)
+    public LocatorResolver doxisLocatorResolver(DoxisOutputProperties properties) {
+        return new PrefixLocatorResolver(properties.locator());
     }
 
     @Bean
-    public DoxisRowMapper doxisRowMapper(DoxisOutputProperties properties) {
-        return new DoxisRowMapper(properties, new ObjectMapper());
+    public ContentPlanner doxisContentPlanner(DoxisOutputProperties properties, LocatorResolver locatorResolver) {
+        return new ContentPlanner(properties.content(), locatorResolver);
+    }
+
+    @Bean
+    public DoxisDocumentMapper doxisDocumentMapper(DoxisOutputProperties properties, DoxisSchema schema) {
+        return new DoxisDocumentMapper(properties, schema);
+    }
+
+    @Bean
+    public DoxisAclMapper doxisAclMapper(DoxisSchema schema) {
+        return new DoxisAclMapper(schema);
     }
 }

@@ -18,34 +18,28 @@ package org.opencrawling.doxis.output.client;
 import java.io.IOException;
 
 /**
- * A non-2xx response from the Doxis AI.dp API, carrying the platform error envelope
- * ({@code result}, {@code code}, {@code sub_code}, {@code message}, {@code request_id}).
+ * A non-2xx response from the Doxis CSB REST API, carrying its exception envelope
+ * ({@code type}, {@code errorCode}, {@code message}), e.g. {@code SECU0014} (missing permission) or
+ * {@code INSTANCE0014} (information object type not allowed in the repository).
  */
 public class DoxisApiException extends IOException {
 
     private final int statusCode;
-    private final Integer errorCode;
-    private final String requestId;
+    private final String errorCode;
 
-    public DoxisApiException(String operation, int statusCode, Integer errorCode, String apiMessage, String requestId) {
+    public DoxisApiException(String operation, int statusCode, String errorCode, String apiMessage) {
         super(operation + " failed: HTTP " + statusCode
-                + (errorCode != null ? " (code " + errorCode + ")" : "")
-                + (apiMessage != null && !apiMessage.isBlank() ? " - " + apiMessage : "")
-                + (requestId != null && !requestId.isBlank() ? " [request_id=" + requestId + "]" : ""));
+                + (errorCode != null && !errorCode.isBlank() ? " [" + errorCode + "]" : "")
+                + (apiMessage != null && !apiMessage.isBlank() ? " - " + apiMessage : ""));
         this.statusCode = statusCode;
         this.errorCode = errorCode;
-        this.requestId = requestId;
     }
 
     public int getStatusCode() {
         return statusCode;
     }
 
-    public Integer getErrorCode() {
+    public String getErrorCode() {
         return errorCode;
-    }
-
-    public String getRequestId() {
-        return requestId;
     }
 }

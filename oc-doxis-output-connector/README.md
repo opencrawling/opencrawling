@@ -1,26 +1,43 @@
 # OpenCrawling - Doxis Output Connector
 
-This module provides the `OutputConnector` implementation for **[Doxis AI.dp](https://www.doxis.com/en/)** (SER Group's Intelligent Content Automation / document processing platform). OpenCrawling archives crawled documents into a Doxis **Dataset v3** dataset through the Doxis AI.dp REST API. Each row holds the original file, the OIS descriptors and the OIS security model. Doxis then OCRs and indexes the archived documents.
+This module provides the `OutputConnector` implementation for **[Doxis 4](https://www.doxis.com/en/)** (SER Group's ECM / Intelligent Content Automation platform). Crawled documents are archived into a Doxis DMS repository through the **Doxis CSB REST API** (`/restws/publicws/rest/api/v1`, verified against CSB 14.4.1). That covers the document type, descriptors, ACLs, versions and deletes.
 
-The REST contract follows the published Doxis AI.dp OpenAPI specification (`https://dochorizon.klippa.com/api/open-api.yaml`, Swagger UI at `https://dochorizon.klippa.com/api/swagger`).
+The connector keeps the **metadata plane** and the **content plane** separate. Metadata always goes through the REST API. The binary is handled by a per-document *content strategy*, so multi-terabyte files never have to be streamed. They can be registered **in place** by handing Doxis a `predefinedLocator` instead of the bytes.
 
 ## Feature Overview
 
-1. **API-key authentication**: every request carries the `x-api-key` header. The connection check calls `GET /api/services/auth/v1/info` and reports the organization and project the key belongs to.
-2. **Dataset auto-provisioning**: on startup, `DoxisDatasetInitializer` resolves the target dataset. It uses the configured `dataset-id` first, then a dataset whose name matches `dataset-name`, and otherwise creates the dataset (`POST /datasets/v3/datasets`). It adds any column the connector writes that the dataset lacks (`POST /datasets/{id}/columns`).
-3. **Original binary archiving**: `DoxisOutputConnector.send()` writes one row per document, with the source file inlined as a base64 *document-input* object in the `document` cell (`POST /datasets/{id}/rows?on_error=abort`).
-4. **OIS descriptor mapping**: title, URI, source system, MIME type, content length, last-modified and ingestion timestamps are stored in typed columns. All remaining source metadata is stored as JSON in `metadata_json`.
-5. **OIS security mapping**: the legacy `acl` string and the `SecurityConfig` permissions are stored per row:
-   - `read`/`write` identities go to `security_allowed_read`.
-   - `deny` identities go to `security_denied_read`.
-   - `security_inheritance` holds the inheritance flag.
-   - `security_json` holds the full OIS security JSON.
-6. **Conflict resolution**: Dataset v3 document cells are write-once, so an UPSERT of an already archived document is resolved by `conflict-resolution`:
-   - `REPLACE` (default) inserts a fresh row first, then deletes the previous rows. A failed upload never removes the archived copy.
-   - `UPDATE_METADATA` keeps the archived content and only patches the metadata and security cells (`PATCH /datasets/{id}/rows/{rowId}`).
-7. **OIS deletion tombstones**: `action: "DELETE"` looks up every row of the document (the `document_id` filter on `POST /rows/views/detailed/search`) and deletes each one (`DELETE /rows/{rowId}`). A row that is already gone (404) counts as deleted, so tombstones are idempotent.
-8. **Decoupled Kafka writer**: when `opencrawling.consumer.writer.enabled=true`, `DoxisStoreWriterConsumer` listens to `opencrawling-embedded` and stores each embedded chunk as a `record_type=chunk` row, keyed by chunk id and grouped by `document_id`, with the chunk text in `chunk_text`.
-9. **Resilience**: connection failures and HTTP `429`/`502`/`503`/`504` are retried with exponential backoff (`max-retries`). Platform errors surface the Doxis error envelope (`code`, `message`, `request_id`).
+1. **Session handling**:
+   - `POST /login` with customer, user, password and an optional role (e.g. `admins`, needed when the user's default role lacks `createDocument`).
+   - The JWT is sent as `Authorization: Bearer`.
+   - A transparent re-login happens on HTTP 401.
+   - `POST /logout` runs on shutdown, because the license counts technical sessions.
+2. **Schema resolution** (`DoxisSchema`): the document type, descriptor definitions (UUID, data type, length, multi-value), Doxis MIME types and organisational elements (users/groups) are resolved by name and cached.
+3. **Content strategies** (`ContentPlanner`), decided per document from file metadata only. Content is never read just to plan.
+   - `UPLOAD`: the binary is streamed as the multipart `inputStream` part, without buffering, up to `content.upload-max-bytes`.
+   - `PREDEFINED_LOCATOR`: the document is created with `predefinedLocator`, `contentLength` and the optional SHA-256, and **no bytes are sent**. This is for binaries that already sit in (or were staged into) the Doxis data store.
+   - `REFERENCE_ONLY`: the document is created without content, and the source URI is recorded in `reference-attribute`.
+   - `AUTO` (default): use a locator if one resolves, else upload if the file is within the limit, else `content.fallback`.
+4. **Locator resolution** (`LocatorResolver`, pluggable as a Spring bean):
+   - An explicit locator in the metadata (`doxisLocator`) wins.
+   - Otherwise a document URI under `locator.uri-prefix` (e.g. a mounted Doxis file data store) maps its remainder to the locator.
+5. **Content verification**: after each write the connector reads back the current version's content object (`GET …/versions?initializeRepresentations=true`). It fails the document if the length or SHA-256 differs from the source, which is how in-place registrations are confirmed without touching the binary.
+6. **Upsert by external id**: the document id is stored in `external-id-attribute` (default `ObjectNumber`) and looked up with CQL (`SELECT * FROM <repo> WHERE OBJECTNUMBER = '…'`). Ids longer than the descriptor allows are stored as a deterministic `h:<sha256>` prefix. When the id already exists, `conflict-resolution` decides what happens:
+   - `NEW_VERSION` (default) adds a version with the new content and descriptors.
+   - `UPDATE_METADATA` patches only the current version's descriptors.
+   - `SKIP` leaves the document unchanged.
+7. **Descriptor mapping**: the title goes to `title-attribute` (default `ObjectName`). `attribute-mapping` maps any OIS metadata key, or the pseudo-keys `id` / `uri` / `lastModified`, to a Doxis descriptor. Values are converted to the descriptor's type: STRING is truncated to its length, DATE/DATETIME becomes epoch millis, numbers and BOOL are converted, and multi-value descriptors take every value.
+8. **OIS security mapping** (`DoxisAclMapper`): OIS permissions become `DocumentAceParams` on creation.
+   - `read` grants `VIEW_DOCUMENT_CONTENTS`.
+   - `write` grants view plus `UPDATE_DOCUMENT` and `VERSION_DOCUMENT`.
+   - `deny` denies `VIEW_DOCUMENT_CONTENTS`.
+   - Identities resolve to Doxis users (login name or name) or groups; `public` maps to `everybody`.
+9. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
+   - `LOGICAL` (default) uses `POST …/remove`, which is reversible and leaves the binary in the data store.
+   - `PHYSICAL` uses `DELETE …`, which is irrevocable.
+10. **Decoupled Kafka writer**: with `opencrawling.consumer.writer.enabled=true`, `DoxisStoreWriterConsumer` consumes `IngestionMessage`s from `opencrawling-documents` in its own consumer group (`opencrawling-doxis-writer`).
+    - The messages only carry a URI, never content.
+    - Claim-check content is opened lazily, and only when the plan uploads it.
+11. **Resilience**: connection failures and HTTP `429` (honouring `Retry-After`) / `502` / `503` / `504` are retried with exponential backoff. This only applies to requests whose body can be rebuilt; a single-use upload stream is sent once. Errors carry the CSB error code (e.g. `SECU0014`, `INSTANCE0014`).
 
 ## Configuration Parameters
 
@@ -28,34 +45,32 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 
 | Parameter | Spring Property Key | Default Value | Description |
 | :--- | :--- | :--- | :--- |
-| **Base URL** | `spring.opencrawling.output.doxis.base-url` | `https://dochorizon.klippa.com` | Doxis AI.dp API host (`https://de.dochorizon.klippa.com` for the Germany region) |
-| **API Key** | `spring.opencrawling.output.doxis.api-key` | — | API key sent as `x-api-key` (required) |
-| **Dataset ID** | `spring.opencrawling.output.doxis.dataset-id` | — | Existing Dataset v3 id; when empty the dataset is resolved by name |
-| **Dataset Name** | `spring.opencrawling.output.doxis.dataset-name` | `OpenCrawling Ingestion` | Dataset looked up (or created) by name |
-| **Auto-Create Dataset** | `spring.opencrawling.output.doxis.auto-create-dataset` | `true` | Create the dataset when no dataset with that name exists |
-| **Upload Content** | `spring.opencrawling.output.doxis.upload-content` | `true` | Store the original binary in the `document` cell |
-| **Include Source Metadata** | `spring.opencrawling.output.doxis.include-source-metadata` | `true` | Store non-promoted metadata as JSON in `metadata_json` |
-| **Apply Security ACLs** | `spring.opencrawling.output.doxis.apply-security-acls` | `true` | Store the OIS security model in the `acl` / `security_*` columns |
-| **Conflict Resolution** | `spring.opencrawling.output.doxis.conflict-resolution` | `REPLACE` | `REPLACE` or `UPDATE_METADATA` |
-| **Max Retries** | `spring.opencrawling.output.doxis.max-retries` | `3` | Retries for connection failures and `429`/`502`/`503`/`504` |
-| **Timeout** | `spring.opencrawling.output.doxis.timeout-seconds` | `60` | HTTP request timeout |
+| **Base URL** | `…doxis.base-url` | `http://localhost:8080/restws/publicws/rest/api/v1` | CSB REST API base URL |
+| **Customer** | `…doxis.customer-name` | — | Doxis customer (tenant) short name |
+| **Username / Password** | `…doxis.username` / `…doxis.password` | — | Archiving user |
+| **Role** | `…doxis.role` | — | Role to log in with (e.g. `admins`) |
+| **Repository** | `…doxis.repository` | — | Target DMS repository (name or UUID) |
+| **Document Type** | `…doxis.document-type` | `BaseDocument` | Document type (name or UUID); must be allowed in the repository |
+| **External ID Descriptor** | `…doxis.external-id-attribute` | `ObjectNumber` | Descriptor used for upsert/delete lookup |
+| **Title Descriptor** | `…doxis.title-attribute` | `ObjectName` | Descriptor receiving the title |
+| **Source URI Descriptor** | `…doxis.reference-attribute` | — | Optional descriptor receiving the source URI |
+| **Descriptor Mapping** | `…doxis.attribute-mapping.<metadataKey>` | — | `<OIS metadata key>: <Doxis descriptor>` |
+| **Content Strategy** | `…doxis.content.strategy` | `AUTO` | `AUTO`, `UPLOAD`, `PREDEFINED_LOCATOR`, `REFERENCE_ONLY` |
+| **Upload Limit** | `…doxis.content.upload-max-bytes` | `2147483648` | Largest binary streamed to Doxis |
+| **Fallback** | `…doxis.content.fallback` | `REFERENCE_ONLY` | `AUTO` strategy for files above the limit without a locator |
+| **Verify** | `…doxis.content.verify` | `true` | Read back and compare length / SHA-256 |
+| **Locator Metadata Key** | `…doxis.locator.metadata-key` | `doxisLocator` | Metadata key carrying an explicit locator |
+| **Locator URI Prefix** | `…doxis.locator.uri-prefix` | — | URI prefix of content that lives in the Doxis data store |
+| **Locator Prefix** | `…doxis.locator.prefix` | `""` | Text prepended to derived locators |
+| **Conflict Resolution** | `…doxis.conflict-resolution` | `NEW_VERSION` | `NEW_VERSION`, `UPDATE_METADATA`, `SKIP` |
+| **Delete Mode** | `…doxis.delete-mode` | `LOGICAL` | `LOGICAL` or `PHYSICAL` |
+| **Apply Security ACLs** | `…doxis.apply-security-acls` | `true` | Map OIS permissions to Doxis permissions on creation |
+| **Max Retries / Timeout** | `…doxis.max-retries` / `…doxis.timeout-seconds` | `3` / `120` | HTTP resilience |
+| **Writer Consumer Group** | `…doxis.consumer-group` | `opencrawling-doxis-writer` | Kafka group of the decoupled writer |
 
 To select this connector, set `spring.opencrawling.output.type=doxis`.
 
-In the admin UI, a **Doxis AI.dp** output connector stores the same settings in its JSON configuration under these keys:
-- `doxisBaseUrl`
-- `doxisApiKey`
-- `doxisDatasetId`
-- `doxisDatasetName`
-- `doxisAutoCreateDataset`
-- `doxisUploadContent`
-- `doxisIncludeSourceMetadata`
-- `doxisApplySecurityAcls`
-- `doxisConflictResolution`
-- `doxisMaxRetries`
-- `doxisTimeoutSeconds`
-
-`JobController` resolves them per job.
+The admin UI stores the same settings as `doxis*` keys in the connector's JSON configuration (e.g. `doxisCustomerName`, `doxisContentStrategy`, `doxisLocatorUriPrefix`, and `doxisAttributeMapping` as `key=Descriptor` pairs). `JobController` resolves them per job.
 
 ```yaml
 spring:
@@ -63,55 +78,48 @@ spring:
     output:
       type: doxis
       doxis:
-        base-url: "https://dochorizon.klippa.com"
-        api-key: "${DOXIS_API_KEY}"
-        dataset-name: "OpenCrawling Ingestion"
-        conflict-resolution: REPLACE
+        base-url: "http://texter.exploredoxis.com:8080/restws/publicws/rest/api/v1"
+        customer-name: faststarter
+        username: Supervisor
+        password: "${DOXIS_PASSWORD}"
+        role: admins
+        repository: D_TEXTER
+        document-type: BaseDocument
+        attribute-mapping:
+          author: ObjectAuthors
+          lastModified: ObjectDate
+        content:
+          strategy: AUTO
+          upload-max-bytes: 2147483648
+        locator:
+          uri-prefix: "file:///mnt/doxis-store/"
+opencrawling:
+  ingestion:
+    max-extract-bytes: 536870912   # larger binaries skip Tika/embedding; metadata still reaches Doxis
 ```
 
-## Row Mapping
+## Request Mapping
 
-The dataset columns (see `DoxisConstants.COLUMNS`) and a document row as sent to `POST /rows`:
+A document registered in place: `POST /dmsRepositories/D_TEXTER/documents` with a single `documentParams` multipart part and **no** `inputStream` part.
 
 ```json
 {
-  "external_id": "sharepoint-01ABCDEF9876",
-  "document_id": "sharepoint-01ABCDEF9876",
-  "record_type": "document",
-  "uri": "sharepoint://contoso.sharepoint.com/items/01ABCDEF9876",
-  "title": "Master Services Agreement 2026",
-  "source_system": "sharepoint",
-  "mime_type": "application/pdf",
-  "content_length": 2097152,
-  "last_modified": "2026-09-30T08:00:00Z",
-  "ingested_at": "2026-10-01T10:15:00Z",
-  "acl": "elena.weber,group:legal-counsel",
-  "security_inheritance": true,
-  "security_allowed_read": "elena.weber,group:legal-counsel",
-  "security_denied_read": "contractors",
-  "security_json": "{\"inheritanceEnabled\":true,\"permissions\":[...]}",
-  "metadata_json": "{\"department\":\"Legal\"}",
-  "document": {
-    "data": "JVBERi0xLjcK...",
-    "filename": "Master Services Agreement 2026.pdf",
-    "content_type": "application/pdf"
-  }
+  "mimeTypeName": "application/mxf",
+  "fullFileName": "master.mxf",
+  "fileExtension": "mxf",
+  "contentLength": 5497558138880,
+  "hashAlgorithm": "SHA-256",
+  "hashValue": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "predefinedLocator": "2026/10/master.mxf",
+  "documentTypeUUID": "b89f3e49-ff11-467f-aba0-03740736646f",
+  "attributes": [
+    { "attributeDefinitionUUID": "90c6196e-0829-4322-836e-93898b4e39be", "attributeDataType": "STRING", "values": ["/mnt/doxis-store/2026/10/master.mxf"] },
+    { "attributeDefinitionUUID": "55a1b1ce-1139-4f08-b9bc-89478d46079b", "attributeDataType": "STRING", "values": ["Film master"] }
+  ]
 }
 ```
 
-| Column | Data type | Document rows | Chunk rows (Kafka writer) |
-| :--- | :--- | :--- | :--- |
-| `external_id` | `text` | document id | chunk id |
-| `document_id` | `text` | document id | document id |
-| `record_type` | `text` | `document` | `chunk` |
-| `uri`, `title`, `source_system`, `mime_type` | `text` | ✓ | ✓ |
-| `content_length` | `int` | bytes of the binary | characters of the chunk |
-| `last_modified`, `ingested_at` | `timestamp` | ✓ | ✓ |
-| `acl`, `security_allowed_read`, `security_denied_read`, `security_json` | `text` | ✓ | ✓ |
-| `security_inheritance` | `bool` | ✓ | ✓ |
-| `metadata_json` | `text` | ✓ | ✓ |
-| `chunk_text` | `text` | — | chunk text |
-| `document` | `document` | original binary | — |
+For `UPLOAD` the same `documentParams` (without `predefinedLocator`) is followed by an `inputStream` part carrying the binary. A re-crawl of an existing external id sends `documentVersionParams` to `POST …/documents/{uuid}/versions`.
 
 ## Testing & Execution
 
@@ -119,21 +127,26 @@ The dataset columns (see `DoxisConstants.COLUMNS`) and a document row as sent to
 ```bash
 mvn test -pl oc-doxis-output-connector
 ```
-`DoxisClientTest` runs the REST client against OkHttp `MockWebServer`, using response fixtures in `src/test/resources/doxis-mock-responses/` that follow the OpenAPI response schemas. It covers authentication, cursor pagination, dataset and column creation, row insert, search, patch and delete, error envelopes, and retry/backoff. `DoxisOutputConnectorTest`, `DoxisDatasetManagerTest` and `DoxisStoreWriterConsumerTest` cover:
-- descriptor and ACL mapping
-- `REPLACE` ordering
-- `UPDATE_METADATA`
-- tombstones
-- dataset resolution
-- the Kafka writer
+Test classes and what they cover:
+- **`DoxisClientTest`** runs the REST client against OkHttp `MockWebServer`. It uses fixtures in `src/test/resources/doxis-mock-responses/` modelled on CSB 14.4.1 responses, and covers login with role, bearer auth, re-login on 401, CQL search and search closing, streaming multipart with and without content, retries, error codes, logical and physical delete, and logout.
+- **`ContentPlannerTest`** covers strategy selection, locator resolution, size limits, and that planning never reads content.
+- **`DoxisDocumentMapperTest`** and **`DoxisAclMapperTest`** cover descriptor typing, external id hashing and permission mapping.
+- **`DoxisOutputConnectorTest`** covers create, in-place registration, verification, versions, `UPDATE_METADATA`, `SKIP` and tombstones.
+- **`DoxisStoreWriterConsumerTest`** and **`DoxisConnectorSettingsTest`** cover the Kafka writer and the admin UI settings.
 
 ### 2. Connection Check
-With a configured connector, `oc connector check --name <connector-name> --type output` (or **Test Connection** in the admin UI) calls `GET /api/services/auth/v1/info`, and `GET /datasets/v3/datasets/{id}` when a dataset id is set.
+`oc connector check --name <connector-name> --type output` (or **Test Connection** in the admin UI) logs in, reads the session user and checks that the repository is accessible.
 
 ## Known Limitations
 
-- Doxis AI.dp is a hosted service, so there is no local container and no `scripts/test-doxis-*.sh` end-to-end script. Live verification needs an API key.
-- The Doxis AI.dp Dataset API has no folder (*Akten*) hierarchy or ACL engine. The OIS security model is stored as row data for downstream enforcement; Doxis does not enforce it.
-- Content is sent inline as base64 in the row-insert request, so very large files are bounded by the platform's request size limit (HTTP `413`).
-- The decoupled Kafka writer stores chunk text, not the original binary: by the time a chunk reaches `opencrawling-embedded`, the claim-check object has usually been cleaned up. Use the direct `send()` path (`spring.opencrawling.output.type=doxis` on the crawler) to archive original files.
-- Embedding vectors are not stored. Doxis AI.dp computes its own embeddings for document cells.
+- **`predefinedLocator` behaviour:** the field is part of the CSB 14.4.1 REST contract, but its semantics are not documented by SER yet. Open questions (raised with SER engineering):
+  - the locator format and which data store it resolves against
+  - whether existence or the hash is checked at create time
+  - whether a physical delete removes the in-place binary
+
+  Until confirmed, keep `delete-mode: LOGICAL` for in-place content.
+- **Repository must allow the document type:** the target repository must allow the configured document type (configured in cubeDesigner). Otherwise creation fails with `INSTANCE0014`.
+- **ACLs on existing documents:** ACLs are applied when a document is created. Permission changes on documents that are already archived are not synchronised.
+- **`storageLocators` not exposed:** the content-object metadata in CSB 14.4.1 does not include `storageLocators`, so verification compares length and SHA-256 rather than the locator itself.
+- **Decoupled upload mode and claim-check cleanup:** for claim-check content, `IngestionConsumer` may delete the claim-check object (`claimcheck.cleanup-on-consume`) before the writer reads it. Use the direct `send()` path, a locator, or disable cleanup.
+- **No local Doxis container:** there is none and no `scripts/test-doxis-*.sh`. Live verification runs against a Doxis CSB (e.g. the SER-hosted training environment).

@@ -1,0 +1,1 @@
+{"type":"PublicWebServiceException","message":"SECU0014: SECU0014I: The caller Supervisor (logged in within role = '-') does not have the createDocument permission on security object type BaseDocument_DocumentType_InstancesSecObjType.","errorCode":"SECU0014","additionalInfo":"..."}

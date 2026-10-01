@@ -16,38 +16,37 @@
 package org.opencrawling.doxis.output.config;
 
 import jakarta.annotation.PostConstruct;
-import org.opencrawling.doxis.output.DoxisDatasetManager;
+import org.opencrawling.doxis.output.DoxisOutputConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Resolves (and if needed provisions) the target dataset at startup. Failures are logged only:
- * the dataset is resolved again lazily on the first write.
+ * Validates the Doxis setup at startup (login, repository, document type, external-id descriptor). Failures are logged only;
+ * the connector initializes again lazily on the first document.
  */
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "doxis")
-public class DoxisDatasetInitializer {
+public class DoxisConnectionInitializer {
 
-    private static final Logger log = LoggerFactory.getLogger(DoxisDatasetInitializer.class);
+    private static final Logger log = LoggerFactory.getLogger(DoxisConnectionInitializer.class);
 
-    private final DoxisDatasetManager datasetManager;
+    private final DoxisOutputConnector connector;
 
-    public DoxisDatasetInitializer(DoxisDatasetManager datasetManager) {
-        this.datasetManager = datasetManager;
+    public DoxisConnectionInitializer(DoxisOutputConnector connector) {
+        this.connector = connector;
     }
 
     @PostConstruct
-    public void initializeDataset() {
+    public void initialize() {
         try {
-            String datasetId = datasetManager.datasetId();
-            log.info("Doxis dataset '{}' is ready for ingestion.", datasetId);
+            connector.initialize();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("Doxis dataset initialization was interrupted.");
+            log.warn("Doxis initialization was interrupted.");
         } catch (Exception e) {
-            log.warn("Doxis dataset provisioning encountered an issue (API unreachable or key lacks dataset rights): {}",
+            log.warn("Doxis output connector is not ready yet (CSB unreachable, credentials, repository or document type): {}",
                     e.getMessage());
         }
     }

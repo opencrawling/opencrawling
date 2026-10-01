@@ -56,6 +56,13 @@ public class IngestionConsumer {
     private final ClaimCheckProperties claimCheckProperties;
     private final TelemetryTraceStore traceStore;
 
+    /**
+     * Upper bound for content loaded into memory for text extraction. Larger binaries (e.g. multi-terabyte files archived in
+     * place by an output connector) are not extracted or embedded; their metadata still flows to output connectors.
+     */
+    @org.springframework.beans.factory.annotation.Value("${opencrawling.ingestion.max-extract-bytes:536870912}")
+    private long maxExtractBytes = 536870912L;
+
     public IngestionConsumer(
             KafkaTemplate<String, Object> kafkaTemplate,
             @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
@@ -101,19 +108,26 @@ public class IngestionConsumer {
             URI fileUri = URI.create(message.uri());
             
             // Resolve stream via ClaimCheckStore (supports local filesystem, Apache Ozone, S3, etc.) or HTTP
+            int readLimit = (int) Math.min(Math.max(maxExtractBytes, 0L) + 1, Integer.MAX_VALUE - 8L);
             byte[] contentBytes;
             if ("http".equalsIgnoreCase(fileUri.getScheme()) || "https".equalsIgnoreCase(fileUri.getScheme())) {
                 try (InputStream httpStream = fileUri.toURL().openStream()) {
-                    contentBytes = httpStream.readAllBytes();
+                    contentBytes = httpStream.readNBytes(readLimit);
                 } catch (Exception e) {
                     log.warn("Failed to read HTTP stream directly for {}: {}", fileUri, e.getMessage());
                     contentBytes = new byte[0];
                 }
             } else {
                 try (InputStream contentStream = claimCheckStore.get(fileUri)) {
-                    contentBytes = contentStream.readAllBytes();
+                    contentBytes = contentStream.readNBytes(readLimit);
                 }
             }
+
+                if (contentBytes.length > maxExtractBytes) {
+                    log.info("Document {} exceeds opencrawling.ingestion.max-extract-bytes ({} bytes); skipping text extraction and embedding.",
+                            message.documentId(), maxExtractBytes);
+                    return;
+                }
                 
                 if (contentBytes.length == 0) {
                     log.warn("Document {} content is empty, skipping chunking.", message.documentId());

@@ -81,8 +81,10 @@ class ConnectorCheckerServiceTest {
     void testCheckDoxisConnectorFailure() {
         ConnectorDTO connector = new ConnectorDTO("Doxis_Test", "Test Doxis", "output",
                 "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of(
-                        "doxisBaseUrl", "http://127.0.0.1:59999",
-                        "doxisApiKey", "test-key"));
+                        "doxisBaseUrl", "http://127.0.0.1:59999/restws/publicws/rest/api/v1",
+                        "doxisCustomerName", "faststarter",
+                        "doxisUsername", "Supervisor",
+                        "doxisPassword", "secret"));
 
         ConnectionCheckResult result = checker.check(connector);
         assertFalse(result.success());
@@ -90,13 +92,13 @@ class ConnectorCheckerServiceTest {
     }
 
     @Test
-    void testCheckDoxisConnectorMissingApiKey() {
+    void testCheckDoxisConnectorMissingCredentials() {
         ConnectorDTO connector = new ConnectorDTO("Doxis_Test", "Test Doxis", "output",
                 "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of("doxisBaseUrl", "http://127.0.0.1:59999"));
 
         ConnectionCheckResult result = checker.check(connector);
         assertFalse(result.success());
-        assertTrue(result.message().contains("API key"));
+        assertTrue(result.message().contains("username and password"));
     }
 
     @Test

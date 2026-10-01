@@ -306,34 +306,11 @@ public class JobController {
                         resolvedOutputConnector = new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper, null);
                         log.info("Successfully resolved dynamic Vespa output connector at endpoint '{}'", endpoint);
                     } else if (cls.contains("Doxis")) {
-                        java.util.Map<String, String> doxisConfig = outConfig.configuration();
-                        org.opencrawling.doxis.output.config.DoxisOutputProperties.ConflictResolution conflictResolution =
-                                org.opencrawling.doxis.output.config.DoxisOutputProperties.ConflictResolution.REPLACE;
-                        try {
-                            conflictResolution = org.opencrawling.doxis.output.config.DoxisOutputProperties.ConflictResolution
-                                    .valueOf(doxisConfig.getOrDefault("doxisConflictResolution", "REPLACE").toUpperCase());
-                        } catch (Exception ignored) {}
-                        int doxisTimeoutSeconds = 60;
-                        try {
-                            doxisTimeoutSeconds = Integer.parseInt(doxisConfig.getOrDefault("doxisTimeoutSeconds", "60"));
-                        } catch (Exception ignored) {}
-                        int doxisMaxRetries = 3;
-                        try {
-                            doxisMaxRetries = Integer.parseInt(doxisConfig.getOrDefault("doxisMaxRetries", "3"));
-                        } catch (Exception ignored) {}
-                        org.opencrawling.doxis.output.config.DoxisOutputProperties doxisProps = new org.opencrawling.doxis.output.config.DoxisOutputProperties(
-                                doxisConfig.get("doxisBaseUrl"),
-                                doxisConfig.get("doxisApiKey"),
-                                doxisConfig.get("doxisDatasetId"),
-                                doxisConfig.get("doxisDatasetName"),
-                                Boolean.parseBoolean(doxisConfig.getOrDefault("doxisAutoCreateDataset", "true")),
-                                Boolean.parseBoolean(doxisConfig.getOrDefault("doxisUploadContent", "true")),
-                                Boolean.parseBoolean(doxisConfig.getOrDefault("doxisIncludeSourceMetadata", "true")),
-                                Boolean.parseBoolean(doxisConfig.getOrDefault("doxisApplySecurityAcls", "true")),
-                                conflictResolution, doxisMaxRetries, doxisTimeoutSeconds
-                        );
+                        org.opencrawling.doxis.output.config.DoxisOutputProperties doxisProps =
+                                org.opencrawling.doxis.output.config.DoxisConnectorSettings.fromConfiguration(outConfig.configuration());
                         resolvedOutputConnector = new org.opencrawling.doxis.output.DoxisOutputConnector(doxisProps);
-                        log.info("Successfully resolved dynamic Doxis output connector for '{}'", doxisProps.baseUrl());
+                        log.info("Successfully resolved dynamic Doxis output connector for '{}' (repository '{}', content strategy {})",
+                                doxisProps.baseUrl(), doxisProps.repository(), doxisProps.content().strategy());
                     } else if (cls.contains("SeaTunnel") || cls.contains("seatunnel")) {
                         String restUrl = outConfig.configuration().getOrDefault("seatunnelRestUrl", "http://localhost:8080");
                         String jobName = outConfig.configuration().getOrDefault("seatunnelJobName", "opencrawling_ingestion_pipeline");

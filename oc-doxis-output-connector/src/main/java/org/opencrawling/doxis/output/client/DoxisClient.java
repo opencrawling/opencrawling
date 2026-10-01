@@ -17,7 +17,6 @@ package org.opencrawling.doxis.output.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.opencrawling.doxis.output.DoxisConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,40 +30,57 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
- * Minimal client for the Doxis AI.dp REST API (Dataset API v3 + Auth API).
- * Authenticates every request with the {@code x-api-key} header.
+ * Client for the Doxis 4 CSB REST API ({@code /restws/publicws/rest/api/v1}).
+ *
+ * <p>Authenticates with {@code POST /login} (customer, user, password, optional role) and sends the returned JWT as
+ * {@code Authorization: Bearer}. An expired session (HTTP 401) triggers one transparent re-login. Throttling (HTTP 429,
+ * honouring {@code Retry-After}), 502/503/504 and connection failures are retried with exponential backoff, but only for
+ * requests whose body can be rebuilt — a multipart upload whose stream cannot be reopened is sent exactly once.
  */
 public class DoxisClient implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(DoxisClient.class);
-    private static final int PAGE_SIZE = 100;
     private static final Set<Integer> RETRYABLE_STATUS = Set.of(429, 502, 503, 504);
+    private static final int SEARCH_LIMIT = 100;
 
     private final String baseUrl;
-    private final String apiKey;
+    private final String customerName;
+    private final String username;
+    private final String password;
+    private final String role;
+    private final String clientId;
     private final Duration timeout;
     private final int maxRetries;
     private final Duration retryBackoff;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final ReentrantLock sessionLock = new ReentrantLock();
+    private volatile String token;
 
-    public DoxisClient(String baseUrl, String apiKey, Duration timeout, int maxRetries) {
-        this(baseUrl, apiKey, timeout, maxRetries, Duration.ofMillis(500), HttpClient.newBuilder()
-                .connectTimeout(timeout)
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build(), new ObjectMapper());
+    public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
+                       String clientId, Duration timeout, int maxRetries) {
+        this(baseUrl, customerName, username, password, role, clientId, timeout, maxRetries, Duration.ofMillis(500),
+                HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL).build(),
+                new ObjectMapper());
     }
 
-    public DoxisClient(String baseUrl, String apiKey, Duration timeout, int maxRetries, Duration retryBackoff,
+    public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
+                       String clientId, Duration timeout, int maxRetries, Duration retryBackoff,
                        HttpClient httpClient, ObjectMapper objectMapper) {
         String base = baseUrl.trim();
-        if (base.endsWith("/")) {
+        while (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
         this.baseUrl = base;
-        this.apiKey = apiKey;
+        this.customerName = customerName;
+        this.username = username;
+        this.password = password;
+        this.role = role;
+        this.clientId = clientId;
         this.timeout = timeout;
         this.maxRetries = Math.max(0, maxRetries);
         this.retryBackoff = retryBackoff;
@@ -76,202 +92,319 @@ public class DoxisClient implements AutoCloseable {
         return baseUrl;
     }
 
-    /**
-     * GET /api/services/auth/v1/info — verifies the API key and returns its organization, project and enabled services.
-     */
-    public JsonNode authInfo() throws IOException, InterruptedException {
-        return send("Auth info", get(DoxisConstants.AUTH_INFO_PATH)).path("data");
+    public ObjectMapper objectMapper() {
+        return objectMapper;
     }
 
-    /**
-     * Lists every dataset visible to the API key, following cursor pagination.
-     */
-    public List<JsonNode> listDatasets() throws IOException, InterruptedException {
-        List<JsonNode> datasets = new ArrayList<>();
-        String cursor = null;
-        do {
-            String path = DoxisConstants.DATASETS_PATH + "?limit=" + PAGE_SIZE
-                    + (cursor != null ? "&cursor=" + URLEncoder.encode(cursor, StandardCharsets.UTF_8) : "");
-            JsonNode data = send("List datasets", get(path)).path("data");
-            data.path("datasets").forEach(datasets::add);
-            cursor = nextCursor(data.path("page_info"));
-        } while (cursor != null);
-        return datasets;
-    }
+    // ------------------------------------------------------------------ session
 
     /**
-     * GET a dataset including its typed columns.
+     * Logs in (if not already logged in) and returns the session JWT.
      */
-    public JsonNode getDataset(String datasetId) throws IOException, InterruptedException {
-        return send("Get dataset " + datasetId, get(datasetPath(datasetId))).path("data");
-    }
-
-    /**
-     * Creates a dataset with the given typed columns ({@code slug -> data_type}) and returns its id.
-     */
-    public String createDataset(String name, Map<String, String> columns) throws IOException, InterruptedException {
-        List<Map<String, Object>> columnBodies = new ArrayList<>();
-        columns.forEach((slug, type) -> columnBodies.add(columnBody(slug, type)));
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("name", name);
-        payload.put("columns", columnBodies);
-        JsonNode data = send("Create dataset '" + name + "'", post(DoxisConstants.DATASETS_PATH, payload)).path("data");
-        return data.path("id").asText();
-    }
-
-    /**
-     * Adds a typed column to an existing dataset.
-     */
-    public void addColumn(String datasetId, String slug, String dataType) throws IOException, InterruptedException {
-        send("Add column '" + slug + "'", post(datasetPath(datasetId) + "/columns", columnBody(slug, dataType)));
-    }
-
-    /**
-     * Bulk-inserts rows ({@code column_slug -> value} maps) with {@code on_error=abort} and returns the created row ids
-     * in request order.
-     */
-    public List<String> insertRows(String datasetId, List<Map<String, Object>> rows) throws IOException, InterruptedException {
-        if (rows == null || rows.isEmpty()) {
-            return List.of();
+    public String login() throws IOException, InterruptedException {
+        String current = token;
+        if (current != null) {
+            return current;
         }
-        JsonNode data = send("Insert " + rows.size() + " rows",
-                post(datasetPath(datasetId) + "/rows?on_error=abort", Map.of("rows", rows))).path("data");
-        List<String> ids = new ArrayList<>();
-        for (JsonNode row : data.path("rows")) {
-            if (!"created".equals(row.path("status").asText())) {
-                throw new IOException("Doxis did not fully create row " + row.path("index").asInt() + ": status="
-                        + row.path("status").asText() + " " + row.path("row_error").path("message").asText(""));
-            }
-            ids.add(row.path("id").asText());
-        }
-        return ids;
-    }
-
-    /**
-     * Returns the ids of every row whose {@code columnSlug} cell equals {@code value}, following cursor pagination.
-     */
-    public List<String> findRowIds(String datasetId, String columnSlug, String value) throws IOException, InterruptedException {
-        List<String> ids = new ArrayList<>();
-        String cursor = null;
-        do {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("filter", Map.of("column_slug", columnSlug, "operator", "equals", "value", value));
-            payload.put("columns", List.of(columnSlug));
-            payload.put("limit", PAGE_SIZE);
-            if (cursor != null) {
-                payload.put("cursor", cursor);
-            }
-            JsonNode data = send("Search rows by " + columnSlug,
-                    post(datasetPath(datasetId) + "/rows/views/detailed/search", payload)).path("data");
-            for (JsonNode row : data.path("rows")) {
-                String id = row.path("id").asText(null);
-                if (id != null && !id.isBlank()) {
-                    ids.add(id);
-                }
-            }
-            cursor = nextCursor(data.path("page_info"));
-        } while (cursor != null);
-        return ids;
-    }
-
-    /**
-     * Overwrites the given cells of a row; omitted cells keep their values.
-     */
-    public void patchRow(String datasetId, String rowId, Map<String, Object> cells) throws IOException, InterruptedException {
-        List<Map<String, Object>> updates = new ArrayList<>();
-        cells.forEach((slug, value) -> {
-            Map<String, Object> cell = new LinkedHashMap<>();
-            cell.put("column_slug", slug);
-            cell.put("value", value);
-            updates.add(cell);
-        });
-        send("Patch row " + rowId, request(datasetPath(datasetId) + "/rows/" + enc(rowId))
-                .header("Content-Type", "application/json")
-                .method("PATCH", jsonBody(Map.of("cells", updates))).build());
-    }
-
-    /**
-     * Deletes a row. A 404 (already gone) is treated as success so tombstones are idempotent.
-     */
-    public void deleteRow(String datasetId, String rowId) throws IOException, InterruptedException {
+        sessionLock.lock();
         try {
-            send("Delete row " + rowId, request(datasetPath(datasetId) + "/rows/" + enc(rowId)).DELETE().build());
-        } catch (DoxisApiException e) {
-            if (e.getStatusCode() != 404) {
-                throw e;
+            if (token == null) {
+                token = doLogin();
             }
-            log.debug("Row {} was already absent from dataset {}.", rowId, datasetId);
+            return token;
+        } finally {
+            sessionLock.unlock();
+        }
+    }
+
+    private String doLogin() throws IOException, InterruptedException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("customerName", customerName);
+        params.put("userName", username);
+        params.put("password", password);
+        if (role != null && !role.isBlank()) {
+            params.put("role", role);
+        }
+        params.put("clientImplementationId", clientId);
+        JsonNode jwt = execute("Login as " + username + "@" + customerName,
+                () -> jsonRequest("/login", "POST", params, false), true, false);
+        String value = jwt.isTextual() ? jwt.textValue() : jwt.toString();
+        value = value.strip();
+        if (value.length() > 1 && value.startsWith("\"") && value.endsWith("\"")) {
+            value = value.substring(1, value.length() - 1);
+        }
+        log.info("Logged in to Doxis CSB at {} as {} (customer {}, role {}).", baseUrl, username, customerName,
+                role != null ? role : "-");
+        return value;
+    }
+
+    /**
+     * Invalidates the session. The license counts technical sessions, so this is called on shutdown.
+     */
+    public void logout() {
+        String current = token;
+        if (current == null) {
+            return;
+        }
+        token = null;
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/logout"))
+                    .timeout(timeout)
+                    .header("Authorization", "Bearer " + current)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                    .build();
+            httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception e) {
+            log.debug("Doxis logout failed: {}", e.getMessage());
         }
     }
 
     @Override
     public void close() {
+        logout();
         httpClient.close();
     }
 
-    private Map<String, Object> columnBody(String slug, String dataType) {
-        Map<String, Object> column = new LinkedHashMap<>();
-        column.put("name", slug);
-        column.put("slug", slug);
-        column.put("data_type", dataType);
-        column.put("nullable", true);
-        return column;
+    // ------------------------------------------------------------------ schema / orga reads
+
+    public JsonNode getRepository(String repository) throws IOException, InterruptedException {
+        return get("Get repository " + repository, "/dmsRepositories/" + enc(repository));
     }
 
-    private String datasetPath(String datasetId) {
-        return DoxisConstants.DATASETS_PATH + "/" + enc(datasetId);
+    public JsonNode getLoggedInUser() throws IOException, InterruptedException {
+        return get("Get session user", "/session/user");
+    }
+
+    public List<JsonNode> listDocumentTypes() throws IOException, InterruptedException {
+        return list(get("List document types", "/documentTypes"));
+    }
+
+    public List<JsonNode> listAttributeDefinitions() throws IOException, InterruptedException {
+        return list(get("List attribute definitions", "/attributeDefinitions"));
+    }
+
+    public List<JsonNode> listMimeTypes() throws IOException, InterruptedException {
+        return list(get("List mime types", "/mimeTypes"));
+    }
+
+    public List<JsonNode> listUsers() throws IOException, InterruptedException {
+        return list(get("List users", "/users"));
+    }
+
+    public List<JsonNode> listGroups() throws IOException, InterruptedException {
+        return list(get("List groups", "/groups"));
+    }
+
+    // ------------------------------------------------------------------ documents
+
+    /**
+     * Runs a CQL search and returns the UUIDs of the hits (current versions, including logically deleted ones only when
+     * {@code includeLogicallyDeleted}). A follow-up search result is always closed.
+     */
+    public List<String> searchDocumentIds(String cqlStatement, boolean includeLogicallyDeleted)
+            throws IOException, InterruptedException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("cqlStatement", cqlStatement);
+        params.put("currentVersionOnly", true);
+        params.put("fetchResultLimitation", SEARCH_LIMIT);
+        params.put("logicallyDeletedFilter", includeLogicallyDeleted ? "ANY_OBJECTS" : "NON_DELETED_OBJECTS");
+        JsonNode result = execute("Search documents", () -> jsonRequest("/documents/search", "POST", params, true), true, true);
+        List<String> ids = new ArrayList<>();
+        for (JsonNode hit : result.path("searchHits")) {
+            String id = hit.path("uuid").asText(null);
+            if (id != null && !ids.contains(id)) {
+                ids.add(id);
+            }
+        }
+        String searchId = result.path("searchId").asText(null);
+        if (searchId != null && !searchId.isBlank() && !"null".equals(searchId)) {
+            try {
+                execute("Close search " + searchId, () -> plainRequest("/documents/searchResults/" + enc(searchId), "DELETE"), true, true);
+            } catch (IOException e) {
+                log.debug("Closing Doxis search {} failed: {}", searchId, e.getMessage());
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * {@code POST /dmsRepositories/{repo}/documents} with a {@code documentParams} part and, optionally, the binary as
+     * {@code inputStream}. Returns the created {@code DocumentWsTO}.
+     */
+    public JsonNode createDocument(String repository, Map<String, Object> documentParams, ContentBody content)
+            throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents";
+        JsonNode response = execute("Create document in " + repository,
+                () -> multipartRequest(path, "documentParams", documentParams, content),
+                content == null || content.reopenable(), true);
+        return response.has("documentWsTO") ? response.path("documentWsTO") : response;
+    }
+
+    /**
+     * {@code POST /dmsRepositories/{repo}/documents/{uuid}/versions} with a {@code documentVersionParams} part and, optionally,
+     * the binary. Returns the updated {@code DocumentWsTO}.
+     */
+    public JsonNode addVersion(String repository, String documentId, Map<String, Object> versionParams, ContentBody content)
+            throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions";
+        return execute("Add version to " + documentId,
+                () -> multipartRequest(path, "documentVersionParams", versionParams, content),
+                content == null || content.reopenable(), true);
+    }
+
+    /**
+     * {@code GET …/documents/{uuid}/versions?initializeRepresentations=true}: every version with its representations and
+     * content objects (length, hash, file name).
+     */
+    public List<JsonNode> getVersions(String repository, String documentId) throws IOException, InterruptedException {
+        return list(get("Get versions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
+                + enc(documentId) + "/versions?initializeRepresentations=true"));
+    }
+
+    /**
+     * {@code PATCH …/versions/{versionNr}/attributes}: adds, updates or clears descriptors of a version.
+     */
+    public void updateAttributes(String repository, String documentId, String versionNr, List<Map<String, Object>> attributes)
+            throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions/" + enc(versionNr)
+                + "/attributes";
+        execute("Update attributes of " + documentId, () -> jsonRequest(path, "PATCH", attributes, true), true, true);
+    }
+
+    /**
+     * {@code POST …/documents/{uuid}/permissions} with a list of {@code DocumentAceParams}.
+     */
+    public void addPermissions(String repository, String documentId, List<Map<String, Object>> aces)
+            throws IOException, InterruptedException {
+        if (aces.isEmpty()) {
+            return;
+        }
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/permissions";
+        execute("Add permissions to " + documentId, () -> jsonRequest(path, "POST", aces, true), true, true);
+    }
+
+    /**
+     * {@code POST …/documents/{uuid}/remove}: logical (reversible) delete.
+     */
+    public void removeDocumentLogically(String repository, String documentId) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/remove";
+        executeTolerating404("Remove document " + documentId, () -> jsonRequest(path, "POST", Map.of(), true));
+    }
+
+    /**
+     * {@code DELETE …/documents/{uuid}}: physical, irrevocable delete.
+     */
+    public void deleteDocumentPhysically(String repository, String documentId) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId);
+        executeTolerating404("Delete document " + documentId, () -> plainRequest(path, "DELETE"));
+    }
+
+    // ------------------------------------------------------------------ plumbing
+
+    private JsonNode get(String operation, String path) throws IOException, InterruptedException {
+        return execute(operation, () -> plainRequest(path, "GET"), true, true);
+    }
+
+    private void executeTolerating404(String operation, Supplier<HttpRequest> request) throws IOException, InterruptedException {
+        try {
+            execute(operation, request, true, true);
+        } catch (DoxisApiException e) {
+            if (e.getStatusCode() != 404) {
+                throw e;
+            }
+            log.debug("{}: already absent.", operation);
+        }
+    }
+
+    private static List<JsonNode> list(JsonNode node) {
+        List<JsonNode> items = new ArrayList<>();
+        if (node != null && node.isArray()) {
+            node.forEach(items::add);
+        }
+        return items;
     }
 
     private static String enc(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
-    private static String nextCursor(JsonNode pageInfo) {
-        if (!pageInfo.path("has_more").asBoolean(false)) {
-            return null;
-        }
-        String cursor = pageInfo.path("next_cursor").asText(null);
-        return cursor == null || cursor.isBlank() ? null : cursor;
-    }
-
-    private HttpRequest.Builder request(String path) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
+    private HttpRequest.Builder builder(String path, boolean authenticated) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(timeout)
                 .header("Accept", "application/json");
-        if (apiKey != null && !apiKey.isBlank()) {
-            builder.header(DoxisConstants.API_KEY_HEADER, apiKey);
+        if (authenticated) {
+            builder.header("Authorization", "Bearer " + token);
         }
         return builder;
     }
 
-    private HttpRequest get(String path) {
-        return request(path).GET().build();
+    private HttpRequest plainRequest(String path, String method) {
+        return builder(path, true).method(method, HttpRequest.BodyPublishers.noBody()).build();
     }
 
-    private HttpRequest post(String path, Object payload) throws IOException {
-        return request(path).header("Content-Type", "application/json").POST(jsonBody(payload)).build();
+    private HttpRequest jsonRequest(String path, String method, Object payload, boolean authenticated) {
+        try {
+            return builder(path, authenticated)
+                    .header("Content-Type", "application/json")
+                    .method(method, HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Cannot serialize Doxis request payload", e);
+        }
     }
 
-    private HttpRequest.BodyPublisher jsonBody(Object payload) throws IOException {
-        return HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload));
+    private HttpRequest multipartRequest(String path, String paramsPartName, Map<String, Object> params, ContentBody content) {
+        String boundary = "----OpenCrawlingDoxis" + UUID.randomUUID().toString().replace("-", "");
+        byte[] json;
+        try {
+            json = objectMapper.writeValueAsBytes(params);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Cannot serialize Doxis document parameters", e);
+        }
+        List<HttpRequest.BodyPublisher> parts = new ArrayList<>();
+        parts.add(HttpRequest.BodyPublishers.ofByteArray(("--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"" + paramsPartName + "\"\r\n"
+                + "Content-Type: application/json\r\n\r\n").getBytes(StandardCharsets.UTF_8)));
+        parts.add(HttpRequest.BodyPublishers.ofByteArray(json));
+        parts.add(HttpRequest.BodyPublishers.ofByteArray("\r\n".getBytes(StandardCharsets.UTF_8)));
+        if (content != null) {
+            String fileName = content.fileName() == null ? "content" : content.fileName().replace("\"", "_");
+            parts.add(HttpRequest.BodyPublishers.ofByteArray(("--" + boundary + "\r\n"
+                    + "Content-Disposition: form-data; name=\"inputStream\"; filename=\"" + fileName + "\"\r\n"
+                    + "Content-Type: " + (content.mimeType() != null ? content.mimeType() : "application/octet-stream")
+                    + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)));
+            parts.add(HttpRequest.BodyPublishers.ofInputStream(content.stream()));
+            parts.add(HttpRequest.BodyPublishers.ofByteArray("\r\n".getBytes(StandardCharsets.UTF_8)));
+        }
+        parts.add(HttpRequest.BodyPublishers.ofByteArray(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8)));
+        return builder(path, true)
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.concat(parts.toArray(HttpRequest.BodyPublisher[]::new)))
+                .build();
     }
 
     /**
-     * Sends the request, retrying connection failures and 429/502/503/504 with exponential backoff,
-     * and returns the parsed JSON body (an empty object for 204 responses).
+     * Sends a request built by {@code requestFactory}. Authenticated requests log in first and re-login once on 401;
+     * retryable failures are retried only when {@code rebuildable}.
      */
-    private JsonNode send(String operation, HttpRequest request) throws IOException, InterruptedException {
+    private JsonNode execute(String operation, Supplier<HttpRequest> requestFactory, boolean rebuildable, boolean authenticated)
+            throws IOException, InterruptedException {
+        if (authenticated) {
+            login();
+        }
         int attempt = 0;
+        boolean reloggedIn = false;
         while (true) {
             HttpResponse<String> response;
             try {
-                response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                response = httpClient.send(requestFactory.get(), HttpResponse.BodyHandlers.ofString());
             } catch (ConnectException e) {
-                if (attempt >= maxRetries) {
+                if (!rebuildable || attempt >= maxRetries) {
                     throw e;
                 }
-                backoff(operation, ++attempt, "connection refused");
+                backoff(operation, ++attempt, "connection refused", null);
                 continue;
             }
 
@@ -280,34 +413,51 @@ public class DoxisClient implements AutoCloseable {
                 String body = response.body();
                 return body == null || body.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(body);
             }
-            if (RETRYABLE_STATUS.contains(status) && attempt < maxRetries) {
-                backoff(operation, ++attempt, "HTTP " + status);
+            if (status == 401 && authenticated && !reloggedIn && rebuildable) {
+                log.info("Doxis session expired during {}, logging in again.", operation);
+                sessionLock.lock();
+                try {
+                    token = doLogin();
+                } finally {
+                    sessionLock.unlock();
+                }
+                reloggedIn = true;
+                continue;
+            }
+            if (RETRYABLE_STATUS.contains(status) && rebuildable && attempt < maxRetries) {
+                backoff(operation, ++attempt, "HTTP " + status, response.headers().firstValue("Retry-After").orElse(null));
                 continue;
             }
             throw toException(operation, response);
         }
     }
 
-    private void backoff(String operation, int attempt, String reason) throws InterruptedException {
+    private void backoff(String operation, int attempt, String reason, String retryAfter) throws InterruptedException {
         long delay = retryBackoff.toMillis() * (1L << (attempt - 1));
+        if (retryAfter != null) {
+            try {
+                delay = Math.max(delay, Long.parseLong(retryAfter.trim()) * 1000L);
+            } catch (NumberFormatException ignored) {
+                // HTTP-date form is not used by CSB
+            }
+        }
         log.warn("Doxis {} failed ({}), retrying in {} ms (attempt {}/{}).", operation, reason, delay, attempt, maxRetries);
         Thread.sleep(delay);
     }
 
     private DoxisApiException toException(String operation, HttpResponse<String> response) {
-        Integer code = null;
+        String errorCode = null;
         String message = response.body();
-        String requestId = null;
         try {
             JsonNode error = objectMapper.readTree(response.body());
-            if (error.has("code")) {
-                code = error.path("code").asInt();
-            }
+            errorCode = error.path("errorCode").asText(null);
             message = error.path("message").asText(message);
-            requestId = error.path("request_id").asText(null);
         } catch (Exception ignored) {
-            // non-JSON error body, keep raw text
+            // non-JSON error body
         }
-        return new DoxisApiException("Doxis " + operation, response.statusCode(), code, message, requestId);
+        if (message != null && message.length() > 500) {
+            message = message.substring(0, 500) + "…";
+        }
+        return new DoxisApiException("Doxis " + operation, response.statusCode(), errorCode, message);
     }
 }

@@ -1,0 +1,7 @@
+[
+ {"name":"ObjectNumber","shortName":"OBJECTNUMBER","uuid":"90c6196e-0829-4322-836e-93898b4e39be","attributeDataType":"STRING","length":50,"multivalueType":"NONE"},
+ {"name":"ObjectName","shortName":"OBJECTNAME","uuid":"55a1b1ce-1139-4f08-b9bc-89478d46079b","attributeDataType":"STRING","length":250,"multivalueType":"NONE"},
+ {"name":"URL","shortName":"URL","uuid":"996fcb9f-d7cb-4e18-b8b9-1b02e7fd68cb","attributeDataType":"STRING","length":250,"multivalueType":"NONE"},
+ {"name":"ObjectAuthors","shortName":"OBJECTAUTHORS","uuid":"f033bf16-1c83-4fb1-9b65-4f0b1dd4e825","attributeDataType":"STRING","length":100,"multivalueType":"SET"},
+ {"name":"ObjectDate","shortName":"OBJECTDATE","uuid":"d060ac48-2df2-466d-acac-f4ca82fd174d","attributeDataType":"DATE","length":0,"multivalueType":"NONE"}
+]

@@ -30,7 +30,8 @@ import java.util.Base64;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import org.opencrawling.doxis.output.DoxisConstants;
+import org.opencrawling.doxis.output.config.DoxisConnectorSettings;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.client.DoxisClient;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
@@ -605,25 +606,23 @@ public class ConnectorCheckerService {
     }
 
     private ConnectionCheckResult checkDoxis(Map<String, String> config) {
-        String baseUrl = config.getOrDefault("doxisBaseUrl", DoxisConstants.DEFAULT_BASE_URL);
-        String apiKey = config.getOrDefault("doxisApiKey", "");
-        String datasetId = config.getOrDefault("doxisDatasetId", "");
-        if (apiKey.isBlank()) {
-            return new ConnectionCheckResult(false, "Doxis API key (doxisApiKey) is not configured.", null);
+        DoxisOutputProperties props = DoxisConnectorSettings.fromConfiguration(config);
+        if (props.customerName() == null || props.username() == null || props.password() == null) {
+            return new ConnectionCheckResult(false, "Doxis customer name, username and password must be configured.", null);
         }
-        try (DoxisClient client = new DoxisClient(baseUrl, apiKey, Duration.ofSeconds(5), 0)) {
-            JsonNode info = client.authInfo();
-            String organization = info.path("organization").path("name").asText("?");
-            String project = info.path("project").path("name").asText("?");
-            String message = "Successfully authenticated to Doxis AI.dp at " + client.getBaseUrl()
-                    + " (organization '" + organization + "', project '" + project + "')";
-            if (!datasetId.isBlank()) {
-                JsonNode dataset = client.getDataset(datasetId);
-                message += "; dataset '" + dataset.path("name").asText(datasetId) + "' is accessible";
+        DoxisClient client = new DoxisClient(props.baseUrl(), props.customerName(), props.username(), props.password(),
+                props.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(10), 0);
+        try (client) {
+            JsonNode user = client.getLoggedInUser();
+            StringBuilder message = new StringBuilder("Successfully logged in to Doxis CSB at " + client.getBaseUrl()
+                    + " as " + user.path("name").asText(props.username()) + " (customer '" + props.customerName() + "')");
+            if (props.repository() != null && !props.repository().isBlank()) {
+                JsonNode repository = client.getRepository(props.repository());
+                message.append("; repository '").append(repository.path("name").asText(props.repository())).append("' is accessible");
             }
-            return new ConnectionCheckResult(true, message + ".", info.toString());
+            return new ConnectionCheckResult(true, message + ".", user.path("uuid").asText(null));
         } catch (Exception e) {
-            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + baseUrl + ": " + e.getMessage(), e.toString());
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + props.baseUrl() + ": " + e.getMessage(), e.toString());
         }
     }
 
