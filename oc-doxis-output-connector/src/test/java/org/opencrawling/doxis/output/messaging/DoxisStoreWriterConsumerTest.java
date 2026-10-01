@@ -15,105 +15,80 @@
  */
 package org.opencrawling.doxis.output.messaging;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import org.opencrawling.core.document.DocumentAction;
-import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.doxis.output.DoxisDatasetManager;
-import org.opencrawling.doxis.output.DoxisRowMapper;
-import org.opencrawling.doxis.output.client.DoxisClient;
-import org.opencrawling.doxis.output.config.DoxisOutputProperties;
+import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.security.SecurityConfig;
+import org.opencrawling.doxis.output.DoxisOutputConnector;
+import org.springframework.beans.factory.ObjectProvider;
+import reactor.core.publisher.Mono;
 
-import java.io.IOException;
-import java.util.HashMap;
+import java.io.ByteArrayInputStream;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class DoxisStoreWriterConsumerTest {
 
-    private static final String DATASET_ID = "ds-1";
-
-    private DoxisClient client;
+    private DoxisOutputConnector connector;
+    private ClaimCheckStore store;
     private DoxisStoreWriterConsumer consumer;
 
     @BeforeEach
-    void setUp() throws Exception {
-        client = mock(DoxisClient.class);
-        DoxisDatasetManager datasetManager = mock(DoxisDatasetManager.class);
-        when(datasetManager.datasetId()).thenReturn(DATASET_ID);
-        DoxisOutputProperties props = DoxisOutputProperties.defaults();
-        consumer = new DoxisStoreWriterConsumer(client, datasetManager, new DoxisRowMapper(props, new ObjectMapper()));
-    }
-
-    @Test
     @SuppressWarnings("unchecked")
-    void upsertStoresChunkRowWithDeserializedSecurityMap() throws Exception {
-        Map<String, Object> security = new HashMap<>();
-        security.put("inheritanceEnabled", false);
-        security.put("permissions", List.of(
-                Map.of("identity", "alice", "identityType", "user", "access", "read"),
-                Map.of("identity", "interns", "identityType", "group", "access", "deny")));
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("uri", "sharepoint://contoso/items/42");
-        metadata.put("title", List.of("Quarterly Report"));
-        metadata.put("acl", "alice");
-        metadata.put("security", security);
-        metadata.put("lastModified", "2026-09-30T08:00:00Z");
-        metadata.put("department", List.of("Finance"));
+    void setUp() {
+        connector = mock(DoxisOutputConnector.class);
+        store = mock(ClaimCheckStore.class);
+        ObjectProvider<ClaimCheckStore> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(store);
+        when(connector.send(any())).thenReturn(Mono.empty());
+        consumer = new DoxisStoreWriterConsumer(connector, provider);
+    }
 
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-42_0")).thenReturn(List.of());
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenReturn(List.of("row-1"));
-
-        consumer.consume(new DocumentEmbeddedMessage("doc-42", "doc-42_0", "Revenue grew 12%.", metadata, new float[]{0.1f, 0.2f}));
-
-        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
-        verify(client).insertRows(eq(DATASET_ID), captor.capture());
-        Map<String, Object> row = captor.getValue().getFirst();
-        assertEquals("doc-42_0", row.get("external_id"));
-        assertEquals("doc-42", row.get("document_id"));
-        assertEquals("chunk", row.get("record_type"));
-        assertEquals("Quarterly Report", row.get("title"));
-        assertEquals("sharepoint", row.get("source_system"));
-        assertEquals("Revenue grew 12%.", row.get("chunk_text"));
-        assertEquals("alice", row.get("security_allowed_read"));
-        assertEquals("interns", row.get("security_denied_read"));
-        assertEquals(false, row.get("security_inheritance"));
-        assertTrue(((String) row.get("metadata_json")).contains("Finance"));
-        assertFalse(row.containsKey("document"));
+    private static IngestionMessage message(String uri, DocumentAction action) {
+        return new IngestionMessage("doc-1", uri, Map.of("title", List.of("MSA")), "elena", SecurityConfig.createPublic(),
+                "2026-09-30T08:00:00Z", null, null, Map.of(), action);
     }
 
     @Test
-    void upsertReplacesPreviousChunkRow() throws Exception {
-        when(client.findRowIds(DATASET_ID, "external_id", "doc-42_0")).thenReturn(List.of("row-old"));
-        when(client.insertRows(eq(DATASET_ID), anyList())).thenReturn(List.of("row-new"));
+    void claimCheckContentIsOpenedLazilyOnlyWhenRead() throws Exception {
+        when(store.get(URI.create("ozone://vol/bucket/doc-1"))).thenReturn(new ByteArrayInputStream(new byte[]{42}));
 
-        consumer.consume(new DocumentEmbeddedMessage("doc-42", "doc-42_0", "text", Map.of(), new float[0]));
+        RepositoryDocument document = consumer.toDocument(message("ozone://vol/bucket/doc-1", DocumentAction.UPSERT));
 
-        verify(client).deleteRow(DATASET_ID, "row-old");
+        verify(store, never()).get(any());
+        assertEquals(42, document.contentStream().read());
+        verify(store).get(URI.create("ozone://vol/bucket/doc-1"));
+        assertEquals("doc-1", document.id());
+        assertEquals("2026-09-30T08:00:00Z", document.lastModified().toString());
     }
 
     @Test
-    void deleteTombstoneRemovesAllRowsOfDocument() throws Exception {
-        when(client.findRowIds(DATASET_ID, "document_id", "doc-42")).thenReturn(List.of("row-1", "row-2"));
+    void localFilesAreLeftToThePlannerWithoutAStream() {
+        RepositoryDocument document = consumer.toDocument(message("file:///mnt/share/a.pdf", DocumentAction.UPSERT));
 
-        consumer.consume(new DocumentEmbeddedMessage("doc-42", "doc-42", "", Map.of(), new float[0], DocumentAction.DELETE));
-
-        verify(client).deleteRow(DATASET_ID, "row-1");
-        verify(client).deleteRow(DATASET_ID, "row-2");
-        verify(client, never()).insertRows(any(), any());
+        assertNull(document.contentStream());
+        assertEquals("file:///mnt/share/a.pdf", document.uri());
     }
 
     @Test
-    void clientFailuresAreLoggedNotPropagated() throws Exception {
-        when(client.findRowIds(any(), any(), any())).thenThrow(new IOException("HTTP 500"));
+    void deleteMessagesBecomeTombstones() {
+        consumer.consume(message("file:///mnt/share/a.pdf", DocumentAction.DELETE));
 
-        assertDoesNotThrow(() -> consumer.consume(
-                new DocumentEmbeddedMessage("doc-42", "doc-42_0", "text", Map.of(), new float[0])));
+        verify(connector).send(argThat(d -> d.action() == DocumentAction.DELETE && "doc-1".equals(d.id())));
+    }
+
+    @Test
+    void failuresAreLoggedNotPropagated() {
+        when(connector.send(any())).thenReturn(Mono.error(new RuntimeException("Doxis down")));
+
+        assertDoesNotThrow(() -> consumer.consume(message("file:///mnt/share/a.pdf", DocumentAction.UPSERT)));
     }
 }

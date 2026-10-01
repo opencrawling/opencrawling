@@ -15,25 +15,30 @@
  */
 package org.opencrawling.doxis.output.messaging;
 
-import jakarta.annotation.PostConstruct;
+import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import org.opencrawling.core.document.DocumentAction;
-import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.doxis.output.DoxisConstants;
-import org.opencrawling.doxis.output.DoxisDatasetManager;
-import org.opencrawling.doxis.output.DoxisRowMapper;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.security.SecurityConfig;
+import org.opencrawling.doxis.output.DoxisOutputConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Decoupled writer: stores each embedded chunk from {@code opencrawling-embedded} as a chunk row
- * (keyed by chunk id, grouped by document id) and applies DELETE tombstones to every row of the document.
+ * Decoupled Doxis writer. Consumes {@link IngestionMessage}s from {@code opencrawling-documents} in its own consumer group
+ * ({@code spring.opencrawling.output.doxis.consumer-group}, default {@code opencrawling-doxis-writer}), so archiving runs in
+ * parallel to (and independently of) text extraction and embedding. Messages only carry a URI — the binary is opened lazily
+ * through the {@link ClaimCheckStore} and only when the content plan uploads it.
  */
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "doxis")
@@ -42,49 +47,49 @@ public class DoxisStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DoxisStoreWriterConsumer.class);
 
-    private final DoxisClient doxisClient;
-    private final DoxisDatasetManager datasetManager;
-    private final DoxisRowMapper rowMapper;
+    private final DoxisOutputConnector connector;
+    private final ObjectProvider<ClaimCheckStore> claimCheckStore;
 
-    public DoxisStoreWriterConsumer(DoxisClient doxisClient, DoxisDatasetManager datasetManager, DoxisRowMapper rowMapper) {
-        this.doxisClient = doxisClient;
-        this.datasetManager = datasetManager;
-        this.rowMapper = rowMapper;
+    public DoxisStoreWriterConsumer(DoxisOutputConnector connector, ObjectProvider<ClaimCheckStore> claimCheckStore) {
+        this.connector = connector;
+        this.claimCheckStore = claimCheckStore;
     }
 
-    @PostConstruct
-    public void init() {
-        log.info("DoxisStoreWriterConsumer initialized against {}.", doxisClient.getBaseUrl());
-    }
-
-    @KafkaListener(topics = "opencrawling-embedded")
-    public void consume(DocumentEmbeddedMessage message) {
-        log.info("Received embedded chunk for Doxis storage: {}", message.chunkId());
+    @KafkaListener(topics = "opencrawling-documents",
+            groupId = "${spring.opencrawling.output.doxis.consumer-group:opencrawling-doxis-writer}")
+    public void consume(IngestionMessage message) {
+        log.info("Received document {} for Doxis archiving ({}).", message.documentId(),
+                message.action() == DocumentAction.DELETE ? "DELETE" : "UPSERT");
         try {
-            String datasetId = datasetManager.datasetId();
-
-            if (message.action() == DocumentAction.DELETE) {
-                List<String> rowIds = doxisClient.findRowIds(datasetId, DoxisConstants.COL_DOCUMENT_ID, message.documentId());
-                for (String rowId : rowIds) {
-                    doxisClient.deleteRow(datasetId, rowId);
-                }
-                log.info("Processed DELETE tombstone for document {}: removed {} Doxis row(s).", message.documentId(), rowIds.size());
-                return;
-            }
-
-            List<String> existing = doxisClient.findRowIds(datasetId, DoxisConstants.COL_EXTERNAL_ID, message.chunkId());
-            List<String> created = doxisClient.insertRows(datasetId, List.of(rowMapper.chunkRow(message)));
-            for (String rowId : existing) {
-                if (!created.contains(rowId)) {
-                    doxisClient.deleteRow(datasetId, rowId);
-                }
-            }
-            log.info("Successfully saved chunk {} to Doxis dataset '{}'.", message.chunkId(), datasetId);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Interrupted while storing chunk {} in Doxis.", message.chunkId());
+            connector.send(toDocument(message)).block();
         } catch (Exception e) {
-            log.error("Failed to store embedded chunk in Doxis: {}", message.chunkId(), e);
+            log.error("Failed to archive document {} into Doxis: {}", message.documentId(), e.getMessage(), e);
         }
+    }
+
+    RepositoryDocument toDocument(IngestionMessage message) {
+        if (message.action() == DocumentAction.DELETE) {
+            return RepositoryDocument.createTombstone(message.documentId(), message.uri());
+        }
+        Instant lastModified = null;
+        if (message.lastModified() != null) {
+            try {
+                lastModified = Instant.parse(message.lastModified());
+            } catch (RuntimeException ignored) {
+                // leave unset
+            }
+        }
+        String uri = message.uri();
+        LazyInputStream content = null;
+        if (uri != null && !uri.startsWith("file:")) {
+            ClaimCheckStore store = claimCheckStore.getIfAvailable();
+            if (store != null) {
+                content = new LazyInputStream(() -> store.get(URI.create(uri)));
+            }
+        }
+        Map<String, List<String>> metadata = message.metadata() != null ? message.metadata() : Map.of();
+        SecurityConfig security = message.security() != null ? message.security() : SecurityConfig.createPublic();
+        return new RepositoryDocument(message.documentId(), uri, content, metadata, message.acl(), security, lastModified,
+                DocumentAction.UPSERT);
     }
 }

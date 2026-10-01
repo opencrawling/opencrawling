@@ -143,13 +143,19 @@ public class ConnectorController {
             "luxirDimensions", "1024",
             "luxirSimilarity", "cosine"
         )));
-        defaults.add(new ConnectorDTO("Doxis_Output", "Doxis AI.dp Intelligent Content Archive", "output", "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of(
-            "doxisBaseUrl", "https://dochorizon.klippa.com",
-            "doxisApiKey", "",
-            "doxisDatasetId", "",
-            "doxisDatasetName", "OpenCrawling Ingestion",
-            "doxisConflictResolution", "REPLACE",
-            "doxisApplySecurityAcls", "true"
+        defaults.add(new ConnectorDTO("Doxis_Output", "Doxis 4 ECM Archive (CSB REST API)", "output", "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.ofEntries(
+            Map.entry("doxisBaseUrl", "http://localhost:8080/restws/publicws/rest/api/v1"),
+            Map.entry("doxisCustomerName", ""),
+            Map.entry("doxisUsername", ""),
+            Map.entry("doxisPassword", ""),
+            Map.entry("doxisRole", ""),
+            Map.entry("doxisRepository", ""),
+            Map.entry("doxisDocumentType", "BaseDocument"),
+            Map.entry("doxisExternalIdAttribute", "ObjectNumber"),
+            Map.entry("doxisTitleAttribute", "ObjectName"),
+            Map.entry("doxisContentStrategy", "AUTO"),
+            Map.entry("doxisConflictResolution", "NEW_VERSION"),
+            Map.entry("doxisDeleteMode", "LOGICAL")
         )));
         defaults.add(new ConnectorDTO("SeaTunnel_Output", "Apache SeaTunnel Distributed Fan-Out", "output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector", 10, Map.of(
             "seaTunnelRestUrl", "http://localhost:8080",

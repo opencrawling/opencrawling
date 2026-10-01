@@ -1,1 +1,0 @@
-{"result":"success","request_id":"req-rows-partial","data":{"created_count":1,"failed_count":0,"rows":[{"index":0,"status":"partial","id":"row-partial","cell_errors":[{"column_slug":"document","message":"unsupported file type"}]}]}}
