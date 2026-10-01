@@ -59,6 +59,7 @@ OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, yo
 *   **PgVector Store**: Connects to PostgreSQL using `pgvector` extension.
 *   **Elasticsearch / OpenSearch**: Leverages KNN indexing vector engines.
 *   **Qdrant / Milvus**: Connects to standard cloud-native vector indexes.
+*   **Doxis AI.dp**: Archives original documents, OIS descriptors and OIS security metadata into a Doxis Dataset v3 dataset (`spring.opencrawling.output.type=doxis`).
 
 ---
 

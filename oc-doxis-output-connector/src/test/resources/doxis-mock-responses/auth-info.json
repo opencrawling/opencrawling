@@ -1,0 +1,1 @@
+{"result":"success","request_id":"req-auth","data":{"credential":{"id":"cred-1","name":"opencrawling-writer"},"enabled_services":[{"name":"datasets"}],"organization":{"id":"org-1","name":"Contoso"},"project":{"id":"proj-1","name":"Archive"},"service_user":{"id":"su-1"}}}

@@ -27,6 +27,7 @@
 [![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x%20%7C%203.x-005EB8.svg?style=flat&logo=opensearch&logoColor=white)](https://opensearch.org/)
 [![Vespa](https://img.shields.io/badge/Vespa-8-4E9BFA.svg?style=flat&logo=vespa&logoColor=white)](https://vespa.ai/)
 [![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
+[![Doxis](https://img.shields.io/badge/Doxis-AI.dp-00A86B.svg?style=flat)](https://www.doxis.com/en/)
 [![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
 [![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
 [![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
@@ -82,7 +83,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir / Apache SeaTunnel]
+        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir / Doxis AI.dp / Apache SeaTunnel]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
@@ -740,7 +741,29 @@ To run the complete decoupled pipeline configured to use Luxir instead of Postgr
 
 This starts a standalone Luxir search engine instance alongside the decoupled OpenCrawling services. Key configuration properties (see `spring.opencrawling.output.luxir.*`): `endpoint`, `collection`, `vector-field` (`embedding_v`), `dimensions` (`384` / `768` / `1024`), `similarity` (`cosine`), and `auto-commit` (`true`). Luxir automatically handles dense vector kNN search, dynamic typing schemas (`_t`, `_s`, `_ss`, `_v`), OIS v1.1 tombstone deletions via `delete_ids`, and zero-trust ACL token filtering.
 
-### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
+### Option A.9: Doxis AI.dp Content Archiving
+
+[![Doxis](https://img.shields.io/badge/Doxis-AI.dp-00A86B.svg?style=flat)](https://www.doxis.com/en/)
+
+To archive crawled documents into a [Doxis AI.dp](https://www.doxis.com/en/) dataset instead of (or alongside) a vector store, select the Doxis output connector:
+
+```bash
+SPRING_OPENCRAWLING_OUTPUT_TYPE=doxis \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_API_KEY=<your-api-key> \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+Doxis AI.dp is a hosted platform, so no local container is started. `DoxisOutputConnector` stores each document as a row in a Dataset v3 dataset: the original binary (OCR'd and indexed by Doxis), OIS descriptors, and the OIS security model. It creates the dataset and its columns on first use. Key configuration properties (see `spring.opencrawling.output.doxis.*`):
+- `base-url` (`https://dochorizon.klippa.com`, or `https://de.dochorizon.klippa.com` for the Germany region)
+- `api-key`
+- `dataset-id` / `dataset-name`
+- `conflict-resolution` (`REPLACE` / `UPDATE_METADATA`)
+- `apply-security-acls`
+- `upload-content`
+
+OIS `DELETE` tombstones remove every row of the document. With `opencrawling.consumer.writer.enabled=true`, `DoxisStoreWriterConsumer` also stores embedded chunks from `opencrawling-embedded`. See [oc-doxis-output-connector/README.md](oc-doxis-output-connector/README.md) for the full column mapping.
+
+### Option A.10: Decoupled Apache SeaTunnel-Based Deployment
 
 [![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
 

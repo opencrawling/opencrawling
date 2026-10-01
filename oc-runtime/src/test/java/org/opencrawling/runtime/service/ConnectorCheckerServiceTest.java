@@ -78,6 +78,28 @@ class ConnectorCheckerServiceTest {
     }
 
     @Test
+    void testCheckDoxisConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Doxis_Test", "Test Doxis", "output",
+                "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of(
+                        "doxisBaseUrl", "http://127.0.0.1:59999",
+                        "doxisApiKey", "test-key"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Doxis"));
+    }
+
+    @Test
+    void testCheckDoxisConnectorMissingApiKey() {
+        ConnectorDTO connector = new ConnectorDTO("Doxis_Test", "Test Doxis", "output",
+                "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of("doxisBaseUrl", "http://127.0.0.1:59999"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("API key"));
+    }
+
+    @Test
     void testCheckStormCrawlerConnectorFailure() {
         ConnectorDTO connector = new ConnectorDTO("StormCrawler_Test", "Test StormCrawler", "repository",
                 "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(

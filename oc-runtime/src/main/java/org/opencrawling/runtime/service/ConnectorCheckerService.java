@@ -29,6 +29,9 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import org.opencrawling.doxis.output.DoxisConstants;
+import org.opencrawling.doxis.output.client.DoxisClient;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
 
@@ -77,6 +80,11 @@ public class ConnectorCheckerService {
             // --- Luxir Output Connector ---
             if (className.contains("LuxirOutputConnector") || className.contains("Luxir")) {
                 return checkLuxir(config);
+            }
+
+            // --- Doxis AI.dp Output Connector ---
+            if (className.contains("DoxisOutputConnector") || className.contains("Doxis")) {
+                return checkDoxis(config);
             }
 
             // --- Apache SeaTunnel Output Connector ---
@@ -593,6 +601,29 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Luxir at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkDoxis(Map<String, String> config) {
+        String baseUrl = config.getOrDefault("doxisBaseUrl", DoxisConstants.DEFAULT_BASE_URL);
+        String apiKey = config.getOrDefault("doxisApiKey", "");
+        String datasetId = config.getOrDefault("doxisDatasetId", "");
+        if (apiKey.isBlank()) {
+            return new ConnectionCheckResult(false, "Doxis API key (doxisApiKey) is not configured.", null);
+        }
+        try (DoxisClient client = new DoxisClient(baseUrl, apiKey, Duration.ofSeconds(5), 0)) {
+            JsonNode info = client.authInfo();
+            String organization = info.path("organization").path("name").asText("?");
+            String project = info.path("project").path("name").asText("?");
+            String message = "Successfully authenticated to Doxis AI.dp at " + client.getBaseUrl()
+                    + " (organization '" + organization + "', project '" + project + "')";
+            if (!datasetId.isBlank()) {
+                JsonNode dataset = client.getDataset(datasetId);
+                message += "; dataset '" + dataset.path("name").asText(datasetId) + "' is accessible";
+            }
+            return new ConnectionCheckResult(true, message + ".", info.toString());
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + baseUrl + ": " + e.getMessage(), e.toString());
         }
     }
 

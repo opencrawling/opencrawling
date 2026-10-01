@@ -34,7 +34,8 @@ import {
   Key,
   Network,
   Layers,
-  Globe
+  Globe,
+  Archive
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -87,6 +88,9 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.includes('luxir') || className.includes('Luxir')) {
     return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
+  if (className.includes('doxis') || className.includes('Doxis')) {
+    return { icon: Archive, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
   }
   if (className.includes('seatunnel') || className.includes('SeaTunnel')) {
     return { icon: Network, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
@@ -243,6 +247,7 @@ export default function ConnectorForm() {
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
+      { label: 'Doxis AI.dp (Intelligent Content Archiving)', value: 'org.opencrawling.doxis.output.DoxisOutputConnector' },
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
     ],
     authority: [
@@ -1812,6 +1817,147 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                         <p className="text-xs text-muted-foreground">HTTP socket and connection timeout.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Doxis AI.dp Output Connector */}
+                  {selectedClass === 'org.opencrawling.doxis.output.DoxisOutputConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Doxis AI.dp API URL</label>
+                        <select
+                          {...register('configuration.doxisBaseUrl', { required: true })}
+                          defaultValue="https://dochorizon.klippa.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="https://dochorizon.klippa.com">Production (dochorizon.klippa.com)</option>
+                          <option value="https://de.dochorizon.klippa.com">Production - Germany (de.dochorizon.klippa.com)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Doxis AI.dp platform region serving the Dataset API.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">API Key</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.doxisApiKey', { required: true })}
+                          placeholder="••••••••"
+                          
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Sent as the x-api-key header. Verified via GET /api/services/auth/v1/info on Test Connection.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Dataset ID</label>
+                        <input 
+                          {...register('configuration.doxisDatasetId')}
+                          placeholder=""
+                          
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Existing Dataset v3 id. Leave empty to resolve the dataset by name below.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Dataset Name</label>
+                        <input 
+                          {...register('configuration.doxisDatasetName')}
+                          placeholder="OpenCrawling Ingestion"
+                          defaultValue="OpenCrawling Ingestion"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Dataset looked up (or created) by name when no Dataset ID is set.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Conflict Resolution</label>
+                        <select
+                          {...register('configuration.doxisConflictResolution')}
+                          defaultValue="REPLACE"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="REPLACE">Replace (new row with new content)</option>
+                          <option value="UPDATE_METADATA">Update Metadata Only</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Document cells are write-once, so content changes always create a new row.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (seconds)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.doxisTimeoutSeconds', { valueAsNumber: true })}
+                          placeholder="60"
+                          defaultValue={60}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">HTTP request timeout for Doxis API calls.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisAutoCreateDataset"
+                            {...register('configuration.doxisAutoCreateDataset')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisAutoCreateDataset" className="text-sm font-medium cursor-pointer">
+                            Auto-Create Dataset
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Create the dataset and any missing columns on first use.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisUploadContent"
+                            {...register('configuration.doxisUploadContent')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisUploadContent" className="text-sm font-medium cursor-pointer">
+                            Upload Original Binary
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Store the source file in the document cell so Doxis can OCR and index it.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisApplySecurityAcls"
+                            {...register('configuration.doxisApplySecurityAcls')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisApplySecurityAcls" className="text-sm font-medium cursor-pointer">
+                            Apply Source ACLs
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Store OIS security permissions in the security_* columns.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisIncludeSourceMetadata"
+                            {...register('configuration.doxisIncludeSourceMetadata')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisIncludeSourceMetadata" className="text-sm font-medium cursor-pointer">
+                            Include Source Metadata
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Store remaining source metadata as JSON in metadata_json.</p>
                       </div>
                     </div>
                   )}

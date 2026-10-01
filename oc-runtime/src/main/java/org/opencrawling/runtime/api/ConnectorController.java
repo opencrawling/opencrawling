@@ -143,6 +143,14 @@ public class ConnectorController {
             "luxirDimensions", "1024",
             "luxirSimilarity", "cosine"
         )));
+        defaults.add(new ConnectorDTO("Doxis_Output", "Doxis AI.dp Intelligent Content Archive", "output", "org.opencrawling.doxis.output.DoxisOutputConnector", 10, Map.of(
+            "doxisBaseUrl", "https://dochorizon.klippa.com",
+            "doxisApiKey", "",
+            "doxisDatasetId", "",
+            "doxisDatasetName", "OpenCrawling Ingestion",
+            "doxisConflictResolution", "REPLACE",
+            "doxisApplySecurityAcls", "true"
+        )));
         defaults.add(new ConnectorDTO("SeaTunnel_Output", "Apache SeaTunnel Distributed Fan-Out", "output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector", 10, Map.of(
             "seaTunnelRestUrl", "http://localhost:8080",
             "seaTunnelJobName", "opencrawling_ingestion_pipeline",

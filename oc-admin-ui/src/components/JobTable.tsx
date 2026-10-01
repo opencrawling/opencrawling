@@ -52,7 +52,8 @@ import {
   FileText,
   ChevronUp,
   Check,
-  Info
+  Info,
+  Archive
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
 
@@ -114,6 +115,9 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.includes('luxir') || className.includes('Luxir')) {
     return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
+  }
+  if (className.includes('doxis') || className.includes('Doxis')) {
+    return { icon: Archive, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
   }
   if (className.includes('seatunnel') || className.includes('SeaTunnel')) {
     return { icon: Network, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
