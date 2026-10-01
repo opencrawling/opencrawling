@@ -66,15 +66,21 @@ class DoxisOutputConnectorTest {
         when(client.listMimeTypes()).thenReturn(Fixtures.list("mime-types.json"));
         when(client.listUsers()).thenReturn(Fixtures.list("users.json"));
         when(client.listGroups()).thenReturn(Fixtures.list("groups.json"));
-        when(client.createDocument(eq(REPO), anyMap(), any())).thenReturn(Fixtures.json("document-created.json").path("documentWsTO"));
-        when(client.getVersions(REPO, "doc-0001")).thenReturn(Fixtures.list("versions.json"));
+        when(client.createDocument(eq(REPO), anyMap(), any(), any())).thenReturn(Fixtures.json("document-created.json").path("documentWsTO"));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(versions("versions.json"));
+    }
+
+    private static List<JsonNode> versions(String fixture) {
+        List<JsonNode> list = new java.util.ArrayList<>();
+        Fixtures.json(fixture).path("versions").forEach(list::add);
+        return list;
     }
 
     private DoxisOutputConnector connector(ConflictResolution conflict, DeleteMode deleteMode, ContentStrategy strategy, String uriPrefix) {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
                 null, null, null, null, null, conflict, deleteMode, true,
                 new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true),
-                new Locator(null, uriPrefix, ""), 0, 10);
+                new Locator(null, uriPrefix, ""), null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         return new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -102,7 +108,7 @@ class DoxisOutputConnectorTest {
 
         ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<ContentBody> body = ArgumentCaptor.forClass(ContentBody.class);
-        verify(client).createDocument(eq(REPO), params.capture(), body.capture());
+        verify(client).createDocument(eq(REPO), params.capture(), isNull(), body.capture());
         assertEquals(TYPE_ID, params.getValue().get("documentTypeUUID"));
         assertEquals("application/pdf", params.getValue().get("mimeTypeName"));
         assertEquals(17L, params.getValue().get("contentLength"));
@@ -121,13 +127,13 @@ class DoxisOutputConnectorTest {
     void hugeInPlaceFileIsRegisteredByLocatorWithoutTransferringBytes() throws Exception {
         when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
         JsonNode versions = new ObjectMapper().readTree(Fixtures.text("versions.json").replace("\"length\":17", "\"length\":5497558138880"));
-        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(versions.get(0)));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(versions.path("versions").get(0)));
 
         connector(ConflictResolution.NEW_VERSION, DeleteMode.LOGICAL, ContentStrategy.AUTO, "file:///mnt/doxis-store/")
                 .send(document("file:///mnt/doxis-store/2026/10/master.mxf", Map.of("sizeInBytes", List.of("5497558138880")))).block();
 
         ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
-        verify(client).createDocument(eq(REPO), params.capture(), isNull());
+        verify(client).createDocument(eq(REPO), params.capture(), isNull(), isNull());
         assertEquals("2026/10/master.mxf", params.getValue().get("predefinedLocator"));
         assertEquals(5_497_558_138_880L, params.getValue().get("contentLength"));
         assertEquals("application/octet-stream", params.getValue().get("mimeTypeName"));
@@ -142,6 +148,82 @@ class DoxisOutputConnectorTest {
                         .send(document("file:///mnt/doxis-store/2026/a.pdf", Map.of("sizeInBytes", List.of("999")))).block());
 
         assertTrue(e.getCause().getMessage().contains("does not match the source"));
+        verify(client).deleteDocumentPhysically(REPO, "doc-0001");
+    }
+
+    @Test
+    void verificationFailsWhenDoxisStoredNoContent() throws Exception {
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(versions("versions-no-content.json"));
+
+        RuntimeException e = assertThrows(RuntimeException.class, () ->
+                connector(ConflictResolution.NEW_VERSION, DeleteMode.LOGICAL, ContentStrategy.AUTO, "file:///mnt/doxis-store/")
+                        .send(document("file:///mnt/doxis-store/2026/a.pdf", Map.of("sizeInBytes", List.of("17")))).block());
+
+        assertTrue(e.getCause().getMessage().contains("no content object"));
+        verify(client).deleteDocumentPhysically(REPO, "doc-0001");
+    }
+
+    @Test
+    void typeWithoutInstanceRightsKeepsTheDocument() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
+                .when(client).addPermissions(eq(REPO), eq("doc-0001"), anyList());
+
+        assertDoesNotThrow(() -> connector().send(document(file.toUri().toString(), Map.of())).block());
+        verify(client).getVersions(REPO, "doc-0001");
+    }
+
+    @Test
+    void mimeTypeOutsideDocumentTypeAllowListIsRejectedBeforeWriting() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
+                "DocumentTemplate", null, null, null, null, null, null, true, null, null, null, 0, 10);
+        DoxisSchema schema = new DoxisSchema(client);
+        DoxisOutputConnector templates = new DoxisOutputConnector(client, props, schema,
+                new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
+                new DoxisDocumentMapper(props, schema), new DoxisAclMapper(schema));
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+                () -> templates.send(document(file.toUri().toString(), Map.of())).block());
+
+        assertTrue(e.getCause().getMessage().contains("is not allowed by Doxis document type 'DocumentTemplate'"));
+        verify(client, never()).createDocument(any(), any(), any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void newDocumentIsFiledIntoTheRecordNamedInMetadata() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        when(client.getRecord(REPO, "efile-4711")).thenReturn(new ObjectMapper().readTree(
+                "{\"uuid\":\"efile-4711\",\"contentRepositoryUUID\":\"repo-uuid\",\"instanceDate\":\"2026-09-01T10:00:00.000+02:00\"}"));
+
+        connector().send(document(file.toUri().toString(), Map.of("doxisRecordId", List.of("efile-4711"),
+                "doxisFolderNodeId", List.of("node-contracts")))).block();
+
+        ArgumentCaptor<Map<String, Object>> relationship = ArgumentCaptor.forClass(Map.class);
+        verify(client).createDocument(eq(REPO), anyMap(), relationship.capture(), any());
+        assertEquals(Map.of("sourceObjectUUID", "efile-4711", "sourceFolderNodeUUID", "node-contracts",
+                "sourceContentRepositoryUUID", "repo-uuid", "sourceObjectInstanceDate", "2026-09-01T10:00:00.000+02:00",
+                "sourceObjectType", "RECORD"), relationship.getValue());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void reCrawlAddsOnlyMissingPermissions() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+        when(client.getPermissions(REPO, "doc-0001")).thenReturn(List.of(new ObjectMapper().readTree(
+                "{\"organizationalElementId\":\"user-elena\",\"permissionName\":\"VIEW_DOCUMENT_CONTENTS\",\"authorizationVariant\":\"GRANT\"}")));
+
+        connector().send(document(file.toUri().toString(), Map.of())).block();
+
+        ArgumentCaptor<List<Map<String, Object>>> aces = ArgumentCaptor.forClass(List.class);
+        verify(client).addPermissions(eq(REPO), eq("doc-0001"), aces.capture());
+        assertEquals(List.of(Map.of("organizationalElementId", "group-contractors", "permission", "VIEW_DOCUMENT_CONTENTS",
+                "authorizationVariant", "DENY")), aces.getValue());
     }
 
     @Test
@@ -152,8 +234,7 @@ class DoxisOutputConnectorTest {
         connector().send(document(file.toUri().toString(), Map.of())).block();
 
         verify(client).addVersion(eq(REPO), eq("doc-0001"), anyMap(), notNull());
-        verify(client, never()).createDocument(any(), any(), any());
-        verify(client, never()).addPermissions(any(), any(), any());
+        verify(client, never()).createDocument(any(), any(), any(), any());
     }
 
     @Test
@@ -176,7 +257,7 @@ class DoxisOutputConnectorTest {
 
         verify(client, never()).addVersion(any(), any(), any(), any());
         verify(client, never()).updateAttributes(any(), any(), any(), any());
-        verify(client, never()).createDocument(any(), any(), any());
+        verify(client, never()).createDocument(any(), any(), any(), any());
     }
 
     @Test
@@ -198,6 +279,17 @@ class DoxisOutputConnectorTest {
 
         verify(client).deleteDocumentPhysically(REPO, "doc-0001");
         verify(client).deleteDocumentPhysically(REPO, "doc-0002");
+    }
+
+    @Test
+    void lookupUsesRepositoryShortNameBecauseCqlRejectsDottedNames() throws Exception {
+        when(client.getRepository(REPO)).thenReturn(new ObjectMapper().readTree(
+                "{\"name\":\"de.ser.doxis4.sp.common.templates\",\"shortName\":\"DX4COMTEMPLATES\",\"uuid\":\"r-1\"}"));
+        when(client.searchDocumentIds(anyString(), anyBoolean())).thenReturn(List.of("doc-0001"));
+
+        connector().send(RepositoryDocument.createTombstone("doc-1", "file:///x")).block();
+
+        verify(client).searchDocumentIds("SELECT * FROM DX4COMTEMPLATES WHERE OBJECTNUMBER = 'doc-1'", false);
     }
 
     @Test

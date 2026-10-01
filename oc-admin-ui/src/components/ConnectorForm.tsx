@@ -2040,6 +2040,40 @@ export default function ConnectorForm() {
                       </div>
 
                       <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Filing (e-file / record)</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Record (e-file) ID</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordId')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">New documents are filed into this record; metadata doxisRecordId overrides it per document.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Record Repository</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordRepository')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Repository of the record (defaults to the DMS repository).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Folder Node ID</label>
+                        <input
+                          {...register('configuration.doxisFilingFolderNodeId')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional folder node inside the record; metadata doxisFolderNodeId overrides it.</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
                         <h4 className="text-sm font-semibold">Lifecycle & Security</h4>
                       </div>
 

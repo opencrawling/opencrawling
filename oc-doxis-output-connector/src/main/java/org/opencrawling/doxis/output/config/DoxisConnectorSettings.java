@@ -60,6 +60,12 @@ public final class DoxisConnectorSettings {
                         c.get("doxisLocatorMetadataKey"),
                         blankToNull(c.get("doxisLocatorUriPrefix")),
                         c.get("doxisLocatorPrefix")),
+                new DoxisOutputProperties.Filing(
+                        c.get("doxisFilingRecordId"),
+                        c.get("doxisFilingRecordRepository"),
+                        c.get("doxisFilingFolderNodeId"),
+                        c.get("doxisFilingRecordIdMetadataKey"),
+                        c.get("doxisFilingFolderNodeMetadataKey")),
                 (int) longValue(c.get("doxisMaxRetries"), DoxisConstants.DEFAULT_MAX_RETRIES),
                 (int) longValue(c.get("doxisTimeoutSeconds"), DoxisConstants.DEFAULT_TIMEOUT_SECONDS));
     }

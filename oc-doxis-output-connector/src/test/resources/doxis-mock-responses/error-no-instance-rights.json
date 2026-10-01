@@ -1,0 +1,1 @@
+{"type":"PublicWebServiceException","message":"SECU0050: SECU0050I: The security object type de.ser.doxis4.sp.common/DocumentTemplate_DocumentType_InstancesSecObjType does not allow instance level rights.","errorCode":"SECU0050","additionalInfo":"..."}

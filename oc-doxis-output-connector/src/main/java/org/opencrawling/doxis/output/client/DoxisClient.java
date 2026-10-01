@@ -235,11 +235,35 @@ public class DoxisClient implements AutoCloseable {
      */
     public JsonNode createDocument(String repository, Map<String, Object> documentParams, ContentBody content)
             throws IOException, InterruptedException {
+        return createDocument(repository, documentParams, null, content);
+    }
+
+    /**
+     * As {@link #createDocument(String, Map, ContentBody)}, additionally sending {@code relationshipParams} so the new
+     * document is filed into a record (e-file) or one of its folder nodes in the same transaction.
+     */
+    public JsonNode createDocument(String repository, Map<String, Object> documentParams, Map<String, Object> relationshipParams,
+                                   ContentBody content) throws IOException, InterruptedException {
         String path = "/dmsRepositories/" + enc(repository) + "/documents";
         JsonNode response = execute("Create document in " + repository,
-                () -> multipartRequest(path, "documentParams", documentParams, content),
+                () -> multipartRequest(path, "documentParams", documentParams, relationshipParams, content),
                 content == null || content.reopenable(), true);
         return response.has("documentWsTO") ? response.path("documentWsTO") : response;
+    }
+
+    /**
+     * {@code GET /dmsRepositories/{repo}/records/{uuid}}: a record (e-file), used to resolve its repository and instance date.
+     */
+    public JsonNode getRecord(String repository, String recordId) throws IOException, InterruptedException {
+        return get("Get record " + recordId, "/dmsRepositories/" + enc(repository) + "/records/" + enc(recordId));
+    }
+
+    /**
+     * {@code GET …/documents/{uuid}/permissions}: the document's current ACEs ({@code RestAce}).
+     */
+    public List<JsonNode> getPermissions(String repository, String documentId) throws IOException, InterruptedException {
+        return list(get("Get permissions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
+                + enc(documentId) + "/permissions"));
     }
 
     /**
@@ -250,17 +274,19 @@ public class DoxisClient implements AutoCloseable {
             throws IOException, InterruptedException {
         String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions";
         return execute("Add version to " + documentId,
-                () -> multipartRequest(path, "documentVersionParams", versionParams, content),
+                () -> multipartRequest(path, "documentVersionParams", versionParams, null, content),
                 content == null || content.reopenable(), true);
     }
 
     /**
      * {@code GET …/documents/{uuid}/versions?initializeRepresentations=true}: every version with its representations and
-     * content objects (length, hash, file name).
+     * content objects (length, hash, file name) — unwrapped from the returned {@code DocumentWsTO}.
      */
     public List<JsonNode> getVersions(String repository, String documentId) throws IOException, InterruptedException {
-        return list(get("Get versions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
-                + enc(documentId) + "/versions?initializeRepresentations=true"));
+        JsonNode response = get("Get versions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
+                + enc(documentId) + "/versions?initializeRepresentations=true");
+        // CSB 14.4.1 answers with the DocumentWsTO, whose "versions" array holds the versions
+        return list(response != null && response.has("versions") ? response.path("versions") : response);
     }
 
     /**
@@ -355,7 +381,8 @@ public class DoxisClient implements AutoCloseable {
         }
     }
 
-    private HttpRequest multipartRequest(String path, String paramsPartName, Map<String, Object> params, ContentBody content) {
+    private HttpRequest multipartRequest(String path, String paramsPartName, Map<String, Object> params,
+                                         Map<String, Object> relationshipParams, ContentBody content) {
         String boundary = "----OpenCrawlingDoxis" + UUID.randomUUID().toString().replace("-", "");
         byte[] json;
         try {
@@ -369,6 +396,17 @@ public class DoxisClient implements AutoCloseable {
                 + "Content-Type: application/json\r\n\r\n").getBytes(StandardCharsets.UTF_8)));
         parts.add(HttpRequest.BodyPublishers.ofByteArray(json));
         parts.add(HttpRequest.BodyPublishers.ofByteArray("\r\n".getBytes(StandardCharsets.UTF_8)));
+        if (relationshipParams != null) {
+            try {
+                parts.add(HttpRequest.BodyPublishers.ofByteArray(("--" + boundary + "\r\n"
+                        + "Content-Disposition: form-data; name=\"relationshipParams\"\r\n"
+                        + "Content-Type: application/json\r\n\r\n").getBytes(StandardCharsets.UTF_8)));
+                parts.add(HttpRequest.BodyPublishers.ofByteArray(objectMapper.writeValueAsBytes(relationshipParams)));
+                parts.add(HttpRequest.BodyPublishers.ofByteArray("\r\n".getBytes(StandardCharsets.UTF_8)));
+            } catch (IOException e) {
+                throw new IllegalArgumentException("Cannot serialize Doxis relationship parameters", e);
+            }
+        }
         if (content != null) {
             String fileName = content.fileName() == null ? "content" : content.fileName().replace("\"", "_");
             parts.add(HttpRequest.BodyPublishers.ofByteArray(("--" + boundary + "\r\n"

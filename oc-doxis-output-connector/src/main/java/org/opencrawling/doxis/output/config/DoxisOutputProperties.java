@@ -45,6 +45,7 @@ public record DoxisOutputProperties(
     @DefaultValue("true") boolean applySecurityAcls,
     @DefaultValue Content content,
     @DefaultValue Locator locator,
+    @DefaultValue Filing filing,
     @DefaultValue("3") int maxRetries,
     @DefaultValue("120") int timeoutSeconds
 ) {
@@ -115,6 +116,30 @@ public record DoxisOutputProperties(
         }
     }
 
+    /**
+     * Files new documents into a record (e-file / dossier) via {@code relationshipParams}: a fixed {@code record-id}, or a
+     * per-document record id from metadata ({@code record-id-metadata-key}), optionally into a folder node of that record.
+     */
+    public record Filing(
+        String recordId,
+        String recordRepository,
+        String folderNodeId,
+        @DefaultValue("doxisRecordId") String recordIdMetadataKey,
+        @DefaultValue("doxisFolderNodeId") String folderNodeMetadataKey
+    ) {
+        public Filing {
+            if (recordId != null && recordId.isBlank()) recordId = null;
+            if (recordRepository != null && recordRepository.isBlank()) recordRepository = null;
+            if (folderNodeId != null && folderNodeId.isBlank()) folderNodeId = null;
+            if (recordIdMetadataKey == null || recordIdMetadataKey.isBlank()) recordIdMetadataKey = "doxisRecordId";
+            if (folderNodeMetadataKey == null || folderNodeMetadataKey.isBlank()) folderNodeMetadataKey = "doxisFolderNodeId";
+        }
+
+        public static Filing defaults() {
+            return new Filing(null, null, null, null, null);
+        }
+    }
+
     public DoxisOutputProperties {
         if (baseUrl == null || baseUrl.isBlank()) baseUrl = DoxisConstants.DEFAULT_BASE_URL;
         if (documentType == null || documentType.isBlank()) documentType = DoxisConstants.DEFAULT_DOCUMENT_TYPE;
@@ -127,12 +152,13 @@ public record DoxisOutputProperties(
         if (deleteMode == null) deleteMode = DeleteMode.LOGICAL;
         if (content == null) content = Content.defaults();
         if (locator == null) locator = Locator.defaults();
+        if (filing == null) filing = Filing.defaults();
         if (maxRetries < 0) maxRetries = DoxisConstants.DEFAULT_MAX_RETRIES;
         if (timeoutSeconds <= 0) timeoutSeconds = DoxisConstants.DEFAULT_TIMEOUT_SECONDS;
     }
 
     public static DoxisOutputProperties defaults() {
         return new DoxisOutputProperties(null, null, null, null, null, null, null, null, null, null, null,
-                null, null, true, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
+                null, null, true, null, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
     }
 }
