@@ -37,7 +37,7 @@
 [![CLI](https://img.shields.io/badge/CLI-oc--cli-4B0082.svg?style=flat&logo=gnu-bash&logoColor=white)](#-opencrawling-cli-oc)
 [![Maven Central](https://img.shields.io/maven-central/v/org.opencrawling.archetypes/opencrawling-connector-archetypes.svg?style=flat&logo=apachemaven&logoColor=white)](https://central.sonatype.com/artifact/org.opencrawling.archetypes/opencrawling-connector-archetypes)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/opencrawling/opencrawling/badge)](https://scorecard.dev/viewer/?uri=github.com/opencrawling/opencrawling)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/opencrawling/opencrawling)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-AI_Documentation-blue.svg?style=flat)](https://deepwiki.com/opencrawling/opencrawling)
 
 **OpenCrawling** is the reference Java and Spring Framework implementation of the **[Open Ingestion Standard (OIS)](https://github.com/opencrawling/open-ingestion-standard)**. It provides a secure, decoupled, and vendor-neutral enterprise data integration platform leveraging modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, Spring AI, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
 
