@@ -17,8 +17,11 @@
 #
 # Example:
 #   DOXIS_BASE_URL=http://csb-host:8080/restws/publicws/rest/api/v1 \
-#   DOXIS_CUSTOMER=faststarter DOXIS_USER=Supervisor DOXIS_PASSWORD=... \
-#   DOXIS_ROLE=admins DOXIS_REPOSITORY=D_TEXTER ./scripts/test-doxis-connector.sh
+#   DOXIS_CUSTOMER=faststarter DOXIS_USER=crawler DOXIS_PASSWORD=... \
+#   DOXIS_ROLE=admins DOXIS_REPOSITORY=D_TEXTER DOXIS_EXTERNAL_ID_FIELD=OBJECTNUMBER2 \
+#   DOXIS_WRITE_TEST=true DOXIS_DOCUMENT_TYPE_UUID=271228ee-0f1c-4169-878e-b9d7a1b12525 \
+#   DOXIS_EXTERNAL_ID_ATTRIBUTE_UUID=5121f636-6090-41ff-bad8-8c05e6bb5fd6 DOXIS_MIME_TYPE=text/plain \
+#   ./scripts/test-doxis-connector.sh
 # ==============================================================================
 
 set -euo pipefail
