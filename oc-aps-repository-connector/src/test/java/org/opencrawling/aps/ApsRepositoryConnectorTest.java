@@ -241,6 +241,20 @@ class ApsRepositoryConnectorTest {
         assertTrue(doc.acl().contains("alice.underwriter@example.com"));
         assertTrue(doc.acl().contains("group:risk-analysts"));
 
+        // Verify Collocated DB Entity References
+        assertEquals(List.of("proc-10042"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_PROC_INST_ID));
+        assertEquals(List.of("proc-10042"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_SCOPE_ID));
+        assertEquals(List.of("processInstance"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_SCOPE_TYPE));
+        assertEquals(List.of("loanApplication"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_PROCESS_DEFINITION_KEY));
+        assertEquals(List.of("LOAN-2026-9481"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_BUSINESS_KEY));
+        assertEquals(List.of("john.doe@example.com"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_START_USER_ID));
+        assertEquals(List.of("enterprise-tenant-1"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_TENANT_ID));
+
+        // Verify Discrete Identity Lists
+        assertTrue(doc.metadata().get(ApsRepositoryConnector.FIELD_APS_IDENTITY_USERS).contains("john.doe@example.com"));
+        assertTrue(doc.metadata().get(ApsRepositoryConnector.FIELD_APS_IDENTITY_USERS).contains("alice.underwriter@example.com"));
+        assertTrue(doc.metadata().get(ApsRepositoryConnector.FIELD_APS_IDENTITY_GROUPS).contains("group:risk-analysts"));
+
         // Verify content JSON stream
         InputStream stream = doc.contentStream();
         assertNotNull(stream);
@@ -251,6 +265,70 @@ class ApsRepositoryConnectorTest {
         assertTrue(contentJsonStr.contains("\"id\":\"proc-10042\""));
         assertTrue(contentJsonStr.contains("\"applicantName\":\"Acme Corp\""));
         assertTrue(contentJsonStr.contains("\"Underwriter Review\""));
+        assertTrue(contentJsonStr.contains("\"aps_proc_inst_id\":\"proc-10042\""));
+        assertTrue(contentJsonStr.contains("\"aps_scope_id\":\"proc-10042\""));
+        assertTrue(contentJsonStr.contains("\"aps_scope_type\":\"processInstance\""));
+        assertTrue(contentJsonStr.contains("\"allowedUsers\""));
+        assertTrue(contentJsonStr.contains("\"allowedGroups\""));
+    }
+
+    @Test
+    void testScanWithIncludeAclsFalse() throws Exception {
+        ApsRepositoryConnector noAclConnector = new ApsRepositoryConnector(
+                "http://localhost:8080/activiti-app/api/enterprise",
+                "admin@app.activiti.com",
+                "admin",
+                100,
+                "",
+                false,
+                false,
+                false,
+                "",
+                "all",
+                false,
+                "",
+                false
+        );
+        noAclConnector.setHttpClient(mockHttpClient);
+
+        String processInstancesJson = """
+                {
+                  "size": 1,
+                  "total": 1,
+                  "start": 0,
+                  "data": [
+                    {
+                      "id": "proc-9999",
+                      "processDefinitionKey": "simpleProc",
+                      "startUserId": "starter@example.com"
+                    }
+                  ]
+                }
+                """;
+
+        HttpResponse<String> mockInstancesResponse = mock(HttpResponse.class);
+        when(mockInstancesResponse.statusCode()).thenReturn(200);
+        when(mockInstancesResponse.body()).thenReturn(processInstancesJson);
+
+        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(mockInstancesResponse);
+
+        List<RepositoryDocument> docs = noAclConnector.scan("simpleProc").collectList().block();
+
+        assertNotNull(docs);
+        assertEquals(1, docs.size());
+
+        RepositoryDocument doc = docs.get(0);
+        assertEquals("proc-9999", doc.id());
+        assertEquals("public", doc.acl());
+        assertNotNull(doc.security());
+        assertEquals(1, doc.security().permissions().size());
+        assertEquals("public", doc.security().permissions().get(0).identity());
+
+        // Collocated DB references are still present
+        assertEquals(List.of("proc-9999"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_PROC_INST_ID));
+        assertEquals(List.of("simpleProc"), doc.metadata().get(ApsRepositoryConnector.FIELD_APS_PROCESS_DEFINITION_KEY));
+        assertNull(doc.metadata().get(ApsRepositoryConnector.FIELD_APS_IDENTITY_USERS));
     }
 
     @Test

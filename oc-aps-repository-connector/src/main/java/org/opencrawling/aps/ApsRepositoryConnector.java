@@ -80,6 +80,20 @@ public class ApsRepositoryConnector implements RepositoryConnector {
     public static final String ATTACHMENT_PREFIX = "aps_attachment_";
     public static final String URI_PREFIX = "aps://process-instances/";
 
+    public static final String FIELD_INCLUDE_ACLS = "includeAcls";
+    public static final String FIELD_APS_PROC_INST_ID = "aps_proc_inst_id";
+    public static final String FIELD_APS_PROCESS_INSTANCE_ID = "aps_process_instance_id";
+    public static final String FIELD_APS_SCOPE_ID = "aps_scope_id";
+    public static final String FIELD_APS_SCOPE_TYPE = "aps_scope_type";
+    public static final String FIELD_APS_PROCESS_DEFINITION_ID = "aps_process_definition_id";
+    public static final String FIELD_APS_PROCESS_DEFINITION_KEY = "aps_process_definition_key";
+    public static final String FIELD_APS_PROCESS_DEFINITION_NAME = "aps_process_definition_name";
+    public static final String FIELD_APS_BUSINESS_KEY = "aps_business_key";
+    public static final String FIELD_APS_START_USER_ID = "aps_start_user_id";
+    public static final String FIELD_APS_TENANT_ID = "aps_tenant_id";
+    public static final String FIELD_APS_IDENTITY_USERS = "aps_identity_users";
+    public static final String FIELD_APS_IDENTITY_GROUPS = "aps_identity_groups";
+
     private final String url;
     private final String username;
     private final String password;
@@ -92,6 +106,7 @@ public class ApsRepositoryConnector implements RepositoryConnector {
     private final String scope;
     private final boolean mcpEnabled;
     private final String mcpUrl;
+    private final boolean includeAcls;
     private final ObjectMapper objectMapper;
 
     private ApsMcpClient mcpClient;
@@ -100,7 +115,7 @@ public class ApsRepositoryConnector implements RepositoryConnector {
     private volatile boolean connected = false;
 
     public ApsRepositoryConnector() {
-        this("http://localhost:8080/activiti-app/api/enterprise", "admin@app.activiti.com", "admin", 100, "", true, true, true, "", "all", false, "");
+        this("http://localhost:8080/activiti-app/api/enterprise", "admin@app.activiti.com", "admin", 100, "", true, true, true, "", "all", false, "", true);
     }
 
     @Autowired
@@ -116,7 +131,8 @@ public class ApsRepositoryConnector implements RepositoryConnector {
             @Value("${spring.opencrawling.connector.aps.tenant-id:}") String tenantId,
             @Value("${spring.opencrawling.connector.aps.scope:all}") String scope,
             @Value("${spring.opencrawling.connector.aps.mcp.enabled:false}") boolean mcpEnabled,
-            @Value("${spring.opencrawling.connector.aps.mcp.url:}") String mcpUrl) {
+            @Value("${spring.opencrawling.connector.aps.mcp.url:}") String mcpUrl,
+            @Value("${spring.opencrawling.connector.aps.include-acls:true}") boolean includeAcls) {
         this.url = url != null && url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.username = username;
         this.password = password;
@@ -129,10 +145,27 @@ public class ApsRepositoryConnector implements RepositoryConnector {
         this.scope = scope;
         this.mcpEnabled = mcpEnabled;
         this.mcpUrl = (mcpUrl != null && !mcpUrl.isBlank()) ? mcpUrl : (this.url + "/mcp");
+        this.includeAcls = includeAcls;
         this.objectMapper = new ObjectMapper();
         if (this.mcpEnabled) {
             this.mcpClient = new ApsMcpClient(this.mcpUrl, this.username, this.password);
         }
+    }
+
+    public ApsRepositoryConnector(
+            String url,
+            String username,
+            String password,
+            int batchSize,
+            String processDefinitionKey,
+            boolean includeVariables,
+            boolean includeTasks,
+            boolean includeAttachments,
+            String tenantId,
+            String scope,
+            boolean mcpEnabled,
+            String mcpUrl) {
+        this(url, username, password, batchSize, processDefinitionKey, includeVariables, includeTasks, includeAttachments, tenantId, scope, mcpEnabled, mcpUrl, true);
     }
 
     public ApsRepositoryConnector(
@@ -190,6 +223,10 @@ public class ApsRepositoryConnector implements RepositoryConnector {
 
     public boolean isIncludeAttachments() {
         return this.includeAttachments;
+    }
+
+    public boolean isIncludeAcls() {
+        return this.includeAcls;
     }
 
     @Override
@@ -640,6 +677,18 @@ public class ApsRepositoryConnector implements RepositoryConnector {
         if (durationInMillis > 0) metadata.put(FIELD_DURATION_IN_MILLIS, List.of(String.valueOf(durationInMillis)));
         if (!tenantIdVal.isBlank()) metadata.put(FIELD_TENANT_ID, List.of(tenantIdVal));
 
+        // Collocated DB and Entity References
+        metadata.put(FIELD_APS_PROC_INST_ID, List.of(processInstanceId));
+        metadata.put(FIELD_APS_PROCESS_INSTANCE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_APS_SCOPE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_APS_SCOPE_TYPE, List.of("processInstance"));
+        if (!processDefinitionId.isBlank()) metadata.put(FIELD_APS_PROCESS_DEFINITION_ID, List.of(processDefinitionId));
+        if (!processDefinitionKey.isBlank()) metadata.put(FIELD_APS_PROCESS_DEFINITION_KEY, List.of(processDefinitionKey));
+        if (!processDefinitionName.isBlank()) metadata.put(FIELD_APS_PROCESS_DEFINITION_NAME, List.of(processDefinitionName));
+        if (!businessKey.isBlank()) metadata.put(FIELD_APS_BUSINESS_KEY, List.of(businessKey));
+        if (!startUserId.isBlank()) metadata.put(FIELD_APS_START_USER_ID, List.of(startUserId));
+        if (!tenantIdVal.isBlank()) metadata.put(FIELD_APS_TENANT_ID, List.of(tenantIdVal));
+
         ObjectNode contentJson = objectMapper.createObjectNode();
         contentJson.put(FIELD_ID, processInstanceId);
         contentJson.put(FIELD_PROCESS_DEFINITION_ID, processDefinitionId);
@@ -651,6 +700,10 @@ public class ApsRepositoryConnector implements RepositoryConnector {
         if (!endTimeStr.isBlank()) contentJson.put(FIELD_END_TIME, endTimeStr);
         if (durationInMillis > 0) contentJson.put(FIELD_DURATION_IN_MILLIS, durationInMillis);
         if (!tenantIdVal.isBlank()) contentJson.put(FIELD_TENANT_ID, tenantIdVal);
+        contentJson.put(FIELD_APS_PROC_INST_ID, processInstanceId);
+        contentJson.put(FIELD_APS_SCOPE_ID, processInstanceId);
+        contentJson.put(FIELD_APS_SCOPE_TYPE, "processInstance");
+        if (!tenantIdVal.isBlank()) contentJson.put(FIELD_APS_TENANT_ID, tenantIdVal);
 
         ObjectNode variablesJson = objectMapper.createObjectNode();
         if (includeVariables) {
@@ -683,7 +736,7 @@ public class ApsRepositoryConnector implements RepositoryConnector {
         contentJson.set(FIELD_VARIABLES, variablesJson);
 
         List<PermissionRule> permissions = new ArrayList<>();
-        if (!startUserId.isBlank()) {
+        if (includeAcls && !startUserId.isBlank()) {
             permissions.add(new PermissionRule(startUserId, "user", startUserName.isBlank() ? startUserId : startUserName, "read"));
         }
 
@@ -708,7 +761,9 @@ public class ApsRepositoryConnector implements RepositoryConnector {
                         assigneeId = assigneeNode.asText("");
                     }
                     if (!assigneeId.isBlank()) {
-                        permissions.add(new PermissionRule(assigneeId, "user", assigneeName.isBlank() ? assigneeId : assigneeName, "read"));
+                        if (includeAcls) {
+                            permissions.add(new PermissionRule(assigneeId, "user", assigneeName.isBlank() ? assigneeId : assigneeName, "read"));
+                        }
                         if (!taskName.isBlank()) {
                             metadata.put("aps_task_" + taskName + "_assignee", List.of(assigneeId));
                         }
@@ -720,7 +775,9 @@ public class ApsRepositoryConnector implements RepositoryConnector {
                         for (JsonNode groupNode : candidateGroups) {
                             String groupName = groupNode.isObject() ? groupNode.path("name").asText(groupNode.path("id").asText("")) : groupNode.asText();
                             if (!groupName.isBlank()) {
-                                permissions.add(new PermissionRule(groupName, "group", groupName, "read"));
+                                if (includeAcls) {
+                                    permissions.add(new PermissionRule(groupName, "group", groupName, "read"));
+                                }
                             }
                         }
                     }
@@ -731,13 +788,41 @@ public class ApsRepositoryConnector implements RepositoryConnector {
                         for (JsonNode userNode : candidateUsers) {
                             String userIdent = userNode.isObject() ? userNode.path("email").asText(userNode.path("id").asText("")) : userNode.asText();
                             if (!userIdent.isBlank()) {
-                                permissions.add(new PermissionRule(userIdent, "user", userIdent, "read"));
+                                if (includeAcls) {
+                                    permissions.add(new PermissionRule(userIdent, "user", userIdent, "read"));
+                                }
                             }
                         }
                     }
                 }
             }
             contentJson.set(FIELD_TASKS, tasksJson);
+        }
+
+        if (includeAcls) {
+            List<String> allowedUsers = permissions.stream()
+                    .filter(p -> "user".equalsIgnoreCase(p.identityType()))
+                    .map(PermissionRule::identity)
+                    .distinct()
+                    .toList();
+            List<String> allowedGroups = permissions.stream()
+                    .filter(p -> "group".equalsIgnoreCase(p.identityType()))
+                    .map(PermissionRule::identity)
+                    .distinct()
+                    .toList();
+
+            if (!allowedUsers.isEmpty()) {
+                metadata.put(FIELD_APS_IDENTITY_USERS, allowedUsers);
+                ArrayNode usersArray = objectMapper.createArrayNode();
+                allowedUsers.forEach(usersArray::add);
+                contentJson.set("allowedUsers", usersArray);
+            }
+            if (!allowedGroups.isEmpty()) {
+                metadata.put(FIELD_APS_IDENTITY_GROUPS, allowedGroups);
+                ArrayNode groupsArray = objectMapper.createArrayNode();
+                allowedGroups.forEach(groupsArray::add);
+                contentJson.set("allowedGroups", groupsArray);
+            }
         }
 
         // Attachments discovery
@@ -812,17 +897,20 @@ public class ApsRepositoryConnector implements RepositoryConnector {
         }
         contentJson.set(FIELD_ATTACHMENTS, attachmentsJson);
 
-        SecurityConfig security = permissions.isEmpty() 
+        SecurityConfig security = (!includeAcls || permissions.isEmpty()) 
                 ? SecurityConfig.createPublic() 
                 : new SecurityConfig(false, permissions.stream().distinct().toList());
 
-        String acl = permissions.stream()
-                .map(PermissionRule::identity)
-                .filter(id -> id != null && !id.isBlank())
-                .distinct()
-                .collect(Collectors.joining(" "));
-        if (acl.isBlank()) {
-            acl = "public";
+        String acl = "public";
+        if (includeAcls && !permissions.isEmpty()) {
+            acl = permissions.stream()
+                    .map(PermissionRule::identity)
+                    .filter(id -> id != null && !id.isBlank())
+                    .distinct()
+                    .collect(Collectors.joining(" "));
+            if (acl.isBlank()) {
+                acl = "public";
+            }
         }
 
         String docUri = URI_PREFIX + processInstanceId;
@@ -927,6 +1015,27 @@ public class ApsRepositoryConnector implements RepositoryConnector {
                             attMetadata.put("created", List.of(att.created()));
                         }
 
+                        // Collocated DB and Entity References
+                        attMetadata.put(FIELD_APS_PROC_INST_ID, List.of(processInstanceId));
+                        attMetadata.put(FIELD_APS_PROCESS_INSTANCE_ID, List.of(processInstanceId));
+                        attMetadata.put(FIELD_APS_SCOPE_ID, List.of(processInstanceId));
+                        attMetadata.put(FIELD_APS_SCOPE_TYPE, List.of("processInstance"));
+                        if (!context.processDefinitionId().isBlank()) {
+                            attMetadata.put(FIELD_APS_PROCESS_DEFINITION_ID, List.of(context.processDefinitionId()));
+                        }
+                        if (!context.processDefinitionKey().isBlank()) {
+                            attMetadata.put(FIELD_APS_PROCESS_DEFINITION_KEY, List.of(context.processDefinitionKey()));
+                        }
+                        if (!context.processDefinitionName().isBlank()) {
+                            attMetadata.put(FIELD_APS_PROCESS_DEFINITION_NAME, List.of(context.processDefinitionName()));
+                        }
+                        if (!context.businessKey().isBlank()) {
+                            attMetadata.put(FIELD_APS_BUSINESS_KEY, List.of(context.businessKey()));
+                        }
+                        if (!context.tenantIdVal().isBlank()) {
+                            attMetadata.put(FIELD_APS_TENANT_ID, List.of(context.tenantIdVal()));
+                        }
+
                         // Inherit process variables
                         for (Map.Entry<String, List<String>> entry : context.metadata().entrySet()) {
                             if (entry.getKey().startsWith(VAR_PREFIX)) {
@@ -935,20 +1044,45 @@ public class ApsRepositoryConnector implements RepositoryConnector {
                         }
 
                         // Inherit security and ensure uploader has access
-                        List<PermissionRule> attPermissions = new ArrayList<>(context.permissions());
-                        if (!att.createdBy().isBlank() && attPermissions.stream().noneMatch(p -> att.createdBy().equals(p.identity()))) {
-                            attPermissions.add(new PermissionRule(att.createdBy(), "user", att.createdBy(), "read"));
+                        List<PermissionRule> attPermissions = new ArrayList<>();
+                        if (includeAcls) {
+                            attPermissions.addAll(context.permissions());
+                            if (!att.createdBy().isBlank() && attPermissions.stream().noneMatch(p -> att.createdBy().equals(p.identity()))) {
+                                attPermissions.add(new PermissionRule(att.createdBy(), "user", att.createdBy(), "read"));
+                            }
                         }
-                        SecurityConfig attSecurity = attPermissions.isEmpty()
+                        SecurityConfig attSecurity = (!includeAcls || attPermissions.isEmpty())
                                 ? SecurityConfig.createPublic()
                                 : new SecurityConfig(false, attPermissions.stream().distinct().toList());
-                        String attAcl = attPermissions.stream()
-                                .map(PermissionRule::identity)
-                                .filter(id -> id != null && !id.isBlank())
-                                .distinct()
-                                .collect(Collectors.joining(" "));
-                        if (attAcl.isBlank()) {
-                            attAcl = "public";
+                        String attAcl = "public";
+                        if (includeAcls && !attPermissions.isEmpty()) {
+                            attAcl = attPermissions.stream()
+                                    .map(PermissionRule::identity)
+                                    .filter(id -> id != null && !id.isBlank())
+                                    .distinct()
+                                    .collect(Collectors.joining(" "));
+                            if (attAcl.isBlank()) {
+                                attAcl = "public";
+                            }
+                        }
+
+                        if (includeAcls) {
+                            List<String> attUsers = attPermissions.stream()
+                                    .filter(p -> "user".equalsIgnoreCase(p.identityType()))
+                                    .map(PermissionRule::identity)
+                                    .distinct()
+                                    .toList();
+                            List<String> attGroups = attPermissions.stream()
+                                    .filter(p -> "group".equalsIgnoreCase(p.identityType()))
+                                    .map(PermissionRule::identity)
+                                    .distinct()
+                                    .toList();
+                            if (!attUsers.isEmpty()) {
+                                attMetadata.put(FIELD_APS_IDENTITY_USERS, attUsers);
+                            }
+                            if (!attGroups.isEmpty()) {
+                                attMetadata.put(FIELD_APS_IDENTITY_GROUPS, attGroups);
+                            }
                         }
 
                         Instant attModified = context.lastModified();

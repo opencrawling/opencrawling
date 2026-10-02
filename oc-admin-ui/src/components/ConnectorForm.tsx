@@ -58,6 +58,12 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Alfresco') || className.includes('Aps') || className.includes('aps')) {
     return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
   }
+  if (className.includes('Flowable') || className.includes('flowable')) {
+    return { icon: Layers, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
+  if (className.includes('Camunda') || className.includes('camunda')) {
+    return { icon: Cpu, color: 'text-rose-400', bg: 'bg-rose-400/10', border: 'border-rose-500/20' }
+  }
   if (className.includes('Cmis') || className.includes('cmis')) {
     return { icon: Layers, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
   }
@@ -578,6 +584,18 @@ export default function ConnectorForm() {
                           Include Historic BPMN Variables
                         </label>
                       </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsFlowable"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsFlowable" className="text-sm font-medium cursor-pointer">
+                          Include Identity Links & Zero-Trust ACLs
+                        </label>
+                      </div>
                     </div>
                   )}
 
@@ -651,6 +669,18 @@ export default function ConnectorForm() {
                         />
                         <label htmlFor="includeVariablesCamunda" className="text-sm font-medium cursor-pointer">
                           Include Historic BPMN Variables
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsCamunda"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsCamunda" className="text-sm font-medium cursor-pointer">
+                          Include Identity Links & Zero-Trust ACLs
                         </label>
                       </div>
                     </div>
@@ -745,7 +775,7 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeTasksAps" className="text-sm font-medium cursor-pointer">
-                          Include Tasks & Candidate ACLs
+                          Include Tasks
                         </label>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">
@@ -758,6 +788,18 @@ export default function ConnectorForm() {
                         />
                         <label htmlFor="includeAttachmentsAps" className="text-sm font-medium cursor-pointer">
                           Include Workflow Attachments & Documents
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsAps"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsAps" className="text-sm font-medium cursor-pointer">
+                          Include Identity Links & Zero-Trust ACLs
                         </label>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">

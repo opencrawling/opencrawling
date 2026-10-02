@@ -33,6 +33,7 @@ import {
   FolderOpen,
   AlertCircle,
   Cpu,
+  Layers,
   X,
   HardDrive,
   Database,
@@ -91,8 +92,14 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('filesystem.FileConnector') || className.includes('FileSystem')) {
     return { icon: HardDrive, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
   }
-  if (className.includes('Alfresco')) {
+  if (className.includes('Alfresco') || className.includes('Aps') || className.includes('aps')) {
     return { icon: Server, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.includes('Flowable') || className.includes('flowable')) {
+    return { icon: Layers, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
+  if (className.includes('Camunda') || className.includes('camunda')) {
+    return { icon: Cpu, color: 'text-rose-400', bg: 'bg-rose-400/10', border: 'border-rose-500/20' }
   }
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
@@ -352,6 +359,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           label: 'Process Definition Key / Scan Filter',
           placeholder: 'e.g. invoice-process or / for all',
           description: 'Process definition key filter (e.g. invoice-process) or / to scan all historic process instances.'
+        };
+      case 'org.opencrawling.aps.ApsRepositoryConnector':
+        return {
+          label: 'Workflow Definition Key / Scope Filter',
+          placeholder: 'e.g. loanApplication or / for all',
+          description: 'Workflow definition key to crawl (e.g. loanApplication) or / to scan all historic workflows.'
         };
       case 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector':
         return {
@@ -1070,6 +1083,8 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                             <option value="filesystem">📁 FileSystem</option>
                             <option value="alfresco">🏢 Alfresco</option>
                             <option value="flowable">🔄 Flowable</option>
+                            <option value="camunda">⚡ Camunda</option>
+                            <option value="aps">📋 APS</option>
                             <option value="custom">⚙️ Custom</option>
                           </select>
                         </div>
@@ -1086,7 +1101,9 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                                 iceberg:    [{ name: 'id', type: 'STRING', description: 'Record identifier' }, { name: 'amount', type: 'DOUBLE', description: 'Transaction amount' }, { name: 'region', type: 'STRING', description: 'Region code' }, { name: 'timestamp', type: 'TIMESTAMP', description: 'Event time' }],
                                 filesystem: [{ name: 'filename', type: 'STRING', description: 'File name' }, { name: 'path', type: 'STRING', description: 'File path' }, { name: 'size', type: 'LONG', description: 'File size in bytes' }, { name: 'extension', type: 'STRING', description: 'File extension' }],
                                 alfresco:   [{ name: 'nodeId', type: 'STRING', description: 'Alfresco node UUID' }, { name: 'title', type: 'STRING', description: 'Document title' }, { name: 'author', type: 'STRING', description: 'Document author' }, { name: 'modified', type: 'DATE', description: 'Last modified date' }],
-                                flowable:   [{ name: 'id', type: 'STRING', description: 'Process instance ID' }, { name: 'processDefinitionKey', type: 'STRING', description: 'BPMN process key' }, { name: 'businessKey', type: 'STRING', description: 'Business key' }, { name: 'startTime', type: 'TIMESTAMP', description: 'Start time' }, { name: 'flowable_var_totalAmount', type: 'DOUBLE', description: 'BPMN total amount variable' }],
+                                flowable:   [{ name: 'id', type: 'STRING', description: 'Process instance ID' }, { name: 'processDefinitionKey', type: 'STRING', description: 'BPMN process key' }, { name: 'businessKey', type: 'STRING', description: 'Business key' }, { name: 'startTime', type: 'TIMESTAMP', description: 'Start time' }, { name: 'flowable_var_totalAmount', type: 'DOUBLE', description: 'BPMN total amount variable' }, { name: 'flowable_identity_users', type: 'STRING', description: 'Candidate/authorized users' }],
+                                camunda:    [{ name: 'id', type: 'STRING', description: 'Process instance ID' }, { name: 'processDefinitionKey', type: 'STRING', description: 'BPMN process key' }, { name: 'businessKey', type: 'STRING', description: 'Business key' }, { name: 'startTime', type: 'TIMESTAMP', description: 'Start time' }, { name: 'camunda_var_invoiceNumber', type: 'STRING', description: 'BPMN invoice variable' }, { name: 'camunda_identity_users', type: 'STRING', description: 'Candidate/authorized users' }],
+                                aps:        [{ name: 'id', type: 'STRING', description: 'Process instance ID' }, { name: 'processDefinitionKey', type: 'STRING', description: 'APS workflow definition key' }, { name: 'name', type: 'STRING', description: 'Process instance name' }, { name: 'started', type: 'TIMESTAMP', description: 'Process start date' }, { name: 'aps_identity_users', type: 'STRING', description: 'Authorized users with candidate access' }],
                                 custom:     [{ name: 'id', type: 'STRING', description: 'Identifier' }, { name: 'content', type: 'STRING', description: 'Document content' }],
                               }
                               const res = await narrativizationApi.generate({
