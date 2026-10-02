@@ -251,7 +251,8 @@ public class DoxisRecordFiler {
             return null;
         }
         String folder = path.substring(0, slash);
-        return folder.endsWith(":") || folder.endsWith(":/") ? null : folder;
+        // a file directly under the root ("file:///c.pdf", "s3://bucket" …) has no source folder to file into
+        return folder.endsWith(":") || folder.endsWith(":/") || folder.endsWith("://") ? null : folder;
     }
 
     static String folderTitle(String folder) {
