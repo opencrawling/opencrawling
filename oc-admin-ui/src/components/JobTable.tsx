@@ -53,7 +53,8 @@ import {
   FileText,
   ChevronUp,
   Check,
-  Info
+  Info,
+  Globe
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
 
@@ -101,8 +102,14 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Camunda') || className.includes('camunda')) {
     return { icon: Cpu, color: 'text-rose-400', bg: 'bg-rose-400/10', border: 'border-rose-500/20' }
   }
+  if (className.includes('Cmis') || className.includes('cmis')) {
+    return { icon: Layers, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
+  }
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
+  if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
+    return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
   if (className.includes('VectorOutputConnector') || className.includes('vector')) {
     return { icon: Network, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
@@ -330,11 +337,18 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     const cls = selected ? selected.className : '';
     
     switch (cls) {
+      case 'org.opencrawling.filesystem.FileSystemRepositoryConnector':
       case 'org.opencrawling.crawler.connectors.filesystem.FileConnector':
         return {
           label: 'Root Scan Path',
-          placeholder: 'e.g. /Users/me/documents',
-          description: 'The root folder on the local filesystem to scan.'
+          placeholder: 'e.g. /data/storage or /Users/me/documents',
+          description: 'The root folder on the local or mounted filesystem to scan.'
+        };
+      case 'org.opencrawling.cmis.CmisRepositoryConnector':
+        return {
+          label: 'Root Folder Path / CMIS SQL Query / Folder ID',
+          placeholder: 'e.g. / or SELECT * FROM cmis:document',
+          description: 'Folder path to crawl recursively, CMIS SQL query, or root folder ID.'
         };
       case 'org.opencrawling.alfresco.AlfrescoRepositoryConnector':
         return {

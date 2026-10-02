@@ -26,6 +26,7 @@ import java.util.Map;
 
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -100,6 +101,14 @@ public class CmisDocumentBuilder {
             metadata.put("cmis.secondaryObjectTypeIds", secondaryTypes);
         }
 
+        // Collocated entity references
+        metadata.put("cmis_object_id", List.of(objectId));
+        metadata.put("cmis_repository_id", List.of(repositoryId));
+        String objectType = getPropertyValue(actualNode, "cmis:objectTypeId");
+        if (objectType != null && !objectType.isBlank()) {
+            metadata.put("cmis_object_type", List.of(objectType));
+        }
+
         // Extract all other properties (including custom aspects / properties)
         extractCustomProperties(actualNode, metadata);
 
@@ -107,6 +116,24 @@ public class CmisDocumentBuilder {
         SecurityConfig securityConfig = includeAcls
                 ? CmisSecurityMapper.mapAcl(actualNode.path("acl"))
                 : SecurityConfig.createPublic();
+
+        if (includeAcls && securityConfig != null && securityConfig.permissions() != null) {
+            List<String> allowedUsers = new ArrayList<>();
+            List<String> allowedGroups = new ArrayList<>();
+            for (PermissionRule rule : securityConfig.permissions()) {
+                if ("user".equalsIgnoreCase(rule.identityType())) {
+                    allowedUsers.add(rule.identity());
+                } else if ("group".equalsIgnoreCase(rule.identityType())) {
+                    allowedGroups.add(rule.identity());
+                }
+            }
+            if (!allowedUsers.isEmpty()) {
+                metadata.put("cmis_identity_users", List.of(String.join(",", allowedUsers)));
+            }
+            if (!allowedGroups.isEmpty()) {
+                metadata.put("cmis_identity_groups", List.of(String.join(",", allowedGroups)));
+            }
+        }
 
         return new RepositoryDocument(
             docId,
