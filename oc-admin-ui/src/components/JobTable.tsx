@@ -338,9 +338,9 @@ export default function JobTable({ setActiveView }: JobTableProps) {
         };
       case 'org.opencrawling.alfresco.AlfrescoRepositoryConnector':
         return {
-          label: 'Crawl Folder Path / Node ID / CMIS Query',
-          placeholder: 'e.g. -root-, /Company Home/Shared, or a specific Node UUID',
-          description: 'Define the starting location in Alfresco. Use -root- to scan the whole repository, or provide a folder path or node UUID.'
+          label: 'Folder Path / Node ID / AFTS Query',
+          placeholder: "e.g. /Company Home/Sites, -root-, or TYPE:'cm:content' AND PATH:'/app:company_home//*'",
+          description: "Scanning entry point. Provide a folder path, node UUID, or full AFTS search query (e.g. TYPE:'cm:content')."
         };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {

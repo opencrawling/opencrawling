@@ -170,8 +170,45 @@ public class JobController {
                         int batchSize = 100;
                         try {
                             batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
-                        } catch (Exception e) {}
-                        resolvedConnector = new org.opencrawling.alfresco.AlfrescoRepositoryConnector(url, username, password, batchSize);
+                        } catch (Exception ignored) {}
+                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
+                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
+                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
+                        String siteId = connConfig.configuration().getOrDefault("siteId", "");
+                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
+                        String excludedFoldersStr = connConfig.configuration().getOrDefault("excludedFolders", "Data Dictionary");
+                        java.util.Set<String> excludedFolders = java.util.Arrays.stream(excludedFoldersStr.split(","))
+                                .map(String::trim)
+                                .filter(s -> !s.isEmpty())
+                                .collect(java.util.stream.Collectors.toSet());
+                        String searchQuery = connConfig.configuration().getOrDefault("searchQuery", "TYPE:'cm:content'");
+                        String queryLanguage = connConfig.configuration().getOrDefault("queryLanguage", "afts");
+                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
+                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
+                        long maxContentSizeBytes = 52428800L;
+                        try {
+                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
+                        } catch (Exception ignored) {}
+                        String mimeTypeFilterStr = connConfig.configuration().getOrDefault("mimeTypeFilter", "");
+                        java.util.Set<String> mimeTypeFilter = java.util.Arrays.stream(mimeTypeFilterStr.split(","))
+                                .map(String::trim)
+                                .filter(s -> !s.isEmpty())
+                                .collect(java.util.stream.Collectors.toSet());
+                        int timeoutSeconds = 30;
+                        try {
+                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
+                        } catch (Exception ignored) {}
+
+                        resolvedConnector = new org.opencrawling.alfresco.AlfrescoRepositoryConnector(
+                                url, username, password, batchSize,
+                                org.opencrawling.alfresco.AlfrescoCrawlMode.fromString(crawlModeStr),
+                                rootFolderPath, rootFolderId, siteId,
+                                includeSubfolders, excludedFolders,
+                                searchQuery, queryLanguage,
+                                includeAcls, includeContentStream,
+                                maxContentSizeBytes, mimeTypeFilter,
+                                timeoutSeconds
+                        );
                     } else if (connConfig.className().contains("Iceberg")) {
                         String catalogType = connConfig.configuration().getOrDefault("catalogType", "in-memory");
                         String catalogUri = connConfig.configuration().getOrDefault("catalogUri", "");
