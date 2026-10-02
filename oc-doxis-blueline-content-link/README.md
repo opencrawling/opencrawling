@@ -82,6 +82,5 @@ The unit tests cover compound-id → UUID extraction, value typing and service r
 ## Known Limitations
 
 - New *versions* of a content-link document are not created. A re-crawl updates the descriptors and keeps the link. If the source file moves, delete the document and recreate it.
-- Filing into a record (e-file) is not applied to content-link documents yet.
 - Content-link creation goes through one Blueline session per writer, with calls serialized. Throughput tuning is still open with SER.
 - Link and lifecycle semantics are based on our tests on 14.4.1; SER's confirmation is pending.
