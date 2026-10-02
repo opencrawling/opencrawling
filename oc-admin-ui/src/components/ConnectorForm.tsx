@@ -508,7 +508,7 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
                           <option value="folder">Folder Tree Traversal</option>
-                          <option value="query">Search API Query (AFTS / CMISQL / Lucene)</option>
+                          <option value="query">Search API Query (AFTS / CMIS SQL / Lucene)</option>
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -519,7 +519,7 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
                           <option value="afts">AFTS (Alfresco Full Text Search)</option>
-                          <option value="cmis">CMISQL</option>
+                          <option value="cmis">CMIS SQL</option>
                           <option value="lucene">Lucene</option>
                         </select>
                       </div>
@@ -1073,7 +1073,7 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
                           <option value="folder">Folder Tree Traversal</option>
-                          <option value="query">CMISQL Query</option>
+                          <option value="query">CMIS SQL Query</option>
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -1106,7 +1106,7 @@ export default function ConnectorForm() {
                         />
                       </div>
                       <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">CMISQL Query (For Query Mode)</label>
+                        <label className="text-sm font-medium">CMIS SQL Query (For Query Mode)</label>
                         <input 
                           {...register('configuration.cmisQuery')}
                           placeholder="SELECT * FROM cmis:document"
