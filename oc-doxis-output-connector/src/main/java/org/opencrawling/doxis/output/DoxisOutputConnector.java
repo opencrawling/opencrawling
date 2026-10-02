@@ -246,7 +246,9 @@ public class DoxisOutputConnector implements OutputConnector {
                 documentId = created.path("uuid").asText();
             }
             if (properties.applySecurityAcls()) {
-                applyPermissions(documentId, document);
+                String typeLabel = plan.strategy() == ContentStrategy.CONTENT_LINK && properties.contentLink().documentType() != null
+                        ? properties.contentLink().documentType() : properties.documentType();
+                applyPermissions(documentId, document, typeLabel);
             }
             try {
                 verify(documentId, plan);
@@ -434,7 +436,7 @@ public class DoxisOutputConnector implements OutputConnector {
                 ? null : values.getFirst().strip();
     }
 
-    private void applyPermissions(String documentId, RepositoryDocument document) throws IOException, InterruptedException {
+    private void applyPermissions(String documentId, RepositoryDocument document, String typeLabel) throws IOException, InterruptedException {
         try {
             client.addPermissions(properties.repository(), documentId, aclMapper.aces(document.security()));
         } catch (DoxisApiException e) {
@@ -443,7 +445,7 @@ public class DoxisOutputConnector implements OutputConnector {
             }
             // The document type's security object type does not allow instance-level rights: the type's ACL applies.
             log.warn("Document type '{}' does not allow per-document permissions; source ACLs of {} were not applied.",
-                    properties.documentType(), document.id());
+                    typeLabel, document.id());
         }
     }
 

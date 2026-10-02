@@ -29,6 +29,8 @@ This module is **not part of the default build**. The SER Doxis client libraries
   - thumbnails and other additional items off;
   - no ML model;
   - *File from file system → File deletion → Delete files* = **False**.
+- **Note on "Creation of representations":** the Java API reports a conversion *type* (`PDF`, `PDFA` or `TIFF`; there is no "none"). That is only the target format. Whether a rendition is ever produced depends on conversion rules for the class in Rendition Server; with no rules, nothing reads the file.
+- **Per-document permissions:** if the class's security object type does not allow instance rights, the REST `POST …/permissions` returns `SECU0050`. The connector then logs a warning and the class ACL applies.
 - **Linked files are opened by whoever opens the document.** The CSB does not stream linked content (REST `GET …/contentObjects/{id}` returns `SEDNA0104`). UNC shares must be reachable by the users' clients.
 
 ## Build & Install
@@ -75,7 +77,7 @@ An explicit `doxisContentLink` metadata value overrides the prefix mapping. The 
 mvn -Pdoxis-blueline test -pl oc-doxis-blueline-content-link
 ```
 
-The unit tests cover compound-id → UUID extraction, value typing and service registration. The full path was verified live on 2026-10-02 against the SER training CSB (14.4.1), `D_TEXTER` / `TX_MigratedDocument`, with a UNC link to `\\fileserver\oc-link-test\test.txt`. A 5 TB `sizeInBytes` made `AUTO` link the file; then create, verify, a re-crawl updating descriptors, and logical plus physical delete all succeeded. The external file survived the deletes.
+The unit tests cover compound-id → UUID extraction, value typing and service registration. The full path was verified live on 2026-10-02 against the SER training CSB (14.4.1): `D_TEXTER` / `TX_MigratedDocument`, and then with linked files routed to the dedicated class `TX_LargeExternalDocument` (`content-link.document-type`). Both runs used a UNC link to `\\fileserver\oc-link-test\test.txt`. A 5 TB `sizeInBytes` made `AUTO` link the file; then create, verify, a re-crawl updating descriptors, and logical plus physical delete all succeeded. The external file survived the deletes.
 
 ## Known Limitations
 
