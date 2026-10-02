@@ -85,11 +85,14 @@ spring:
       doxis:
         base-url: "http://texter.exploredoxis.com:8080/restws/publicws/rest/api/v1"
         customer-name: faststarter
-        username: Supervisor
+        username: Supervisor2
         password: "${DOXIS_PASSWORD}"
         role: admins
         repository: D_TEXTER
-        document-type: BaseDocument
+        document-type: TX_MigratedDocument            # or its UUID 271228ee-0f1c-4169-878e-b9d7a1b12525
+        external-id-attribute: ObjectNumberExternal   # CQL field OBJECTNUMBER2
+        title-attribute: ObjectName
+        reference-attribute: URL
         attribute-mapping:
           author: ObjectAuthors
           lastModified: ObjectDate
