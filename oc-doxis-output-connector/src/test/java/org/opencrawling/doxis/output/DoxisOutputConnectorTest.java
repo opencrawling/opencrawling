@@ -79,7 +79,7 @@ class DoxisOutputConnectorTest {
     private DoxisOutputConnector connector(ConflictResolution conflict, DeleteMode deleteMode, ContentStrategy strategy, String uriPrefix) {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
                 null, null, null, null, null, conflict, deleteMode, true,
-                new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true),
+                new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true, null),
                 new Locator(null, uriPrefix, ""), null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         return new DoxisOutputConnector(client, props, schema,
@@ -224,6 +224,33 @@ class DoxisOutputConnectorTest {
         verify(client).addPermissions(eq(REPO), eq("doc-0001"), aces.capture());
         assertEquals(List.of(Map.of("organizationalElementId", "group-contractors", "permission", "VIEW_DOCUMENT_CONTENTS",
                 "authorizationVariant", "DENY")), aces.getValue());
+    }
+
+    @Test
+    void unchangedReCrawlSkipsNewVersionWhenChangeMarkerMatches() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+        String marker = "2026-09-30T08:00:00Z|17";
+        JsonNode version = new ObjectMapper().readTree("{\"versionNumber\":\"1\",\"currentVersion\":true,\"attributes\":["
+                + "{\"attributeDefinitionUUID\":\"996fcb9f-d7cb-4e18-b8b9-1b02e7fd68cb\",\"values\":[\"" + marker + "\"]}]}");
+        JsonNode amended = new ObjectMapper().readTree(Fixtures.text("versions.json").replace("\"length\":17", "\"length\":26"))
+                .path("versions").get(0);
+        // calls: first send -> change check; second send -> change check, then read-back verification
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(version), List.of(version), List.of(amended));
+        DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor2", "pw", "admins", REPO,
+                null, null, null, null, null, null, null, true,
+                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, "URL"), null, null, 0, 10);
+        DoxisSchema schema = new DoxisSchema(client);
+        DoxisOutputConnector withMarker = new DoxisOutputConnector(client, props, schema,
+                new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
+                new DoxisDocumentMapper(props, schema), new DoxisAclMapper(schema));
+
+        withMarker.send(document(file.toUri().toString(), Map.of())).block();
+        verify(client, never()).addVersion(any(), any(), any(), any());
+
+        Files.writeString(file, "%PDF-1.7 contract, amended");
+        withMarker.send(document(file.toUri().toString(), Map.of())).block();
+        verify(client).addVersion(eq(REPO), eq("doc-0001"), anyMap(), notNull());
     }
 
     @Test

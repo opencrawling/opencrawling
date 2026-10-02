@@ -80,20 +80,26 @@ public record DoxisOutputProperties(
         AUTO
     }
 
+    /**
+     * @param changeMarkerAttribute optional descriptor that stores {@code <lastModified>|<length>} of the source; when set, a
+     *                              re-crawl whose marker is unchanged does not create a new version
+     */
     public record Content(
         @DefaultValue("AUTO") ContentStrategy strategy,
         @DefaultValue("2147483648") long uploadMaxBytes,
         @DefaultValue("REFERENCE_ONLY") ContentStrategy fallback,
-        @DefaultValue("true") boolean verify
+        @DefaultValue("true") boolean verify,
+        String changeMarkerAttribute
     ) {
         public Content {
             if (strategy == null) strategy = ContentStrategy.AUTO;
             if (uploadMaxBytes <= 0) uploadMaxBytes = DoxisConstants.DEFAULT_UPLOAD_MAX_BYTES;
             if (fallback == null || fallback == ContentStrategy.AUTO) fallback = ContentStrategy.REFERENCE_ONLY;
+            if (changeMarkerAttribute != null && changeMarkerAttribute.isBlank()) changeMarkerAttribute = null;
         }
 
         public static Content defaults() {
-            return new Content(ContentStrategy.AUTO, DoxisConstants.DEFAULT_UPLOAD_MAX_BYTES, ContentStrategy.REFERENCE_ONLY, true);
+            return new Content(ContentStrategy.AUTO, DoxisConstants.DEFAULT_UPLOAD_MAX_BYTES, ContentStrategy.REFERENCE_ONLY, true, null);
         }
     }
 
