@@ -43,6 +43,7 @@ public class DoxisSchema {
     private volatile Map<String, Set<String>> allowedMimeTypesByType;
     private volatile Map<String, String> principalsByName;
     private volatile Set<String> mimeTypes;
+    private volatile Map<String, String> recordTypeIdsByName;
 
     public DoxisSchema(DoxisClient client) {
         this.client = client;
@@ -142,6 +143,38 @@ public class DoxisSchema {
     }
 
     /**
+     * Resolves an e-file (record) class given by UUID or name ({@code schemaMetaType RECORD}).
+     */
+    public String recordTypeId(String nameOrId) throws IOException, InterruptedException {
+        Map<String, String> types = recordTypeIdsByName;
+        if (types == null) {
+            lock.lock();
+            try {
+                if (recordTypeIdsByName == null) {
+                    Map<String, String> map = new LinkedHashMap<>();
+                    for (JsonNode node : client.listInformationObjectTypes()) {
+                        if ("RECORD".equals(node.path("schemaMetaType").asText())) {
+                            map.put(node.path("name").asText().toLowerCase(Locale.ROOT), node.path("uuid").asText());
+                        }
+                    }
+                    recordTypeIdsByName = map;
+                }
+                types = recordTypeIdsByName;
+            } finally {
+                lock.unlock();
+            }
+        }
+        String byName = types.get(nameOrId.toLowerCase(Locale.ROOT));
+        if (byName != null) {
+            return byName;
+        }
+        if (types.containsValue(nameOrId)) {
+            return nameOrId;
+        }
+        throw new IOException("Doxis e-file (record) class '" + nameOrId + "' not found (available: " + types.keySet() + ")");
+    }
+
+    /**
      * Drops cached schema and organisation data (e.g. after a schema change in cubeDesigner).
      */
     public void invalidate() {
@@ -150,6 +183,7 @@ public class DoxisSchema {
         allowedMimeTypesByType = null;
         principalsByName = null;
         mimeTypes = null;
+        recordTypeIdsByName = null;
     }
 
     private Map<String, Attribute> attributes() throws IOException, InterruptedException {

@@ -45,7 +45,7 @@ class DoxisDocumentMapperTest {
 
     private DoxisDocumentMapper mapper(String referenceAttribute, Map<String, String> mapping) {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", "D_TEXTER",
-                null, null, null, referenceAttribute, mapping, null, null, true, null, null, null, null, 0, 10);
+                null, null, null, referenceAttribute, mapping, null, null, true, null, null, null, null, null, 0, 10);
         return new DoxisDocumentMapper(props, schema);
     }
 

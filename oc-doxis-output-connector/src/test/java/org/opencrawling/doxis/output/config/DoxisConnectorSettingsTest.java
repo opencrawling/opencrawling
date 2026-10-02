@@ -47,7 +47,12 @@ class DoxisConnectorSettingsTest {
                 Map.entry("doxisContentLinkClientLibDir", "/opt/doxis-client-lib"),
                 Map.entry("doxisContentLinkUriPrefix", "file:///mnt/archive/"),
                 Map.entry("doxisContentLinkPrefix", "\\\\fs\\archive\\"),
-                Map.entry("doxisContentLinkType", "url")));
+                Map.entry("doxisContentLinkType", "url"),
+                Map.entry("doxisFilingMode", "source_folder"),
+                Map.entry("doxisFilingRecordClass", "TX_SourceFolder"),
+                Map.entry("doxisSecurityMode", "RECORD"),
+                Map.entry("doxisSecurityStrict", "true"),
+                Map.entry("doxisSecurityRecordAclSync", "ADDITIVE")));
 
         assertEquals("faststarter", props.customerName());
         assertEquals("admins", props.role());
@@ -70,6 +75,13 @@ class DoxisConnectorSettingsTest {
         assertEquals("file:///mnt/archive/", props.contentLink().uriPrefix());
         assertEquals(org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.URL, props.contentLink().linkType());
         assertEquals("doxisContentLink", props.contentLink().metadataKey());
+        assertEquals(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, props.filing().mode());
+        assertEquals("TX_SourceFolder", props.filing().recordClass());
+        assertEquals(DoxisOutputProperties.FilingMethod.PRIMARY_PARENT, props.filing().method());
+        // apply-security-acls=false (set above) wins over the mode
+        assertEquals(DoxisOutputProperties.SecurityMode.NONE, props.security().mode());
+        assertTrue(props.security().strict());
+        assertEquals(DoxisOutputProperties.RecordAclSync.ADDITIVE, props.security().recordAclSync());
     }
 
     @Test
@@ -82,5 +94,7 @@ class DoxisConnectorSettingsTest {
         assertEquals(ConflictResolution.NEW_VERSION, props.conflictResolution());
         assertEquals(DeleteMode.LOGICAL, props.deleteMode());
         assertTrue(props.applySecurityAcls());
+        assertEquals(DoxisOutputProperties.SecurityMode.DOCUMENT, props.security().mode());
+        assertEquals(DoxisOutputProperties.FilingMode.METADATA, props.filing().mode());
     }
 }

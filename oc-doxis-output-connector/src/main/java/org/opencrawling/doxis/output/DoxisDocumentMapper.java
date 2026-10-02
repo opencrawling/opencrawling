@@ -81,12 +81,28 @@ public class DoxisDocumentMapper {
      * a deterministic {@code h:}-prefixed SHA-256 prefix so that lookups keep working.
      */
     public String externalIdValue(String documentId) throws IOException, InterruptedException {
-        DoxisSchema.Attribute attribute = schema.attribute(properties.externalIdAttribute());
+        return fitValue(schema.attribute(properties.externalIdAttribute()), documentId);
+    }
+
+    /**
+     * {@code value} if it fits the descriptor, else a deterministic {@code h:}-prefixed SHA-256 prefix (for lookup keys).
+     */
+    public String fitValue(DoxisSchema.Attribute attribute, String value) {
+        return fitValue(attribute, value, true);
+    }
+
+    /**
+     * Fits {@code value} into the descriptor's length: hashed (lookup keys) or truncated (display values).
+     */
+    public String fitValue(DoxisSchema.Attribute attribute, String value, boolean hash) {
         int max = attribute.length() > 0 ? attribute.length() : Integer.MAX_VALUE;
-        if (documentId.length() <= max) {
-            return documentId;
+        if (value.length() <= max) {
+            return value;
         }
-        String hex = sha256Hex(documentId);
+        if (!hash) {
+            return value.substring(0, max);
+        }
+        String hex = sha256Hex(value);
         return "h:" + hex.substring(0, Math.min(hex.length(), Math.max(8, max - 2)));
     }
 

@@ -2154,6 +2154,81 @@ export default function ConnectorForm() {
                       </div>
 
                       <div className="space-y-2">
+                        <label className="text-sm font-medium">Filing Mode</label>
+                        <select
+                          {...register('configuration.doxisFilingMode')}
+                          defaultValue="METADATA"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="NONE">None</option>
+                          <option value="FIXED">Fixed e-file (Record ID)</option>
+                          <option value="METADATA">E-file ID from metadata (doxisRecordId)</option>
+                          <option value="SOURCE_FOLDER">One e-file per source folder</option>
+                          <option value="KEY_METADATA">One e-file per metadata value</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Which e-file a new document is filed into; keyed modes find or create the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file Class</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordClass')}
+                          placeholder="TX_SourceFolder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">E-file (record) class used to auto-create e-files.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file Key Descriptor</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordKeyAttribute')}
+                          placeholder="ObjectNumberExternal"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Descriptor that identifies an e-file (folder path or metadata value).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Key Metadata Field</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordKeyMetadataKey')}
+                          placeholder="customerId"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">KEY_METADATA: metadata field whose value selects the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Filing Method</label>
+                        <select
+                          {...register('configuration.doxisFilingMethod')}
+                          defaultValue="PRIMARY_PARENT"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="PRIMARY_PARENT">Primary parent (uploads + content links)</option>
+                          <option value="RELATIONSHIP">Relationship in create (uploads, folder node)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How documents are attached to the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisFilingAutoCreate"
+                            {...register('configuration.doxisFilingAutoCreate')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisFilingAutoCreate" className="text-sm font-medium cursor-pointer">
+                            Auto-create E-files
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Create the e-file when no e-file with the key exists.</p>
+                      </div>
+
+                      <div className="space-y-2">
                         <label className="text-sm font-medium">Record (e-file) ID</label>
                         <input
                           {...register('configuration.doxisFilingRecordId')}
@@ -2185,6 +2260,66 @@ export default function ConnectorForm() {
 
                       <div className="md:col-span-2 pt-2 border-t border-border">
                         <h4 className="text-sm font-semibold">Lifecycle & Security</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Security Mode</label>
+                        <select
+                          {...register('configuration.doxisSecurityMode')}
+                          defaultValue="DOCUMENT"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="DOCUMENT">Per document</option>
+                          <option value="RECORD">On the e-file (documents inherit)</option>
+                          <option value="DOCUMENT_AND_RECORD">Both</option>
+                          <option value="NONE">None (class ACL)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Where source permissions are applied. RECORD needs a filing mode and Pass down permissions on the document class.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file ACL Sync</label>
+                        <select
+                          {...register('configuration.doxisSecurityRecordAclSync')}
+                          defaultValue="CREATE_ONLY"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="CREATE_ONLY">When the e-file is created</option>
+                          <option value="ADDITIVE">Add missing entries from later documents</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How permissions of existing e-files are maintained.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisSecurityStrict"
+                            {...register('configuration.doxisSecurityStrict')}
+                            defaultChecked={false}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisSecurityStrict" className="text-sm font-medium cursor-pointer">
+                            Strict Permissions
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Fail (and roll back) a document whose permissions cannot be applied.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisSecurityRemoveStale"
+                            {...register('configuration.doxisSecurityRemoveStale')}
+                            defaultChecked={false}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisSecurityRemoveStale" className="text-sm font-medium cursor-pointer">
+                            Remove Stale Permissions
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Per-document mode: remove view/update/version permissions that no longer exist at the source.</p>
                       </div>
 
                       <div className="space-y-2">

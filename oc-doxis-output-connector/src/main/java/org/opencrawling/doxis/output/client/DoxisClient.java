@@ -189,6 +189,13 @@ public class DoxisClient implements AutoCloseable {
         return list(get("List mime types", "/mimeTypes"));
     }
 
+    /**
+     * {@code GET /informationObjectTypes}: all object types incl. record (e-file) classes ({@code schemaMetaType RECORD}).
+     */
+    public List<JsonNode> listInformationObjectTypes() throws IOException, InterruptedException {
+        return list(get("List information object types", "/informationObjectTypes"));
+    }
+
     public List<JsonNode> listUsers() throws IOException, InterruptedException {
         return list(get("List users", "/users"));
     }
@@ -297,6 +304,77 @@ public class DoxisClient implements AutoCloseable {
         String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions/" + enc(versionNr)
                 + "/attributes";
         execute("Update attributes of " + documentId, () -> jsonRequest(path, "PATCH", attributes, true), true, true);
+    }
+
+    /**
+     * {@code POST /records/search} with a CQL statement; returns record UUIDs (search result closed).
+     */
+    public List<String> searchRecordIds(String cqlStatement) throws IOException, InterruptedException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("cqlStatement", cqlStatement);
+        params.put("currentVersionOnly", true);
+        params.put("fetchResultLimitation", SEARCH_LIMIT);
+        params.put("logicallyDeletedFilter", "NON_DELETED_OBJECTS");
+        JsonNode result = execute("Search records", () -> jsonRequest("/records/search", "POST", params, true), true, true);
+        List<String> ids = new ArrayList<>();
+        for (JsonNode hit : result.path("searchHits")) {
+            String id = hit.path("uuid").asText(null);
+            if (id != null && !ids.contains(id)) {
+                ids.add(id);
+            }
+        }
+        String searchId = result.path("searchId").asText(null);
+        if (searchId != null && !searchId.isBlank() && !"null".equals(searchId)) {
+            try {
+                execute("Close record search " + searchId, () -> plainRequest("/records/searchResults/" + enc(searchId), "DELETE"), true, true);
+            } catch (IOException e) {
+                log.debug("Closing Doxis record search {} failed: {}", searchId, e.getMessage());
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * {@code POST /dmsRepositories/{repo}/records} ({@code RecordParamsBase}); returns the created record (e-file).
+     */
+    public JsonNode createRecord(String repository, Map<String, Object> recordParams) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/records";
+        return execute("Create record in " + repository, () -> jsonRequest(path, "POST", recordParams, true), true, true);
+    }
+
+    /**
+     * {@code POST …/records/{uuid}/permissions} with a list of {@code RecordAceParams}.
+     */
+    public void addRecordPermissions(String repository, String recordId, List<Map<String, Object>> aces)
+            throws IOException, InterruptedException {
+        if (aces.isEmpty()) {
+            return;
+        }
+        String path = "/dmsRepositories/" + enc(repository) + "/records/" + enc(recordId) + "/permissions";
+        execute("Add permissions to record " + recordId, () -> jsonRequest(path, "POST", aces, true), true, true);
+    }
+
+    public List<JsonNode> getRecordPermissions(String repository, String recordId) throws IOException, InterruptedException {
+        return list(get("Get permissions of record " + recordId, "/dmsRepositories/" + enc(repository) + "/records/"
+                + enc(recordId) + "/permissions"));
+    }
+
+    /**
+     * {@code PUT …/documents/{uuid}/primaryParent}: files the document into the record (e-file) {@code parentId}.
+     */
+    public void setDocumentPrimaryParent(String repository, String documentId, String parentId) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/primaryParent";
+        execute("Set primary parent of " + documentId, () -> jsonRequest(path, "PUT", parentId, true), true, true);
+    }
+
+    /**
+     * {@code DELETE …/documents/{uuid}/permissions/{permission}/organizationalElements/{orgElem}/authorizationVariants/{variant}}.
+     */
+    public void deleteDocumentPermission(String repository, String documentId, String permission, String organizationalElementId,
+                                         String authorizationVariant) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/permissions/" + enc(permission)
+                + "/organizationalElements/" + enc(organizationalElementId) + "/authorizationVariants/" + enc(authorizationVariant);
+        executeTolerating404("Remove permission " + permission + " of " + documentId, () -> plainRequest(path, "DELETE"));
     }
 
     /**

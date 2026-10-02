@@ -80,7 +80,7 @@ class DoxisOutputConnectorTest {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
                 null, null, null, null, null, conflict, deleteMode, true,
                 new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true, null),
-                new Locator(null, uriPrefix, ""), null, null, 0, 10);
+                new Locator(null, uriPrefix, ""), null, null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         return new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -179,7 +179,7 @@ class DoxisOutputConnectorTest {
     void mimeTypeOutsideDocumentTypeAllowListIsRejectedBeforeWriting() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
-                "DocumentTemplate", null, null, null, null, null, null, true, null, null, null, null, 0, 10);
+                "DocumentTemplate", null, null, null, null, null, null, true, null, null, null, null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         DoxisOutputConnector templates = new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -192,22 +192,138 @@ class DoxisOutputConnectorTest {
         verify(client, never()).createDocument(any(), any(), any(), any());
     }
 
+    private DoxisOutputConnector filingConnector(DoxisOutputProperties.Filing filing, DoxisOutputProperties.Security security) {
+        DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "crawler", "pw", "admins", REPO,
+                null, null, null, null, null, null, null, true, new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, null),
+                null, filing, security, null, 0, 10);
+        DoxisSchema schema = new DoxisSchema(client);
+        return new DoxisOutputConnector(client, props, schema, new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
+                new DoxisDocumentMapper(props, schema), new DoxisAclMapper(schema));
+    }
+
+    private static DoxisOutputProperties.Filing filing(DoxisOutputProperties.FilingMode mode, String keyMetadata,
+                                                       DoxisOutputProperties.FilingMethod method) {
+        return new DoxisOutputProperties.Filing(mode, null, null, null, null, null, keyMetadata, "TX_SourceFolder", "ObjectNumber",
+                "ObjectName", true, method);
+    }
+
+    private static DoxisOutputProperties.Security security(DoxisOutputProperties.SecurityMode mode, boolean strict, boolean removeStale) {
+        return new DoxisOutputProperties.Security(mode, strict, removeStale, DoxisOutputProperties.RecordAclSync.CREATE_ONLY);
+    }
+
+    @Test
+    void newDocumentIsFiledIntoTheRecordNamedInMetadataViaPrimaryParent() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+
+        connector().send(document(file.toUri().toString(), Map.of("doxisRecordId", List.of("efile-4711")))).block();
+
+        verify(client).createDocument(eq(REPO), anyMap(), isNull(), any());
+        verify(client).setDocumentPrimaryParent(REPO, "doc-0001", "efile-4711");
+    }
+
     @Test
     @SuppressWarnings("unchecked")
-    void newDocumentIsFiledIntoTheRecordNamedInMetadata() throws Exception {
+    void relationshipMethodFilesInTheCreateRequestIncludingFolderNode() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
         when(client.getRecord(REPO, "efile-4711")).thenReturn(new ObjectMapper().readTree(
                 "{\"uuid\":\"efile-4711\",\"contentRepositoryUUID\":\"repo-uuid\",\"instanceDate\":\"2026-09-01T10:00:00.000+02:00\"}"));
 
-        connector().send(document(file.toUri().toString(), Map.of("doxisRecordId", List.of("efile-4711"),
-                "doxisFolderNodeId", List.of("node-contracts")))).block();
+        filingConnector(filing(DoxisOutputProperties.FilingMode.METADATA, null, DoxisOutputProperties.FilingMethod.RELATIONSHIP),
+                DoxisOutputProperties.Security.defaults())
+                .send(document(file.toUri().toString(), Map.of("doxisRecordId", List.of("efile-4711"),
+                        "doxisFolderNodeId", List.of("node-contracts")))).block();
 
         ArgumentCaptor<Map<String, Object>> relationship = ArgumentCaptor.forClass(Map.class);
         verify(client).createDocument(eq(REPO), anyMap(), relationship.capture(), any());
         assertEquals(Map.of("sourceObjectUUID", "efile-4711", "sourceFolderNodeUUID", "node-contracts",
                 "sourceContentRepositoryUUID", "repo-uuid", "sourceObjectInstanceDate", "2026-09-01T10:00:00.000+02:00",
                 "sourceObjectType", "RECORD"), relationship.getValue());
+        verify(client, never()).setDocumentPrimaryParent(any(), any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void sourceFolderModeAutoCreatesOneEfilePerFolderWithRecordPermissions() throws Exception {
+        Path folder = Files.createDirectories(tmp.resolve("contracts"));
+        Path first = Files.writeString(folder.resolve("a.pdf"), "%PDF a");
+        Path second = Files.writeString(folder.resolve("b.pdf"), "%PDF b");
+        String folderUri = first.toUri().toString().substring(0, first.toUri().toString().lastIndexOf('/'));
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.listInformationObjectTypes()).thenReturn(List.of(new ObjectMapper().readTree(
+                "{\"name\":\"TX_SourceFolder\",\"uuid\":\"rt-1\",\"schemaMetaType\":\"RECORD\"}")));
+        when(client.searchRecordIds(anyString())).thenReturn(List.of());
+        when(client.createRecord(eq(REPO), anyMap())).thenReturn(new ObjectMapper().readTree("{\"uuid\":\"rec-new\"}"));
+        when(client.getVersions(eq(REPO), anyString())).thenReturn(versions("versions.json"));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(new ObjectMapper().readTree(
+                Fixtures.text("versions.json").replace("\"length\":17", "\"length\":6")).path("versions").get(0)));
+
+        DoxisOutputConnector c = filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null,
+                DoxisOutputProperties.FilingMethod.PRIMARY_PARENT), security(DoxisOutputProperties.SecurityMode.RECORD, false, false));
+        c.send(document(first.toUri().toString(), Map.of())).block();
+        c.send(document(second.toUri().toString(), Map.of())).block();
+
+        ArgumentCaptor<Map<String, Object>> record = ArgumentCaptor.forClass(Map.class);
+        verify(client, times(1)).createRecord(eq(REPO), record.capture());
+        assertEquals("rt-1", record.getValue().get("compoundEntityTypeUUID"));
+        assertTrue(record.getValue().toString().contains("contracts"));
+        verify(client, times(1)).searchRecordIds(anyString());
+        ArgumentCaptor<List<Map<String, Object>>> aces = ArgumentCaptor.forClass(List.class);
+        verify(client).addRecordPermissions(eq(REPO), eq("rec-new"), aces.capture());
+        assertTrue(aces.getValue().stream().allMatch(a -> a.get("permission").toString().contains("FOLDER")));
+        verify(client, times(2)).setDocumentPrimaryParent(eq(REPO), anyString(), eq("rec-new"));
+        verify(client, never()).addPermissions(any(), any(), any());
+        assertNotNull(folderUri);
+    }
+
+    @Test
+    void keyMetadataModeReusesExistingEfile() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        when(client.searchRecordIds("SELECT * FROM D_TEXTER WHERE OBJECTNUMBER = 'CUST-4711'")).thenReturn(List.of("rec-9"));
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.KEY_METADATA, "customerId", DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                security(DoxisOutputProperties.SecurityMode.RECORD, false, false))
+                .send(document(file.toUri().toString(), Map.of("customerId", List.of("CUST-4711")))).block();
+
+        verify(client, never()).createRecord(any(), any());
+        verify(client).setDocumentPrimaryParent(REPO, "doc-0001", "rec-9");
+    }
+
+    @Test
+    void strictSecurityRollsBackWhenPermissionsCannotBeApplied() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
+                .when(client).addPermissions(eq(REPO), eq("doc-0001"), anyList());
+
+        RuntimeException e = assertThrows(RuntimeException.class, () -> filingConnector(
+                filing(DoxisOutputProperties.FilingMode.NONE, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                security(DoxisOutputProperties.SecurityMode.DOCUMENT, true, false))
+                .send(document(file.toUri().toString(), Map.of())).block());
+
+        assertTrue(e.getCause().getMessage().contains("security.strict"));
+        verify(client).deleteDocumentPhysically(REPO, "doc-0001");
+    }
+
+    @Test
+    void removeStaleDeletesOnlyManagedPermissionsNoLongerAtTheSource() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+        ObjectMapper om = new ObjectMapper();
+        when(client.getPermissions(REPO, "doc-0001")).thenReturn(List.of(
+                om.readTree("{\"organizationalElementId\":\"user-elena\",\"permissionName\":\"VIEW_DOCUMENT_CONTENTS\",\"authorizationVariant\":\"GRANT\"}"),
+                om.readTree("{\"organizationalElementId\":\"group-old\",\"permissionName\":\"VIEW_DOCUMENT_CONTENTS\",\"authorizationVariant\":\"GRANT\"}"),
+                om.readTree("{\"organizationalElementId\":\"group-admins\",\"permissionName\":\"DELETE_DOCUMENT\",\"authorizationVariant\":\"GRANT\"}")));
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.NONE, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                security(DoxisOutputProperties.SecurityMode.DOCUMENT, false, true))
+                .send(document(file.toUri().toString(), Map.of())).block();
+
+        verify(client).deleteDocumentPermission(REPO, "doc-0001", "VIEW_DOCUMENT_CONTENTS", "group-old", "GRANT");
+        verify(client, never()).deleteDocumentPermission(eq(REPO), eq("doc-0001"), eq("DELETE_DOCUMENT"), any(), any());
+        verify(client, never()).deleteDocumentPermission(eq(REPO), eq("doc-0001"), any(), eq("user-elena"), any());
     }
 
     @Test
@@ -239,7 +355,7 @@ class DoxisOutputConnectorTest {
         when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(version), List.of(version), List.of(amended));
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "crawler", "pw", "admins", REPO,
                 null, null, null, null, null, null, null, true,
-                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, "URL"), null, null, null, 0, 10);
+                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, "URL"), null, null, null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         DoxisOutputConnector withMarker = new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -256,7 +372,7 @@ class DoxisOutputConnectorTest {
     private DoxisOutputConnector linkConnector(org.opencrawling.doxis.output.content.ContentLinkWriter writer) {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "crawler", "pw", "admins", REPO,
                 null, null, null, null, null, null, null, true,
-                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, null), null, null,
+                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, null), null, null, null,
                 new DoxisOutputProperties.ContentLink("/opt/doxis-client", null, 0, "file:///mnt/archive/", "\\\\fileserver\\archive\\",
                         org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.UNC, null, null), 0, 10);
         DoxisSchema schema = new DoxisSchema(client);

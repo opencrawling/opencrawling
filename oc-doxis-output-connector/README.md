@@ -34,7 +34,28 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    - `deny` denies `VIEW_DOCUMENT_CONTENTS`.
    - Identities resolve to Doxis users (login name or name) or groups; `public` maps to `everybody`.
    - Document types whose security object type forbids per-document rights (`SECU0050`) keep the type's ACL; the connector logs a warning.
-9. **Filing into e-files**: new documents can be filed into a record (e-file / dossier) and optionally a folder node of it, in the same create transaction (`relationshipParams`). Use a fixed `filing.record-id`, or a per-document record id in metadata (`doxisRecordId` / `doxisFolderNodeId`).
+9. **Filing into e-files (records), configurable per use case.**
+
+   `filing.mode` chooses the e-file:
+   - `NONE`
+   - `FIXED`: always `record-id`
+   - `METADATA` (default): the record UUID in `doxisRecordId` metadata
+   - `SOURCE_FOLDER`: one e-file per source folder
+   - `KEY_METADATA`: one e-file per value of `record-key-metadata-key`, e.g. a customer id
+
+   For the keyed modes, the e-file is found by `record-key-attribute` (CQL on `/records/search`). With `auto-create` it is created in `record-class` when missing. Long keys are hashed deterministically.
+
+   `filing.method` attaches the document:
+   - `PRIMARY_PARENT` (default): `PUT …/documents/{uuid}/primaryParent`, for uploads and content links;
+   - `RELATIONSHIP`: `relationshipParams` in the REST create, for uploads only; it supports a folder node (`doxisFolderNodeId` / `folder-node-id`).
+
+   **Security, also configurable** (`security.mode`):
+   - `DOCUMENT`: per-document ACEs (the default; needs instance rights on the document class).
+   - `RECORD`: ACEs on the e-file (`VIEW_FOLDER_CONTENTS`, `UPDATE_FOLDER`, `EDIT_FOLDER_DESCRIPTORS`, DENY view). Documents inherit them when the document class has *Primary parent objects → Pass down permissions* enabled. The e-file's permissions come from the first document that creates it. `record-acl-sync: ADDITIVE` lets later documents add missing entries.
+   - `DOCUMENT_AND_RECORD`
+   - `NONE`
+
+   `security.strict` fails and rolls back a document whose permissions cannot be applied (`SECU0050`, or identities without a Doxis user or group). `security.remove-stale` removes the connector-managed document permissions (view/update/version) that no longer exist at the source; permissions set by administrators are never touched.
 10. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
    - `LOGICAL` (default) uses `POST …/remove`, which is reversible and leaves the binary in the data store.
    - `PHYSICAL` uses `DELETE …`, which is irrevocable.
@@ -75,7 +96,13 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **Content-Link URI Prefix / Link Prefix** | `…doxis.content-link.uri-prefix` / `link-prefix` | — | Maps crawled URIs to the external link, e.g. `file:///mnt/archive/` → `\\fileserver\archive\` |
 | **Content-Link Type** | `…doxis.content-link.link-type` | `UNC` | `UNC` or `URL` |
 | **Content-Link Document Type** | `…doxis.content-link.document-type` | `document-type` | Class for linked documents (must allow linking contents) |
-| **Filing Record** | `…doxis.filing.record-id` | — | Record (e-file) new documents are filed into |
+| **Filing Mode** | `…doxis.filing.mode` | `METADATA` | `NONE`, `FIXED`, `METADATA`, `SOURCE_FOLDER`, `KEY_METADATA` |
+| **Filing Method** | `…doxis.filing.method` | `PRIMARY_PARENT` | `PRIMARY_PARENT` or `RELATIONSHIP` |
+| **E-file Class / Key / Title** | `…doxis.filing.record-class` / `record-key-attribute` / `record-title-attribute` | — / `ObjectNumberExternal` / `ObjectName` | For keyed modes and auto-create |
+| **Key Metadata / Auto-create** | `…doxis.filing.record-key-metadata-key` / `auto-create` | — / `true` | `KEY_METADATA` source field; create missing e-files |
+| **Security Mode** | `…doxis.security.mode` | `DOCUMENT` | `DOCUMENT`, `RECORD`, `DOCUMENT_AND_RECORD`, `NONE` |
+| **Strict / Remove Stale / E-file ACL Sync** | `…doxis.security.strict` / `remove-stale` / `record-acl-sync` | `false` / `false` / `CREATE_ONLY` | See above |
+| **Filing Record** | `…doxis.filing.record-id` | — | `FIXED`: the record (e-file) new documents are filed into |
 | **Filing Record Repository** | `…doxis.filing.record-repository` | DMS repository | Repository of the record |
 | **Filing Folder Node** | `…doxis.filing.folder-node-id` | — | Optional folder node inside the record |
 | **Writer Consumer Group** | `…doxis.consumer-group` | `opencrawling-doxis-writer` | Kafka group of the decoupled writer |
