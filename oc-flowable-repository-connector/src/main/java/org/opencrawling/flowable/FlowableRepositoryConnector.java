@@ -38,6 +38,7 @@ import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -95,6 +96,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     private HttpClient httpClient;
     private String authHeader;
 
+    @Autowired
     public FlowableRepositoryConnector(
             @Value("${spring.opencrawling.connector.flowable.url:${spring.opencrawling.connector.flowable.endpoint:http://localhost:8080/flowable-rest/service}}") String url,
             @Value("${spring.opencrawling.connector.flowable.username:admin}") String username,
