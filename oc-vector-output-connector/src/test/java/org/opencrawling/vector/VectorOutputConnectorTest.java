@@ -70,5 +70,44 @@ class VectorOutputConnectorTest {
         assertFalse(addedChunks.isEmpty());
         assertNotNull(addedChunks.get(0).getMetadata().get("embedding"));
         assertArrayEquals(mockEmbedding, (float[]) addedChunks.get(0).getMetadata().get("embedding"));
+        assertEquals(List.of("public"), addedChunks.get(0).getMetadata().get("security_allowed_read"));
+    }
+
+    @Test
+    void testSendWithSecurityConfigMapsAclFields() {
+        byte[] content = "Content with specific ACL permissions.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-sec-1");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of(
+                "flowable_proc_inst_id", List.of("proc-1234"),
+                "mimeType", List.of("text/plain")
+        ));
+        when(repoDoc.uri()).thenReturn("flowable://process-instances/proc-1234");
+        when(repoDoc.acl()).thenReturn("user1,group1");
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        org.opencrawling.core.security.SecurityConfig security = new org.opencrawling.core.security.SecurityConfig(false, List.of(
+                new org.opencrawling.core.security.PermissionRule("user1", "user", "user1", "read"),
+                new org.opencrawling.core.security.PermissionRule("group1", "group", "group1", "read"),
+                new org.opencrawling.core.security.PermissionRule("bad_user", "user", "bad_user", "deny")
+        ));
+        when(repoDoc.security()).thenReturn(security);
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f, 0.3f});
+
+        connector.send(repoDoc).block();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore, atLeastOnce()).add(captor.capture());
+
+        List<Document> addedChunks = captor.getValue();
+        assertFalse(addedChunks.isEmpty());
+        Document chunk = addedChunks.get(0);
+        assertEquals(List.of("user1", "group1"), chunk.getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("bad_user"), chunk.getMetadata().get("security_denied_read"));
+        assertEquals(false, chunk.getMetadata().get("security_inheritance"));
+        assertEquals(List.of("proc-1234"), chunk.getMetadata().get("flowable_proc_inst_id"));
     }
 }

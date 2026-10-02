@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,13 +34,16 @@ import java.util.concurrent.StructuredTaskScope;
 
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import reactor.core.publisher.Flux;
@@ -65,6 +68,19 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
     public static final String VAR_PREFIX = "camunda_var_";
     public static final String URI_PREFIX = "camunda://process-instances/";
 
+    public static final String FIELD_INCLUDE_ACLS = "includeAcls";
+    public static final String FIELD_CAMUNDA_PROC_INST_ID = "camunda_proc_inst_id";
+    public static final String FIELD_CAMUNDA_PROCESS_INSTANCE_ID = "camunda_process_instance_id";
+    public static final String FIELD_CAMUNDA_SCOPE_ID = "camunda_scope_id";
+    public static final String FIELD_CAMUNDA_SCOPE_TYPE = "camunda_scope_type";
+    public static final String FIELD_CAMUNDA_PROCESS_DEFINITION_ID = "camunda_process_definition_id";
+    public static final String FIELD_CAMUNDA_PROCESS_DEFINITION_KEY = "camunda_process_definition_key";
+    public static final String FIELD_CAMUNDA_BUSINESS_KEY = "camunda_business_key";
+    public static final String FIELD_CAMUNDA_START_USER_ID = "camunda_start_user_id";
+    public static final String FIELD_CAMUNDA_TENANT_ID = "camunda_tenant_id";
+    public static final String FIELD_CAMUNDA_IDENTITY_USERS = "camunda_identity_users";
+    public static final String FIELD_CAMUNDA_IDENTITY_GROUPS = "camunda_identity_groups";
+
     private final String url;
     private final String username;
     private final String password;
@@ -72,11 +88,17 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
     private final String processDefinitionKey;
     private final boolean includeVariables;
     private final String scope;
+    private final boolean includeAcls;
     private final ObjectMapper objectMapper;
 
     private HttpClient httpClient;
     private String authHeader;
 
+    public CamundaRepositoryConnector() {
+        this("http://localhost:8080/engine-rest", "demo", "demo", 100, "", true, "all", true);
+    }
+
+    @Autowired
     public CamundaRepositoryConnector(
             @Value("${spring.opencrawling.connector.camunda.url:http://localhost:8080/engine-rest}") String url,
             @Value("${spring.opencrawling.connector.camunda.username:demo}") String username,
@@ -84,7 +106,8 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
             @Value("${spring.opencrawling.connector.camunda.batch-size:100}") int batchSize,
             @Value("${spring.opencrawling.connector.camunda.process-definition-key:}") String processDefinitionKey,
             @Value("${spring.opencrawling.connector.camunda.include-variables:true}") boolean includeVariables,
-            @Value("${spring.opencrawling.connector.camunda.scope:all}") String scope) {
+            @Value("${spring.opencrawling.connector.camunda.scope:all}") String scope,
+            @Value("${spring.opencrawling.connector.camunda.include-acls:true}") boolean includeAcls) {
         this.url = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.username = username;
         this.password = password;
@@ -92,7 +115,19 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         this.processDefinitionKey = processDefinitionKey;
         this.includeVariables = includeVariables;
         this.scope = scope;
+        this.includeAcls = includeAcls;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public CamundaRepositoryConnector(
+            String url,
+            String username,
+            String password,
+            int batchSize,
+            String processDefinitionKey,
+            boolean includeVariables,
+            String scope) {
+        this(url, username, password, batchSize, processDefinitionKey, includeVariables, scope, true);
     }
 
     @Override
@@ -263,6 +298,27 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         return objectMapper.readTree(response.body());
     }
 
+    private JsonNode fetchHistoricIdentityLinks(String processInstanceId) throws IOException, InterruptedException {
+        String linksUrl = url + "/history/identity-link-log?processInstanceId=" + URLEncoder.encode(processInstanceId, StandardCharsets.UTF_8);
+
+        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                .uri(URI.create(linksUrl))
+                .header("Accept", "application/json")
+                .GET();
+
+        if (authHeader != null) {
+            reqBuilder.header("Authorization", authHeader);
+        }
+
+        HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Failed to fetch historic identity links for instance {}. Status: {}", processInstanceId, response.statusCode());
+            return objectMapper.createArrayNode();
+        }
+
+        return objectMapper.readTree(response.body());
+    }
+
     private RepositoryDocument createDocument(JsonNode instanceNode) throws IOException, InterruptedException {
         String processInstanceId = instanceNode.path(FIELD_ID).asText();
         String processDefinitionId = instanceNode.path(FIELD_PROCESS_DEFINITION_ID).asText("");
@@ -272,6 +328,7 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         String startTimeStr = instanceNode.path(FIELD_START_TIME).asText("");
         String endTimeStr = instanceNode.path(FIELD_END_TIME).asText("");
         long durationInMillis = instanceNode.path(FIELD_DURATION_IN_MILLIS).asLong(0);
+        String tenantId = instanceNode.path("tenantId").asText("");
 
         Map<String, List<String>> metadata = new HashMap<>();
         metadata.put("mimeType", List.of("application/json"));
@@ -283,6 +340,20 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         if (!endTimeStr.isBlank()) metadata.put(FIELD_END_TIME, List.of(endTimeStr));
         metadata.put(FIELD_DURATION_IN_MILLIS, List.of(String.valueOf(durationInMillis)));
 
+        // Collocated DB and Entity References
+        metadata.put(FIELD_CAMUNDA_PROC_INST_ID, List.of(processInstanceId));
+        metadata.put(FIELD_CAMUNDA_PROCESS_INSTANCE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_CAMUNDA_SCOPE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_CAMUNDA_SCOPE_TYPE, List.of("processInstance"));
+        if (!processDefinitionId.isBlank()) metadata.put(FIELD_CAMUNDA_PROCESS_DEFINITION_ID, List.of(processDefinitionId));
+        if (!processDefinitionKey.isBlank()) metadata.put(FIELD_CAMUNDA_PROCESS_DEFINITION_KEY, List.of(processDefinitionKey));
+        if (!businessKey.isBlank()) metadata.put(FIELD_CAMUNDA_BUSINESS_KEY, List.of(businessKey));
+        if (!startUserId.isBlank()) metadata.put(FIELD_CAMUNDA_START_USER_ID, List.of(startUserId));
+        if (!tenantId.isBlank()) {
+            metadata.put("tenantId", List.of(tenantId));
+            metadata.put(FIELD_CAMUNDA_TENANT_ID, List.of(tenantId));
+        }
+
         ObjectNode contentJson = objectMapper.createObjectNode();
         contentJson.put(FIELD_ID, processInstanceId);
         contentJson.put(FIELD_PROCESS_DEFINITION_ID, processDefinitionId);
@@ -292,6 +363,44 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         contentJson.put(FIELD_START_TIME, startTimeStr);
         contentJson.put(FIELD_END_TIME, endTimeStr);
         contentJson.put(FIELD_DURATION_IN_MILLIS, durationInMillis);
+        contentJson.put(FIELD_CAMUNDA_PROC_INST_ID, processInstanceId);
+        contentJson.put(FIELD_CAMUNDA_SCOPE_ID, processInstanceId);
+        contentJson.put(FIELD_CAMUNDA_SCOPE_TYPE, "processInstance");
+        if (!tenantId.isBlank()) {
+            contentJson.put("tenantId", tenantId);
+            contentJson.put(FIELD_CAMUNDA_TENANT_ID, tenantId);
+        }
+
+        SecurityConfig securityConfig = SecurityConfig.createPublic();
+        String aclString = "public";
+
+        if (includeAcls) {
+            JsonNode identityLinksNode = fetchHistoricIdentityLinks(processInstanceId);
+            securityConfig = CamundaSecurityMapper.mapSecurity(identityLinksNode, startUserId);
+
+            List<String> allowedUsers = CamundaSecurityMapper.extractAllowedUsers(identityLinksNode, startUserId);
+            if (!allowedUsers.isEmpty()) {
+                metadata.put(FIELD_CAMUNDA_IDENTITY_USERS, allowedUsers);
+            }
+            List<String> allowedGroups = CamundaSecurityMapper.extractAllowedGroups(identityLinksNode);
+            if (!allowedGroups.isEmpty()) {
+                metadata.put(FIELD_CAMUNDA_IDENTITY_GROUPS, allowedGroups);
+            }
+
+            ArrayNode usersArray = objectMapper.createArrayNode();
+            allowedUsers.forEach(usersArray::add);
+            contentJson.set("allowedUsers", usersArray);
+
+            ArrayNode groupsArray = objectMapper.createArrayNode();
+            allowedGroups.forEach(groupsArray::add);
+            contentJson.set("allowedGroups", groupsArray);
+
+            List<String> allIdentities = new ArrayList<>(allowedUsers);
+            allIdentities.addAll(allowedGroups);
+            if (!allIdentities.isEmpty()) {
+                aclString = String.join(",", allIdentities);
+            }
+        }
 
         ObjectNode variablesJson = objectMapper.createObjectNode();
 
@@ -337,7 +446,8 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
                 docUri,
                 contentStream,
                 metadata,
-                "public",
+                aclString,
+                securityConfig,
                 lastModified
         );
     }
