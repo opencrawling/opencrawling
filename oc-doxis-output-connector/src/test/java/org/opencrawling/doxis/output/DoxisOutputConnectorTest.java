@@ -208,7 +208,7 @@ class DoxisOutputConnectorTest {
     }
 
     private static DoxisOutputProperties.Security security(DoxisOutputProperties.SecurityMode mode, boolean strict, boolean removeStale) {
-        return new DoxisOutputProperties.Security(mode, strict, removeStale, DoxisOutputProperties.RecordAclSync.CREATE_ONLY);
+        return new DoxisOutputProperties.Security(mode, strict, removeStale, DoxisOutputProperties.RecordAclSync.CREATE_ONLY, true);
     }
 
     @Test
@@ -255,6 +255,7 @@ class DoxisOutputConnectorTest {
                 "{\"name\":\"TX_SourceFolder\",\"uuid\":\"rt-1\",\"schemaMetaType\":\"RECORD\"}")));
         when(client.searchRecordIds(anyString())).thenReturn(List.of());
         when(client.createRecord(eq(REPO), anyMap())).thenReturn(new ObjectMapper().readTree("{\"uuid\":\"rec-new\"}"));
+        when(client.getLoggedInUser()).thenReturn(new ObjectMapper().readTree("{\"uuid\":\"user-connector\",\"name\":\"crawler\"}"));
         when(client.getVersions(eq(REPO), anyString())).thenReturn(versions("versions.json"));
         when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(new ObjectMapper().readTree(
                 Fixtures.text("versions.json").replace("\"length\":17", "\"length\":6")).path("versions").get(0)));
@@ -271,7 +272,10 @@ class DoxisOutputConnectorTest {
         verify(client, times(1)).searchRecordIds(anyString());
         ArgumentCaptor<List<Map<String, Object>>> aces = ArgumentCaptor.forClass(List.class);
         verify(client).addRecordPermissions(eq(REPO), eq("rec-new"), aces.capture());
-        assertTrue(aces.getValue().stream().allMatch(a -> a.get("permission").toString().contains("FOLDER")));
+        assertTrue(aces.getValue().stream().filter(a -> !"user-connector".equals(a.get("organizationalElementId")))
+                .allMatch(a -> a.get("permission").toString().contains("FOLDER")));
+        assertTrue(aces.getValue().stream().anyMatch(a -> "user-connector".equals(a.get("organizationalElementId"))
+                && "DELETE_FOLDER".equals(a.get("permission"))), "connector user keeps management rights on its e-files");
         verify(client, times(2)).setDocumentPrimaryParent(eq(REPO), anyString(), eq("rec-new"));
         verify(client, never()).addPermissions(any(), any(), any());
         assertNotNull(folderUri);

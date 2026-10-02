@@ -55,6 +55,13 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    - `DOCUMENT_AND_RECORD`
    - `NONE`
 
+   `security.grant-connector-user` (default `true`) also grants the connector's own technical user view/update/edit/delete/set-primary-parent on every e-file it creates. Instance ACLs replace the class ACL, so without these grants the connector locks itself out of its own e-files.
+
+   **Doxis permissions the technical user needs** (live findings on CSB 14.4.1):
+   - `SET_PRIMARY_PARENT` on the document classes, for `PRIMARY_PARENT` filing; otherwise `SECU0015 … setPrimaryParent permission`.
+   - High-volume (HV) write rights on the e-files, to remove or delete them (`SECU0015 … high volume write permission`).
+   - `RELATIONSHIP` filing needs a folder node that may hold documents: the e-file root node is `NODES_ONLY` (`RELATIONSHIP0134`), and omitting the node fails with `PUBLICWS0320`.
+
    `security.strict` fails and rolls back a document whose permissions cannot be applied (`SECU0050`, or identities without a Doxis user or group). `security.remove-stale` removes the connector-managed document permissions (view/update/version) that no longer exist at the source; permissions set by administrators are never touched.
 10. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
    - `LOGICAL` (default) uses `POST …/remove`, which is reversible and leaves the binary in the data store.
@@ -101,6 +108,7 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **E-file Class / Key / Title** | `…doxis.filing.record-class` / `record-key-attribute` / `record-title-attribute` | — / `ObjectNumberExternal` / `ObjectName` | For keyed modes and auto-create |
 | **Key Metadata / Auto-create** | `…doxis.filing.record-key-metadata-key` / `auto-create` | — / `true` | `KEY_METADATA` source field; create missing e-files |
 | **Security Mode** | `…doxis.security.mode` | `DOCUMENT` | `DOCUMENT`, `RECORD`, `DOCUMENT_AND_RECORD`, `NONE` |
+| **Grant Connector User** | `…doxis.security.grant-connector-user` | `true` | Keep management rights for the technical user on e-files it creates |
 | **Strict / Remove Stale / E-file ACL Sync** | `…doxis.security.strict` / `remove-stale` / `record-acl-sync` | `false` / `false` / `CREATE_ONLY` | See above |
 | **Filing Record** | `…doxis.filing.record-id` | — | `FIXED`: the record (e-file) new documents are filed into |
 | **Filing Record Repository** | `…doxis.filing.record-repository` | DMS repository | Repository of the record |

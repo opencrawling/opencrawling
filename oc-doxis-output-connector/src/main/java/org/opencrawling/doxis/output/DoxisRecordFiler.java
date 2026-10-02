@@ -190,7 +190,20 @@ public class DoxisRecordFiler {
 
     private void applyRecordAcls(String recordId, RepositoryDocument document, boolean created) throws IOException, InterruptedException {
         try {
-            List<Map<String, Object>> aces = aclMapper.recordAces(document.security());
+            List<Map<String, Object>> aces = new ArrayList<>(aclMapper.recordAces(document.security()));
+            if (created && properties.security().grantConnectorUser()) {
+                String self = connectorUserId();
+                for (String permission : DoxisAclMapper.CONNECTOR_RECORD_PERMISSIONS) {
+                    Map<String, Object> ace = new LinkedHashMap<>();
+                    ace.put("organizationalElementId", self);
+                    ace.put("permission", permission);
+                    ace.put("authorizationVariant", "GRANT");
+                    if (aces.stream().noneMatch(a -> self.equals(a.get("organizationalElementId")) && permission.equals(a.get("permission"))
+                            && "GRANT".equals(a.get("authorizationVariant")))) {
+                        aces.add(ace);
+                    }
+                }
+            }
             if (!created) {
                 Set<String> existing = new HashSet<>();
                 for (JsonNode ace : client.getRecordPermissions(recordRepository(), recordId)) {
@@ -213,6 +226,17 @@ public class DoxisRecordFiler {
             }
             throw e;
         }
+    }
+
+    private volatile String connectorUserId;
+
+    private String connectorUserId() throws IOException, InterruptedException {
+        String id = connectorUserId;
+        if (id == null) {
+            id = client.getLoggedInUser().path("uuid").asText();
+            connectorUserId = id;
+        }
+        return id;
     }
 
     private JsonNode record(String recordId) throws IOException, InterruptedException {
