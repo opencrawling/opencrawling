@@ -33,14 +33,18 @@ import java.util.Map;
 import java.util.concurrent.StructuredTaskScope;
 
 import org.opencrawling.core.connector.RepositoryConnector;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import reactor.core.publisher.Flux;
@@ -66,6 +70,19 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     public static final String VAR_PREFIX = "flowable_var_";
     public static final String URI_PREFIX = "flowable://process-instances/";
 
+    public static final String FIELD_INCLUDE_ACLS = "includeAcls";
+    public static final String FIELD_FLOWABLE_PROC_INST_ID = "flowable_proc_inst_id";
+    public static final String FIELD_FLOWABLE_PROCESS_INSTANCE_ID = "flowable_process_instance_id";
+    public static final String FIELD_FLOWABLE_SCOPE_ID = "flowable_scope_id";
+    public static final String FIELD_FLOWABLE_SCOPE_TYPE = "flowable_scope_type";
+    public static final String FIELD_FLOWABLE_PROCESS_DEFINITION_ID = "flowable_process_definition_id";
+    public static final String FIELD_FLOWABLE_PROCESS_DEFINITION_KEY = "flowable_process_definition_key";
+    public static final String FIELD_FLOWABLE_BUSINESS_KEY = "flowable_business_key";
+    public static final String FIELD_FLOWABLE_START_USER_ID = "flowable_start_user_id";
+    public static final String FIELD_FLOWABLE_TENANT_ID = "flowable_tenant_id";
+    public static final String FIELD_FLOWABLE_IDENTITY_USERS = "flowable_identity_users";
+    public static final String FIELD_FLOWABLE_IDENTITY_GROUPS = "flowable_identity_groups";
+
     private final String url;
     private final String username;
     private final String password;
@@ -73,11 +90,13 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     private final String processDefinitionKey;
     private final boolean includeVariables;
     private final String scope;
+    private final boolean includeAcls;
     private final ObjectMapper objectMapper;
 
     private HttpClient httpClient;
     private String authHeader;
 
+    @Autowired
     public FlowableRepositoryConnector(
             @Value("${spring.opencrawling.connector.flowable.url:${spring.opencrawling.connector.flowable.endpoint:http://localhost:8080/flowable-rest/service}}") String url,
             @Value("${spring.opencrawling.connector.flowable.username:admin}") String username,
@@ -85,7 +104,8 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
             @Value("${spring.opencrawling.connector.flowable.batch-size:100}") int batchSize,
             @Value("${spring.opencrawling.connector.flowable.process-definition-key:}") String processDefinitionKey,
             @Value("${spring.opencrawling.connector.flowable.include-variables:true}") boolean includeVariables,
-            @Value("${spring.opencrawling.connector.flowable.scope:all}") String scope) {
+            @Value("${spring.opencrawling.connector.flowable.scope:all}") String scope,
+            @Value("${spring.opencrawling.connector.flowable.include-acls:true}") boolean includeAcls) {
         this.url = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.username = username;
         this.password = password;
@@ -93,7 +113,19 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         this.processDefinitionKey = processDefinitionKey;
         this.includeVariables = includeVariables;
         this.scope = scope;
+        this.includeAcls = includeAcls;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public FlowableRepositoryConnector(
+            String url,
+            String username,
+            String password,
+            int batchSize,
+            String processDefinitionKey,
+            boolean includeVariables,
+            String scope) {
+        this(url, username, password, batchSize, processDefinitionKey, includeVariables, scope, true);
     }
 
     @Override
@@ -257,6 +289,25 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         return resNode.path("data");
     }
 
+    private JsonNode fetchHistoricIdentityLinks(String processInstanceId) throws IOException, InterruptedException {
+        String linksUrl = url + "/history/historic-process-instances/" + URLEncoder.encode(processInstanceId, StandardCharsets.UTF_8) + "/identitylinks";
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(linksUrl))
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Failed to fetch historic identity links for instance {}. Status: {}", processInstanceId, response.statusCode());
+            return objectMapper.createArrayNode();
+        }
+
+        return objectMapper.readTree(response.body());
+    }
+
     private RepositoryDocument createDocument(JsonNode instanceNode) throws IOException, InterruptedException {
         String processInstanceId = instanceNode.path(FIELD_ID).asText();
         String processDefinitionId = instanceNode.path(FIELD_PROCESS_DEFINITION_ID).asText("");
@@ -266,6 +317,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         String startTimeStr = instanceNode.path(FIELD_START_TIME).asText("");
         String endTimeStr = instanceNode.path(FIELD_END_TIME).asText("");
         long durationInMillis = instanceNode.path(FIELD_DURATION_IN_MILLIS).asLong(0);
+        String tenantId = instanceNode.path("tenantId").asText("");
 
         Map<String, List<String>> metadata = new HashMap<>();
         metadata.put("mimeType", List.of("application/json"));
@@ -277,6 +329,17 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         if (!endTimeStr.isBlank()) metadata.put(FIELD_END_TIME, List.of(endTimeStr));
         metadata.put(FIELD_DURATION_IN_MILLIS, List.of(String.valueOf(durationInMillis)));
 
+        // Entity reference metadata for Collocated and Distributed patterns
+        metadata.put(FIELD_FLOWABLE_PROC_INST_ID, List.of(processInstanceId));
+        metadata.put(FIELD_FLOWABLE_PROCESS_INSTANCE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_FLOWABLE_SCOPE_ID, List.of(processInstanceId));
+        metadata.put(FIELD_FLOWABLE_SCOPE_TYPE, List.of("processInstance"));
+        if (!processDefinitionId.isBlank()) metadata.put(FIELD_FLOWABLE_PROCESS_DEFINITION_ID, List.of(processDefinitionId));
+        if (!processDefinitionKey.isBlank()) metadata.put(FIELD_FLOWABLE_PROCESS_DEFINITION_KEY, List.of(processDefinitionKey));
+        if (!businessKey.isBlank()) metadata.put(FIELD_FLOWABLE_BUSINESS_KEY, List.of(businessKey));
+        if (!startUserId.isBlank()) metadata.put(FIELD_FLOWABLE_START_USER_ID, List.of(startUserId));
+        if (!tenantId.isBlank()) metadata.put(FIELD_FLOWABLE_TENANT_ID, List.of(tenantId));
+
         ObjectNode contentJson = objectMapper.createObjectNode();
         contentJson.put(FIELD_ID, processInstanceId);
         contentJson.put(FIELD_PROCESS_DEFINITION_ID, processDefinitionId);
@@ -286,6 +349,41 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         contentJson.put(FIELD_START_TIME, startTimeStr);
         contentJson.put(FIELD_END_TIME, endTimeStr);
         contentJson.put(FIELD_DURATION_IN_MILLIS, durationInMillis);
+        contentJson.put(FIELD_FLOWABLE_PROC_INST_ID, processInstanceId);
+        contentJson.put(FIELD_FLOWABLE_SCOPE_ID, processInstanceId);
+        contentJson.put(FIELD_FLOWABLE_SCOPE_TYPE, "processInstance");
+        if (!tenantId.isBlank()) contentJson.put(FIELD_FLOWABLE_TENANT_ID, tenantId);
+
+        SecurityConfig securityConfig = SecurityConfig.createPublic();
+        String aclString = "public";
+
+        if (includeAcls) {
+            JsonNode identityLinksNode = fetchHistoricIdentityLinks(processInstanceId);
+            securityConfig = FlowableSecurityMapper.mapSecurity(identityLinksNode, startUserId);
+
+            List<String> allowedUsers = FlowableSecurityMapper.extractAllowedUsers(identityLinksNode, startUserId);
+            if (!allowedUsers.isEmpty()) {
+                metadata.put(FIELD_FLOWABLE_IDENTITY_USERS, allowedUsers);
+            }
+            List<String> allowedGroups = FlowableSecurityMapper.extractAllowedGroups(identityLinksNode);
+            if (!allowedGroups.isEmpty()) {
+                metadata.put(FIELD_FLOWABLE_IDENTITY_GROUPS, allowedGroups);
+            }
+
+            ArrayNode usersArray = objectMapper.createArrayNode();
+            allowedUsers.forEach(usersArray::add);
+            contentJson.set("allowedUsers", usersArray);
+
+            ArrayNode groupsArray = objectMapper.createArrayNode();
+            allowedGroups.forEach(groupsArray::add);
+            contentJson.set("allowedGroups", groupsArray);
+
+            List<String> allIdentities = new ArrayList<>(allowedUsers);
+            allIdentities.addAll(allowedGroups);
+            if (!allIdentities.isEmpty()) {
+                aclString = String.join(",", allIdentities);
+            }
+        }
 
         ObjectNode variablesJson = objectMapper.createObjectNode();
 
@@ -332,8 +430,10 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
                 docUri,
                 contentStream,
                 metadata,
-                "public",
-                lastModified
+                aclString,
+                securityConfig,
+                lastModified,
+                DocumentAction.UPSERT
         );
     }
 }

@@ -24,6 +24,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.PermissionRule;
+import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -128,7 +130,33 @@ public class VectorOutputConnector implements OutputConnector {
                 metadata.put("uri", document.uri());
                 metadata.put("acl", document.acl());
                 metadata.put("lastModified", document.lastModified().toString());
-                
+
+                // Map standard OIS security fields for role-based and zero-trust pre-filtering
+                List<String> allowedRead = new ArrayList<>();
+                List<String> deniedRead = new ArrayList<>();
+                boolean inheritanceEnabled = false;
+
+                if (document.security() != null) {
+                    inheritanceEnabled = document.security().inheritanceEnabled();
+                    if (document.security().permissions() != null) {
+                        for (PermissionRule rule : document.security().permissions()) {
+                            if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
+                                allowedRead.add(rule.identity());
+                            } else if ("deny".equalsIgnoreCase(rule.access())) {
+                                deniedRead.add(rule.identity());
+                            }
+                        }
+                    }
+                }
+
+                if (allowedRead.isEmpty() && deniedRead.isEmpty()) {
+                    allowedRead.add("public");
+                }
+
+                metadata.put("security_inheritance", inheritanceEnabled);
+                metadata.put("security_allowed_read", allowedRead);
+                metadata.put("security_denied_read", deniedRead);
+
                 // Construct Spring AI Document
                 Document aiDoc = new Document(document.id(), text, metadata);
                 
