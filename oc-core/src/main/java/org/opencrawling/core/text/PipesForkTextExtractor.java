@@ -18,13 +18,22 @@ package org.opencrawling.core.text;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import org.apache.tika.Tika;
 import org.apache.tika.config.TimeoutLimits;
 import org.apache.tika.io.TikaInputStream;
@@ -50,6 +59,7 @@ public class PipesForkTextExtractor implements TextExtractionService {
 
     private static final Logger log = LoggerFactory.getLogger(PipesForkTextExtractor.class);
     private static final String DEFAULT_FORK_HEAP = "-Xmx512m";
+    private static final String TIKA_EXTRAS_DIR = "tika.extras.dir";
 
     private final TextExtractionProperties properties;
     private PipesForkParser pipesForkParser;
@@ -90,6 +100,8 @@ public class PipesForkTextExtractor implements TextExtractionService {
     }
 
     private PipesForkParser buildPipesForkParser(TextExtractionProperties conf) throws Exception {
+        ensureTikaExtrasClasspath();
+
         if (System.getProperty("tika.pipes.server.stdio") == null) {
             System.setProperty("tika.pipes.server.stdio", "discard");
         }
@@ -116,6 +128,103 @@ public class PipesForkTextExtractor implements TextExtractionService {
         }
 
         return new PipesForkParser(config);
+    }
+
+    private void ensureTikaExtrasClasspath() {
+        String currentProp = System.getProperty(TIKA_EXTRAS_DIR);
+        if (currentProp != null && !currentProp.isBlank()) {
+            Path path = Paths.get(currentProp.trim());
+            if (Files.isDirectory(path)) {
+                log.debug("Using configured tika.extras.dir: {}", currentProp);
+                return;
+            }
+        }
+
+        String envDir = System.getenv("TIKA_EXTRAS_DIR");
+        if (envDir != null && !envDir.isBlank()) {
+            Path path = Paths.get(envDir.trim());
+            if (Files.isDirectory(path)) {
+                System.setProperty(TIKA_EXTRAS_DIR, path.toAbsolutePath().toString());
+                log.info("Configured tika.extras.dir from TIKA_EXTRAS_DIR environment variable: {}", path.toAbsolutePath());
+                return;
+            }
+        }
+
+        // Look for existing standard directory layouts (e.g. ./lib or /app/lib)
+        List<Path> standardLibPaths = List.of(
+                Paths.get("lib"),
+                Paths.get("/app/lib")
+        );
+        for (Path libPath : standardLibPaths) {
+            if (Files.isDirectory(libPath) && hasJarFiles(libPath)) {
+                System.setProperty(TIKA_EXTRAS_DIR, libPath.toAbsolutePath().toString());
+                log.info("Auto-discovered library directory for Tika extras: {}", libPath.toAbsolutePath());
+                return;
+            }
+        }
+
+        // Inspect running code source location
+        try {
+            CodeSource codeSource = getClass().getProtectionDomain().getCodeSource();
+            if (codeSource != null && codeSource.getLocation() != null) {
+                Path codePath = Paths.get(codeSource.getLocation().toURI());
+                if (Files.isRegularFile(codePath)) {
+                    // Check sibling lib/ directory (typical in unpacked or extracted distributions)
+                    Path parent = codePath.getParent();
+                    if (parent != null) {
+                        Path siblingLib = parent.resolve("lib");
+                        if (Files.isDirectory(siblingLib) && hasJarFiles(siblingLib)) {
+                            System.setProperty(TIKA_EXTRAS_DIR, siblingLib.toAbsolutePath().toString());
+                            log.info("Auto-discovered sibling lib directory for Tika extras: {}", siblingLib.toAbsolutePath());
+                            return;
+                        }
+                    }
+
+                    // Fallback for unextracted Spring Boot uber fat-jars: unpack BOOT-INF/lib to temp cache
+                    Path cacheDir = Paths.get(System.getProperty("java.io.tmpdir"), "opencrawling-tika-fork-libs");
+                    extractFatJarLibs(codePath, cacheDir);
+                    if (Files.isDirectory(cacheDir) && hasJarFiles(cacheDir)) {
+                        System.setProperty(TIKA_EXTRAS_DIR, cacheDir.toAbsolutePath().toString());
+                        log.info("Configured tika.extras.dir from extracted fat-jar cache: {}", cacheDir.toAbsolutePath());
+                        return;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not inspect code source for Tika extras classpath: {}", e.getMessage());
+        }
+    }
+
+    private static boolean hasJarFiles(Path dir) {
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir, "*.jar")) {
+            return ds.iterator().hasNext();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void extractFatJarLibs(Path jarPath, Path targetDir) {
+        try {
+            Files.createDirectories(targetDir);
+            try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+                var entries = jarFile.entries();
+                while (entries.hasMoreElements()) {
+                    JarEntry entry = entries.nextElement();
+                    String name = entry.getName();
+                    if (name.startsWith("BOOT-INF/lib/") && name.endsWith(".jar") && !entry.isDirectory()) {
+                        String filename = Paths.get(name).getFileName().toString();
+                        Path outFile = targetDir.resolve(filename);
+                        if (!Files.exists(outFile) || Files.size(outFile) != entry.getSize()) {
+                            try (InputStream is = jarFile.getInputStream(entry)) {
+                                Files.copy(is, outFile, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract fat jar libraries from {} to {}: {}", jarPath, targetDir, e.getMessage());
+        }
     }
 
     private boolean setsHeap(String arg) {
