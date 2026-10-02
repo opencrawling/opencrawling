@@ -104,5 +104,9 @@ COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
 # Expose the ports the backend runs on (8080 HTTP/REST, 9095 gRPC Transport)
 EXPOSE 8080 9095
 
+ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
+ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+
 # Run the Spring Boot application enabling Java 25 preview features
 ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]

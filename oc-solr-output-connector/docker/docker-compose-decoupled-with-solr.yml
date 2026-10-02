@@ -190,6 +190,9 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=solr
       - SPRING_OPENCRAWLING_OUTPUT_SOLR_URL=http://solr:8983/solr
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
     volumes:
       - ../../oc-runtime/data:/data
     depends_on:

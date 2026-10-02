@@ -203,6 +203,9 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=opensearch3
       - SPRING_OPENCRAWLING_OUTPUT_OPENSEARCH3_URIS=http://opensearch-standalone:9200
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
     volumes:
       - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
     depends_on:
