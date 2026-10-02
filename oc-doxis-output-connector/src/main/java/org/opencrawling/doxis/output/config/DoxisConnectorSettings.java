@@ -67,6 +67,16 @@ public final class DoxisConnectorSettings {
                         c.get("doxisFilingFolderNodeId"),
                         c.get("doxisFilingRecordIdMetadataKey"),
                         c.get("doxisFilingFolderNodeMetadataKey")),
+                new DoxisOutputProperties.ContentLink(
+                        c.get("doxisContentLinkClientLibDir"),
+                        c.get("doxisContentLinkCsbHost"),
+                        (int) longValue(c.get("doxisContentLinkCsbPort"), 0),
+                        c.get("doxisContentLinkUriPrefix"),
+                        c.get("doxisContentLinkPrefix"),
+                        enumValue(org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.class, c.get("doxisContentLinkType"),
+                                org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.UNC),
+                        c.get("doxisContentLinkMetadataKey"),
+                        c.get("doxisContentLinkDocumentType")),
                 (int) longValue(c.get("doxisMaxRetries"), DoxisConstants.DEFAULT_MAX_RETRIES),
                 (int) longValue(c.get("doxisTimeoutSeconds"), DoxisConstants.DEFAULT_TIMEOUT_SECONDS));
     }

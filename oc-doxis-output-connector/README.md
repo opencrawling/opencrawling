@@ -16,7 +16,8 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    - `UPLOAD`: the binary is streamed as the multipart `inputStream` part, without buffering, up to `content.upload-max-bytes`.
    - `PREDEFINED_LOCATOR`: the document is created with `predefinedLocator`, `contentLength` and the optional SHA-256, and **no bytes are sent**. This is for binaries that already sit in (or were staged into) the Doxis data store.
    - `REFERENCE_ONLY`: the document is created without content, and the source URI is recorded in `reference-attribute`.
-   - `AUTO` (default): use a locator if one resolves, else upload if the file is within the limit, else `content.fallback`.
+   - `CONTENT_LINK`: **zero-copy**. The document gets an external content link (UNC path or URL), and the binary stays where it is and is never stored by Doxis. This needs the optional [`oc-doxis-blueline-content-link`](../oc-doxis-blueline-content-link/README.md) module and the SER Doxis client jars, loaded in isolation from `content-link.client-lib-dir`. The source URI is mapped to the link by `content-link.uri-prefix` → `content-link.link-prefix`, or taken from the `doxisContentLink` metadata. Verified on CSB 14.4.1 with a UNC link; a physical delete leaves the external file untouched.
+   - `AUTO` (default): use a locator if one resolves (experimental), else upload if the file is within the limit, else a content link if one resolves and the content-link module is configured, else `content.fallback`.
 4. **Locator resolution** (`LocatorResolver`, pluggable as a Spring bean):
    - An explicit locator in the metadata (`doxisLocator`) wins.
    - Otherwise a document URI under `locator.uri-prefix` (e.g. a mounted Doxis file data store) maps its remainder to the locator.
@@ -70,6 +71,10 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **Delete Mode** | `…doxis.delete-mode` | `LOGICAL` | `LOGICAL` or `PHYSICAL` |
 | **Apply Security ACLs** | `…doxis.apply-security-acls` | `true` | Map OIS permissions to Doxis permissions on creation |
 | **Max Retries / Timeout** | `…doxis.max-retries` / `…doxis.timeout-seconds` | `3` / `120` | HTTP resilience |
+| **Content-Link Client Dir** | `…doxis.content-link.client-lib-dir` | — | Directory with the SER Doxis client jars + `oc-doxis-blueline-content-link`; enables `CONTENT_LINK` |
+| **Content-Link URI Prefix / Link Prefix** | `…doxis.content-link.uri-prefix` / `link-prefix` | — | Maps crawled URIs to the external link, e.g. `file:///mnt/archive/` → `\\fileserver\archive\` |
+| **Content-Link Type** | `…doxis.content-link.link-type` | `UNC` | `UNC` or `URL` |
+| **Content-Link Document Type** | `…doxis.content-link.document-type` | `document-type` | Class for linked documents (must allow linking contents) |
 | **Filing Record** | `…doxis.filing.record-id` | — | Record (e-file) new documents are filed into |
 | **Filing Record Repository** | `…doxis.filing.record-repository` | DMS repository | Repository of the record |
 | **Filing Folder Node** | `…doxis.filing.folder-node-id` | — | Optional folder node inside the record |

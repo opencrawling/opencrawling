@@ -19,12 +19,15 @@ import org.opencrawling.doxis.output.DoxisAclMapper;
 import org.opencrawling.doxis.output.DoxisDocumentMapper;
 import org.opencrawling.doxis.output.DoxisOutputConnector;
 import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.output.content.ContentLinkResolver;
+import org.opencrawling.doxis.output.content.ContentLinkWriter;
 import org.opencrawling.doxis.output.content.ContentPlanner;
 import org.opencrawling.doxis.output.content.LocatorResolver;
 import org.opencrawling.doxis.output.content.PrefixLocatorResolver;
 import org.opencrawling.doxis.output.schema.DoxisSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -60,9 +63,21 @@ public class DoxisClientConfig {
         return new PrefixLocatorResolver(properties.locator());
     }
 
+    /**
+     * Optional zero-copy content-link writer, loaded from {@code content-link.client-lib-dir} (SER Doxis Java client + the
+     * {@code oc-doxis-blueline-content-link} module) in an isolated class loader.
+     */
+    @Bean(destroyMethod = "close")
+    @ConditionalOnProperty(name = "spring.opencrawling.output.doxis.content-link.client-lib-dir")
+    public ContentLinkWriter doxisContentLinkWriter(DoxisOutputProperties properties) {
+        return DoxisOutputConnector.newContentLinkWriter(properties);
+    }
+
     @Bean
-    public ContentPlanner doxisContentPlanner(DoxisOutputProperties properties, LocatorResolver locatorResolver) {
-        return new ContentPlanner(properties.content(), locatorResolver);
+    public ContentPlanner doxisContentPlanner(DoxisOutputProperties properties, LocatorResolver locatorResolver,
+                                              ObjectProvider<ContentLinkWriter> contentLinkWriter) {
+        return new ContentPlanner(properties.content(), locatorResolver, new ContentLinkResolver(properties.contentLink()),
+                contentLinkWriter.getIfAvailable() != null);
     }
 
     @Bean
