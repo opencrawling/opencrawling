@@ -46,6 +46,7 @@ public record DoxisOutputProperties(
     @DefaultValue Content content,
     @DefaultValue Locator locator,
     @DefaultValue Filing filing,
+    @DefaultValue Security security,
     @DefaultValue ContentLink contentLink,
     @DefaultValue("3") int maxRetries,
     @DefaultValue("120") int timeoutSeconds
@@ -131,16 +132,47 @@ public record DoxisOutputProperties(
         }
     }
 
+    /** Which e-file (record) a new document is filed into. */
+    public enum FilingMode {
+        /** No filing. */
+        NONE,
+        /** Always {@code filing.record-id}. */
+        FIXED,
+        /** The record UUID given in the document metadata ({@code filing.record-id-metadata-key}). */
+        METADATA,
+        /** One e-file per source folder (the parent of the document URI), found by key or auto-created. */
+        SOURCE_FOLDER,
+        /** One e-file per metadata value ({@code filing.record-key-metadata-key}, e.g. a customer id), found or auto-created. */
+        KEY_METADATA
+    }
+
+    /** How a document is attached to its e-file. */
+    public enum FilingMethod {
+        /** {@code PUT …/documents/{uuid}/primaryParent} after creation — works for uploads and content links. */
+        PRIMARY_PARENT,
+        /** {@code relationshipParams} in the REST create (uploads only; supports a folder node). */
+        RELATIONSHIP
+    }
+
     /**
-     * Files new documents into a record (e-file / dossier) via {@code relationshipParams}: a fixed {@code record-id}, or a
-     * per-document record id from metadata ({@code record-id-metadata-key}), optionally into a folder node of that record.
+     * Files new documents into records (e-files / dossiers). With {@code SOURCE_FOLDER} / {@code KEY_METADATA} the e-file is
+     * looked up by {@code record-key-attribute} in {@code record-class} and, with {@code auto-create}, created when missing
+     * (title in {@code record-title-attribute}). Permissions set on the e-file apply to everything inside when the document
+     * class has "Primary parent objects → Pass down permissions" enabled — see {@link Security}.
      */
     public record Filing(
+        FilingMode mode,
         String recordId,
         String recordRepository,
         String folderNodeId,
         @DefaultValue("doxisRecordId") String recordIdMetadataKey,
-        @DefaultValue("doxisFolderNodeId") String folderNodeMetadataKey
+        @DefaultValue("doxisFolderNodeId") String folderNodeMetadataKey,
+        String recordKeyMetadataKey,
+        String recordClass,
+        @DefaultValue("ObjectNumberExternal") String recordKeyAttribute,
+        @DefaultValue("ObjectName") String recordTitleAttribute,
+        @DefaultValue("true") boolean autoCreate,
+        @DefaultValue("PRIMARY_PARENT") FilingMethod method
     ) {
         public Filing {
             if (recordId != null && recordId.isBlank()) recordId = null;
@@ -148,10 +180,68 @@ public record DoxisOutputProperties(
             if (folderNodeId != null && folderNodeId.isBlank()) folderNodeId = null;
             if (recordIdMetadataKey == null || recordIdMetadataKey.isBlank()) recordIdMetadataKey = "doxisRecordId";
             if (folderNodeMetadataKey == null || folderNodeMetadataKey.isBlank()) folderNodeMetadataKey = "doxisFolderNodeId";
+            if (recordKeyMetadataKey != null && recordKeyMetadataKey.isBlank()) recordKeyMetadataKey = null;
+            if (recordClass != null && recordClass.isBlank()) recordClass = null;
+            if (recordKeyAttribute == null || recordKeyAttribute.isBlank()) recordKeyAttribute = "ObjectNumberExternal";
+            if (recordTitleAttribute == null || recordTitleAttribute.isBlank()) recordTitleAttribute = "ObjectName";
+            if (method == null) method = FilingMethod.PRIMARY_PARENT;
+            if (mode == null) {
+                // backward compatible: a configured fixed record id implies FIXED, otherwise metadata-driven filing
+                mode = recordId != null ? FilingMode.FIXED : FilingMode.METADATA;
+            }
         }
 
         public static Filing defaults() {
-            return new Filing(null, null, null, null, null);
+            return new Filing(FilingMode.METADATA, null, null, null, null, null, null, null, null, null, true, FilingMethod.PRIMARY_PARENT);
+        }
+    }
+
+    /** Where OIS permissions are applied. */
+    public enum SecurityMode {
+        /** Permissions are left to the document class / e-file configuration in Doxis. */
+        NONE,
+        /** Per-document ACEs (needs instance rights on the document class). */
+        DOCUMENT,
+        /** ACEs on the e-file; documents inherit them ("Pass down permissions"). Needs a filing mode and instance rights on the e-file class. */
+        RECORD,
+        /** Both. */
+        DOCUMENT_AND_RECORD
+    }
+
+    /** How permissions of an existing e-file are maintained. */
+    public enum RecordAclSync {
+        /** Set once, when the connector creates the e-file. */
+        CREATE_ONLY,
+        /** Later documents add their missing ACEs to the e-file (never removes). */
+        ADDITIVE
+    }
+
+    /**
+     * @param strict      fail (and roll back) a new document when its permissions cannot be applied, instead of logging a warning
+     * @param removeStale document mode: on re-crawl also remove the connector-managed permissions (view/update/version) that no
+     *                    longer exist at the source
+     */
+    public record Security(
+        @DefaultValue("DOCUMENT") SecurityMode mode,
+        @DefaultValue("false") boolean strict,
+        @DefaultValue("false") boolean removeStale,
+        @DefaultValue("CREATE_ONLY") RecordAclSync recordAclSync
+    ) {
+        public Security {
+            if (mode == null) mode = SecurityMode.DOCUMENT;
+            if (recordAclSync == null) recordAclSync = RecordAclSync.CREATE_ONLY;
+        }
+
+        public static Security defaults() {
+            return new Security(SecurityMode.DOCUMENT, false, false, RecordAclSync.CREATE_ONLY);
+        }
+
+        public boolean documentAcls() {
+            return mode == SecurityMode.DOCUMENT || mode == SecurityMode.DOCUMENT_AND_RECORD;
+        }
+
+        public boolean recordAcls() {
+            return mode == SecurityMode.RECORD || mode == SecurityMode.DOCUMENT_AND_RECORD;
         }
     }
 
@@ -198,6 +288,8 @@ public record DoxisOutputProperties(
         if (content == null) content = Content.defaults();
         if (locator == null) locator = Locator.defaults();
         if (filing == null) filing = Filing.defaults();
+        if (security == null) security = Security.defaults();
+        if (!applySecurityAcls) security = new Security(SecurityMode.NONE, security.strict(), security.removeStale(), security.recordAclSync());
         if (contentLink == null) contentLink = ContentLink.defaults();
         if (maxRetries < 0) maxRetries = DoxisConstants.DEFAULT_MAX_RETRIES;
         if (timeoutSeconds <= 0) timeoutSeconds = DoxisConstants.DEFAULT_TIMEOUT_SECONDS;
@@ -205,6 +297,6 @@ public record DoxisOutputProperties(
 
     public static DoxisOutputProperties defaults() {
         return new DoxisOutputProperties(null, null, null, null, null, null, null, null, null, null, null,
-                null, null, true, null, null, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
+                null, null, true, null, null, null, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
     }
 }

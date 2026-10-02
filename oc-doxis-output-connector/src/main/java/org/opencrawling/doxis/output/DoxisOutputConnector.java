@@ -48,6 +48,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -73,7 +74,7 @@ public class DoxisOutputConnector implements OutputConnector {
     private volatile String repositoryName;
     private volatile String contentLinkDocumentTypeId;
     private volatile String documentTypeId;
-    private final Map<String, JsonNode> recordCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final DoxisRecordFiler filer;
 
     /**
      * No-arg constructor for {@link java.util.ServiceLoader} discovery; such an instance is not connected.
@@ -86,6 +87,7 @@ public class DoxisOutputConnector implements OutputConnector {
         this.mapper = null;
         this.aclMapper = null;
         this.contentLinkWriter = null;
+        this.filer = null;
     }
 
     /**
@@ -124,6 +126,7 @@ public class DoxisOutputConnector implements OutputConnector {
         this.mapper = mapper;
         this.aclMapper = aclMapper;
         this.contentLinkWriter = contentLinkWriter;
+        this.filer = client != null ? new DoxisRecordFiler(properties, client, schema, mapper, aclMapper) : null;
     }
 
     /**
@@ -237,23 +240,30 @@ public class DoxisOutputConnector implements OutputConnector {
         List<String> existing = client.searchDocumentIds(mapper.lookupStatement(repositoryName, document.id()), false);
 
         if (existing.isEmpty()) {
+            Optional<DoxisRecordFiler.Target> eFile = filer.target(document);
+            boolean fileByRelationship = eFile.isPresent() && plan.strategy() != ContentStrategy.CONTENT_LINK
+                    && properties.filing().method() == DoxisOutputProperties.FilingMethod.RELATIONSHIP;
             String documentId;
             if (plan.strategy() == ContentStrategy.CONTENT_LINK) {
                 documentId = createLinkedDocument(document, plan);
             } else {
                 Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
-                JsonNode created = client.createDocument(properties.repository(), params, relationshipParams(document), plan.body());
+                JsonNode created = client.createDocument(properties.repository(), params,
+                        fileByRelationship ? filer.relationshipParams(eFile.get()) : null, plan.body());
                 documentId = created.path("uuid").asText();
             }
-            if (properties.applySecurityAcls()) {
-                String typeLabel = plan.strategy() == ContentStrategy.CONTENT_LINK && properties.contentLink().documentType() != null
-                        ? properties.contentLink().documentType() : properties.documentType();
-                applyPermissions(documentId, document, typeLabel);
-            }
             try {
+                if (eFile.isPresent() && !fileByRelationship) {
+                    client.setDocumentPrimaryParent(properties.repository(), documentId, eFile.get().recordId());
+                }
+                if (properties.security().documentAcls()) {
+                    String typeLabel = plan.strategy() == ContentStrategy.CONTENT_LINK && properties.contentLink().documentType() != null
+                            ? properties.contentLink().documentType() : properties.documentType();
+                    applyPermissions(documentId, document, typeLabel);
+                }
                 verify(documentId, plan);
-            } catch (IOException e) {
-                // Do not leave an empty or inconsistent document behind: remove what this call just created.
+            } catch (IOException | RuntimeException e) {
+                // Do not leave an empty, unfiled or unprotected document behind: remove what this call just created.
                 log.warn("Rolling back Doxis document {} for {}: {}", documentId, document.id(), e.getMessage());
                 try {
                     client.deleteDocumentPhysically(properties.repository(), documentId);
@@ -262,8 +272,9 @@ public class DoxisOutputConnector implements OutputConnector {
                 }
                 throw e;
             }
-            log.info("Archived document {} into Doxis repository '{}' as {} (content: {}).",
-                    document.id(), repositoryName, documentId, describe(plan));
+            log.info("Archived document {} into Doxis repository '{}' as {} (content: {}{}).",
+                    document.id(), repositoryName, documentId, describe(plan),
+                    eFile.map(t -> "; e-file " + t.recordId() + (t.createdNow() ? " (new)" : "")).orElse(""));
             return;
         }
 
@@ -320,9 +331,6 @@ public class DoxisOutputConnector implements OutputConnector {
             descriptors.add(new ContentLinkWriter.Descriptor((String) attribute.get("attributeDefinitionUUID"),
                     (String) attribute.get("attributeDataType"), values));
         }
-        if (relationshipParams(document) != null) {
-            log.warn("Filing into a record is not supported for content-link documents yet; {} is not filed.", document.id());
-        }
         try {
             return contentLinkWriter.createLinkedDocument(new ContentLinkWriter.Request(repositoryName, contentLinkDocumentTypeId,
                     descriptors, plan.contentLink().type(), plan.contentLink().link()));
@@ -360,17 +368,23 @@ public class DoxisOutputConnector implements OutputConnector {
      * entries (including ones set by Doxis administrators) are never removed. Best effort — failures are logged.
      */
     private void syncPermissions(String documentId, RepositoryDocument document) throws InterruptedException {
-        if (!properties.applySecurityAcls()) {
+        if (!properties.security().documentAcls()) {
             return;
         }
         try {
+            List<Map<String, Object>> desired = aclMapper.aces(document.security());
+            Set<String> desiredKeys = new HashSet<>();
+            for (Map<String, Object> ace : desired) {
+                desiredKeys.add(ace.get("organizationalElementId") + "|" + ace.get("permission") + "|" + ace.get("authorizationVariant"));
+            }
             Set<String> existing = new HashSet<>();
-            for (JsonNode ace : client.getPermissions(properties.repository(), documentId)) {
+            List<JsonNode> current = client.getPermissions(properties.repository(), documentId);
+            for (JsonNode ace : current) {
                 existing.add(ace.path("organizationalElementId").asText() + "|" + ace.path("permissionName").asText()
                         + "|" + ace.path("authorizationVariant").asText());
             }
             List<Map<String, Object>> missing = new ArrayList<>();
-            for (Map<String, Object> ace : aclMapper.aces(document.security())) {
+            for (Map<String, Object> ace : desired) {
                 if (!existing.contains(ace.get("organizationalElementId") + "|" + ace.get("permission") + "|"
                         + ace.get("authorizationVariant"))) {
                     missing.add(ace);
@@ -379,6 +393,22 @@ public class DoxisOutputConnector implements OutputConnector {
             if (!missing.isEmpty()) {
                 client.addPermissions(properties.repository(), documentId, missing);
                 log.info("Added {} missing permission(s) to Doxis document {} for {}.", missing.size(), documentId, document.id());
+            }
+            if (properties.security().removeStale()) {
+                int removed = 0;
+                for (JsonNode ace : current) {
+                    String permission = ace.path("permissionName").asText();
+                    String key = ace.path("organizationalElementId").asText() + "|" + permission + "|" + ace.path("authorizationVariant").asText();
+                    if (DoxisAclMapper.MANAGED_DOCUMENT_PERMISSIONS.contains(permission) && !desiredKeys.contains(key)) {
+                        client.deleteDocumentPermission(properties.repository(), documentId, permission,
+                                ace.path("organizationalElementId").asText(), ace.path("authorizationVariant").asText());
+                        removed++;
+                    }
+                }
+                if (removed > 0) {
+                    log.info("Removed {} permission(s) of Doxis document {} that no longer exist at the source ({}).",
+                            removed, documentId, document.id());
+                }
             }
         } catch (DoxisApiException e) {
             if ("SECU0050".equals(e.getErrorCode())) {
@@ -391,51 +421,6 @@ public class DoxisOutputConnector implements OutputConnector {
         }
     }
 
-    /**
-     * {@code relationshipParams} filing the new document into a record (e-file): the record id comes from the document metadata
-     * ({@code filing.record-id-metadata-key}) or {@code filing.record-id}; the folder node likewise. The record's repository and
-     * instance date are looked up once per record.
-     */
-    private Map<String, Object> relationshipParams(RepositoryDocument document) throws IOException, InterruptedException {
-        DoxisOutputProperties.Filing filing = properties.filing();
-        String recordId = metadataValue(document, filing.recordIdMetadataKey());
-        if (recordId == null) {
-            recordId = filing.recordId();
-        }
-        if (recordId == null) {
-            return null;
-        }
-        String folderNodeId = metadataValue(document, filing.folderNodeMetadataKey());
-        if (folderNodeId == null) {
-            folderNodeId = filing.folderNodeId();
-        }
-        String recordRepository = filing.recordRepository() != null ? filing.recordRepository() : properties.repository();
-        final String key = recordRepository + "/" + recordId;
-        JsonNode record = recordCache.get(key);
-        if (record == null) {
-            record = client.getRecord(recordRepository, recordId);
-            recordCache.put(key, record);
-        }
-        Map<String, Object> relationship = new LinkedHashMap<>();
-        relationship.put("sourceObjectUUID", recordId);
-        if (folderNodeId != null) {
-            relationship.put("sourceFolderNodeUUID", folderNodeId);
-        }
-        relationship.put("sourceContentRepositoryUUID", record.path("contentRepositoryUUID").asText(recordRepository));
-        relationship.put("sourceObjectInstanceDate", record.path("instanceDate").asText());
-        relationship.put("sourceObjectType", "RECORD");
-        return relationship;
-    }
-
-    private static String metadataValue(RepositoryDocument document, String key) {
-        if (document.metadata() == null) {
-            return null;
-        }
-        List<String> values = document.metadata().get(key);
-        return values == null || values.isEmpty() || values.getFirst() == null || values.getFirst().isBlank()
-                ? null : values.getFirst().strip();
-    }
-
     private void applyPermissions(String documentId, RepositoryDocument document, String typeLabel) throws IOException, InterruptedException {
         try {
             client.addPermissions(properties.repository(), documentId, aclMapper.aces(document.security()));
@@ -443,9 +428,17 @@ public class DoxisOutputConnector implements OutputConnector {
             if (!"SECU0050".equals(e.getErrorCode())) {
                 throw e;
             }
+            if (properties.security().strict()) {
+                throw new IOException("Document type '" + typeLabel + "' does not allow per-document permissions (security.strict)", e);
+            }
             // The document type's security object type does not allow instance-level rights: the type's ACL applies.
             log.warn("Document type '{}' does not allow per-document permissions; source ACLs of {} were not applied.",
                     typeLabel, document.id());
+            return;
+        }
+        List<String> unresolved = aclMapper.unresolvedIdentities(document.security());
+        if (properties.security().strict() && !unresolved.isEmpty()) {
+            throw new IOException("Identities " + unresolved + " of " + document.id() + " have no Doxis user or group (security.strict)");
         }
     }
 

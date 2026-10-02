@@ -36,6 +36,11 @@ public class DoxisAclMapper {
 
     static final String VIEW = "VIEW_DOCUMENT_CONTENTS";
     static final List<String> WRITE = List.of(VIEW, "UPDATE_DOCUMENT", "VERSION_DOCUMENT");
+    static final String RECORD_VIEW = "VIEW_FOLDER_CONTENTS";
+    static final List<String> RECORD_WRITE = List.of(RECORD_VIEW, "UPDATE_FOLDER", "EDIT_FOLDER_DESCRIPTORS");
+
+    /** Permissions the connector manages on documents (the only ones {@code security.remove-stale} may remove). */
+    public static final Set<String> MANAGED_DOCUMENT_PERMISSIONS = Set.of(VIEW, "UPDATE_DOCUMENT", "VERSION_DOCUMENT");
 
     private final DoxisSchema schema;
 
@@ -44,6 +49,33 @@ public class DoxisAclMapper {
     }
 
     public List<Map<String, Object>> aces(SecurityConfig security) throws IOException, InterruptedException {
+        return aces(security, false);
+    }
+
+    /**
+     * ACEs for an e-file (record): {@code read} → {@code VIEW_FOLDER_CONTENTS}; {@code write} → view + {@code UPDATE_FOLDER} +
+     * {@code EDIT_FOLDER_DESCRIPTORS}; {@code deny} → DENY view. Documents inherit them when the class passes permissions down.
+     */
+    public List<Map<String, Object>> recordAces(SecurityConfig security) throws IOException, InterruptedException {
+        return aces(security, true);
+    }
+
+    /** Identities of {@code security} that have no matching Doxis user or group. */
+    public List<String> unresolvedIdentities(SecurityConfig security) throws IOException, InterruptedException {
+        List<String> unresolved = new ArrayList<>();
+        if (security != null && security.permissions() != null) {
+            for (PermissionRule rule : security.permissions()) {
+                if (schema.principalId(rule.identity()).isEmpty()) {
+                    unresolved.add(rule.identity());
+                }
+            }
+        }
+        return unresolved;
+    }
+
+    private List<Map<String, Object>> aces(SecurityConfig security, boolean record) throws IOException, InterruptedException {
+        String view = record ? RECORD_VIEW : VIEW;
+        List<String> write = record ? RECORD_WRITE : WRITE;
         List<Map<String, Object>> aces = new ArrayList<>();
         if (security == null || security.permissions() == null) {
             return aces;
@@ -57,9 +89,9 @@ public class DoxisAclMapper {
             }
             String access = rule.access() == null ? "" : rule.access().toLowerCase(Locale.ROOT);
             switch (access) {
-                case "deny" -> add(aces, seen, principal.get(), VIEW, "DENY");
-                case "write" -> WRITE.forEach(permission -> add(aces, seen, principal.get(), permission, "GRANT"));
-                case "read" -> add(aces, seen, principal.get(), VIEW, "GRANT");
+                case "deny" -> add(aces, seen, principal.get(), view, "DENY");
+                case "write" -> write.forEach(permission -> add(aces, seen, principal.get(), permission, "GRANT"));
+                case "read" -> add(aces, seen, principal.get(), view, "GRANT");
                 default -> log.warn("Unsupported OIS access '{}' for identity '{}'; skipped.", rule.access(), rule.identity());
             }
         }
