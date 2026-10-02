@@ -39,6 +39,10 @@ public class DoxisAclMapper {
     static final String RECORD_VIEW = "VIEW_FOLDER_CONTENTS";
     static final List<String> RECORD_WRITE = List.of(RECORD_VIEW, "UPDATE_FOLDER", "EDIT_FOLDER_DESCRIPTORS");
 
+    /** Record permissions granted to the connector's own user on e-files it creates ({@code security.grant-connector-user}). */
+    public static final List<String> CONNECTOR_RECORD_PERMISSIONS = List.of(RECORD_VIEW, "UPDATE_FOLDER", "EDIT_FOLDER_DESCRIPTORS",
+            "DELETE_FOLDER", "CREATE_FOLDER", "SET_PRIMARY_PARENT", "VIEW_REMOVED_FOLDER");
+
     /** Permissions the connector manages on documents (the only ones {@code security.remove-stale} may remove). */
     public static final Set<String> MANAGED_DOCUMENT_PERMISSIONS = Set.of(VIEW, "UPDATE_DOCUMENT", "VERSION_DOCUMENT");
 

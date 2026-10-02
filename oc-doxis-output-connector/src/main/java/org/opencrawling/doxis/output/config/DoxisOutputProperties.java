@@ -220,12 +220,16 @@ public record DoxisOutputProperties(
      * @param strict      fail (and roll back) a new document when its permissions cannot be applied, instead of logging a warning
      * @param removeStale document mode: on re-crawl also remove the connector-managed permissions (view/update/version) that no
      *                    longer exist at the source
+     * @param grantConnectorUser record mode: also grant the connector's own (technical) user view/update/edit/delete/
+     *                    set-primary-parent on e-files it creates — instance ACLs replace the class ACL, so without this the
+     *                    connector can lock itself out of its own e-files
      */
     public record Security(
         @DefaultValue("DOCUMENT") SecurityMode mode,
         @DefaultValue("false") boolean strict,
         @DefaultValue("false") boolean removeStale,
-        @DefaultValue("CREATE_ONLY") RecordAclSync recordAclSync
+        @DefaultValue("CREATE_ONLY") RecordAclSync recordAclSync,
+        @DefaultValue("true") boolean grantConnectorUser
     ) {
         public Security {
             if (mode == null) mode = SecurityMode.DOCUMENT;
@@ -233,7 +237,7 @@ public record DoxisOutputProperties(
         }
 
         public static Security defaults() {
-            return new Security(SecurityMode.DOCUMENT, false, false, RecordAclSync.CREATE_ONLY);
+            return new Security(SecurityMode.DOCUMENT, false, false, RecordAclSync.CREATE_ONLY, true);
         }
 
         public boolean documentAcls() {
@@ -289,7 +293,7 @@ public record DoxisOutputProperties(
         if (locator == null) locator = Locator.defaults();
         if (filing == null) filing = Filing.defaults();
         if (security == null) security = Security.defaults();
-        if (!applySecurityAcls) security = new Security(SecurityMode.NONE, security.strict(), security.removeStale(), security.recordAclSync());
+        if (!applySecurityAcls) security = new Security(SecurityMode.NONE, security.strict(), security.removeStale(), security.recordAclSync(), security.grantConnectorUser());
         if (contentLink == null) contentLink = ContentLink.defaults();
         if (maxRetries < 0) maxRetries = DoxisConstants.DEFAULT_MAX_RETRIES;
         if (timeoutSeconds <= 0) timeoutSeconds = DoxisConstants.DEFAULT_TIMEOUT_SECONDS;

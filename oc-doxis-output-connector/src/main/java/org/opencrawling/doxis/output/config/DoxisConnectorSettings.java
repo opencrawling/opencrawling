@@ -78,7 +78,8 @@ public final class DoxisConnectorSettings {
                         enumValue(DoxisOutputProperties.SecurityMode.class, c.get("doxisSecurityMode"), DoxisOutputProperties.SecurityMode.DOCUMENT),
                         bool(c.get("doxisSecurityStrict"), false),
                         bool(c.get("doxisSecurityRemoveStale"), false),
-                        enumValue(DoxisOutputProperties.RecordAclSync.class, c.get("doxisSecurityRecordAclSync"), DoxisOutputProperties.RecordAclSync.CREATE_ONLY)),
+                        enumValue(DoxisOutputProperties.RecordAclSync.class, c.get("doxisSecurityRecordAclSync"), DoxisOutputProperties.RecordAclSync.CREATE_ONLY),
+                        bool(c.get("doxisSecurityGrantConnectorUser"), true)),
                 new DoxisOutputProperties.ContentLink(
                         c.get("doxisContentLinkClientLibDir"),
                         c.get("doxisContentLinkCsbHost"),
