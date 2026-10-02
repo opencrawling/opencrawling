@@ -123,7 +123,7 @@
         <picocli.version>4.7.6</picocli.version>
         <jline.version>3.26.1</jline.version>
         <spring-ai.version>2.0.0</spring-ai.version>
-        <tika.version>3.3.1</tika.version>
+        <tika.version>4.1.0</tika.version>
         <commons-io.version>2.22.0</commons-io.version>
         <jaxb-api.version>2.3.1</jaxb-api.version>
         <jmustache.version>1.16</jmustache.version>
@@ -255,8 +255,34 @@
             </dependency>
             <dependency>
                 <groupId>org.apache.tika</groupId>
+                <artifactId>tika-pipes-fork-parser</artifactId>
+                <version>${tika.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.apache.logging.log4j</groupId>
+                        <artifactId>log4j-core</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.apache.logging.log4j</groupId>
+                        <artifactId>log4j-slf4j2-impl</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tika</groupId>
+                <artifactId>tika-pipes-core</artifactId>
+                <version>${tika.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tika</groupId>
+                <artifactId>tika-pipes-api</artifactId>
+                <version>${tika.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tika</groupId>
                 <artifactId>tika-parsers-standard-package</artifactId>
                 <version>${tika.version}</version>
+                <type>pom</type>
             </dependency>
             <dependency>
                 <groupId>org.apache.stormcrawler</groupId>

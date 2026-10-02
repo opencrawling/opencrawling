@@ -15,7 +15,9 @@
  */
 package org.opencrawling.runtime.messaging;
 
-import org.apache.tika.Tika;
+import org.opencrawling.core.text.TextExtractionService;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
@@ -51,7 +53,7 @@ public class IngestionConsumer {
     
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties claimCheckProperties;
     private final TelemetryTraceStore traceStore;
@@ -60,13 +62,14 @@ public class IngestionConsumer {
             KafkaTemplate<String, Object> kafkaTemplate,
             @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
             ClaimCheckProperties claimCheckProperties,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TextExtractionService textExtractionService) {
         this.kafkaTemplate = kafkaTemplate;
         this.claimCheckStore = claimCheckStore;
         this.claimCheckProperties = claimCheckProperties;
         this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
     }
 
     @jakarta.annotation.PostConstruct
@@ -120,24 +123,17 @@ public class IngestionConsumer {
                     return;
                 }
 
-                // Extract raw text using Apache Tika
-                String text = "";
-                try {
-                    text = tika.parseToString(new java.io.ByteArrayInputStream(contentBytes));
-                } catch (Exception e) {
-                    log.warn("Tika failed to parse document {}: {}. Falling back to plain text check.", message.documentId(), e.getMessage());
-                }
-                
-                // Fallback for plain text if Tika fails but we have bytes
-                if (text.isBlank() && contentBytes.length > 0) {
-                    String mimeType = String.valueOf(message.metadata().getOrDefault("mimeType", List.of("text/plain")));
-                    if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                        text = new String(contentBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    }
+                // Extract raw text using Apache Tika via TextExtractionService (isolated in child process if configured)
+                TextExtractionResult extractionResult = textExtractionService.extractText(contentBytes, message.metadata());
+                String text = extractionResult.text();
+
+                if (!extractionResult.success()) {
+                    log.warn("Tika text extraction failed for document {}: {}", message.documentId(), extractionResult.errorMessage());
                 }
 
-                // Remove null characters to prevent PostgreSQL "invalid byte sequence for encoding UTF8: 0x00" error
-                text = text.replace("\u0000", "");
+                if (extractionResult.trimmed()) {
+                    log.info("Document {} text was trimmed during extraction.", message.documentId());
+                }
 
                 if (text.isBlank()) {
                     log.warn("Document {} extracted text is empty, skipping.", message.documentId());
