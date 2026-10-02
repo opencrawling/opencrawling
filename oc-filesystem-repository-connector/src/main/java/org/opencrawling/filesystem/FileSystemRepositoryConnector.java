@@ -46,6 +46,31 @@ import reactor.core.publisher.Flux;
 @Primary
 public class FileSystemRepositoryConnector implements RepositoryConnector {
 
+    public static final String FIELD_INCLUDE_ACLS = "includeAcls";
+
+    private final boolean includeAcls;
+
+    public FileSystemRepositoryConnector() {
+        this(true);
+    }
+
+    public FileSystemRepositoryConnector(boolean includeAcls) {
+        this.includeAcls = includeAcls;
+    }
+
+    public FileSystemRepositoryConnector(Map<String, Object> config) {
+        if (config != null && config.containsKey(FIELD_INCLUDE_ACLS)) {
+            Object val = config.get(FIELD_INCLUDE_ACLS);
+            this.includeAcls = val instanceof Boolean ? (Boolean) val : Boolean.parseBoolean(String.valueOf(val));
+        } else {
+            this.includeAcls = true;
+        }
+    }
+
+    public boolean isIncludeAcls() {
+        return includeAcls;
+    }
+
     @Override
     public String getName() {
         return "FileSystemConnector";
@@ -111,57 +136,62 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
         metadata.put("file_size", List.of(String.valueOf(attrs.size())));
         metadata.put("file_is_hidden", List.of(String.valueOf(Files.isHidden(file))));
 
-        // Collocated POSIX / OS identity attributes
-        String owner = null;
-        try {
-            owner = Files.getOwner(file).getName();
-            if (owner != null && !owner.isBlank()) {
-                metadata.put("file_owner", List.of(owner));
-                metadata.put("file_identity_users", List.of(owner));
-            }
-        } catch (Exception ignored) {}
-
         List<PermissionRule> rules = new ArrayList<>();
         boolean isPublic = false;
 
-        PosixFileAttributeView posixView = Files.getFileAttributeView(file, PosixFileAttributeView.class);
-        if (posixView != null) {
+        if (includeAcls) {
+            // Collocated POSIX / OS identity attributes
+            String owner = null;
             try {
-                PosixFileAttributes posixAttrs = posixView.readAttributes();
-                if (posixAttrs != null) {
-                    Set<PosixFilePermission> perms = posixAttrs.permissions();
-                    String permStr = PosixFilePermissions.toString(perms);
-                    metadata.put("file_permissions", List.of(permStr));
-                    
-                    int octalMode = toOctalMode(perms);
-                    metadata.put("file_mode_octal", List.of(String.format("%04o", octalMode)));
-
-                    String group = posixAttrs.group().getName();
-                    if (group != null && !group.isBlank()) {
-                        metadata.put("file_group", List.of(group));
-                        metadata.put("file_identity_groups", List.of(group));
-                    }
-
-                    if (perms.contains(PosixFilePermission.OWNER_READ)) {
-                        rules.add(new PermissionRule(owner != null ? owner : "owner", "user", owner != null ? owner : "Owner", "read"));
-                    }
-                    if (group != null && perms.contains(PosixFilePermission.GROUP_READ)) {
-                        rules.add(new PermissionRule(group, "group", group, "read"));
-                    }
-                    if (perms.contains(PosixFilePermission.OTHERS_READ)) {
-                        rules.add(new PermissionRule("public", "public", "Everyone", "read"));
-                        isPublic = true;
-                    }
+                owner = Files.getOwner(file).getName();
+                if (owner != null && !owner.isBlank()) {
+                    metadata.put("file_owner", List.of(owner));
+                    metadata.put("file_identity_users", List.of(owner));
                 }
             } catch (Exception ignored) {}
-        }
 
-        if (rules.isEmpty()) {
-            if (owner != null && !owner.isBlank()) {
-                rules.add(new PermissionRule(owner, "user", owner, "read"));
+            PosixFileAttributeView posixView = Files.getFileAttributeView(file, PosixFileAttributeView.class);
+            if (posixView != null) {
+                try {
+                    PosixFileAttributes posixAttrs = posixView.readAttributes();
+                    if (posixAttrs != null) {
+                        Set<PosixFilePermission> perms = posixAttrs.permissions();
+                        String permStr = PosixFilePermissions.toString(perms);
+                        metadata.put("file_permissions", List.of(permStr));
+                        
+                        int octalMode = toOctalMode(perms);
+                        metadata.put("file_mode_octal", List.of(String.format("%04o", octalMode)));
+
+                        String group = posixAttrs.group().getName();
+                        if (group != null && !group.isBlank()) {
+                            metadata.put("file_group", List.of(group));
+                            metadata.put("file_identity_groups", List.of(group));
+                        }
+
+                        if (perms.contains(PosixFilePermission.OWNER_READ)) {
+                            rules.add(new PermissionRule(owner != null ? owner : "owner", "user", owner != null ? owner : "Owner", "read"));
+                        }
+                        if (group != null && perms.contains(PosixFilePermission.GROUP_READ)) {
+                            rules.add(new PermissionRule(group, "group", group, "read"));
+                        }
+                        if (perms.contains(PosixFilePermission.OTHERS_READ)) {
+                            rules.add(new PermissionRule("public", "public", "Everyone", "read"));
+                            isPublic = true;
+                        }
+                    }
+                } catch (Exception ignored) {}
             }
-            rules.add(new PermissionRule("public", "public", "Everyone", "read"));
+
+            if (rules.isEmpty()) {
+                if (owner != null && !owner.isBlank()) {
+                    rules.add(new PermissionRule(owner, "user", owner, "read"));
+                }
+                rules.add(new PermissionRule("public", "public", "Everyone", "read"));
+                isPublic = true;
+            }
+        } else {
             isPublic = true;
+            rules.add(new PermissionRule("public", "public", "Everyone", "read"));
         }
 
         SecurityConfig securityConfig = new SecurityConfig(false, rules);

@@ -72,8 +72,25 @@ class FileSystemRepositoryConnectorTest {
     }
 
     @Test
+    void testScanWithoutAcls() throws IOException {
+        FileSystemRepositoryConnector noAclConnector = new FileSystemRepositoryConnector(false);
+        Path testFile = tempDir.resolve("public-doc.txt");
+        Files.writeString(testFile, "Public content", StandardCharsets.UTF_8);
+
+        StepVerifier.create(noAclConnector.scan(tempDir.toString()))
+                .assertNext(doc -> {
+                    assertThat(doc.security()).isNotNull();
+                    assertThat(doc.acl()).isEqualTo("public");
+                    assertThat(doc.metadata()).doesNotContainKey("file_identity_users");
+                    assertThat(doc.metadata()).doesNotContainKey("file_identity_groups");
+                })
+                .verifyComplete();
+    }
+
+    @Test
     void testConnectorLifecycle() throws Exception {
         assertThat(connector.getName()).isEqualTo("FileSystemConnector");
+        assertThat(connector.isIncludeAcls()).isTrue();
         connector.connect();
         connector.disconnect();
     }
