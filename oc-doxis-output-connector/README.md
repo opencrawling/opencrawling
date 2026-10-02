@@ -168,6 +168,11 @@ Result: each file is archived with its title, source URL, `ObjectDate` and hashe
 
 Findings from live runs against a Doxis CSB 14.4.1 (SER training environment), recorded 2026-10-01:
 
+- **SER guidance (2026-10-02): `predefinedLocator` is not a supported zero-copy mechanism.** SER's documented path for external, never-copied content is the Java/Blueline `IDocument.addContentLinkPartDocument()` (exactly one representation and one content object per document). It has no REST equivalent in 14.4.1, so the `PREDEFINED_LOCATOR` strategy is experimental. For in-place content, a content-link implementation via the Blueline API (licensed jars) or a newer server version is required. SER also notes:
+  - Server-side processing can only be disabled per document class (content indexing off, no rendition rules, thumbnails off, no ML model).
+  - Hashing is a storage-adapter setting.
+  - A physical delete removes stored files.
+  - FIPS cannot reference resident files.
 - **`predefinedLocator` is a storage-system feature that is off by default.**
   - A create with `predefinedLocator` *and* content fails with `Archive operations with predefined locators are not allowed for repository sb1` (the storage repository). It has to be enabled on the storage system by the Doxis administrator.
   - A create with `predefinedLocator` and *no* content is accepted, but stores the version as `NO_CONTENT`: the locator is ignored. The connector detects this, fails the document and rolls it back.
