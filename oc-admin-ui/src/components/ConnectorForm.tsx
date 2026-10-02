@@ -500,14 +500,133 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select 
+                          {...register('configuration.crawlMode')}
+                          defaultValue="folder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="folder">Folder Tree Traversal</option>
+                          <option value="query">Search API Query (AFTS / CMISQL / Lucene)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Query Language (For Query Mode)</label>
+                        <select 
+                          {...register('configuration.queryLanguage')}
+                          defaultValue="afts"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="afts">AFTS (Alfresco Full Text Search)</option>
+                          <option value="cmis">CMISQL</option>
+                          <option value="lucene">Lucene</option>
+                        </select>
+                      </div>
                       <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Search Query (For Query Mode)</label>
+                        <input 
+                          {...register('configuration.searchQuery')}
+                          placeholder="TYPE:'cm:content' AND PATH:'/app:company_home/st:sites/cm:finance//*'"
+                          defaultValue="TYPE:'cm:content'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder Path</label>
+                        <input 
+                          {...register('configuration.rootFolderPath')}
+                          placeholder="/Company Home"
+                          defaultValue="/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder / Node ID (Optional)</label>
+                        <input 
+                          {...register('configuration.rootFolderId')}
+                          placeholder="e.g. -root- or specific UUID"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Site ID (Optional Scope)</label>
+                        <input 
+                          {...register('configuration.siteId')}
+                          placeholder="e.g. finance or marketing"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Folders (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.excludedFolders')}
+                          placeholder="Data Dictionary, /Sites/trash"
+                          defaultValue="Data Dictionary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm font-medium">Batch Size</label>
                         <input 
                           type="number"
-                          {...register('configuration.batchSize')}
-                          defaultValue="100"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          {...register('configuration.batchSize', { valueAsNumber: true })}
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.maxContentSizeBytes', { valueAsNumber: true })}
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">MIME Type Filter (Optional, comma-separated)</label>
+                        <input 
+                          {...register('configuration.mimeTypeFilter')}
+                          placeholder="e.g. application/pdf, text/plain, image/*"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeSubfoldersAlfresco"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersAlfresco" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders Recursively
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeContentStreamAlfresco"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamAlfresco" className="text-sm font-medium cursor-pointer">
+                          Fetch Binary Content Stream
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsAlfresco"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsAlfresco" className="text-sm font-medium cursor-pointer">
+                          Include Access Control Lists (ACLs)
+                        </label>
                       </div>
                     </div>
                   )}

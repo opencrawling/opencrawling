@@ -41,7 +41,16 @@ public class ConnectorController {
         // Initial mock data defaults
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
-        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1", "username", "admin", "password", "admin", "batchSize", "100")));
+        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
+            "url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
+            "username", "admin",
+            "password", "admin",
+            "batchSize", "100",
+            "crawlMode", "folder",
+            "includeSubfolders", "true",
+            "includeAcls", "true",
+            "includeContentStream", "true"
+        )));
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));
         defaults.add(new ConnectorDTO("Camunda_7_REST_Engine", "Camunda 7 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://localhost:8080/engine-rest", "username", "demo", "password", "demo")));
