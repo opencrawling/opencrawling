@@ -90,6 +90,10 @@ public class PipesForkTextExtractor implements TextExtractionService {
     }
 
     private PipesForkParser buildPipesForkParser(TextExtractionProperties conf) throws Exception {
+        if (System.getProperty("tika.pipes.server.stdio") == null) {
+            System.setProperty("tika.pipes.server.stdio", "discard");
+        }
+
         PipesForkParserConfig config = new PipesForkParserConfig();
         config.setHandlerType(BasicContentHandlerFactory.HANDLER_TYPE.TEXT);
         config.setParseMode(ParseMode.CONCATENATE);
@@ -121,8 +125,12 @@ public class PipesForkTextExtractor implements TextExtractionService {
     }
 
     private void startFork() throws Exception {
+        Metadata warmupMetadata = new Metadata();
+        warmupMetadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, "warmup.txt");
+        warmupMetadata.set(org.apache.tika.metadata.HttpHeaders.CONTENT_TYPE, "text/plain");
+
         try (TikaInputStream tis = TikaInputStream.get("OpenCrawling Warmup".getBytes(StandardCharsets.UTF_8))) {
-            PipesForkResult result = pipesForkParser.parse(tis);
+            PipesForkResult result = pipesForkParser.parse(tis, warmupMetadata);
             if (!result.isSuccess()) {
                 throw new IllegalStateException("Fork test parse failed: " + result.getStatus()
                         + (result.getMessage() != null ? " - " + result.getMessage() : ""));
@@ -248,11 +256,27 @@ public class PipesForkTextExtractor implements TextExtractionService {
     private void populateTikaMetadata(Metadata tikaMd, Map<String, List<String>> metadata) {
         if (metadata == null) return;
         List<String> mimeType = metadata.get("mimeType");
+        if (mimeType == null || mimeType.isEmpty()) {
+            mimeType = metadata.get("mimetype");
+        }
+        if (mimeType == null || mimeType.isEmpty()) {
+            mimeType = metadata.get("Content-Type");
+        }
+        if (mimeType == null || mimeType.isEmpty()) {
+            mimeType = metadata.get("content-type");
+        }
         if (mimeType != null && !mimeType.isEmpty() && mimeType.get(0) != null) {
             tikaMd.set(org.apache.tika.metadata.HttpHeaders.CONTENT_TYPE, mimeType.get(0));
             tikaMd.set(TikaCoreProperties.CONTENT_TYPE_USER_OVERRIDE, mimeType.get(0));
         }
+
         List<String> filename = metadata.get("filename");
+        if (filename == null || filename.isEmpty()) {
+            filename = metadata.get("fileName");
+        }
+        if (filename == null || filename.isEmpty()) {
+            filename = metadata.get("resourceName");
+        }
         if (filename != null && !filename.isEmpty() && filename.get(0) != null) {
             tikaMd.set(TikaCoreProperties.RESOURCE_NAME_KEY, filename.get(0));
         }
