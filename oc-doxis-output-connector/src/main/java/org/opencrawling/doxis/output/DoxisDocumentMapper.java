@@ -111,6 +111,9 @@ public class DoxisDocumentMapper {
         if (properties.referenceAttribute() != null && document.uri() != null) {
             put(byAttribute, properties.referenceAttribute(), List.of(document.uri()));
         }
+        if (properties.content().changeMarkerAttribute() != null) {
+            put(byAttribute, properties.content().changeMarkerAttribute(), List.of(changeMarker(document, plan)));
+        }
         for (Map.Entry<String, String> mapping : properties.attributeMapping().entrySet()) {
             List<String> values = sourceValues(document, mapping.getKey());
             if (!values.isEmpty()) {
@@ -118,6 +121,15 @@ public class DoxisDocumentMapper {
             }
         }
         return new ArrayList<>(byAttribute.values());
+    }
+
+    /**
+     * {@code <lastModified>|<length>} of the source — cheap to compute (no content read) and stored in
+     * {@code content.change-marker-attribute} so unchanged re-crawls can skip creating a new version.
+     */
+    public static String changeMarker(RepositoryDocument document, ContentPlan plan) {
+        return (document.lastModified() != null ? document.lastModified().toString() : "") + "|"
+                + (plan.length() != null ? plan.length() : "");
     }
 
     private Map<String, Object> contentParams(ContentPlan plan) {

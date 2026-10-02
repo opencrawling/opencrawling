@@ -354,6 +354,16 @@ public class JobController {
                 } catch (Exception e) {
                     log.error("Background Virtual Thread failed: {}", e.getMessage(), e);
                     updateJobStatusAndStage(id, "Error", "Failed", getActualDbDocCount());
+                } finally {
+                    // Connectors built for this job (from its connector configuration) own their clients and sessions,
+                    // e.g. a Doxis CSB login; release them. The shared Spring output connector is left untouched.
+                    if (finalOutputConnector != this.outputConnector) {
+                        try {
+                            finalOutputConnector.disconnect();
+                        } catch (Exception e) {
+                            log.warn("Failed to disconnect output connector {} after job {}: {}", finalOutputConnector.getName(), id, e.getMessage());
+                        }
+                    }
                 }
             });
         }

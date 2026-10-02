@@ -42,7 +42,7 @@ class ContentPlannerTest {
     Path tmp;
 
     private static ContentPlanner planner(ContentStrategy strategy, long maxBytes, String uriPrefix) {
-        return new ContentPlanner(new Content(strategy, maxBytes, ContentStrategy.REFERENCE_ONLY, true),
+        return new ContentPlanner(new Content(strategy, maxBytes, ContentStrategy.REFERENCE_ONLY, true, null),
                 new PrefixLocatorResolver(new Locator("doxisLocator", uriPrefix, "")));
     }
 

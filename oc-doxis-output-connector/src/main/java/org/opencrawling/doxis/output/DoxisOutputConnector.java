@@ -223,12 +223,39 @@ public class DoxisOutputConnector implements OutputConnector {
                 log.info("Updated descriptors of Doxis document {} (version {}) for {}.", documentId, versionNr, document.id());
             }
             case NEW_VERSION -> {
+                if (unchanged(documentId, document, plan)) {
+                    discard(plan);
+                    log.info("Document {} is unchanged since Doxis document {} was archived; no new version.", document.id(), documentId);
+                    return;
+                }
                 client.addVersion(properties.repository(), documentId, mapper.versionParams(document, plan), plan.body());
                 verify(documentId, plan);
                 syncPermissions(documentId, document);
                 log.info("Added a new version to Doxis document {} for {} (content: {}).", documentId, document.id(), describe(plan));
             }
         }
+    }
+
+    /**
+     * True when {@code content.change-marker-attribute} is configured and the current version carries the same marker.
+     */
+    private boolean unchanged(String documentId, RepositoryDocument document, ContentPlan plan) throws IOException, InterruptedException {
+        String markerAttribute = properties.content().changeMarkerAttribute();
+        if (markerAttribute == null) {
+            return false;
+        }
+        String attributeId = schema.attribute(markerAttribute).uuid();
+        JsonNode version = currentVersion(documentId);
+        if (version == null) {
+            return false;
+        }
+        String expected = DoxisDocumentMapper.changeMarker(document, plan);
+        for (JsonNode attribute : version.path("attributes")) {
+            if (attributeId.equals(attribute.path("attributeDefinitionUUID").asText())) {
+                return expected.equals(attribute.path("values").path(0).asText(null));
+            }
+        }
+        return false;
     }
 
     /**

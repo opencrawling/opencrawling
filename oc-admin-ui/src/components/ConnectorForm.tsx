@@ -2081,6 +2081,16 @@ export default function ConnectorForm() {
                         <p className="text-xs text-muted-foreground">Read back the content object and compare length/SHA-256 after each write.</p>
                       </div>
 
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Change Marker Descriptor</label>
+                        <input
+                          {...register('configuration.doxisChangeMarkerAttribute')}
+                          placeholder="SystemId1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional descriptor storing lastModified|length; unchanged re-crawls then skip the new version.</p>
+                      </div>
+
                       <div className="md:col-span-2 pt-2 border-t border-border">
                         <h4 className="text-sm font-semibold">Filing (e-file / record)</h4>
                       </div>

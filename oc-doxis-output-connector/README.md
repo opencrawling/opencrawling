@@ -25,6 +25,7 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    - `NEW_VERSION` (default) adds a version with the new content and descriptors.
    - `UPDATE_METADATA` patches only the current version's descriptors.
    - `SKIP` leaves the document unchanged.
+   - With `content.change-marker-attribute` set (e.g. `SystemId1`), the connector stores `<lastModified>|<length>` of the source in that descriptor and does not create a new version when a re-crawl finds it unchanged.
 7. **Descriptor mapping**: the title goes to `title-attribute` (default `ObjectName`). `attribute-mapping` maps any OIS metadata key, or the pseudo-keys `id` / `uri` / `lastModified`, to a Doxis descriptor. Values are converted to the descriptor's type: STRING is truncated to its length, DATE/DATETIME becomes epoch millis, numbers and BOOL are converted, and multi-value descriptors take every value.
 8. **OIS security mapping** (`DoxisAclMapper`): OIS permissions become `DocumentAceParams` on creation. On re-crawls they are synced additively: permissions missing on the document are added, and existing entries (including ones set by Doxis administrators) are never removed.
    - `read` grants `VIEW_DOCUMENT_CONTENTS`.
@@ -60,6 +61,7 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **Content Strategy** | `…doxis.content.strategy` | `AUTO` | `AUTO`, `UPLOAD`, `PREDEFINED_LOCATOR`, `REFERENCE_ONLY` |
 | **Upload Limit** | `…doxis.content.upload-max-bytes` | `2147483648` | Largest binary streamed to Doxis |
 | **Fallback** | `…doxis.content.fallback` | `REFERENCE_ONLY` | `AUTO` strategy for files above the limit without a locator |
+| **Change Marker** | `…doxis.content.change-marker-attribute` | — | Descriptor storing `lastModified\|length`; unchanged re-crawls skip the new version |
 | **Verify** | `…doxis.content.verify` | `true` | Read back and compare length / SHA-256 |
 | **Locator Metadata Key** | `…doxis.locator.metadata-key` | `doxisLocator` | Metadata key carrying an explicit locator |
 | **Locator URI Prefix** | `…doxis.locator.uri-prefix` | — | URI prefix of content that lives in the Doxis data store |
@@ -150,7 +152,16 @@ DOXIS_USER=<user> DOXIS_PASSWORD=<password> DOXIS_ROLE=admins DOXIS_REPOSITORY=<
 ```
 The script checks liveness, customer discovery, login, repository and the CQL lookup, then logs out. With `DOXIS_WRITE_TEST=true` (plus `DOXIS_DOCUMENT_TYPE_UUID`, `DOXIS_EXTERNAL_ID_ATTRIBUTE_UUID`, `DOXIS_MIME_TYPE`) it also creates a document, verifies the stored length and physically deletes it. Without `DOXIS_*` variables it skips, so it is safe in `run-integration-tests.sh`.
 
-### 3. Connection Check
+### 3. End-to-End Pipeline (filesystem → OpenCrawling → Doxis)
+Verified 2026-10-02 against `D_TEXTER` / `TX_MigratedDocument` as `crawler`:
+1. `docker compose up -d postgres kafka` (the dev profile needs Postgres; Redis/Ollama are optional for a Doxis-only run).
+2. Build and start the runtime, e.g. `java --enable-preview -jar oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8097 --grpc.server.port=9097`. Run it from an empty working directory to keep a separate `data/`.
+3. `POST /api/connectors` an output connector with class `org.opencrawling.doxis.output.DoxisOutputConnector` and the `doxis*` configuration keys.
+4. `POST /api/jobs` with `repositoryConnector: "FileSystem_Local"`, that output connector, the folder `path` and `transformationConnector: ""` (no embedding). Then `POST /api/jobs/{id}/start`.
+
+Result: each file is archived with its title, source URL, `ObjectDate` and hashed external id, and verified. A re-crawl finds the documents again and adds versions, or skips them with a change marker. The job's Doxis session is logged out when the job ends.
+
+### 4. Connection Check
 `oc connector check --name <connector-name> --type output` (or **Test Connection** in the admin UI) logs in, reads the session user and checks that the repository is accessible.
 
 ## Known Limitations

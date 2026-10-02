@@ -55,7 +55,8 @@ public final class DoxisConnectorSettings {
                         enumValue(ContentStrategy.class, c.get("doxisContentStrategy"), ContentStrategy.AUTO),
                         longValue(c.get("doxisUploadMaxBytes"), DoxisConstants.DEFAULT_UPLOAD_MAX_BYTES),
                         enumValue(ContentStrategy.class, c.get("doxisContentFallback"), ContentStrategy.REFERENCE_ONLY),
-                        bool(c.get("doxisVerifyContent"), true)),
+                        bool(c.get("doxisVerifyContent"), true),
+                        c.get("doxisChangeMarkerAttribute")),
                 new DoxisOutputProperties.Locator(
                         c.get("doxisLocatorMetadataKey"),
                         blankToNull(c.get("doxisLocatorUriPrefix")),
