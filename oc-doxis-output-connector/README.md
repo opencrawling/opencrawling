@@ -58,8 +58,9 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    `security.grant-connector-user` (default `true`) also grants the connector's own technical user view/update/edit/delete/set-primary-parent on every e-file it creates. Instance ACLs replace the class ACL, so without these grants the connector locks itself out of its own e-files.
 
    **Doxis permissions the technical user needs** (live findings on CSB 14.4.1):
-   - `SET_PRIMARY_PARENT` on the document classes, for `PRIMARY_PARENT` filing; otherwise `SECU0015 … setPrimaryParent permission`.
-   - High-volume (HV) write rights on the e-files, to remove or delete them (`SECU0015 … high volume write permission`).
+   - *Document - Change primary parent object* (`SET_PRIMARY_PARENT`) on the document classes, for `PRIMARY_PARENT` filing; otherwise `SECU0015 … setPrimaryParent permission`.
+   - *All instances - Read* and *All instances - Write* on the e-file class (the high-volume write right), to remove or delete e-files; otherwise `SECU0015 … high volume write permission`.
+   - The DMS repository needs a *content repository for primary parent objects* (Designer, *DMS → Databases*); otherwise filing fails with `INSTANCE0207`.
    - `RELATIONSHIP` filing needs a folder node that may hold documents: the e-file root node is `NODES_ONLY` (`RELATIONSHIP0134`), and omitting the node fails with `PUBLICWS0320`.
 
    `security.strict` fails and rolls back a document whose permissions cannot be applied (`SECU0050`, or identities without a Doxis user or group). `security.remove-stale` removes the connector-managed document permissions (view/update/version) that no longer exist at the source; permissions set by administrators are never touched.
@@ -221,6 +222,6 @@ Findings from live runs against a Doxis CSB 14.4.1 (SER training environment), r
 - **The repository must allow the document type**; otherwise creation fails with `INSTANCE0014`. This is configured in cubeDesigner; the REST API cannot change it.
 - **The client-supplied SHA-256 is not stored** by CSB 14.4.1 (`hashValue` is `null` on read-back), so verification compares the length; the hash is compared only when Doxis reports one. The content-object metadata does not include `storageLocators` either.
 - **CQL needs the repository short name**; full names may contain dots, which the parser rejects (`INSTANCE0107`). The connector resolves the short name automatically. Wildcards are `*`, not `%`.
-- **Filing into records and the additive ACL sync are implemented against the REST contract**, but have not been exercised live yet: the training environment has no record type and no document type with per-document rights.
+- **E-file creation, lookup by key and record ACLs are verified live** (training environment, `TX_SourceFolder`). Filing documents into the e-file is pending a repository setting there (`INSTANCE0207`). The additive record-ACL sync has not been exercised live yet.
 - **Decoupled upload mode and claim-check cleanup:** for claim-check content, `IngestionConsumer` may delete the claim-check object (`claimcheck.cleanup-on-consume`) before the writer reads it. Use the direct `send()` path, a locator, or disable cleanup.
 - **No local Doxis container:** run `scripts/test-doxis-connector.sh` against a CSB.
