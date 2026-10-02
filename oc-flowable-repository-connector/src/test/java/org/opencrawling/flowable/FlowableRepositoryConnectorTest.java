@@ -131,6 +131,23 @@ class FlowableRepositoryConnectorTest {
             }
             """;
 
+        String identityLinksJson = """
+            [
+              {
+                "type": "participant",
+                "userId": "finance_agent_1",
+                "groupId": null,
+                "processInstanceId": "proc-1234"
+              },
+              {
+                "type": "candidate",
+                "userId": null,
+                "groupId": "finance_managers",
+                "processInstanceId": "proc-1234"
+              }
+            ]
+            """;
+
         HttpResponse<String> mockInstancesResponse = mock(HttpResponse.class);
         when(mockInstancesResponse.statusCode()).thenReturn(200);
         when(mockInstancesResponse.body()).thenReturn(processInstancesJson);
@@ -139,12 +156,20 @@ class FlowableRepositoryConnectorTest {
         when(mockVariablesResponse.statusCode()).thenReturn(200);
         when(mockVariablesResponse.body()).thenReturn(variablesJson);
 
+        HttpResponse<String> mockIdentityLinksResponse = mock(HttpResponse.class);
+        when(mockIdentityLinksResponse.statusCode()).thenReturn(200);
+        when(mockIdentityLinksResponse.body()).thenReturn(identityLinksJson);
+
         ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
         when(mockHttpClient.send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class)))
                 .thenAnswer(invocation -> {
                     HttpRequest req = invocation.getArgument(0);
-                    if (req.uri().toString().contains("/history/historic-variable-instances")) {
+                    String uri = req.uri().toString();
+                    if (uri.contains("/history/historic-variable-instances")) {
                         return mockVariablesResponse;
+                    }
+                    if (uri.contains("/identitylinks")) {
+                        return mockIdentityLinksResponse;
                     }
                     return mockInstancesResponse;
                 });
@@ -163,6 +188,20 @@ class FlowableRepositoryConnectorTest {
         assertEquals(List.of("250.50"), doc.metadata().get("flowable_var_totalAmount"));
         assertEquals(List.of("ACME Corp"), doc.metadata().get("flowable_var_customerName"));
 
+        // Entity references for collocated and distributed patterns
+        assertEquals(List.of("proc-1234"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_PROC_INST_ID));
+        assertEquals(List.of("proc-1234"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_ID));
+        assertEquals(List.of("processInstance"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_TYPE));
+        assertEquals(List.of("finance_agent_1"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_USERS));
+        assertEquals(List.of("finance_managers"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_GROUPS));
+
+        // SecurityConfig validation
+        assertNotNull(doc.security());
+        assertFalse(doc.security().inheritanceEnabled());
+        assertEquals(2, doc.security().permissions().size());
+        assertTrue(doc.security().permissions().stream().anyMatch(p -> p.identity().equals("finance_agent_1") && p.identityType().equals("user")));
+        assertTrue(doc.security().permissions().stream().anyMatch(p -> p.identity().equals("finance_managers") && p.identityType().equals("group")));
+
         InputStream stream = doc.contentStream();
         assertNotNull(stream);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -170,7 +209,58 @@ class FlowableRepositoryConnectorTest {
         String contentJsonStr = baos.toString(StandardCharsets.UTF_8);
 
         assertTrue(contentJsonStr.contains("\"id\":\"proc-1234\""));
+        assertTrue(contentJsonStr.contains("\"flowable_proc_inst_id\":\"proc-1234\""));
         assertTrue(contentJsonStr.contains("\"totalAmount\":\"250.50\""));
         assertTrue(contentJsonStr.contains("\"customerName\":\"ACME Corp\""));
+        assertTrue(contentJsonStr.contains("\"allowedUsers\":[\"finance_agent_1\"]"));
+        assertTrue(contentJsonStr.contains("\"allowedGroups\":[\"finance_managers\"]"));
+    }
+
+    @Test
+    void testScanWithAclsDisabled() throws Exception {
+        FlowableRepositoryConnector connectorNoAcl = new FlowableRepositoryConnector(
+                "http://localhost:8080/flowable-rest/service",
+                "admin",
+                "test",
+                100,
+                "",
+                false,
+                "all",
+                false
+        );
+        connectorNoAcl.setHttpClient(mockHttpClient);
+
+        String processInstancesJson = """
+            {
+              "total": 1,
+              "data": [
+                {
+                  "id": "proc-9999",
+                  "processDefinitionKey": "sample-process",
+                  "startTime": "2026-07-23T08:00:00.000Z"
+                }
+              ]
+            }
+            """;
+
+        HttpResponse<String> mockInstancesResponse = mock(HttpResponse.class);
+        when(mockInstancesResponse.statusCode()).thenReturn(200);
+        when(mockInstancesResponse.body()).thenReturn(processInstancesJson);
+
+        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(mockInstancesResponse);
+
+        List<RepositoryDocument> docs = connectorNoAcl.scan("sample-process").collectList().block();
+
+        assertNotNull(docs);
+        assertEquals(1, docs.size());
+
+        RepositoryDocument doc = docs.get(0);
+        assertEquals("proc-9999", doc.id());
+        assertEquals("public", doc.acl());
+        assertEquals(List.of("proc-9999"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_PROC_INST_ID));
+        assertNull(doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_USERS));
+        assertEquals(1, doc.security().permissions().size());
+        assertEquals("public", doc.security().permissions().get(0).identity());
     }
 }
