@@ -543,6 +543,26 @@ if [ "$ALFRESCO_META_COUNT" -lt 2 ]; then
 fi
 log_success "Metadata check passed: Alfresco repository metadata attributes confirmed in pgvector JSONB (${ALFRESCO_META_COUNT} records)."
 
+# 2b. Verify Collocated Entity & Zero-Trust Metadata (alfresco_node_id, alfresco_node_type)
+log_info "Check 2b: Verifying Alfresco zero-trust & collocated metadata (alfresco_node_id, alfresco_node_type) in pgvector JSONB..."
+COLLOCATED_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
+  "SELECT (
+     CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
+       (SELECT count(*) FROM vector_store_1024 WHERE metadata::text LIKE '%alfresco_node_id%' AND metadata::text LIKE '%alfresco_node_type%')
+     ELSE 0 END +
+     CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
+       (SELECT count(*) FROM vector_store WHERE metadata::text LIKE '%alfresco_node_id%' AND metadata::text LIKE '%alfresco_node_type%')
+     ELSE 0 END
+   );" 2>/dev/null || echo "0")
+COLLOCATED_COUNT=$(echo "$COLLOCATED_COUNT" | tr -d '[:space:]')
+[ -z "$COLLOCATED_COUNT" ] && COLLOCATED_COUNT=0
+
+if [ "$COLLOCATED_COUNT" -ge 2 ]; then
+  log_success "Zero-trust & collocated metadata check passed: alfresco_node_id and alfresco_node_type confirmed in pgvector (${COLLOCATED_COUNT} records)."
+else
+  log_warn "Collocated metadata check returned ${COLLOCATED_COUNT} records (expected >= 2)."
+fi
+
 # 3. Preview Stored Alfresco Vectors Table
 log_info "Preview of indexed Alfresco repository document records in pgvector:"
 docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -P pager=off -c \
