@@ -2003,6 +2003,7 @@ export default function ConnectorForm() {
                           <option value="UPLOAD">Upload (stream binary)</option>
                           <option value="PREDEFINED_LOCATOR">Predefined Locator (in place, no transfer)</option>
                           <option value="REFERENCE_ONLY">Reference Only (no binary in Doxis)</option>
+                          <option value="CONTENT_LINK">Content Link (zero-copy, in place)</option>
                         </select>
                         <p className="text-xs text-muted-foreground">How the binary reaches Doxis. Metadata always goes through the REST API.</p>
                       </div>
@@ -2089,6 +2090,63 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                         <p className="text-xs text-muted-foreground">Optional descriptor storing lastModified|length; unchanged re-crawls then skip the new version.</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Zero-copy Content Links (optional module)</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Doxis Client Lib Dir</label>
+                        <input
+                          {...register('configuration.doxisContentLinkClientLibDir')}
+                          placeholder="/opt/doxis-client-lib"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">SER Doxis client jars + oc-doxis-blueline-content-link; enables the CONTENT_LINK strategy.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawled URI Prefix</label>
+                        <input
+                          {...register('configuration.doxisContentLinkUriPrefix')}
+                          placeholder="file:///mnt/archive/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Documents under this URI prefix are linked in place instead of uploaded (when above the upload limit).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Link Prefix</label>
+                        <input
+                          {...register('configuration.doxisContentLinkPrefix')}
+                          placeholder="\\\\fileserver\\archive\\"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Replaces the URI prefix to form the UNC path or URL Doxis links to.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Link Type</label>
+                        <select
+                          {...register('configuration.doxisContentLinkType')}
+                          defaultValue="UNC"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="UNC">UNC path (\\\\server\\share\\...)</option>
+                          <option value="URL">URL</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">The document class must allow linking contents.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Linked Document Class</label>
+                        <input
+                          {...register('configuration.doxisContentLinkDocumentType')}
+                          placeholder="TX_LargeExternalDocument"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional class for linked documents (defaults to the Document Type).</p>
                       </div>
 
                       <div className="md:col-span-2 pt-2 border-t border-border">

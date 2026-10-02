@@ -20,7 +20,8 @@ import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrateg
 
 /**
  * How one document's binary is handled: {@link ContentStrategy#UPLOAD} carries a streaming {@link #body()},
- * {@link ContentStrategy#PREDEFINED_LOCATOR} carries a {@link #locator()}, {@link ContentStrategy#REFERENCE_ONLY} carries
+ * {@link ContentStrategy#PREDEFINED_LOCATOR} carries a {@link #locator()}, {@link ContentStrategy#CONTENT_LINK} carries a
+ * {@link #contentLink()}, {@link ContentStrategy#REFERENCE_ONLY} carries
  * neither. {@code length} and {@code sha256} are null when unknown — the connector never reads content just to compute them.
  */
 public record ContentPlan(
@@ -31,6 +32,15 @@ public record ContentPlan(
     String sha256,
     String locator,
     String sourceUri,
-    ContentBody body
+    ContentBody body,
+    ContentLinkResolver.Target contentLink
 ) {
+    public ContentPlan(ContentStrategy strategy, String fileName, String mimeType, Long length, String sha256, String locator,
+                       String sourceUri, ContentBody body) {
+        this(strategy, fileName, mimeType, length, sha256, locator, sourceUri, body, null);
+    }
+
+    public ContentPlan withMimeType(String newMimeType) {
+        return new ContentPlan(strategy, fileName, newMimeType, length, sha256, locator, sourceUri, body, contentLink);
+    }
 }

@@ -45,10 +45,23 @@ public class ContentPlanner {
 
     private final DoxisOutputProperties.Content config;
     private final LocatorResolver locatorResolver;
+    private final ContentLinkResolver contentLinkResolver;
+    private final boolean contentLinksAvailable;
 
     public ContentPlanner(DoxisOutputProperties.Content config, LocatorResolver locatorResolver) {
+        this(config, locatorResolver, null, false);
+    }
+
+    /**
+     * @param contentLinksAvailable whether a {@link ContentLinkWriter} is configured; without one, {@code AUTO} never plans a
+     *                              content link and an explicit {@code CONTENT_LINK} strategy fails
+     */
+    public ContentPlanner(DoxisOutputProperties.Content config, LocatorResolver locatorResolver,
+                          ContentLinkResolver contentLinkResolver, boolean contentLinksAvailable) {
         this.config = config;
         this.locatorResolver = locatorResolver;
+        this.contentLinkResolver = contentLinkResolver;
+        this.contentLinksAvailable = contentLinksAvailable && contentLinkResolver != null;
     }
 
     public ContentPlan plan(RepositoryDocument document) {
@@ -62,6 +75,7 @@ public class ContentPlanner {
             sha256 = first(metadata, DoxisConstants.META_HASH_VALUE);
         }
         Optional<String> locator = locatorResolver.resolve(document);
+        Optional<ContentLinkResolver.Target> link = contentLinkResolver != null ? contentLinkResolver.resolve(document) : Optional.empty();
 
         ContentStrategy strategy = switch (config.strategy()) {
             case UPLOAD -> {
@@ -79,12 +93,28 @@ public class ContentPlanner {
                 yield ContentStrategy.PREDEFINED_LOCATOR;
             }
             case REFERENCE_ONLY -> ContentStrategy.REFERENCE_ONLY;
+            case CONTENT_LINK -> {
+                if (!contentLinksAvailable) {
+                    throw new IllegalStateException("Content strategy CONTENT_LINK requires content-link.client-lib-dir "
+                            + "(oc-doxis-blueline-content-link + SER Doxis client jars)");
+                }
+                if (link.isEmpty()) {
+                    throw new IllegalStateException("No content link resolvable for document " + document.id() + " (uri "
+                            + document.uri() + "); set content-link.uri-prefix/link-prefix or metadata 'doxisContentLink'");
+                }
+                yield ContentStrategy.CONTENT_LINK;
+            }
             case AUTO -> {
                 if (locator.isPresent()) {
                     yield ContentStrategy.PREDEFINED_LOCATOR;
                 }
                 if (length == null || length <= config.uploadMaxBytes()) {
                     yield ContentStrategy.UPLOAD;
+                }
+                if (contentLinksAvailable && link.isPresent()) {
+                    log.info("Document {} is {} bytes (> {}), linking it in place: {}", document.id(), length,
+                            config.uploadMaxBytes(), link.get().link());
+                    yield ContentStrategy.CONTENT_LINK;
                 }
                 log.info("Document {} is {} bytes (> {}), using fallback strategy {}.", document.id(), length,
                         config.uploadMaxBytes(), config.fallback());
@@ -104,7 +134,8 @@ public class ContentPlanner {
             closeQuietly(document.contentStream());
         }
         return new ContentPlan(strategy, fileName, mimeType, length, sha256,
-                strategy == ContentStrategy.PREDEFINED_LOCATOR ? locator.orElseThrow() : null, document.uri(), body);
+                strategy == ContentStrategy.PREDEFINED_LOCATOR ? locator.orElseThrow() : null, document.uri(), body,
+                strategy == ContentStrategy.CONTENT_LINK ? link.orElseThrow() : null);
     }
 
     private ContentBody uploadBody(RepositoryDocument document, String fileName, String mimeType, Optional<Path> localFile) {

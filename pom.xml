@@ -440,6 +440,14 @@
     </distributionManagement>
 
     <profiles>
+        <!-- Optional: SER Doxis Blueline content links (requires the SER "blueline" jar in your Maven repository) -->
+        <profile>
+            <id>doxis-blueline</id>
+            <modules>
+                <module>oc-doxis-blueline-content-link</module>
+            </modules>
+        </profile>
+
         <profile>
             <id>eclipse-only</id>
             <activation>

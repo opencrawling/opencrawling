@@ -24,6 +24,9 @@ import org.opencrawling.doxis.output.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.DeleteMode;
+import org.opencrawling.doxis.output.content.ContentLinkResolver;
+import org.opencrawling.doxis.output.content.ContentLinkWriter;
+import org.opencrawling.doxis.output.content.ContentLinkWriterLoader;
 import org.opencrawling.doxis.output.content.ContentPlan;
 import org.opencrawling.doxis.output.content.ContentPlanner;
 import org.opencrawling.doxis.output.content.PrefixLocatorResolver;
@@ -37,6 +40,8 @@ import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -64,7 +69,9 @@ public class DoxisOutputConnector implements OutputConnector {
     private final ContentPlanner contentPlanner;
     private final DoxisDocumentMapper mapper;
     private final DoxisAclMapper aclMapper;
+    private final ContentLinkWriter contentLinkWriter;
     private volatile String repositoryName;
+    private volatile String contentLinkDocumentTypeId;
     private volatile String documentTypeId;
     private final Map<String, JsonNode> recordCache = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -78,6 +85,7 @@ public class DoxisOutputConnector implements OutputConnector {
         this.contentPlanner = null;
         this.mapper = null;
         this.aclMapper = null;
+        this.contentLinkWriter = null;
     }
 
     /**
@@ -88,23 +96,64 @@ public class DoxisOutputConnector implements OutputConnector {
     }
 
     private DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties) {
-        this(client, properties, new DoxisSchema(client),
-                new ContentPlanner(properties.content(), new PrefixLocatorResolver(properties.locator())));
+        this(client, properties, newContentLinkWriter(properties));
     }
 
-    private DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties, DoxisSchema schema, ContentPlanner planner) {
-        this(client, properties, schema, planner, new DoxisDocumentMapper(properties, schema), new DoxisAclMapper(schema));
+    private DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties, ContentLinkWriter writer) {
+        this(client, properties, new DoxisSchema(client), newContentPlanner(properties, writer), writer);
+    }
+
+    private DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties, DoxisSchema schema, ContentPlanner planner,
+                                 ContentLinkWriter writer) {
+        this(client, properties, schema, planner, new DoxisDocumentMapper(properties, schema), new DoxisAclMapper(schema), writer);
+    }
+
+    public DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties, DoxisSchema schema,
+                                ContentPlanner contentPlanner, DoxisDocumentMapper mapper, DoxisAclMapper aclMapper) {
+        this(client, properties, schema, contentPlanner, mapper, aclMapper, null);
     }
 
     @Autowired
     public DoxisOutputConnector(DoxisClient client, DoxisOutputProperties properties, DoxisSchema schema,
-                                ContentPlanner contentPlanner, DoxisDocumentMapper mapper, DoxisAclMapper aclMapper) {
+                                ContentPlanner contentPlanner, DoxisDocumentMapper mapper, DoxisAclMapper aclMapper,
+                                @Autowired(required = false) ContentLinkWriter contentLinkWriter) {
         this.client = client;
         this.properties = properties;
         this.schema = schema;
         this.contentPlanner = contentPlanner;
         this.mapper = mapper;
         this.aclMapper = aclMapper;
+        this.contentLinkWriter = contentLinkWriter;
+    }
+
+    /**
+     * Planner wired with the content-link resolver; content links are only planned when a writer is available.
+     */
+    public static ContentPlanner newContentPlanner(DoxisOutputProperties properties, ContentLinkWriter writer) {
+        return new ContentPlanner(properties.content(), new PrefixLocatorResolver(properties.locator()),
+                new ContentLinkResolver(properties.contentLink()), writer != null);
+    }
+
+    /**
+     * Loads the optional content-link writer from {@code content-link.client-lib-dir}; {@code null} when not configured.
+     */
+    public static ContentLinkWriter newContentLinkWriter(DoxisOutputProperties properties) {
+        DoxisOutputProperties.ContentLink config = properties.contentLink();
+        if (config.clientLibDir() == null) {
+            return null;
+        }
+        URI base = URI.create(properties.baseUrl());
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put("host", config.csbHost() != null ? config.csbHost() : base.getHost());
+        settings.put("port", String.valueOf(config.csbPort() > 0 ? config.csbPort() : (base.getPort() > 0 ? base.getPort() : 8080)));
+        settings.put("customer", properties.customerName());
+        settings.put("username", properties.username());
+        settings.put("password", properties.password());
+        try {
+            return ContentLinkWriterLoader.load(Path.of(config.clientLibDir()), settings);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot load the Doxis content-link writer: " + e.getMessage(), e);
+        }
     }
 
     public static DoxisClient newClient(DoxisOutputProperties properties) {
@@ -127,6 +176,9 @@ public class DoxisOutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
+        if (contentLinkWriter != null) {
+            contentLinkWriter.close();
+        }
         if (client != null) {
             client.close();
         }
@@ -149,6 +201,8 @@ public class DoxisOutputConnector implements OutputConnector {
         // which the CQL parser rejects (INSTANCE0107).
         String shortName = repository.path("shortName").asText("");
         repositoryName = !shortName.isBlank() ? shortName : repository.path("name").asText(properties.repository());
+        String linkType = properties.contentLink().documentType();
+        contentLinkDocumentTypeId = linkType != null ? schema.documentTypeId(linkType) : typeId;
         documentTypeId = typeId;
         log.info("Doxis output ready: repository '{}', document type '{}' ({}), external id descriptor '{}', content strategy {}.",
                 repositoryName, properties.documentType(), typeId, properties.externalIdAttribute(), properties.content().strategy());
@@ -183,9 +237,14 @@ public class DoxisOutputConnector implements OutputConnector {
         List<String> existing = client.searchDocumentIds(mapper.lookupStatement(repositoryName, document.id()), false);
 
         if (existing.isEmpty()) {
-            Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
-            JsonNode created = client.createDocument(properties.repository(), params, relationshipParams(document), plan.body());
-            String documentId = created.path("uuid").asText();
+            String documentId;
+            if (plan.strategy() == ContentStrategy.CONTENT_LINK) {
+                documentId = createLinkedDocument(document, plan);
+            } else {
+                Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
+                JsonNode created = client.createDocument(properties.repository(), params, relationshipParams(document), plan.body());
+                documentId = created.path("uuid").asText();
+            }
             if (properties.applySecurityAcls()) {
                 applyPermissions(documentId, document);
             }
@@ -223,6 +282,15 @@ public class DoxisOutputConnector implements OutputConnector {
                 log.info("Updated descriptors of Doxis document {} (version {}) for {}.", documentId, versionNr, document.id());
             }
             case NEW_VERSION -> {
+                if (plan.strategy() == ContentStrategy.CONTENT_LINK) {
+                    // Content-link versions cannot be added through REST; keep the link, refresh the descriptors.
+                    String versionNr = currentVersionNumber(documentId);
+                    client.updateAttributes(properties.repository(), documentId, versionNr, mapper.attributes(document, plan));
+                    syncPermissions(documentId, document);
+                    log.info("Updated descriptors of linked Doxis document {} for {} (content link unchanged: {}).",
+                            documentId, document.id(), plan.contentLink().link());
+                    return;
+                }
                 if (unchanged(documentId, document, plan)) {
                     discard(plan);
                     log.info("Document {} is unchanged since Doxis document {} was archived; no new version.", document.id(), documentId);
@@ -233,6 +301,33 @@ public class DoxisOutputConnector implements OutputConnector {
                 syncPermissions(documentId, document);
                 log.info("Added a new version to Doxis document {} for {} (content: {}).", documentId, document.id(), describe(plan));
             }
+        }
+    }
+
+    /**
+     * Creates the document through the content-link writer (Doxis Java API): descriptors and an external UNC/URL link, no bytes.
+     */
+    private String createLinkedDocument(RepositoryDocument document, ContentPlan plan) throws IOException, InterruptedException {
+        if (contentLinkWriter == null) {
+            throw new IllegalStateException("CONTENT_LINK planned without a content-link writer");
+        }
+        List<ContentLinkWriter.Descriptor> descriptors = new ArrayList<>();
+        for (Map<String, Object> attribute : mapper.attributes(document, plan)) {
+            @SuppressWarnings("unchecked")
+            List<Object> values = (List<Object>) attribute.get("values");
+            descriptors.add(new ContentLinkWriter.Descriptor((String) attribute.get("attributeDefinitionUUID"),
+                    (String) attribute.get("attributeDataType"), values));
+        }
+        if (relationshipParams(document) != null) {
+            log.warn("Filing into a record is not supported for content-link documents yet; {} is not filed.", document.id());
+        }
+        try {
+            return contentLinkWriter.createLinkedDocument(new ContentLinkWriter.Request(repositoryName, contentLinkDocumentTypeId,
+                    descriptors, plan.contentLink().type(), plan.contentLink().link()));
+        } catch (IOException | RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Content-link creation failed for " + document.id() + ": " + e.getMessage(), e);
         }
     }
 
@@ -375,6 +470,19 @@ public class DoxisOutputConnector implements OutputConnector {
             return;
         }
         JsonNode contentObject = currentContentObject(documentId);
+        if (plan.strategy() == ContentStrategy.CONTENT_LINK) {
+            // Linked content has no stored bytes (length 0); REST 14.4.x shows a UNC link as the content object's file name.
+            if (contentObject == null) {
+                throw new IOException("Doxis document " + documentId + " has no content object after a CONTENT_LINK write");
+            }
+            String fileName = contentObject.path("fullFilename").asText(null);
+            if (plan.contentLink().type() == ContentLinkWriter.LinkType.UNC && fileName != null
+                    && !fileName.equalsIgnoreCase(plan.contentLink().link())) {
+                throw new IOException("Doxis document " + documentId + " links to '" + fileName + "', expected '"
+                        + plan.contentLink().link() + "'");
+            }
+            return;
+        }
         if (contentObject == null) {
             // e.g. CSB silently ignores a predefinedLocator sent without content and stores the version as NO_CONTENT
             throw new IOException("Doxis document " + documentId + " has no content object after a " + plan.strategy()
@@ -437,8 +545,7 @@ public class DoxisOutputConnector implements OutputConnector {
         if (mimeType.equals(plan.mimeType())) {
             return plan;
         }
-        return new ContentPlan(plan.strategy(), plan.fileName(), mimeType, plan.length(), plan.sha256(), plan.locator(),
-                plan.sourceUri(), plan.body());
+        return plan.withMimeType(mimeType);
     }
 
     private static void discard(ContentPlan plan) {
@@ -456,6 +563,7 @@ public class DoxisOutputConnector implements OutputConnector {
             case UPLOAD -> "uploaded" + (plan.length() != null ? " " + plan.length() + " bytes" : "");
             case PREDEFINED_LOCATOR -> "registered in place at locator '" + plan.locator() + "'";
             case REFERENCE_ONLY -> "reference only (" + plan.sourceUri() + ")";
+            case CONTENT_LINK -> "linked in place (" + plan.contentLink().type() + " " + plan.contentLink().link() + ")";
             case AUTO -> "auto";
         };
     }

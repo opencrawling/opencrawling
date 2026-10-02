@@ -43,7 +43,11 @@ class DoxisConnectorSettingsTest {
                 Map.entry("doxisDeleteMode", "PHYSICAL"),
                 Map.entry("doxisApplySecurityAcls", "false"),
                 Map.entry("doxisFilingRecordId", "efile-4711"),
-                Map.entry("doxisFilingFolderNodeId", "node-contracts")));
+                Map.entry("doxisFilingFolderNodeId", "node-contracts"),
+                Map.entry("doxisContentLinkClientLibDir", "/opt/doxis-client-lib"),
+                Map.entry("doxisContentLinkUriPrefix", "file:///mnt/archive/"),
+                Map.entry("doxisContentLinkPrefix", "\\\\fs\\archive\\"),
+                Map.entry("doxisContentLinkType", "url")));
 
         assertEquals("faststarter", props.customerName());
         assertEquals("admins", props.role());
@@ -62,6 +66,10 @@ class DoxisConnectorSettingsTest {
         assertEquals("node-contracts", props.filing().folderNodeId());
         assertNull(props.filing().recordRepository());
         assertEquals("doxisRecordId", props.filing().recordIdMetadataKey());
+        assertEquals("/opt/doxis-client-lib", props.contentLink().clientLibDir());
+        assertEquals("file:///mnt/archive/", props.contentLink().uriPrefix());
+        assertEquals(org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.URL, props.contentLink().linkType());
+        assertEquals("doxisContentLink", props.contentLink().metadataKey());
     }
 
     @Test

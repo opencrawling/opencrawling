@@ -46,6 +46,7 @@ public record DoxisOutputProperties(
     @DefaultValue Content content,
     @DefaultValue Locator locator,
     @DefaultValue Filing filing,
+    @DefaultValue ContentLink contentLink,
     @DefaultValue("3") int maxRetries,
     @DefaultValue("120") int timeoutSeconds
 ) {
@@ -76,7 +77,15 @@ public record DoxisOutputProperties(
         PREDEFINED_LOCATOR,
         /** Create the document without content; the source URI is recorded in {@code reference-attribute}. */
         REFERENCE_ONLY,
-        /** Per document: locator if one resolves, else upload if small enough, else {@link Content#fallback()}. */
+        /**
+         * Create the document with an external content link (UNC path or URL) via the Doxis Java API: zero-copy, the binary
+         * stays where it is and is never stored by Doxis. Requires {@code content-link.client-lib-dir}.
+         */
+        CONTENT_LINK,
+        /**
+         * Per document: locator if one resolves (experimental), else upload if small enough, else a content link if one resolves
+         * and a content-link writer is configured, else {@link Content#fallback()}.
+         */
         AUTO
     }
 
@@ -146,6 +155,36 @@ public record DoxisOutputProperties(
         }
     }
 
+    /**
+     * Zero-copy content links for large / in-place binaries. {@code client-lib-dir} holds the
+     * {@code oc-doxis-blueline-content-link} jar plus the SER Doxis Java client jars; the CSB SOAP endpoint defaults to the host
+     * and port of {@code base-url}.
+     */
+    public record ContentLink(
+        String clientLibDir,
+        String csbHost,
+        @DefaultValue("0") int csbPort,
+        String uriPrefix,
+        String linkPrefix,
+        @DefaultValue("UNC") org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType linkType,
+        @DefaultValue("doxisContentLink") String metadataKey,
+        String documentType
+    ) {
+        public ContentLink {
+            if (clientLibDir != null && clientLibDir.isBlank()) clientLibDir = null;
+            if (csbHost != null && csbHost.isBlank()) csbHost = null;
+            if (uriPrefix != null && uriPrefix.isBlank()) uriPrefix = null;
+            if (linkPrefix == null) linkPrefix = "";
+            if (linkType == null) linkType = org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.UNC;
+            if (metadataKey == null || metadataKey.isBlank()) metadataKey = "doxisContentLink";
+            if (documentType != null && documentType.isBlank()) documentType = null;
+        }
+
+        public static ContentLink defaults() {
+            return new ContentLink(null, null, 0, null, "", null, null, null);
+        }
+    }
+
     public DoxisOutputProperties {
         if (baseUrl == null || baseUrl.isBlank()) baseUrl = DoxisConstants.DEFAULT_BASE_URL;
         if (documentType == null || documentType.isBlank()) documentType = DoxisConstants.DEFAULT_DOCUMENT_TYPE;
@@ -159,12 +198,13 @@ public record DoxisOutputProperties(
         if (content == null) content = Content.defaults();
         if (locator == null) locator = Locator.defaults();
         if (filing == null) filing = Filing.defaults();
+        if (contentLink == null) contentLink = ContentLink.defaults();
         if (maxRetries < 0) maxRetries = DoxisConstants.DEFAULT_MAX_RETRIES;
         if (timeoutSeconds <= 0) timeoutSeconds = DoxisConstants.DEFAULT_TIMEOUT_SECONDS;
     }
 
     public static DoxisOutputProperties defaults() {
         return new DoxisOutputProperties(null, null, null, null, null, null, null, null, null, null, null,
-                null, null, true, null, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
+                null, null, true, null, null, null, null, DoxisConstants.DEFAULT_MAX_RETRIES, DoxisConstants.DEFAULT_TIMEOUT_SECONDS);
     }
 }

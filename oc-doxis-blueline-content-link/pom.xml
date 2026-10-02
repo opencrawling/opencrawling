@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.opencrawling</groupId>
+        <artifactId>opencrawling-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>oc-doxis-blueline-content-link</artifactId>
+    <packaging>jar</packaging>
+
+    <name>OpenCrawling - Doxis Blueline Content Link (optional, requires SER Doxis client)</name>
+    <description>
+        ContentLinkWriter for oc-doxis-output-connector, implemented with the SER Doxis Java (Blueline) API. Not part of the
+        default build: the SER client libraries are licensed by SER and are not distributed with OpenCrawling. Build with
+        -Pdoxis-blueline after installing the SER "blueline" API jar into your Maven repository (see README).
+    </description>
+
+    <properties>
+        <doxis.client.version>14.4.1-1</doxis.client.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
+            <artifactId>oc-doxis-output-connector</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- SER Doxis Java API (com.ser.blueline.*); provided at runtime from content-link.client-lib-dir -->
+        <dependency>
+            <groupId>de.ser.doxis4.java-api</groupId>
+            <artifactId>blueline</artifactId>
+            <version>${doxis.client.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

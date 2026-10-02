@@ -80,7 +80,7 @@ class DoxisOutputConnectorTest {
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
                 null, null, null, null, null, conflict, deleteMode, true,
                 new Content(strategy, 1024, ContentStrategy.REFERENCE_ONLY, true, null),
-                new Locator(null, uriPrefix, ""), null, 0, 10);
+                new Locator(null, uriPrefix, ""), null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         return new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -179,7 +179,7 @@ class DoxisOutputConnectorTest {
     void mimeTypeOutsideDocumentTypeAllowListIsRejectedBeforeWriting() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor", "pw", "admins", REPO,
-                "DocumentTemplate", null, null, null, null, null, null, true, null, null, null, 0, 10);
+                "DocumentTemplate", null, null, null, null, null, null, true, null, null, null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         DoxisOutputConnector templates = new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -239,7 +239,7 @@ class DoxisOutputConnectorTest {
         when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(version), List.of(version), List.of(amended));
         DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor2", "pw", "admins", REPO,
                 null, null, null, null, null, null, null, true,
-                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, "URL"), null, null, 0, 10);
+                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, "URL"), null, null, null, 0, 10);
         DoxisSchema schema = new DoxisSchema(client);
         DoxisOutputConnector withMarker = new DoxisOutputConnector(client, props, schema,
                 new ContentPlanner(props.content(), new PrefixLocatorResolver(props.locator())),
@@ -251,6 +251,54 @@ class DoxisOutputConnectorTest {
         Files.writeString(file, "%PDF-1.7 contract, amended");
         withMarker.send(document(file.toUri().toString(), Map.of())).block();
         verify(client).addVersion(eq(REPO), eq("doc-0001"), anyMap(), notNull());
+    }
+
+    private DoxisOutputConnector linkConnector(org.opencrawling.doxis.output.content.ContentLinkWriter writer) {
+        DoxisOutputProperties props = new DoxisOutputProperties(null, "faststarter", "Supervisor2", "pw", "admins", REPO,
+                null, null, null, null, null, null, null, true,
+                new Content(ContentStrategy.AUTO, 1024, ContentStrategy.REFERENCE_ONLY, true, null), null, null,
+                new DoxisOutputProperties.ContentLink("/opt/doxis-client", null, 0, "file:///mnt/archive/", "\\\\BN-PR-DEV\\archive\\",
+                        org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.UNC, null, null), 0, 10);
+        DoxisSchema schema = new DoxisSchema(client);
+        return new DoxisOutputConnector(client, props, schema, DoxisOutputConnector.newContentPlanner(props, writer),
+                new DoxisDocumentMapper(props, schema), new DoxisAclMapper(schema), writer);
+    }
+
+    @Test
+    void largeInPlaceFileIsLinkedThroughTheContentLinkWriter() throws Exception {
+        var writer = mock(org.opencrawling.doxis.output.content.ContentLinkWriter.class);
+        when(writer.createLinkedDocument(any())).thenReturn("doc-0001");
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
+        JsonNode linked = new ObjectMapper().readTree(Fixtures.text("versions.json")
+                .replace("\"length\":17", "\"length\":0")
+                .replace("\"fullFilename\":\"msa.pdf\"", "\"fullFilename\":\"\\\\\\\\BN-PR-DEV\\\\archive\\\\2026\\\\master.mxf\""));
+        when(client.getVersions(REPO, "doc-0001")).thenReturn(List.of(linked.path("versions").get(0)));
+
+        linkConnector(writer).send(document("file:///mnt/archive/2026/master.mxf", Map.of("sizeInBytes", List.of("5497558138880")))).block();
+
+        ArgumentCaptor<org.opencrawling.doxis.output.content.ContentLinkWriter.Request> request =
+                ArgumentCaptor.forClass(org.opencrawling.doxis.output.content.ContentLinkWriter.Request.class);
+        verify(writer).createLinkedDocument(request.capture());
+        assertEquals("D_TEXTER", request.getValue().repository());
+        assertEquals(TYPE_ID, request.getValue().documentTypeId());
+        assertEquals(org.opencrawling.doxis.output.content.ContentLinkWriter.LinkType.UNC, request.getValue().linkType());
+        assertEquals("\\\\BN-PR-DEV\\archive\\2026\\master.mxf", request.getValue().link());
+        assertTrue(request.getValue().descriptors().stream().anyMatch(d -> d.values().contains("doc-1")));
+        verify(client, never()).createDocument(any(), any(), any(), any());
+        verify(client).addPermissions(eq(REPO), eq("doc-0001"), anyList());
+        verify(client, never()).deleteDocumentPhysically(any(), any());
+    }
+
+    @Test
+    void reCrawlOfLinkedDocumentUpdatesDescriptorsOnly() throws Exception {
+        var writer = mock(org.opencrawling.doxis.output.content.ContentLinkWriter.class);
+        when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of("doc-0001"));
+
+        linkConnector(writer).send(document("file:///mnt/archive/2026/master.mxf", Map.of("sizeInBytes", List.of("5497558138880")))).block();
+
+        verify(client).updateAttributes(eq(REPO), eq("doc-0001"), eq("1"), anyList());
+        verify(client, never()).addVersion(any(), any(), any(), any());
+        verify(writer, never()).createLinkedDocument(any());
     }
 
     @Test
