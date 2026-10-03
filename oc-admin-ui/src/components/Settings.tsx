@@ -30,7 +30,8 @@ import {
   Radio,
   Server,
   ShieldCheck,
-  Activity
+  Activity,
+  FileText
 } from 'lucide-react'
 import { statusApi, transportApi } from '../lib/api'
 
@@ -62,6 +63,15 @@ interface SystemSettings {
   ozoneOmPort: number
   ozoneVolume: string
   ozoneBucket: string
+  tikaVersion: string
+  tikaEngine: string
+  tikaForkEnabled: boolean
+  tikaTimeoutMs: number
+  tikaJvmHeap: string
+  tikaMaxFilesPerProcess: number
+  tikaFallbackToEmbedded: boolean
+  tikaExtractEmbedded: boolean
+  tikaWriteLimit: number
 }
 
 export default function Settings() {
@@ -79,7 +89,16 @@ export default function Settings() {
     ozoneOmHost: '127.0.0.1',
     ozoneOmPort: 9862,
     ozoneVolume: 's3v',
-    ozoneBucket: 'claims'
+    ozoneBucket: 'claims',
+    tikaVersion: '4.1.0',
+    tikaEngine: 'PipesForkParser (Process-Isolated)',
+    tikaForkEnabled: true,
+    tikaTimeoutMs: 30000,
+    tikaJvmHeap: '-Xmx512m',
+    tikaMaxFilesPerProcess: 10000,
+    tikaFallbackToEmbedded: true,
+    tikaExtractEmbedded: false,
+    tikaWriteLimit: 20000000
   })
 
   const [transportSettings, setTransportSettings] = useState<TransportSettings>({
@@ -103,7 +122,7 @@ export default function Settings() {
   const [testingGrpc, setTestingGrpc] = useState(false)
   const [grpcTestResult, setGrpcTestResult] = useState<{ status: string; message: string; latencyMs?: number } | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
-  const [activeTab, setActiveTab] = useState<'embedding' | 'chunking' | 'storage' | 'transport'>('embedding')
+  const [activeTab, setActiveTab] = useState<'embedding' | 'chunking' | 'tika' | 'storage' | 'transport'>('embedding')
 
   const fetchSettings = async () => {
     setIsLoading(true)
@@ -231,10 +250,11 @@ export default function Settings() {
       )}
 
       {/* Fluid Responsive Tab Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-b border-border/80 pb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 border-b border-border/80 pb-4">
         {[
           { id: 'embedding', label: 'Embedding Engine', icon: Cpu, badge: settings.embeddingProvider || 'Ollama' },
           { id: 'chunking', label: 'Splitter & Chunker', icon: Layers, badge: settings.chunkerType || 'TokenTextSplitter' },
+          { id: 'tika', label: 'Text Extraction (Tika)', icon: FileText, badge: 'v' + (settings.tikaVersion || '4.1.0') },
           { id: 'storage', label: 'Claim-Check Storage', icon: HardDrive, badge: (settings.claimCheckStore || 'ozone').toUpperCase() },
           { id: 'transport', label: 'Internal Transport', icon: Server, badge: transportSettings?.mode || 'AUTO' }
         ].map((tab) => {
@@ -489,13 +509,220 @@ export default function Settings() {
         </div>
         )}
 
-        {/* Card 3: Apache Ozone Storage & Client Selection */}
+        {/* Card 3: Apache Tika 4.x Text Extraction & Process Isolation */}
+        {activeTab === 'tika' && (
+          <div className="card-container space-y-6 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div className="flex items-center gap-3">
+                <FileText className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">3. Apache Tika 4.x Text Extraction & Process Isolation</h3>
+                  <p className="text-xs text-muted-foreground">Configure out-of-process text extraction with watchdog timeouts and JVM heap bounds.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  Tika {settings.tikaVersion || '4.1.0'}
+                </span>
+                <span className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase ${
+                  settings.tikaForkEnabled
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}>
+                  {settings.tikaForkEnabled ? 'Fork Isolated' : 'In-Process'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {/* Architecture Mode Selection */}
+              <div>
+                <label className="text-sm font-semibold mb-2 block">Parsing Execution Strategy</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Mode 1: PipesForkParser */}
+                  <div
+                    onClick={() => setSettings({ ...settings, tikaForkEnabled: true, tikaEngine: 'PipesForkParser (Process-Isolated)' })}
+                    className={`p-4 border rounded-lg flex flex-col justify-between cursor-pointer transition-all ${
+                      settings.tikaForkEnabled
+                        ? 'border-amber-500/80 bg-amber-500/10 ring-1 ring-amber-500/30'
+                        : 'border-border bg-slate-900/30 hover:border-border-50 opacity-70'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-amber-400" />
+                        PipesForkParser (Process-Isolated)
+                      </span>
+                      <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-bold">Recommended</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Forks a dedicated child JVM process monitored by watchdog timers. Hard timeout kills prevent parser hangs and OOM crashes from affecting the main worker process.
+                    </p>
+                  </div>
+
+                  {/* Mode 2: In-Process Embedded */}
+                  <div
+                    onClick={() => setSettings({ ...settings, tikaForkEnabled: false, tikaEngine: 'In-Process Embedded Tika' })}
+                    className={`p-4 border rounded-lg flex flex-col justify-between cursor-pointer transition-all ${
+                      !settings.tikaForkEnabled
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                        : 'border-border bg-slate-900/30 hover:border-border-50 opacity-70'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                        <Cpu className="w-4 h-4 text-slate-400" />
+                        Embedded In-Process Tika
+                      </span>
+                      <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded font-mono font-bold">Direct Memory</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Executes Tika directly inside the runtime JVM heap. Fast for trusted plain text documents, but unhandled native parser crashes or OOMs can terminate the container.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fork Configuration Parameters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-border/40">
+                {/* Watchdog Timeout */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-medium flex items-center gap-1">
+                      Watchdog Timeout
+                      <span className="text-xs text-muted-foreground font-normal">(Milliseconds)</span>
+                    </label>
+                    <span className="font-mono text-sm text-amber-400 font-bold">{settings.tikaTimeoutMs} ms ({(settings.tikaTimeoutMs / 1000).toFixed(0)}s)</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5000"
+                    max="120000"
+                    step="5000"
+                    value={settings.tikaTimeoutMs}
+                    onChange={(e) => setSettings({ ...settings, tikaTimeoutMs: parseInt(e.target.value) || 30000 })}
+                    className="w-full accent-amber-400 bg-secondary h-1.5 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
+                    <span>5s</span>
+                    <span>30s (Default)</span>
+                    <span>60s</span>
+                    <span>120s</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Hard deadline enforced per document. If Tika child process does not return in time, it is terminated and restarted.
+                  </p>
+                </div>
+
+                {/* Fork JVM Heap Memory Limit */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium flex items-center gap-1.5">
+                    <HardDrive className="w-4 h-4 text-muted" />
+                    Forked JVM Heap Limit
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <select
+                      value={settings.tikaJvmHeap}
+                      onChange={(e) => setSettings({ ...settings, tikaJvmHeap: e.target.value })}
+                      className="bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground w-full font-mono"
+                    >
+                      <option value="-Xmx256m">-Xmx256m (Lightweight)</option>
+                      <option value="-Xmx512m">-Xmx512m (Default)</option>
+                      <option value="-Xmx1024m">-Xmx1024m (Large Docs)</option>
+                      <option value="-Xmx2048m">-Xmx2048m (High Memory)</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={settings.tikaJvmHeap}
+                      onChange={(e) => setSettings({ ...settings, tikaJvmHeap: e.target.value })}
+                      placeholder="-Xmx512m"
+                      className="bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono w-full"
+                      title="Custom JVM heap argument"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Isolated JVM memory bounds allocated to child parser processes.
+                  </p>
+                </div>
+
+                {/* Max Files Per Process */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Process Recycling Threshold</label>
+                  <input
+                    type="number"
+                    value={settings.tikaMaxFilesPerProcess}
+                    onChange={(e) => setSettings({ ...settings, tikaMaxFilesPerProcess: parseInt(e.target.value) || 10000 })}
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    min="100"
+                    step="1000"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Recycle child JVM after parsing N files to prevent native memory fragmentation and memory leaks.
+                  </p>
+                </div>
+
+                {/* Max Extracted Characters (Write Limit) */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Max Extracted Characters Limit</label>
+                  <input
+                    type="number"
+                    value={settings.tikaWriteLimit}
+                    onChange={(e) => setSettings({ ...settings, tikaWriteLimit: parseInt(e.target.value) || 20000000 })}
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    min="100000"
+                    step="1000000"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Maximum characters extracted per document before truncating (default: 20,000,000 characters).
+                  </p>
+                </div>
+              </div>
+
+              {/* Resilience & Embedded Settings */}
+              <div className="p-4 bg-slate-950/40 border border-border/50 rounded-lg space-y-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.tikaFallbackToEmbedded}
+                    onChange={(e) => setSettings({ ...settings, tikaFallbackToEmbedded: e.target.checked })}
+                    className="w-4 h-4 rounded border-border text-amber-500 focus:ring-amber-500/50 bg-background"
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-foreground">Graceful Embedded Fallback</span>
+                    <p className="text-xs text-muted-foreground">
+                      If process fork initialization fails or encounters a socket communication error, immediately fallback to embedded in-process Tika.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer pt-2 border-t border-border/30">
+                  <input
+                    type="checkbox"
+                    checked={settings.tikaExtractEmbedded}
+                    onChange={(e) => setSettings({ ...settings, tikaExtractEmbedded: e.target.checked })}
+                    className="w-4 h-4 rounded border-border text-amber-500 focus:ring-amber-500/50 bg-background"
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-foreground">Extract Nested Embedded Documents</span>
+                    <p className="text-xs text-muted-foreground">
+                      Recursively extract text from embedded files and attachments (e.g. nested files in ZIP, PDF, or Office documents).
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Card 4: Apache Ozone Storage & Client Selection */}
         {activeTab === 'storage' && (
         <div className="card-container space-y-6 animate-in fade-in duration-200">
           <div className="flex items-center gap-3 border-b border-border pb-4">
             <HardDrive className="w-5 h-5 text-amber-400" />
             <div>
-              <h3 className="text-lg font-bold text-foreground">3. Apache Ozone & Claim-Check Storage</h3>
+              <h3 className="text-lg font-bold text-foreground">4. Apache Ozone & Claim-Check Storage</h3>
               <p className="text-xs text-muted-foreground">Configure binary document offloading and client protocol strategy (S3 Gateway vs Native RPC).</p>
             </div>
           </div>
@@ -658,14 +885,14 @@ export default function Settings() {
         </div>
         )}
 
-        {/* Card 4: Internal Communication & Transport Settings */}
+        {/* Card 5: Internal Communication & Transport Settings */}
         {activeTab === 'transport' && (
         <div className="card-container space-y-6 animate-in fade-in duration-200">
           <div className="flex items-center justify-between border-b border-border pb-4">
             <div className="flex items-center gap-3">
               <Server className="w-5 h-5 text-cyan-400" />
               <div>
-                <h3 className="text-lg font-bold text-foreground">4. Internal Communication & Transport (gRPC / REST)</h3>
+                <h3 className="text-lg font-bold text-foreground">5. Internal Communication & Transport (gRPC / REST)</h3>
                 <p className="text-xs text-muted-foreground">Configure high-performance gRPC payload transport with dynamic REST fallback for internal node communication.</p>
               </div>
             </div>

@@ -93,16 +93,23 @@ COPY oc-runtime/src/ /app/oc-runtime/src/
 
 # Build and package the application
 RUN mvn clean package -pl oc-runtime -am -DskipTests
+RUN java -Djarmode=tools -jar /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar extract --destination /app/extracted
 
 # Runtime stage
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
-# Copy the fat jar from the builder stage
-COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
+# Copy the extracted thin jar and dependency libraries from the builder stage
+COPY --from=builder /app/extracted/lib ./lib
+COPY --from=builder /app/extracted/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
 
 # Expose the ports the backend runs on (8080 HTTP/REST, 9095 gRPC Transport)
 EXPOSE 8080 9095
 
+ENV TIKA_EXTRAS_DIR=/app/lib
+ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
+ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+
 # Run the Spring Boot application enabling Java 25 preview features
-ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-Dtika.extras.dir=/app/lib", "-jar", "app.jar"]

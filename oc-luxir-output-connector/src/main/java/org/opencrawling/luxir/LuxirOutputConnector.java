@@ -15,9 +15,11 @@
  */
 package org.opencrawling.luxir;
 
-import org.apache.tika.Tika;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.text.PipesForkTextExtractor;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.luxir.client.LuxirClient;
 import org.opencrawling.luxir.config.LuxirOutputProperties;
 import org.slf4j.Logger;
@@ -31,7 +33,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -47,22 +48,30 @@ public class LuxirOutputConnector implements OutputConnector {
     private final LuxirOutputProperties properties;
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
 
     public LuxirOutputConnector() {
-        this(null, new LuxirOutputProperties(null, null, null, LuxirConstants.DEFAULT_DIMENSIONS, null, true, 0, LuxirConstants.DEFAULT_TIMEOUT_SECONDS), null);
+        this(null, new LuxirOutputProperties(null, null, null, LuxirConstants.DEFAULT_DIMENSIONS, null, true, 0, LuxirConstants.DEFAULT_TIMEOUT_SECONDS), null, null);
+    }
+
+    public LuxirOutputConnector(
+            LuxirClient luxirClient,
+            LuxirOutputProperties properties,
+            EmbeddingModel embeddingModel) {
+        this(luxirClient, properties, embeddingModel, null);
     }
 
     @Autowired
     public LuxirOutputConnector(
             LuxirClient luxirClient,
             LuxirOutputProperties properties,
-            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
+            @Autowired(required = false) TextExtractionService textExtractionService) {
         this.luxirClient = luxirClient;
         this.properties = properties;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
     }
 
     @Override
@@ -92,7 +101,12 @@ public class LuxirOutputConnector implements OutputConnector {
                     return;
                 }
 
-                String text = extractText(contentBytes, document);
+                TextExtractionResult result = textExtractionService.extractText(contentBytes, document.metadata());
+                String text = result.text();
+                if (!result.success()) {
+                    log.warn("Text extraction failed for document {}: {}", document.id(), result.errorMessage());
+                }
+
                 if (text.isBlank()) {
                     log.warn("Document {} extracted text is empty, skipping Luxir ingestion.", document.id());
                     return;
@@ -169,24 +183,6 @@ public class LuxirOutputConnector implements OutputConnector {
                 throw new RuntimeException("Failed to process document for Luxir: " + document.id(), e);
             }
         });
-    }
-
-    private String extractText(byte[] contentBytes, RepositoryDocument document) {
-        String text = "";
-        try {
-            text = tika.parseToString(new ByteArrayInputStream(contentBytes));
-        } catch (Exception e) {
-            log.warn("Tika failed to parse document {}: {}. Falling back to text check.", document.id(), e.getMessage());
-        }
-
-        if (text.isBlank()) {
-            String mimeType = String.valueOf(document.metadata().getOrDefault("mimeType", List.of("text/plain")));
-            if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                text = new String(contentBytes, StandardCharsets.UTF_8);
-            }
-        }
-
-        return text.replace(NUL_CHAR, "");
     }
 
     private Map<String, Object> cleanedMetadata(RepositoryDocument document) {

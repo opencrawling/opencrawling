@@ -71,11 +71,13 @@ COPY oc-cli/src/ /app/oc-cli/src/
 COPY oc-mcf-migrator/src/ /app/oc-mcf-migrator/src/
 
 RUN mvn clean package -pl oc-runtime -am -DskipTests
+RUN java -Djarmode=tools -jar /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar extract --destination /app/extracted
 
 # Runtime stage
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
-COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
+COPY --from=builder /app/extracted/lib ./lib
+COPY --from=builder /app/extracted/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
 
 # Decoupled component configuration: Enable IngestionConsumer (Tika), disable others
 ENV SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
@@ -84,5 +86,9 @@ ENV OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
 ENV OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
 ENV OPENCRAWLING_MCP_SERVER_ENABLED=false
 ENV SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=false
+ENV TIKA_EXTRAS_DIR=/app/lib
+ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
+ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
 
-ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-Dtika.extras.dir=/app/lib", "-jar", "app.jar"]

@@ -15,7 +15,9 @@
  */
 package org.opencrawling.vector;
 
-import org.apache.tika.Tika;
+import org.opencrawling.core.text.TextExtractionService;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -49,21 +51,26 @@ public class VectorOutputConnector implements OutputConnector {
     private static final Logger log = LoggerFactory.getLogger(VectorOutputConnector.class);
     private final VectorStore vectorStore;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
     private final EmbeddingModel embeddingModel;
 
     @Autowired
     public VectorOutputConnector(
             VectorStore vectorStore,
-            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
+            @Autowired(required = false) TextExtractionService textExtractionService) {
         this.vectorStore = vectorStore;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+    }
+
+    public VectorOutputConnector(VectorStore vectorStore, EmbeddingModel embeddingModel) {
+        this(vectorStore, embeddingModel, null);
     }
 
     public VectorOutputConnector(VectorStore vectorStore) {
-        this(vectorStore, null);
+        this(vectorStore, null, null);
     }
 
     @Override
@@ -88,24 +95,17 @@ public class VectorOutputConnector implements OutputConnector {
                     return;
                 }
 
-                // Extract raw text using Apache Tika (now from bytes to avoid stream issues)
-                String text = "";
-                try {
-                    text = tika.parseToString(new java.io.ByteArrayInputStream(contentBytes));
-                } catch (Exception e) {
-                    log.warn("Tika failed to parse document {}: {}. Falling back to plain text check.", document.id(), e.getMessage());
-                }
-                
-                // Fallback for plain text if Tika fails but we have bytes
-                if (text.isBlank() && contentBytes.length > 0) {
-                    String mimeType = String.valueOf(document.metadata().getOrDefault("mimeType", List.of("text/plain")));
-                    if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                        text = new String(contentBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    }
+                // Extract raw text using TextExtractionService (process-isolated PipesForkParser)
+                TextExtractionResult result = textExtractionService.extractText(contentBytes, document.metadata());
+                String text = result.text();
+
+                if (!result.success()) {
+                    log.warn("Text extraction failed for document {}: {}", document.id(), result.errorMessage());
                 }
 
-                // Remove null characters to prevent PostgreSQL "invalid byte sequence for encoding UTF8: 0x00" error
-                text = text.replace("\u0000", "");
+                if (result.trimmed()) {
+                    log.info("Document {} text was trimmed during extraction.", document.id());
+                }
 
                 if (text.isBlank()) {
                     log.warn("Document {} extracted text is empty, skipping vector store.", document.id());

@@ -18,7 +18,9 @@ package org.opencrawling.vespa;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
 import ai.vespa.feed.client.Result;
-import org.apache.tika.Tika;
+import org.opencrawling.core.text.TextExtractionService;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.vespa.config.VespaOutputProperties;
@@ -57,20 +59,29 @@ public class VespaOutputConnector implements OutputConnector {
     private final VespaDocumentMapper mapper;
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
 
     @Autowired
     public VespaOutputConnector(
             FeedClient client,
             VespaOutputProperties properties,
             VespaDocumentMapper mapper,
-            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
+            @Autowired(required = false) TextExtractionService textExtractionService) {
         this.client = client;
         this.properties = properties;
         this.mapper = mapper;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+    }
+
+    public VespaOutputConnector(
+            FeedClient client,
+            VespaOutputProperties properties,
+            VespaDocumentMapper mapper,
+            EmbeddingModel embeddingModel) {
+        this(client, properties, mapper, embeddingModel, null);
     }
 
     @Override
@@ -134,21 +145,11 @@ public class VespaOutputConnector implements OutputConnector {
     }
 
     private String extractText(byte[] contentBytes, RepositoryDocument document) {
-        String text = "";
-        try {
-            text = tika.parseToString(new ByteArrayInputStream(contentBytes));
-        } catch (Exception e) {
-            log.warn("Tika failed to parse document {}: {}. Falling back to plain text check.", document.id(), e.getMessage());
+        TextExtractionResult result = textExtractionService.extractText(contentBytes, document.metadata());
+        if (!result.success()) {
+            log.warn("Text extraction failed for document {}: {}", document.id(), result.errorMessage());
         }
-
-        if (text.isBlank()) {
-            String mimeType = String.valueOf(document.metadata().getOrDefault("mimeType", List.of("text/plain")));
-            if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                text = new String(contentBytes, StandardCharsets.UTF_8);
-            }
-        }
-
-        return text.replace(NUL_CHAR, "");
+        return result.text();
     }
 
     private Map<String, Object> cleanedMetadata(RepositoryDocument document) {

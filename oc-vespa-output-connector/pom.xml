@@ -63,14 +63,6 @@
             <artifactId>vespa-feed-client</artifactId>
             <version>${vespa-feed-client.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-parsers-standard-package</artifactId>
-        </dependency>
 
         <!-- Test dependencies -->
         <dependency>
