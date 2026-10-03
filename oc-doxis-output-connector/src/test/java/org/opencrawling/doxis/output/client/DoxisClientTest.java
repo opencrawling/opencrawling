@@ -288,4 +288,38 @@ class DoxisClientTest {
         assertEquals("application/json", logout.getHeader("Content-Type"));
         assertEquals("Bearer " + JWT, logout.getHeader("Authorization"));
     }
+
+    @Test
+    void recordNodeHierarchyIsRequestedExplicitly() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, "{\"uuid\":\"efile-4711\",\"versions\":[{\"folderNodes\":[{\"uuid\":\"node-root\"}]}]}");
+
+        JsonNode record = client.getRecordWithNodes("D_TEXTER", "efile-4711");
+
+        assertEquals("node-root", record.path("versions").get(0).path("folderNodes").get(0).path("uuid").asText());
+        server.takeRequest(); // login
+        RecordedRequest req = server.takeRequest();
+        assertEquals("GET", req.getMethod());
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/records/efile-4711?initializeNodeHierarchy=true", req.getPath());
+    }
+
+    @Test
+    void createFolderNodePostsFolderNodeParamsAndAcceptsQuotedOrBareIds() throws Exception {
+        enqueueLogin();
+        enqueueJson(200, "\"node-quoted\"");
+        server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "text/plain").setBody("node-bare"));
+
+        Map<String, Object> params = Map.of("nodeName", "Documents", "parentFolderNodeUUID", "node-root", "nodeMetaType", "STATIC");
+        assertEquals("node-quoted", client.createFolderNode("D_TEXTER", "efile-4711", params));
+        assertEquals("node-bare", client.createFolderNode("D_TEXTER", "efile-4711", params));
+
+        server.takeRequest(); // login
+        RecordedRequest req = server.takeRequest();
+        assertEquals("POST", req.getMethod());
+        assertEquals(BASE + "/dmsRepositories/D_TEXTER/records/efile-4711/nodes", req.getPath());
+        JsonNode body = objectMapper.readTree(req.getBody().readUtf8());
+        assertEquals("Documents", body.path("nodeName").asText());
+        assertEquals("node-root", body.path("parentFolderNodeUUID").asText());
+        assertEquals("STATIC", body.path("nodeMetaType").asText());
+    }
 }

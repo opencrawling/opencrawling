@@ -53,6 +53,8 @@ public class DoxisRecordFiler {
     private final Map<String, String> recordIdsByKey = new ConcurrentHashMap<>();
     private final Map<String, Object> keyLocks = new ConcurrentHashMap<>();
     private final Map<String, JsonNode> records = new ConcurrentHashMap<>();
+    private final Map<String, String> folderNodesByRecord = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> recordAceKeys = new ConcurrentHashMap<>();
     private volatile String recordRepositoryName;
 
     public DoxisRecordFiler(DoxisOutputProperties properties, DoxisClient client, DoxisSchema schema,
@@ -76,14 +78,13 @@ public class DoxisRecordFiler {
         switch (filing.mode()) {
             case NONE:
                 return Optional.empty();
-            case FIXED:
-                return filing.recordId() == null ? Optional.empty() : Optional.of(new Target(filing.recordId(), folderNode, false, null));
-            case METADATA: {
-                String id = metadata(document, filing.recordIdMetadataKey());
+            case FIXED, METADATA: {
+                String id = configuredRecordId(document);
                 if (id == null) {
-                    id = filing.recordId();
+                    return Optional.empty();
                 }
-                return id == null ? Optional.empty() : Optional.of(new Target(id, folderNode, false, null));
+                syncRecordAcls(id, document);
+                return Optional.of(new Target(id, folderNode, false, null));
             }
             case SOURCE_FOLDER: {
                 String folder = sourceFolder(document.uri());
@@ -99,19 +100,179 @@ public class DoxisRecordFiler {
     }
 
     /**
-     * {@code relationshipParams} for a REST create (filing method {@code RELATIONSHIP}).
+     * {@code ADDITIVE} record ACL sync for a document that is already archived (a re-crawl): adds the document's missing
+     * ACEs to its e-file. Never creates an e-file; does nothing unless {@code security.record-acl-sync} is {@code ADDITIVE}.
      */
-    public Map<String, Object> relationshipParams(Target target) throws IOException, InterruptedException {
+    public void syncExisting(RepositoryDocument document) throws IOException, InterruptedException {
+        if (!properties.security().recordAcls() || properties.security().recordAclSync() != DoxisOutputProperties.RecordAclSync.ADDITIVE) {
+            return;
+        }
+        String recordId = switch (properties.filing().mode()) {
+            case FIXED, METADATA -> configuredRecordId(document);
+            case SOURCE_FOLDER -> {
+                String folder = sourceFolder(document.uri());
+                yield folder == null ? null : findRecord(folder);
+            }
+            case KEY_METADATA -> {
+                String key = properties.filing().recordKeyMetadataKey() != null
+                        ? metadata(document, properties.filing().recordKeyMetadataKey()) : null;
+                yield key == null ? null : findRecord(key);
+            }
+            default -> null;
+        };
+        if (recordId != null) {
+            applyRecordAcls(recordId, document, false);
+        }
+    }
+
+    private String configuredRecordId(RepositoryDocument document) {
+        if (properties.filing().mode() == DoxisOutputProperties.FilingMode.METADATA) {
+            String id = metadata(document, properties.filing().recordIdMetadataKey());
+            if (id != null) {
+                return id;
+            }
+        }
+        return properties.filing().recordId();
+    }
+
+    /** The e-file with key {@code key} (cached, else searched); null when there is none. */
+    private String findRecord(String key) throws IOException, InterruptedException {
+        String cached = recordIdsByKey.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        DoxisSchema.Attribute keyAttribute = schema.attribute(properties.filing().recordKeyAttribute());
+        String keyValue = mapper.fitValue(keyAttribute, key);
+        String field = keyAttribute.shortName() != null ? keyAttribute.shortName() : keyAttribute.name();
+        List<String> found = client.searchRecordIds("SELECT * FROM " + recordRepositoryName() + " WHERE " + field + " = '"
+                + keyValue.replace("'", "''") + "'");
+        if (found.isEmpty()) {
+            return null;
+        }
+        if (found.size() > 1) {
+            log.warn("E-file key '{}' matches {} Doxis records {}; using {}.", key, found.size(), found, found.getFirst());
+        }
+        recordIdsByKey.put(key, found.getFirst());
+        return found.getFirst();
+    }
+
+    /**
+     * {@code relationshipParams} for a REST create (filing method {@code RELATIONSHIP}). Without an explicit folder node the
+     * document goes into the node named {@code filing.folder-node-name} of the e-file, which is created when missing.
+     */
+    public Map<String, Object> relationshipParams(Target target, String documentTypeId) throws IOException, InterruptedException {
         JsonNode record = target.record() != null ? target.record() : record(target.recordId());
+        String folderNode = target.folderNodeId() != null ? target.folderNodeId() : folderNode(target.recordId(), documentTypeId);
         Map<String, Object> relationship = new LinkedHashMap<>();
         relationship.put("sourceObjectUUID", target.recordId());
-        if (target.folderNodeId() != null) {
-            relationship.put("sourceFolderNodeUUID", target.folderNodeId());
-        }
+        relationship.put("sourceFolderNodeUUID", folderNode);
         relationship.put("sourceContentRepositoryUUID", record.path("contentRepositoryUUID").asText(recordRepository()));
         relationship.put("sourceObjectInstanceDate", record.path("instanceDate").asText());
         relationship.put("sourceObjectType", "RECORD");
         return relationship;
+    }
+
+    /**
+     * The document-capable folder node named {@code filing.folder-node-name} in the e-file: found in its node tree or, with
+     * {@code filing.auto-create}, created as a local {@code STATIC} node under the root (the e-file root node is
+     * {@code NODES_ONLY} and cannot hold documents itself).
+     */
+    private String folderNode(String recordId, String documentTypeId) throws IOException, InterruptedException {
+        String cached = folderNodesByRecord.get(recordId);
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (keyLocks.computeIfAbsent("node|" + recordId, k -> new Object())) {
+            cached = folderNodesByRecord.get(recordId);
+            if (cached != null) {
+                return cached;
+            }
+            Filing filing = properties.filing();
+            String name = filing.folderNodeName();
+            JsonNode version = currentVersion(client.getRecordWithNodes(recordRepository(), recordId));
+            List<JsonNode> nodes = new ArrayList<>();
+            collectNodes(version.path("folderNodes"), nodes, new HashSet<>());
+            for (JsonNode node : nodes) {
+                if (name.equalsIgnoreCase(node.path("name").asText()) && !node.path("logicalDeleted").asBoolean(false)) {
+                    if (!holdsDocuments(node, documentTypeId)) {
+                        throw new IOException("Folder node '" + name + "' (" + node.path("uuid").asText() + ") of e-file " + recordId
+                                + " cannot hold documents of this class (nodeMetaType " + node.path("nodeMetaType").asText()
+                                + "); set filing.folder-node-name to a document node or use filing method PRIMARY_PARENT");
+                    }
+                    folderNodesByRecord.put(recordId, node.path("uuid").asText());
+                    return node.path("uuid").asText();
+                }
+            }
+            if (!filing.autoCreate()) {
+                throw new IOException("E-file " + recordId + " has no folder node '" + name + "' and filing.auto-create is disabled");
+            }
+            String root = rootNode(version, nodes);
+            if (root == null) {
+                throw new IOException("E-file " + recordId + " has no root folder node to create '" + name + "' under");
+            }
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("nodeName", name);
+            params.put("parentFolderNodeUUID", root);
+            params.put("nodeMetaType", "STATIC");
+            params.put("allowedTargetInformationObjectTypeUUIDs", List.of(documentTypeId));
+            params.put("defaultTargetInformationObjectTypeUUID", documentTypeId);
+            String created = client.createFolderNode(recordRepository(), recordId, params);
+            log.info("Created folder node '{}' ({}) in Doxis e-file {}.", name, created, recordId);
+            folderNodesByRecord.put(recordId, created);
+            return created;
+        }
+    }
+
+    private static JsonNode currentVersion(JsonNode record) {
+        JsonNode last = record;
+        for (JsonNode version : record.path("versions")) {
+            if (version.path("currentVersion").asBoolean(false)) {
+                return version;
+            }
+            last = version;
+        }
+        return last;
+    }
+
+    private static void collectNodes(JsonNode nodes, List<JsonNode> into, Set<String> seen) {
+        for (JsonNode node : nodes) {
+            if (seen.add(node.path("uuid").asText())) {
+                into.add(node);
+            }
+            collectNodes(node.path("childrenFolderNodes"), into, seen);
+        }
+    }
+
+    /** A {@code STATIC} node whose allowed target types (if restricted) include the document class. */
+    private static boolean holdsDocuments(JsonNode node, String documentTypeId) {
+        if (!"STATIC".equals(node.path("nodeMetaType").asText())) {
+            return false;
+        }
+        JsonNode allowed = node.path("allowedTargetInformationObjectTypeUUIDs");
+        if (!allowed.isArray() || allowed.isEmpty()) {
+            return true;
+        }
+        for (JsonNode type : allowed) {
+            if (type.asText().equals(documentTypeId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String rootNode(JsonNode version, List<JsonNode> nodes) {
+        String reference = version.path("rootFolderNodeReferenceUUID").asText("");
+        for (JsonNode node : nodes) {
+            if (!reference.isBlank() && reference.equals(node.path("uuid").asText())) {
+                return reference;
+            }
+        }
+        for (JsonNode node : nodes) {
+            if (node.path("parentFolderNodeUUID").asText("").isBlank()) {
+                return node.path("uuid").asText();
+            }
+        }
+        return reference.isBlank() ? null : reference;
     }
 
     private Target keyed(RepositoryDocument document, String key, String title, String folderNode) throws IOException, InterruptedException {
@@ -128,19 +289,13 @@ public class DoxisRecordFiler {
                 return new Target(cached, folderNode, false, records.get(cached));
             }
             Filing filing = properties.filing();
+            String existing = findRecord(key);
+            if (existing != null) {
+                syncRecordAcls(existing, document);
+                return new Target(existing, folderNode, false, null);
+            }
             DoxisSchema.Attribute keyAttribute = schema.attribute(filing.recordKeyAttribute());
             String keyValue = mapper.fitValue(keyAttribute, key);
-            String field = keyAttribute.shortName() != null ? keyAttribute.shortName() : keyAttribute.name();
-            List<String> found = client.searchRecordIds("SELECT * FROM " + recordRepositoryName() + " WHERE " + field + " = '"
-                    + keyValue.replace("'", "''") + "'");
-            if (!found.isEmpty()) {
-                if (found.size() > 1) {
-                    log.warn("E-file key '{}' matches {} Doxis records {}; using {}.", key, found.size(), found, found.getFirst());
-                }
-                recordIdsByKey.put(key, found.getFirst());
-                syncRecordAcls(found.getFirst(), document);
-                return new Target(found.getFirst(), folderNode, false, null);
-            }
             if (!filing.autoCreate()) {
                 throw new IOException("No Doxis e-file with " + filing.recordKeyAttribute() + " = '" + keyValue
                         + "' and filing.auto-create is disabled (document " + document.id() + ")");
@@ -189,6 +344,12 @@ public class DoxisRecordFiler {
     }
 
     private void applyRecordAcls(String recordId, RepositoryDocument document, boolean created) throws IOException, InterruptedException {
+        synchronized (keyLocks.computeIfAbsent("acl|" + recordId, k -> new Object())) {
+            applyRecordAclsLocked(recordId, document, created);
+        }
+    }
+
+    private void applyRecordAclsLocked(String recordId, RepositoryDocument document, boolean created) throws IOException, InterruptedException {
         try {
             List<Map<String, Object>> aces = new ArrayList<>(aclMapper.recordAces(document.security()));
             if (created && properties.security().grantConnectorUser()) {
@@ -204,16 +365,21 @@ public class DoxisRecordFiler {
                     }
                 }
             }
-            if (!created) {
-                Set<String> existing = new HashSet<>();
+            // the e-file's ACEs are read once per run; later documents of the same e-file only add what is new
+            Set<String> known = recordAceKeys.get(recordId);
+            if (!created && known == null) {
+                known = new HashSet<>();
                 for (JsonNode ace : client.getRecordPermissions(recordRepository(), recordId)) {
-                    existing.add(ace.path("organizationalElementId").asText() + "|" + ace.path("permissionName").asText() + "|"
+                    known.add(ace.path("organizationalElementId").asText() + "|" + ace.path("permissionName").asText() + "|"
                             + ace.path("authorizationVariant").asText());
                 }
-                aces = aces.stream().filter(a -> !existing.contains(a.get("organizationalElementId") + "|" + a.get("permission") + "|"
-                        + a.get("authorizationVariant"))).toList();
             }
+            Set<String> present = known == null ? Set.of() : known;
+            aces = aces.stream().filter(a -> !present.contains(aceKey(a))).toList();
             client.addRecordPermissions(recordRepository(), recordId, aces);
+            Set<String> updated = new HashSet<>(present);
+            aces.forEach(a -> updated.add(aceKey(a)));
+            recordAceKeys.put(recordId, updated);
             List<String> unresolved = aclMapper.unresolvedIdentities(document.security());
             if (properties.security().strict() && !unresolved.isEmpty()) {
                 throw new IOException("Identities " + unresolved + " have no Doxis user or group (security.strict)");
@@ -226,6 +392,10 @@ public class DoxisRecordFiler {
             }
             throw e;
         }
+    }
+
+    private static String aceKey(Map<String, Object> ace) {
+        return ace.get("organizationalElementId") + "|" + ace.get("permission") + "|" + ace.get("authorizationVariant");
     }
 
     private volatile String connectorUserId;

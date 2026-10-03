@@ -266,6 +266,31 @@ public class DoxisClient implements AutoCloseable {
     }
 
     /**
+     * {@code GET /dmsRepositories/{repo}/records/{uuid}?initializeNodeHierarchy=true}: the record with the folder-node tree of
+     * its versions ({@code versions[].folderNodes[].childrenFolderNodes}).
+     */
+    public JsonNode getRecordWithNodes(String repository, String recordId) throws IOException, InterruptedException {
+        return get("Get folder nodes of record " + recordId, "/dmsRepositories/" + enc(repository) + "/records/" + enc(recordId)
+                + "?initializeNodeHierarchy=true");
+    }
+
+    /**
+     * {@code POST /dmsRepositories/{repo}/records/{uuid}/nodes} ({@code FolderNodeParams}): creates a local folder node in the
+     * record and returns its UUID.
+     */
+    public String createFolderNode(String repository, String recordId, Map<String, Object> folderNodeParams)
+            throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/records/" + enc(recordId) + "/nodes";
+        JsonNode result = execute("Create folder node in record " + recordId, () -> jsonRequest(path, "POST", folderNodeParams, true),
+                true, true);
+        String id = result.isTextual() ? result.asText() : result.path("uuid").asText(null);
+        if (id == null || id.isBlank()) {
+            throw new IOException("Doxis returned no folder node id for record " + recordId + ": " + result);
+        }
+        return id;
+    }
+
+    /**
      * {@code GET …/documents/{uuid}/permissions}: the document's current ACEs ({@code RestAce}).
      */
     public List<JsonNode> getPermissions(String repository, String documentId) throws IOException, InterruptedException {
@@ -407,6 +432,15 @@ public class DoxisClient implements AutoCloseable {
 
     // ------------------------------------------------------------------ plumbing
 
+    /** JSON bodies as a tree; operations declared as {@code string} may answer with a bare, unquoted value. */
+    private JsonNode parseBody(String body) {
+        try {
+            return objectMapper.readTree(body);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return objectMapper.getNodeFactory().textNode(body.strip());
+        }
+    }
+
     private JsonNode get(String operation, String path) throws IOException, InterruptedException {
         return execute(operation, () -> plainRequest(path, "GET"), true, true);
     }
@@ -527,7 +561,7 @@ public class DoxisClient implements AutoCloseable {
             int status = response.statusCode();
             if (status >= 200 && status < 300) {
                 String body = response.body();
-                return body == null || body.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(body);
+                return body == null || body.isBlank() ? objectMapper.createObjectNode() : parseBody(body);
             }
             if (status == 401 && authenticated && !reloggedIn && rebuildable) {
                 log.info("Doxis session expired during {}, logging in again.", operation);

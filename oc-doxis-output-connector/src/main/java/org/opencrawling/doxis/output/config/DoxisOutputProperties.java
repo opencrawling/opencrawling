@@ -150,7 +150,11 @@ public record DoxisOutputProperties(
     public enum FilingMethod {
         /** {@code PUT …/documents/{uuid}/primaryParent} after creation — works for uploads and content links. */
         PRIMARY_PARENT,
-        /** {@code relationshipParams} in the REST create (uploads only; supports a folder node). */
+        /**
+         * {@code relationshipParams} in the REST create, into a folder node of the e-file (uploads only; content links fall back
+         * to {@code PRIMARY_PARENT}). The node is {@code folder-node-id} / the {@code folder-node-metadata-key} value when given,
+         * otherwise the document-capable node named {@code folder-node-name} in each e-file, created when missing.
+         */
         RELATIONSHIP
     }
 
@@ -158,7 +162,8 @@ public record DoxisOutputProperties(
      * Files new documents into records (e-files / dossiers). With {@code SOURCE_FOLDER} / {@code KEY_METADATA} the e-file is
      * looked up by {@code record-key-attribute} in {@code record-class} and, with {@code auto-create}, created when missing
      * (title in {@code record-title-attribute}). Permissions set on the e-file apply to everything inside when the document
-     * class has "Primary parent objects → Pass down permissions" enabled — see {@link Security}.
+     * class has "Primary parent objects → Pass down permissions" enabled — see {@link Security}. {@code folder-node-name}
+     * (default {@code Documents}) names the folder node used by filing method {@code RELATIONSHIP} when no node id is given.
      */
     public record Filing(
         FilingMode mode,
@@ -172,7 +177,8 @@ public record DoxisOutputProperties(
         @DefaultValue("ObjectNumberExternal") String recordKeyAttribute,
         @DefaultValue("ObjectName") String recordTitleAttribute,
         @DefaultValue("true") boolean autoCreate,
-        @DefaultValue("PRIMARY_PARENT") FilingMethod method
+        @DefaultValue("PRIMARY_PARENT") FilingMethod method,
+        @DefaultValue("Documents") String folderNodeName
     ) {
         public Filing {
             if (recordId != null && recordId.isBlank()) recordId = null;
@@ -185,6 +191,7 @@ public record DoxisOutputProperties(
             if (recordKeyAttribute == null || recordKeyAttribute.isBlank()) recordKeyAttribute = "ObjectNumberExternal";
             if (recordTitleAttribute == null || recordTitleAttribute.isBlank()) recordTitleAttribute = "ObjectName";
             if (method == null) method = FilingMethod.PRIMARY_PARENT;
+            if (folderNodeName == null || folderNodeName.isBlank()) folderNodeName = "Documents";
             if (mode == null) {
                 // backward compatible: a configured fixed record id implies FIXED, otherwise metadata-driven filing
                 mode = recordId != null ? FilingMode.FIXED : FilingMode.METADATA;
@@ -192,7 +199,7 @@ public record DoxisOutputProperties(
         }
 
         public static Filing defaults() {
-            return new Filing(FilingMode.METADATA, null, null, null, null, null, null, null, null, null, true, FilingMethod.PRIMARY_PARENT);
+            return new Filing(FilingMode.METADATA, null, null, null, null, null, null, null, null, null, true, FilingMethod.PRIMARY_PARENT, null);
         }
     }
 

@@ -47,11 +47,11 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
 
    `filing.method` attaches the document:
    - `PRIMARY_PARENT` (default): `PUT …/documents/{uuid}/primaryParent`, for uploads and content links;
-   - `RELATIONSHIP`: `relationshipParams` in the REST create, for uploads only; it supports a folder node (`doxisFolderNodeId` / `folder-node-id`).
+   - `RELATIONSHIP`: `relationshipParams` in the REST create, into a folder node of the e-file. This applies to uploads only; content links fall back to `PRIMARY_PARENT`. The node is `doxisFolderNodeId` / `folder-node-id` when given. Otherwise it is the document node named `folder-node-name` (default `Documents`) in each e-file: found in the e-file's node tree, or created as a local `STATIC` node under the root when missing (with `auto-create`). It is resolved once per e-file per run. A node of that name that cannot hold the document class fails the document.
 
    **Security, also configurable** (`security.mode`):
    - `DOCUMENT`: per-document ACEs (the default; needs instance rights on the document class).
-   - `RECORD`: ACEs on the e-file (`VIEW_FOLDER_CONTENTS`, `UPDATE_FOLDER`, `EDIT_FOLDER_DESCRIPTORS`, DENY view). Documents inherit them when the document class has *Primary parent objects → Pass down permissions* enabled. The e-file's permissions come from the first document that creates it. `record-acl-sync: ADDITIVE` lets later documents add missing entries.
+   - `RECORD`: ACEs on the e-file (`VIEW_FOLDER_CONTENTS`, `UPDATE_FOLDER`, `EDIT_FOLDER_DESCRIPTORS`, DENY view). Documents inherit them when the document class has *Primary parent objects → Pass down permissions* enabled. The e-file's permissions come from the first document that creates it. `record-acl-sync: ADDITIVE` lets later documents add missing entries. It applies in every filing mode, both when a new document joins an existing e-file and when a re-crawled document carries new identities (a re-crawl never creates an e-file). It reads an e-file's permissions once per run and then only adds entries it has not seen; it never removes any.
    - `DOCUMENT_AND_RECORD`
    - `NONE`
 
@@ -61,7 +61,7 @@ The connector keeps the **metadata plane** and the **content plane** separate. M
    - *Document - Change primary parent object* (`SET_PRIMARY_PARENT`) on the document classes, for `PRIMARY_PARENT` filing; otherwise `SECU0015 … setPrimaryParent permission`.
    - *All instances - Read* and *All instances - Write* on the e-file class (the high-volume write right), to remove or delete e-files; otherwise `SECU0015 … high volume write permission`.
    - The DMS repository needs a *content repository for primary parent objects* (Designer, *DMS → Databases*); otherwise filing fails with `INSTANCE0207`.
-   - `RELATIONSHIP` filing needs a folder node that may hold documents: the e-file root node is `NODES_ONLY` (`RELATIONSHIP0134`), and omitting the node fails with `PUBLICWS0320`.
+   - `RELATIONSHIP` filing needs a folder node that may hold documents: the e-file root node is `NODES_ONLY` (`RELATIONSHIP0134`), and omitting the node fails with `PUBLICWS0320`. The connector creates the `folder-node-name` node itself, which needs `CREATE_FOLDER` on the e-file (included in the connector-user grants).
 
    `security.strict` fails and rolls back a document whose permissions cannot be applied (`SECU0050`, or identities without a Doxis user or group). `security.remove-stale` removes the connector-managed document permissions (view/update/version) that no longer exist at the source; permissions set by administrators are never touched.
 10. **OIS deletion tombstones**: `action: "DELETE"` is applied according to `delete-mode`.
@@ -114,6 +114,7 @@ All properties are bound via `DoxisOutputProperties` under the `spring.opencrawl
 | **Filing Record** | `…doxis.filing.record-id` | — | `FIXED`: the record (e-file) new documents are filed into |
 | **Filing Record Repository** | `…doxis.filing.record-repository` | DMS repository | Repository of the record |
 | **Filing Folder Node** | `…doxis.filing.folder-node-id` | — | Optional folder node inside the record |
+| **Filing Folder Node Name** | `…doxis.filing.folder-node-name` | `Documents` | `RELATIONSHIP` without a node id: the document node found or created in each e-file |
 | **Writer Consumer Group** | `…doxis.consumer-group` | `opencrawling-doxis-writer` | Kafka group of the decoupled writer |
 
 To select this connector, set `spring.opencrawling.output.type=doxis`.
@@ -222,6 +223,6 @@ Findings from live runs against a Doxis CSB 14.4.1 (SER training environment), r
 - **The repository must allow the document type**; otherwise creation fails with `INSTANCE0014`. This is configured in cubeDesigner; the REST API cannot change it.
 - **The client-supplied SHA-256 is not stored** by CSB 14.4.1 (`hashValue` is `null` on read-back), so verification compares the length; the hash is compared only when Doxis reports one. The content-object metadata does not include `storageLocators` either.
 - **CQL needs the repository short name**; full names may contain dots, which the parser rejects (`INSTANCE0107`). The connector resolves the short name automatically. Wildcards are `*`, not `%`.
-- **E-file filing is verified live** on CSB 14.4.1 (2026-10-02, `SOURCE_FOLDER` + `RECORD`, `PRIMARY_PARENT`): 4 documents (3 uploads and one 5 TB content link) filed into 3 auto-created `TX_SourceFolder` e-files, with no document-level ACEs; each e-file carried the source ACL plus the connector-user grants. A re-crawl reused the documents and e-files. The additive record-ACL sync has not been exercised live yet, and effective inheritance for a non-admin user is still to be checked.
+- **E-file filing is verified live** on CSB 14.4.1 (2026-10-02, `SOURCE_FOLDER` + `RECORD`, `PRIMARY_PARENT`): 4 documents (3 uploads and one 5 TB content link) filed into 3 auto-created `TX_SourceFolder` e-files, with no document-level ACEs; each e-file carried the source ACL plus the connector-user grants. A re-crawl reused the documents and e-files. `RELATIONSHIP` filing with an auto-created folder node and the `ADDITIVE` record-ACL sync are covered by unit tests against the 14.4.1 OpenAPI contract but not yet exercised live; effective inheritance for a non-admin user is still to be checked.
 - **Decoupled upload mode and claim-check cleanup:** for claim-check content, `IngestionConsumer` may delete the claim-check object (`claimcheck.cleanup-on-consume`) before the writer reads it. Use the direct `send()` path, a locator, or disable cleanup.
 - **No local Doxis container:** run `scripts/test-doxis-connector.sh` against a CSB.
