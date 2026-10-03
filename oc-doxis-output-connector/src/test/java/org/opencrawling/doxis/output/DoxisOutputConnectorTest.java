@@ -437,6 +437,26 @@ class DoxisOutputConnectorTest {
     }
 
     @Test
+    void aRemovedEfileIsLookedUpAgainInsteadOfServedFromTheCache() throws Exception {
+        Path folder = Files.createDirectories(tmp.resolve("contracts"));
+        Path a = Files.writeString(folder.resolve("a.pdf"), "%PDF-1.7 contract");
+        Path b = Files.writeString(folder.resolve("b.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.searchRecordIds(anyString())).thenReturn(List.of("rec-gone"), List.of("rec-new"));
+        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Set primary parent", 404, "INSTANCE0001", "record not found"))
+                .when(client).setDocumentPrimaryParent(REPO, "doc-0001", "rec-gone");
+
+        DoxisOutputConnector connector = filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null,
+                DoxisOutputProperties.FilingMethod.PRIMARY_PARENT), security(DoxisOutputProperties.SecurityMode.RECORD, false, false));
+        assertThrows(RuntimeException.class, () -> connector.send(document("doc-a", a.toUri().toString(),
+                new PermissionRule("elena.weber", "user", "Elena", "read"))).block());
+        connector.send(document("doc-b", b.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"))).block();
+
+        verify(client, times(2)).searchRecordIds(anyString());
+        verify(client).setDocumentPrimaryParent(REPO, "doc-0001", "rec-new");
+    }
+
+    @Test
     void createOnlySyncNeverTouchesAnExistingEfile() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
