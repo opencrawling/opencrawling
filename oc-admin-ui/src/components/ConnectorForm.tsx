@@ -2258,6 +2258,16 @@ export default function ConnectorForm() {
                         <p className="text-xs text-muted-foreground">Optional folder node inside the record; metadata doxisFolderNodeId overrides it.</p>
                       </div>
 
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Folder Node Name</label>
+                        <input
+                          {...register('configuration.doxisFilingFolderNodeName')}
+                          placeholder="Documents"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">RELATIONSHIP filing without a node ID: the document node of this name in each e-file, created when missing.</p>
+                      </div>
+
                       <div className="md:col-span-2 pt-2 border-t border-border">
                         <h4 className="text-sm font-semibold">Lifecycle & Security</h4>
                       </div>

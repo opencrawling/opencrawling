@@ -73,7 +73,8 @@ public final class DoxisConnectorSettings {
                         c.get("doxisFilingRecordKeyAttribute"),
                         c.get("doxisFilingRecordTitleAttribute"),
                         bool(c.get("doxisFilingAutoCreate"), true),
-                        enumValue(DoxisOutputProperties.FilingMethod.class, c.get("doxisFilingMethod"), DoxisOutputProperties.FilingMethod.PRIMARY_PARENT)),
+                        enumValue(DoxisOutputProperties.FilingMethod.class, c.get("doxisFilingMethod"), DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                        c.get("doxisFilingFolderNodeName")),
                 new DoxisOutputProperties.Security(
                         enumValue(DoxisOutputProperties.SecurityMode.class, c.get("doxisSecurityMode"), DoxisOutputProperties.SecurityMode.DOCUMENT),
                         bool(c.get("doxisSecurityStrict"), false),

@@ -204,7 +204,7 @@ class DoxisOutputConnectorTest {
     private static DoxisOutputProperties.Filing filing(DoxisOutputProperties.FilingMode mode, String keyMetadata,
                                                        DoxisOutputProperties.FilingMethod method) {
         return new DoxisOutputProperties.Filing(mode, null, null, null, null, null, keyMetadata, "TX_SourceFolder", "ObjectNumber",
-                "ObjectName", true, method);
+                "ObjectName", true, method, null);
     }
 
     private static DoxisOutputProperties.Security security(DoxisOutputProperties.SecurityMode mode, boolean strict, boolean removeStale) {
@@ -279,6 +279,175 @@ class DoxisOutputConnectorTest {
         verify(client, times(2)).setDocumentPrimaryParent(eq(REPO), anyString(), eq("rec-new"));
         verify(client, never()).addPermissions(any(), any(), any());
         assertNotNull(folderUri);
+    }
+
+    private RepositoryDocument document(String id, String uri, PermissionRule... rules) {
+        return new RepositoryDocument(id, uri, null, Map.of("doxisRecordId", List.of("efile-4711")), "elena.weber",
+                new SecurityConfig(true, List.of(rules)), Instant.parse("2026-09-30T08:00:00Z"));
+    }
+
+    private static final String RECORD_4711 = "{\"uuid\":\"efile-4711\",\"contentRepositoryUUID\":\"repo-uuid\",\"instanceDate\":\"2026-09-01T10:00:00.000+02:00\"}";
+
+    /** An e-file version whose only node is the NODES_ONLY root, optionally with one child. */
+    private static JsonNode recordWithNodes(String child) throws Exception {
+        return new ObjectMapper().readTree("{\"uuid\":\"efile-4711\",\"versions\":[{\"currentVersion\":true,"
+                + "\"rootFolderNodeReferenceUUID\":\"node-root\",\"folderNodes\":[{\"uuid\":\"node-root\",\"name\":\"TX_SourceFolder\","
+                + "\"nodeMetaType\":\"NODES_ONLY\",\"childrenFolderNodes\":[" + (child == null ? "" : child) + "]}]}]}");
+    }
+
+    private DoxisOutputConnector relationshipConnector() {
+        return filingConnector(filing(DoxisOutputProperties.FilingMode.METADATA, null, DoxisOutputProperties.FilingMethod.RELATIONSHIP),
+                DoxisOutputProperties.Security.defaults());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void relationshipWithoutNodeIdCreatesTheDocumentsNodeOncePerEfile() throws Exception {
+        Path a = Files.writeString(tmp.resolve("a.pdf"), "%PDF-1.7 contract");
+        Path b = Files.writeString(tmp.resolve("b.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.getRecord(REPO, "efile-4711")).thenReturn(new ObjectMapper().readTree(RECORD_4711));
+        when(client.getRecordWithNodes(REPO, "efile-4711")).thenReturn(recordWithNodes(null));
+        when(client.createFolderNode(eq(REPO), eq("efile-4711"), anyMap())).thenReturn("node-documents");
+
+        DoxisOutputConnector c = relationshipConnector();
+        c.send(document("doc-a", a.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"))).block();
+        c.send(document("doc-b", b.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"))).block();
+
+        ArgumentCaptor<Map<String, Object>> node = ArgumentCaptor.forClass(Map.class);
+        verify(client, times(1)).createFolderNode(eq(REPO), eq("efile-4711"), node.capture());
+        assertEquals(Map.of("nodeName", "Documents", "parentFolderNodeUUID", "node-root", "nodeMetaType", "STATIC",
+                "allowedTargetInformationObjectTypeUUIDs", List.of(TYPE_ID), "defaultTargetInformationObjectTypeUUID", TYPE_ID), node.getValue());
+        verify(client, times(1)).getRecordWithNodes(REPO, "efile-4711");
+        ArgumentCaptor<Map<String, Object>> relationship = ArgumentCaptor.forClass(Map.class);
+        verify(client, times(2)).createDocument(eq(REPO), anyMap(), relationship.capture(), any());
+        assertTrue(relationship.getAllValues().stream().allMatch(r -> "node-documents".equals(r.get("sourceFolderNodeUUID"))));
+        verify(client, never()).setDocumentPrimaryParent(any(), any(), any());
+    }
+
+    @Test
+    void relationshipReusesAnExistingDocumentsNode() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.getRecord(REPO, "efile-4711")).thenReturn(new ObjectMapper().readTree(RECORD_4711));
+        when(client.getRecordWithNodes(REPO, "efile-4711")).thenReturn(recordWithNodes(
+                "{\"uuid\":\"node-docs\",\"name\":\"documents\",\"nodeMetaType\":\"STATIC\",\"parentFolderNodeUUID\":\"node-root\"}"));
+
+        relationshipConnector().send(document("doc-a", file.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"))).block();
+
+        verify(client, never()).createFolderNode(any(), any(), any());
+        verify(client).createDocument(eq(REPO), anyMap(), argThat(r -> "node-docs".equals(r.get("sourceFolderNodeUUID"))), any());
+    }
+
+    @Test
+    void relationshipRefusesANodeOfThatNameThatCannotHoldDocuments() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.getRecord(REPO, "efile-4711")).thenReturn(new ObjectMapper().readTree(RECORD_4711));
+        when(client.getRecordWithNodes(REPO, "efile-4711")).thenReturn(recordWithNodes(
+                "{\"uuid\":\"node-docs\",\"name\":\"Documents\",\"nodeMetaType\":\"NODES_ONLY\"}"));
+
+        RuntimeException e = assertThrows(RuntimeException.class, () -> relationshipConnector()
+                .send(document("doc-a", file.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"))).block());
+
+        assertTrue(e.getCause().getMessage().contains("cannot hold documents"));
+        verify(client, never()).createDocument(any(), anyMap(), any(), any());
+        verify(client, never()).createFolderNode(any(), any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void additiveSyncReadsEfilePermissionsOnceAndAddsOnlyNewAces() throws Exception {
+        Path folder = Files.createDirectories(tmp.resolve("contracts"));
+        Path a = Files.writeString(folder.resolve("a.pdf"), "%PDF-1.7 contract");
+        Path b = Files.writeString(folder.resolve("b.pdf"), "%PDF-1.7 contract");
+        Path c = Files.writeString(folder.resolve("c.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.searchRecordIds(anyString())).thenReturn(List.of("rec-9"));
+        when(client.getRecordPermissions(REPO, "rec-9")).thenReturn(List.of(new ObjectMapper().readTree(
+                "{\"organizationalElementId\":\"user-elena\",\"permissionName\":\"VIEW_FOLDER_CONTENTS\",\"authorizationVariant\":\"GRANT\"}")));
+
+        DoxisOutputConnector connector = filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null,
+                DoxisOutputProperties.FilingMethod.PRIMARY_PARENT), new DoxisOutputProperties.Security(DoxisOutputProperties.SecurityMode.RECORD,
+                false, false, DoxisOutputProperties.RecordAclSync.ADDITIVE, true));
+        PermissionRule elena = new PermissionRule("elena.weber", "user", "Elena", "read");
+        PermissionRule legal = new PermissionRule("legal-counsel", "group", "Legal", "read");
+        connector.send(document("doc-a", a.toUri().toString(), elena)).block();
+        connector.send(document("doc-b", b.toUri().toString(), elena, legal)).block();
+        connector.send(document("doc-c", c.toUri().toString(), elena, legal)).block();
+
+        verify(client, times(1)).getRecordPermissions(REPO, "rec-9");
+        ArgumentCaptor<List<Map<String, Object>>> added = ArgumentCaptor.forClass(List.class);
+        verify(client, atLeastOnce()).addRecordPermissions(eq(REPO), eq("rec-9"), added.capture());
+        List<Map<String, Object>> nonEmpty = added.getAllValues().stream().filter(l -> !l.isEmpty()).flatMap(List::stream).toList();
+        assertEquals(List.of(Map.of("organizationalElementId", "group-legal", "permission", "VIEW_FOLDER_CONTENTS",
+                "authorizationVariant", "GRANT")), nonEmpty, "only the new ACE is added, once, and nothing is removed");
+        verify(client, never()).createRecord(any(), any());
+        verify(client, times(3)).setDocumentPrimaryParent(eq(REPO), anyString(), eq("rec-9"));
+    }
+
+    private static DoxisOutputProperties.Security additive() {
+        return new DoxisOutputProperties.Security(DoxisOutputProperties.SecurityMode.RECORD, false, false,
+                DoxisOutputProperties.RecordAclSync.ADDITIVE, true);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void additiveSyncOnReCrawlAddsANewIdentityToTheEfile() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of("doc-0001"));
+        when(client.getRecordPermissions(REPO, "efile-4711")).thenReturn(List.of(new ObjectMapper().readTree(
+                "{\"organizationalElementId\":\"user-elena\",\"permissionName\":\"VIEW_FOLDER_CONTENTS\",\"authorizationVariant\":\"GRANT\"}")));
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.METADATA, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT), additive())
+                .send(document("doc-a", file.toUri().toString(), new PermissionRule("elena.weber", "user", "Elena", "read"),
+                        new PermissionRule("legal-counsel", "group", "Legal", "read"))).block();
+
+        verify(client).addRecordPermissions(REPO, "efile-4711", List.of(Map.of("organizationalElementId", "group-legal",
+                "permission", "VIEW_FOLDER_CONTENTS", "authorizationVariant", "GRANT")));
+        verify(client, never()).setDocumentPrimaryParent(any(), any(), any());
+    }
+
+    @Test
+    void additiveSyncOnReCrawlNeverCreatesAnEfile() throws Exception {
+        Path folder = Files.createDirectories(tmp.resolve("contracts"));
+        Path file = Files.writeString(folder.resolve("a.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of("doc-0001"));
+        when(client.searchRecordIds(anyString())).thenReturn(List.of());
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT), additive())
+                .send(document("doc-a", file.toUri().toString(), new PermissionRule("legal-counsel", "group", "Legal", "read"))).block();
+
+        verify(client).searchRecordIds(anyString());
+        verify(client, never()).createRecord(any(), any());
+        verify(client, never()).addRecordPermissions(any(), any(), any());
+    }
+
+    @Test
+    void createOnlySyncLeavesTheEfileAloneOnReCrawl() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of("doc-0001"));
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.METADATA, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                security(DoxisOutputProperties.SecurityMode.RECORD, false, false))
+                .send(document("doc-a", file.toUri().toString(), new PermissionRule("legal-counsel", "group", "Legal", "read"))).block();
+
+        verify(client, never()).getRecordPermissions(any(), any());
+        verify(client, never()).addRecordPermissions(any(), any(), any());
+    }
+
+    @Test
+    void createOnlySyncNeverTouchesAnExistingEfile() throws Exception {
+        Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
+        when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
+        when(client.searchRecordIds(anyString())).thenReturn(List.of("rec-9"));
+
+        filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null, DoxisOutputProperties.FilingMethod.PRIMARY_PARENT),
+                security(DoxisOutputProperties.SecurityMode.RECORD, false, false))
+                .send(document("doc-a", file.toUri().toString(), new PermissionRule("legal-counsel", "group", "Legal", "read"))).block();
+
+        verify(client, never()).getRecordPermissions(any(), any());
+        verify(client, never()).addRecordPermissions(any(), any(), any());
     }
 
     @Test

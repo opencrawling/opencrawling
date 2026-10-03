@@ -249,7 +249,7 @@ public class DoxisOutputConnector implements OutputConnector {
             } else {
                 Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
                 JsonNode created = client.createDocument(properties.repository(), params,
-                        fileByRelationship ? filer.relationshipParams(eFile.get()) : null, plan.body());
+                        fileByRelationship ? filer.relationshipParams(eFile.get(), documentTypeId) : null, plan.body());
                 documentId = created.path("uuid").asText();
             }
             try {
@@ -368,6 +368,11 @@ public class DoxisOutputConnector implements OutputConnector {
      * entries (including ones set by Doxis administrators) are never removed. Best effort — failures are logged.
      */
     private void syncPermissions(String documentId, RepositoryDocument document) throws InterruptedException {
+        try {
+            filer.syncExisting(document);
+        } catch (IOException e) {
+            log.warn("E-file ACL sync for {} failed: {}", document.id(), e.getMessage());
+        }
         if (!properties.security().documentAcls()) {
             return;
         }
