@@ -86,7 +86,9 @@ public class OpenCrawlingTestTopology {
                     + "<p>OpenCrawling Bolt verification content for page " + emittedCount + "</p></body></html>")
                     .getBytes(StandardCharsets.UTF_8);
 
-            collector.emit(new Values(url, content, metadata));
+            String text = "StormCrawler Integration Test OpenCrawling Bolt verification content for page " + emittedCount;
+
+            collector.emit(new Values(url, content, metadata, text));
             spoutLog.info("Emitted parsed content tuple for URL: {}", url);
 
             // On page 3, emit an HTTP 404 deletion signal on the status stream
@@ -103,7 +105,7 @@ public class OpenCrawlingTestTopology {
 
         @Override
         public void declareOutputFields(OutputFieldsDeclarer declarer) {
-            declarer.declare(new Fields("url", "content", "metadata"));
+            declarer.declare(new Fields("url", "content", "metadata", "text"));
             declarer.declareStream(Constants.StatusStreamName, new Fields("url", "status", "metadata"));
         }
     }

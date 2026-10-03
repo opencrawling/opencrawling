@@ -18,13 +18,11 @@ package org.opencrawling.stormcrawler.bolt;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
-import org.apache.storm.topology.OutputFieldsDeclarer;
-import org.apache.storm.topology.base.BaseRichBolt;
-import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
 import org.apache.storm.tuple.Values;
 import org.apache.stormcrawler.Constants;
 import org.apache.stormcrawler.Metadata;
+import org.apache.stormcrawler.indexing.AbstractIndexerBolt;
 import org.apache.stormcrawler.persistence.Status;
 import org.opencrawling.stormcrawler.bolt.dispatcher.HttpPayloadDispatcher;
 import org.opencrawling.stormcrawler.bolt.dispatcher.InMemoryPayloadDispatcher;
@@ -38,12 +36,21 @@ import java.time.Instant;
 import java.util.*;
 
 /**
- * Apache Storm Bolt that intercepts parsed documents and status stream updates
- * from Apache StormCrawler topologies, normalizes them into Open Ingestion Standard (OIS)
- * document (action: "UPSERT") and deletion tombstone (action: "DELETE") payloads,
- * and dispatches them to OpenCrawling ingestion runtime or message queues.
+ * StormCrawler indexer that sends crawled pages to OpenCrawling as Open Ingestion Standard (OIS)
+ * payloads.
+ *
+ * <p>Parsed documents become OIS {@code UPSERT} payloads whose {@code content.text} is the
+ * parser's {@code text} field and whose {@code id} is the fetched URL. After a successful
+ * dispatch the bolt emits {@code (url, metadata, FETCHED)} on the {@code status} stream, the only
+ * stream it declares; a failed dispatch fails the tuple. Documents excluded by
+ * {@code robots.noIndex} or {@code indexer.md.filter} are not dispatched but are still reported as
+ * {@code FETCHED}. Status and deletion tuples it receives become OIS {@code DELETE} payloads.
+ *
+ * <p>It reads the StormCrawler settings {@code indexer.md.mapping},
+ * {@code indexer.canonical.name} and {@code indexer.md.filter}, plus its own
+ * {@code opencrawling.*} settings.
  */
-public class OpenCrawlingBolt extends BaseRichBolt {
+public class OpenCrawlingBolt extends AbstractIndexerBolt {
 
     private static final Logger log = LoggerFactory.getLogger(OpenCrawlingBolt.class);
 
@@ -80,6 +87,7 @@ public class OpenCrawlingBolt extends BaseRichBolt {
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
+        super.prepare(topoConf, context, collector);
         this.collector = collector;
 
         if (topoConf != null) {
@@ -164,7 +172,6 @@ public class OpenCrawlingBolt extends BaseRichBolt {
             String json = objectMapper.writeValueAsString(tombstonePayload);
 
             dispatcher.dispatch(url, ACTION_DELETE, json);
-            collector.emit(tuple, new Values(url, ACTION_DELETE, statusStr));
             collector.ack(tuple);
             log.info("Dispatched OIS DELETE tombstone for removed URL: {} (status={}, http={})", url, statusStr, httpStatus);
         } else {
@@ -217,27 +224,35 @@ public class OpenCrawlingBolt extends BaseRichBolt {
         Object contentObj = tuple.contains("content") ? tuple.getValueByField("content") : null;
         Metadata metadata = getMetadataFromTuple(tuple);
 
-        byte[] rawBytes;
-        String textContent;
+        // noindex or indexer.md.filter: not ingested, but fetched, as for StormCrawler indexers
+        if (!filterDocument(metadata)) {
+            collector.emit(Constants.StatusStreamName, tuple, new Values(url, metadata, Status.FETCHED));
+            collector.ack(tuple);
+            return;
+        }
 
+        byte[] rawBytes;
         if (contentObj instanceof byte[] bytes) {
             rawBytes = bytes;
-            textContent = new String(bytes, StandardCharsets.UTF_8);
         } else if (contentObj instanceof String str) {
-            textContent = str;
             rawBytes = str.getBytes(StandardCharsets.UTF_8);
         } else {
             rawBytes = new byte[0];
-            textContent = "";
         }
+        // the parser's extracted text; "content" holds the raw fetched bytes
+        String textContent = tuple.contains("text") ? Objects.toString(tuple.getStringByField("text"), "") : "";
 
         String contentHash = computeHash(rawBytes, hashAlgorithm);
 
-        Map<String, Object> upsertPayload = createUpsertPayload(url, rawBytes, textContent, contentHash, metadata);
+        // valueForURL reads the tuple's metadata field and needs a Metadata there
+        boolean hasMetadata = tuple.contains("metadata") && tuple.getValueByField("metadata") instanceof Metadata;
+        String canonicalUrl = hasMetadata ? valueForURL(tuple) : url;
+
+        Map<String, Object> upsertPayload = createUpsertPayload(url, canonicalUrl, textContent, contentHash, metadata);
         String json = objectMapper.writeValueAsString(upsertPayload);
 
         dispatcher.dispatch(url, ACTION_UPSERT, json);
-        collector.emit(tuple, new Values(url, ACTION_UPSERT, "FETCHED"));
+        collector.emit(Constants.StatusStreamName, tuple, new Values(url, metadata, Status.FETCHED));
         collector.ack(tuple);
         log.info("Dispatched OIS UPSERT document for URL: {} (hash={})", url, contentHash);
     }
@@ -273,7 +288,11 @@ public class OpenCrawlingBolt extends BaseRichBolt {
         return payload;
     }
 
-    public Map<String, Object> createUpsertPayload(String url, byte[] rawBytes, String textContent, String contentHash, Metadata metadata) {
+    /**
+     * Builds the OIS UPSERT payload. The id is the fetched URL, so that a later deletion of the
+     * same URL matches it; the canonical URL only goes in the metadata.
+     */
+    public Map<String, Object> createUpsertPayload(String url, String canonicalUrl, String textContent, String contentHash, Metadata metadata) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("id", url);
         payload.put("action", ACTION_UPSERT);
@@ -300,17 +319,17 @@ public class OpenCrawlingBolt extends BaseRichBolt {
         meta.put("contentHash", contentHash);
         meta.put("crawledAt", Instant.now().toString());
 
+        // keys from indexer.md.mapping; OIS metadata values such as title are strings, so keep the first value
         if (metadata != null) {
-            for (String key : metadata.keySet()) {
-                String val = metadata.getFirstValue(key);
-                if (val != null) {
-                    meta.put(key, val);
+            filterMetadata(metadata).forEach((key, values) -> {
+                if (values.length > 0 && values[0] != null) {
+                    meta.put(key, values[0]);
                 }
-            }
+            });
         }
 
         if (!meta.containsKey("canonical.url")) {
-            meta.put("canonical.url", url);
+            meta.put("canonical.url", canonicalUrl);
         }
         if (!meta.containsKey("title")) {
             meta.put("title", url);
@@ -342,11 +361,6 @@ public class OpenCrawlingBolt extends BaseRichBolt {
         } catch (Exception e) {
             throw new RuntimeException("Hash calculation error", e);
         }
-    }
-
-    @Override
-    public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        declarer.declare(new Fields("url", "action", "status"));
     }
 
     @Override

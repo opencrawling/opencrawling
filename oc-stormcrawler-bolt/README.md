@@ -11,7 +11,8 @@ It normalizes crawled records into **Open Ingestion Standard (OIS)** payloads:
 ```mermaid
 graph LR
     subgraph StormCrawler Topology
-        ParserBolt[ParserBolt] -->|Default Stream: url, content, metadata| OCBolt[OpenCrawlingBolt]
+        ParserBolt[ParserBolt] -->|Default Stream: url, content, metadata, text| OCBolt[OpenCrawlingBolt]
+        OCBolt -->|status stream: url, metadata, FETCHED| StatusUpdater[Status Updater]
         StatusStream[Status Stream / 404 / Deletions] -->|StatusStreamName / DELETION_STREAM_NAME| OCBolt
     end
 
@@ -29,6 +30,24 @@ graph LR
   - `REST`: Dispatches OIS JSON payloads via HTTP POST to the OpenCrawling ingestion runtime (`/api/v1/ingest/ois`).
   - `MEMORY`: In-memory dispatcher for embedded topologies and test suites.
 
+## Indexer Behavior
+
+`OpenCrawlingBolt` extends StormCrawler's `AbstractIndexerBolt` and takes the place of the indexer in a topology:
+
+- It puts the parser's `text` field in the OIS `content.text`; the `content` field (the raw fetched bytes) is only used for `metadata.contentHash`.
+- After a successful dispatch it emits `(url, metadata, FETCHED)` on the `status` stream and acks the tuple; if the dispatch fails, the tuple fails and no status is emitted. Subscribe the status updater to the bolt's `status` stream, as for any StormCrawler indexer: Storm rejects a topology that subscribes to a stream the bolt does not declare.
+- The OIS `id` is the fetched URL, for UPSERT and DELETE alike.
+
+It reads these StormCrawler indexer settings:
+
+| Setting | Effect |
+|---|---|
+| `indexer.md.mapping` | Metadata keys copied to the OIS `metadata`, with optional renaming (`parse.title=title`); the first value of each key is used. Unmapped keys are not sent. |
+| `indexer.canonical.name` | Metadata key holding the canonical URL, sent as `metadata.canonical.url` when it is on the same registered domain as the fetched URL; otherwise the fetched URL is sent. |
+| `indexer.md.filter` | Only documents whose metadata match are dispatched. Pages marked `robots.noIndex` are never dispatched. Both kinds are still reported as `FETCHED`. |
+
+`indexer.text.fieldname`, `indexer.url.fieldname`, `indexer.text.maxlength`, `indexer.md.docid` and `indexer.ignore.empty.fields` have no effect: OIS has fixed field names, `content.text` is sent in full, and the OIS `id` is always the fetched URL.
+
 ## Topology Configuration (`crawler-conf.yaml`)
 
 ```yaml
@@ -43,4 +62,10 @@ config:
   opencrawling.status.stream.id: "status"
   opencrawling.hash.algorithm: "SHA-256"
   opencrawling.instance.id: "stormcrawler-cluster-01"
+
+  # StormCrawler indexer settings read by the bolt
+  indexer.md.mapping:
+  - parse.title=title
+  - parse.description=description
+  indexer.canonical.name: "canonical"
 ```

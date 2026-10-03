@@ -20,8 +20,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.tuple.Tuple;
+import org.apache.storm.tuple.Values;
 import org.apache.stormcrawler.Constants;
 import org.apache.stormcrawler.Metadata;
+import org.apache.stormcrawler.indexing.AbstractIndexerBolt;
 import org.apache.stormcrawler.persistence.Status;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +32,7 @@ import org.mockito.ArgumentCaptor;
 import org.opencrawling.stormcrawler.bolt.dispatcher.InMemoryPayloadDispatcher;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -53,12 +56,14 @@ class OpenCrawlingBoltTest {
 
         bolt.prepare(Map.of(
                 OpenCrawlingBolt.CONF_INSTANCE_ID, "test-storm-cluster",
-                OpenCrawlingBolt.CONF_EMIT_DELETIONS, "true"
+                OpenCrawlingBolt.CONF_EMIT_DELETIONS, "true",
+                AbstractIndexerBolt.metadata2fieldParamName, List.of("parse.title=title"),
+                AbstractIndexerBolt.canonicalMetadataParamName, "canonical"
         ), context, collector);
     }
 
     @Test
-    @DisplayName("Content Tuple Processing: Emits OIS UPSERT Payload with Content Hash")
+    @DisplayName("Content Tuple Processing: Emits OIS UPSERT Payload with Content Hash and Mapped Metadata")
     void testExecuteContentTupleEmitsUpsert() throws Exception {
         Tuple tuple = mock(Tuple.class);
         when(tuple.getSourceStreamId()).thenReturn("default");
@@ -66,16 +71,21 @@ class OpenCrawlingBoltTest {
         when(tuple.contains("content")).thenReturn(true);
         byte[] contentBytes = "<h1>Security Policy</h1><p>Zero Trust enterprise guidelines.</p>".getBytes(StandardCharsets.UTF_8);
         when(tuple.getValueByField("content")).thenReturn(contentBytes);
+        when(tuple.contains("text")).thenReturn(true);
+        when(tuple.getStringByField("text")).thenReturn("Security Policy Zero Trust enterprise guidelines.");
         when(tuple.contains("metadata")).thenReturn(true);
 
         Metadata metadata = new Metadata();
         metadata.setValue("parse.Content-Type", "text/html");
-        metadata.setValue("title", "Enterprise Security Policy");
+        metadata.setValue("parse.title", "Enterprise Security Policy");
+        metadata.setValue("canonical", "/docs/security-policy");
         metadata.setValue("http.status", "200");
         when(tuple.getValueByField("metadata")).thenReturn(metadata);
 
         bolt.execute(tuple);
 
+        verify(collector, times(1)).emit(Constants.StatusStreamName, tuple,
+                new Values("https://example.com/docs/security", metadata, Status.FETCHED));
         verify(collector, times(1)).ack(tuple);
         verify(collector, never()).fail(any());
 
@@ -90,10 +100,32 @@ class OpenCrawlingBoltTest {
         assertEquals("stormcrawler", json.path("source").path("type").asText());
         assertEquals("test-storm-cluster", json.path("source").path("instance").asText());
         assertEquals("text/html", json.path("content").path("mimeType").asText());
-        assertTrue(json.path("content").path("text").asText().contains("Zero Trust"));
+        assertEquals("Security Policy Zero Trust enterprise guidelines.", json.path("content").path("text").asText());
         assertNotNull(json.path("metadata").path("contentHash").asText());
         assertEquals("Enterprise Security Policy", json.path("metadata").path("title").asText());
+        assertTrue(json.path("metadata").path("http.status").isMissingNode(), "unmapped key in payload");
+        assertEquals("https://example.com/docs/security-policy", json.path("metadata").path("canonical.url").asText());
         assertFalse(json.path("security").path("inheritanceEnabled").asBoolean());
+    }
+
+    @Test
+    @DisplayName("Noindex Page: Not Dispatched, Still Reported as FETCHED")
+    void testNoindexPageIsNotDispatchedButReportedFetched() {
+        Tuple tuple = mock(Tuple.class);
+        when(tuple.getSourceStreamId()).thenReturn("default");
+        when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/private");
+        when(tuple.contains("metadata")).thenReturn(true);
+
+        Metadata metadata = new Metadata();
+        metadata.setValue("robots.noIndex", "true");
+        when(tuple.getValueByField("metadata")).thenReturn(metadata);
+
+        bolt.execute(tuple);
+
+        assertEquals(0, dispatcher.getDispatchedItems().size());
+        verify(collector, times(1)).emit(Constants.StatusStreamName, tuple,
+                new Values("https://example.com/docs/private", metadata, Status.FETCHED));
+        verify(collector, times(1)).ack(tuple);
     }
 
     @Test
@@ -240,11 +272,36 @@ class OpenCrawlingBoltTest {
         when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/fail");
         when(tuple.contains("content")).thenReturn(true);
         when(tuple.getValueByField("content")).thenReturn("test content".getBytes(StandardCharsets.UTF_8));
-        when(tuple.contains("metadata")).thenReturn(false);
+        when(tuple.contains("text")).thenReturn(true);
+        when(tuple.getStringByField("text")).thenReturn("test content");
+        when(tuple.contains("metadata")).thenReturn(true);
+        when(tuple.getValueByField("metadata")).thenReturn(new Metadata());
 
         failingBolt.execute(tuple);
 
+        verify(failingDispatcher, times(1)).dispatch(any(), any(), any());
         verify(collector, times(1)).fail(tuple);
         verify(collector, never()).ack(tuple);
+        verify(collector, never()).emit(anyString(), any(Tuple.class), anyList());
+    }
+
+    @Test
+    @DisplayName("Content Tuple Without Metadata: Dispatched with the Fetched URL as Canonical")
+    void testContentTupleWithoutMetadataIsDispatched() throws Exception {
+        Tuple tuple = mock(Tuple.class);
+        when(tuple.getSourceStreamId()).thenReturn("default");
+        when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/bare");
+        when(tuple.contains("text")).thenReturn(true);
+        when(tuple.getStringByField("text")).thenReturn("bare page");
+        when(tuple.contains("metadata")).thenReturn(false);
+
+        bolt.execute(tuple);
+
+        verify(collector, never()).fail(any());
+        verify(collector, times(1)).ack(tuple);
+        assertEquals(1, dispatcher.getDispatchedItems().size());
+        JsonNode json = objectMapper.readTree(dispatcher.getDispatchedItems().get(0).jsonPayload());
+        assertEquals("https://example.com/docs/bare", json.path("id").asText());
+        assertEquals("https://example.com/docs/bare", json.path("metadata").path("canonical.url").asText());
     }
 }

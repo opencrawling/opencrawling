@@ -77,6 +77,12 @@
             <artifactId>mockito-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.apache.storm</groupId>
+            <artifactId>storm-server</artifactId>
+            <version>${storm.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
