@@ -108,6 +108,8 @@ class OpenCrawlingBoltTopologyTest {
         Config conf = new Config();
         conf.putAll((Map<String, Object>) Utils.findAndReadConfigFile("crawler-default.yaml", true).get("config"));
         conf.put("http.agent.name", "opencrawling-test");
+        // allow the local HTTP fixture on 127.0.0.1
+        conf.put("http.filter.ipaddress.exclude", "");
         return conf;
     }
 
