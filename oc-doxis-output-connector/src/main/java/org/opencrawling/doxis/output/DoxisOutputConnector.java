@@ -248,8 +248,16 @@ public class DoxisOutputConnector implements OutputConnector {
                 documentId = createLinkedDocument(document, plan);
             } else {
                 Map<String, Object> params = mapper.documentParams(document, plan, documentTypeId);
-                JsonNode created = client.createDocument(properties.repository(), params,
-                        fileByRelationship ? filer.relationshipParams(eFile.get(), documentTypeId) : null, plan.body());
+                JsonNode created;
+                try {
+                    created = client.createDocument(properties.repository(), params,
+                            fileByRelationship ? filer.relationshipParams(eFile.get(), documentTypeId) : null, plan.body());
+                } catch (IOException e) {
+                    if (fileByRelationship) {
+                        filer.evictIfStale(eFile.get().recordId(), e);
+                    }
+                    throw e;
+                }
                 documentId = created.path("uuid").asText();
             }
             try {
@@ -264,6 +272,7 @@ public class DoxisOutputConnector implements OutputConnector {
                 verify(documentId, plan);
             } catch (IOException | RuntimeException e) {
                 // Do not leave an empty, unfiled or unprotected document behind: remove what this call just created.
+                eFile.ifPresent(target -> filer.evictIfStale(target.recordId(), e));
                 log.warn("Rolling back Doxis document {} for {}: {}", documentId, document.id(), e.getMessage());
                 try {
                     client.deleteDocumentPhysically(properties.repository(), documentId);

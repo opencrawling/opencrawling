@@ -100,6 +100,22 @@ public class DoxisRecordFiler {
     }
 
     /**
+     * Forgets everything cached about e-file {@code recordId} when {@code failure} says it (or a node in it) no longer exists
+     * — HTTP 404 or a Doxis {@code INSTANCE*} error — so the next document looks it up again. Transient errors keep the cache.
+     */
+    public void evictIfStale(String recordId, Exception failure) {
+        if (recordId == null || !(failure instanceof DoxisApiException api)
+                || !(api.getStatusCode() == 404 || (api.getErrorCode() != null && api.getErrorCode().startsWith("INSTANCE")))) {
+            return;
+        }
+        folderNodesByRecord.remove(recordId);
+        recordAceKeys.remove(recordId);
+        records.remove(recordId);
+        recordIdsByKey.values().removeIf(recordId::equals);
+        log.info("Dropped cached state of Doxis e-file {} after {}.", recordId, api.getErrorCode() != null ? api.getErrorCode() : "HTTP 404");
+    }
+
+    /**
      * {@code ADDITIVE} record ACL sync for a document that is already archived (a re-crawl): adds the document's missing
      * ACEs to its e-file. Never creates an e-file; does nothing unless {@code security.record-acl-sync} is {@code ADDITIVE}.
      */
@@ -161,8 +177,15 @@ public class DoxisRecordFiler {
      * document goes into the node named {@code filing.folder-node-name} of the e-file, which is created when missing.
      */
     public Map<String, Object> relationshipParams(Target target, String documentTypeId) throws IOException, InterruptedException {
-        JsonNode record = target.record() != null ? target.record() : record(target.recordId());
-        String folderNode = target.folderNodeId() != null ? target.folderNodeId() : folderNode(target.recordId(), documentTypeId);
+        JsonNode record;
+        String folderNode;
+        try {
+            record = target.record() != null ? target.record() : record(target.recordId());
+            folderNode = target.folderNodeId() != null ? target.folderNodeId() : folderNode(target.recordId(), documentTypeId);
+        } catch (IOException e) {
+            evictIfStale(target.recordId(), e);
+            throw e;
+        }
         Map<String, Object> relationship = new LinkedHashMap<>();
         relationship.put("sourceObjectUUID", target.recordId());
         relationship.put("sourceFolderNodeUUID", folderNode);
@@ -345,7 +368,12 @@ public class DoxisRecordFiler {
 
     private void applyRecordAcls(String recordId, RepositoryDocument document, boolean created) throws IOException, InterruptedException {
         synchronized (keyLocks.computeIfAbsent("acl|" + recordId, k -> new Object())) {
-            applyRecordAclsLocked(recordId, document, created);
+            try {
+                applyRecordAclsLocked(recordId, document, created);
+            } catch (IOException e) {
+                evictIfStale(recordId, e);
+                throw e;
+            }
         }
     }
 
