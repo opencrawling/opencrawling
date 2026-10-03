@@ -30,6 +30,13 @@
     <name>OpenCrawling - StormCrawler Bolt</name>
     <description>Apache Storm Bolt converting StormCrawler parsed tuples and status streams into Open Ingestion Standard (OIS) document and deletion tombstone payloads.</description>
 
+    <properties>
+        <!-- stormcrawler-core 3.7.0 is built on Tika 3.3.2 and its parsers fail on Tika 4
+             (NoClassDefFoundError: org/apache/tika/config/TikaConfig). Remove when
+             stormcrawler.version moves to a release built on Tika 4. -->
+        <tika.version>3.3.2</tika.version>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.apache.stormcrawler</groupId>
