@@ -28,7 +28,7 @@
     <packaging>jar</packaging>
 
     <name>OpenCrawling - StormCrawler Bolt</name>
-    <description>Apache Storm Bolt converting StormCrawler parsed tuples and status streams into Open Ingestion Standard (OIS) document and deletion tombstone payloads.</description>
+    <description>Apache Storm Bolt converting StormCrawler parsed tuples and deletion tuples into Open Ingestion Standard (OIS) document and deletion tombstone payloads.</description>
 
     <properties>
         <!-- stormcrawler-core 3.7.0 is built on Tika 3.3.2 and its parsers fail on Tika 4

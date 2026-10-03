@@ -129,8 +129,8 @@ class OpenCrawlingBoltTest {
     }
 
     @Test
-    @DisplayName("Status Stream 404: Emits OIS DELETE Tombstone Payload")
-    void testExecuteStatusTupleWithHttp404EmitsDeleteTombstone() throws Exception {
+    @DisplayName("Status Stream 404: Acknowledged Without Dispatch or Emission")
+    void testStatusStreamTupleIsIgnoredEvenFor404() {
         Tuple tuple = mock(Tuple.class);
         when(tuple.getSourceStreamId()).thenReturn(Constants.StatusStreamName);
         when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/obsolete");
@@ -140,6 +140,27 @@ class OpenCrawlingBoltTest {
 
         Metadata metadata = new Metadata();
         metadata.setValue("http.status", "404");
+        metadata.setValue("fetch.statusCode", "404");
+        when(tuple.getValueByField("metadata")).thenReturn(metadata);
+
+        bolt.execute(tuple);
+
+        assertEquals(0, dispatcher.getDispatchedItems().size());
+        verify(collector, times(1)).ack(tuple);
+        verifyNoMoreInteractions(collector);
+    }
+
+    @Test
+    @DisplayName("Deletion Stream: Emits OIS DELETE Tombstone with ERROR and the Fetched HTTP Status")
+    void testDeletionStreamTupleEmitsTombstoneWithFetchStatusCode() throws Exception {
+        Tuple tuple = mock(Tuple.class);
+        when(tuple.getSourceStreamId()).thenReturn(Constants.DELETION_STREAM_NAME);
+        when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/gone");
+        when(tuple.contains("metadata")).thenReturn(true);
+
+        Metadata metadata = new Metadata();
+        metadata.setValue("fetch.statusCode", "410");
+        metadata.setValue("error.cause", "maxFetchErrors");
         when(tuple.getValueByField("metadata")).thenReturn(metadata);
 
         bolt.execute(tuple);
@@ -149,48 +170,30 @@ class OpenCrawlingBoltTest {
 
         assertEquals(1, dispatcher.getDispatchedItems().size());
         InMemoryPayloadDispatcher.DispatchedItem item = dispatcher.getDispatchedItems().get(0);
-        assertEquals("https://example.com/docs/obsolete", item.documentId());
+        assertEquals("https://example.com/docs/gone", item.documentId());
         assertEquals("DELETE", item.action());
 
         JsonNode json = objectMapper.readTree(item.jsonPayload());
-        assertEquals("https://example.com/docs/obsolete", json.path("id").asText());
+        assertEquals("https://example.com/docs/gone", json.path("id").asText());
         assertEquals("DELETE", json.path("action").asText());
         assertEquals("stormcrawler", json.path("source").path("type").asText());
-        assertEquals("FETCH_ERROR", json.path("metadata").path("stormcrawler.status").asText());
-        assertEquals("404", json.path("metadata").path("http.status").asText());
-        assertNotNull(json.path("metadata").path("deletedAt").asText());
+        assertEquals("ERROR", json.path("metadata").path("stormcrawler.status").asText());
+        assertEquals("410", json.path("metadata").path("http.status").asText());
+        assertFalse(json.path("metadata").path("deletedAt").asText().isEmpty());
         assertTrue(json.path("content").isMissingNode());
     }
 
     @Test
-    @DisplayName("Status Stream 410 Gone: Emits OIS DELETE Tombstone Payload")
-    void testExecuteStatusTupleWithHttp410EmitsDeleteTombstone() throws Exception {
-        Tuple tuple = mock(Tuple.class);
-        when(tuple.getSourceStreamId()).thenReturn(Constants.StatusStreamName);
-        when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/gone");
-        when(tuple.contains("status")).thenReturn(true);
-        when(tuple.getValueByField("status")).thenReturn(Status.ERROR);
-        when(tuple.contains("metadata")).thenReturn(true);
-
-        Metadata metadata = new Metadata();
-        metadata.setValue("http.status", "410");
-        when(tuple.getValueByField("metadata")).thenReturn(metadata);
-
-        bolt.execute(tuple);
-
-        verify(collector, times(1)).ack(tuple);
-        assertEquals(1, dispatcher.getDispatchedItems().size());
-        assertEquals("DELETE", dispatcher.getDispatchedItems().get(0).action());
-    }
-
-    @Test
-    @DisplayName("Dedicated Deletion Stream: Emits OIS DELETE Tombstone Payload")
-    void testExecuteDedicatedDeletionStreamEmitsDeleteTombstone() throws Exception {
+    @DisplayName("Deletion Stream Without HTTP Status (e.g. robots.txt denial): Tombstone Carries No http.status")
+    void testDeletionStreamTupleWithoutFetchStatusCodeOmitsHttpStatus() throws Exception {
         Tuple tuple = mock(Tuple.class);
         when(tuple.getSourceStreamId()).thenReturn(Constants.DELETION_STREAM_NAME);
         when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/purged");
-        when(tuple.contains("status")).thenReturn(false);
-        when(tuple.contains("metadata")).thenReturn(false);
+        when(tuple.contains("metadata")).thenReturn(true);
+
+        Metadata metadata = new Metadata();
+        metadata.setValue("error.cause", "robots.txt");
+        when(tuple.getValueByField("metadata")).thenReturn(metadata);
 
         bolt.execute(tuple);
 
@@ -199,50 +202,33 @@ class OpenCrawlingBoltTest {
         InMemoryPayloadDispatcher.DispatchedItem item = dispatcher.getDispatchedItems().get(0);
         assertEquals("https://example.com/docs/purged", item.documentId());
         assertEquals("DELETE", item.action());
+
+        JsonNode json = objectMapper.readTree(item.jsonPayload());
+        assertEquals("ERROR", json.path("metadata").path("stormcrawler.status").asText());
+        assertTrue(json.path("metadata").path("http.status").isMissingNode(), "metadata: " + json.path("metadata"));
     }
 
     @Test
-    @DisplayName("Status Stream Non-Deletion (FETCHED): Acknowledged Without Dispatch")
-    void testExecuteStatusTupleFetchedDoesNotEmitTombstone() {
-        Tuple tuple = mock(Tuple.class);
-        when(tuple.getSourceStreamId()).thenReturn(Constants.StatusStreamName);
-        when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/active");
-        when(tuple.contains("status")).thenReturn(true);
-        when(tuple.getValueByField("status")).thenReturn(Status.FETCHED);
-        when(tuple.contains("metadata")).thenReturn(true);
-
-        Metadata metadata = new Metadata();
-        metadata.setValue("http.status", "200");
-        when(tuple.getValueByField("metadata")).thenReturn(metadata);
-
-        bolt.execute(tuple);
-
-        verify(collector, times(1)).ack(tuple);
-        assertEquals(0, dispatcher.getDispatchedItems().size());
-    }
-
-    @Test
-    @DisplayName("Emit Deletions Disabled: Status Deletions are Ignored")
+    @DisplayName("Emit Deletions Disabled: Deletion Stream Tuples Acknowledged Without Dispatch")
     void testExecuteWhenEmitDeletionsDisabled() {
         bolt.prepare(Map.of(
                 OpenCrawlingBolt.CONF_EMIT_DELETIONS, "false"
         ), context, collector);
 
         Tuple tuple = mock(Tuple.class);
-        when(tuple.getSourceStreamId()).thenReturn(Constants.StatusStreamName);
+        when(tuple.getSourceStreamId()).thenReturn(Constants.DELETION_STREAM_NAME);
         when(tuple.getStringByField("url")).thenReturn("https://example.com/docs/404");
-        when(tuple.contains("status")).thenReturn(true);
-        when(tuple.getValueByField("status")).thenReturn(Status.FETCH_ERROR);
         when(tuple.contains("metadata")).thenReturn(true);
 
         Metadata metadata = new Metadata();
-        metadata.setValue("http.status", "404");
+        metadata.setValue("fetch.statusCode", "404");
         when(tuple.getValueByField("metadata")).thenReturn(metadata);
 
         bolt.execute(tuple);
 
         verify(collector, times(1)).ack(tuple);
         assertEquals(0, dispatcher.getDispatchedItems().size());
+        verify(collector, never()).fail(any());
     }
 
     @Test

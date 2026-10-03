@@ -1,10 +1,10 @@
 # OpenCrawling - Apache StormCrawler Bolt
 
-The `oc-stormcrawler-bolt` module provides an Apache Storm Bolt library (`org.opencrawling:oc-stormcrawler-bolt`) that intercepts parsed web documents and URL lifecycle status streams from **Apache StormCrawler** topologies.
+The `oc-stormcrawler-bolt` module provides an Apache Storm Bolt library (`org.opencrawling:oc-stormcrawler-bolt`) that intercepts parsed web documents and the status updater's deletion stream in **Apache StormCrawler** topologies.
 
 It normalizes crawled records into **Open Ingestion Standard (OIS)** payloads:
 - **`action: "UPSERT"`**: For newly discovered and updated web pages emitted by `ParserBolt`.
-- **`action: "DELETE"`**: For removed pages, deleted URLs, and HTTP 404/410 status events emitted via the StormCrawler status stream (`StatusStreamName` / `DELETION_STREAM_NAME`).
+- **`action: "DELETE"`**: For the URLs the StormCrawler status updater emits on its `deletion` stream (`Constants.DELETION_STREAM_NAME`): pages whose status became `ERROR`, for instance after `max.fetch.errors` consecutive fetch errors such as HTTP 404.
 
 ## Architecture & Stream Mapping
 
@@ -13,7 +13,7 @@ graph LR
     subgraph StormCrawler Topology
         ParserBolt[ParserBolt] -->|Default Stream: url, content, metadata, text| OCBolt[OpenCrawlingBolt]
         OCBolt -->|status stream: url, metadata, FETCHED| StatusUpdater[Status Updater]
-        StatusStream[Status Stream / 404 / Deletions] -->|StatusStreamName / DELETION_STREAM_NAME| OCBolt
+        StatusUpdater -->|deletion stream: url, metadata| OCBolt
     end
 
     subgraph OpenCrawling Pipeline
@@ -23,11 +23,11 @@ graph LR
 ```
 
 ## Features
-- **Dual-Stream Processing**: Seamlessly ingests parsed content tuples and handles status deletion signals.
+- **Dual-Stream Processing**: Ingests parsed content tuples and the status updater's deletion tuples.
 - **OIS Compliance**: Maps crawled web pages into standard OIS `UPSERT` documents and deletion `tombstones`.
 - **Content Deduplication**: Calculates document content hashes (`SHA-256` or `MD5`) for deduplication and incremental crawl detection.
 - **Flexible Dispatching**:
-  - `REST`: Dispatches OIS JSON payloads via HTTP POST to the OpenCrawling ingestion runtime (`/api/v1/ingest/ois`).
+  - `REST`: POSTs OIS JSON payloads to `opencrawling.target.endpoint`. The default is `http://localhost:8080/api/v1/ingest/ois`, which `oc-runtime` does not implement yet (#141).
   - `MEMORY`: In-memory dispatcher for embedded topologies and test suites.
 
 ## Indexer Behavior
@@ -37,6 +37,8 @@ graph LR
 - It puts the parser's `text` field in the OIS `content.text`; the `content` field (the raw fetched bytes) is only used for `metadata.contentHash`.
 - After a successful dispatch it emits `(url, metadata, FETCHED)` on the `status` stream and acks the tuple; if the dispatch fails, the tuple fails and no status is emitted. Subscribe the status updater to the bolt's `status` stream, as for any StormCrawler indexer: Storm rejects a topology that subscribes to a stream the bolt does not declare.
 - The OIS `id` is the fetched URL, for UPSERT and DELETE alike.
+- It turns each tuple of the status updater's `deletion` stream into an OIS DELETE: `metadata.stormcrawler.status` is `ERROR` and `metadata.http.status` is the `fetch.statusCode` of the last fetch, absent when there is none (for instance a robots.txt denial). The status updater emits these tuples unanchored: if the DELETE dispatch fails, it is not replayed. `opencrawling.emit.deletions: false` acknowledges them without dispatching.
+- Tuples on a `status` stream are acknowledged and not dispatched.
 
 It reads these StormCrawler indexer settings:
 
@@ -47,6 +49,26 @@ It reads these StormCrawler indexer settings:
 | `indexer.md.filter` | Only documents whose metadata match are dispatched. Pages marked `robots.noIndex` are never dispatched. Both kinds are still reported as `FETCHED`. |
 
 `indexer.text.fieldname`, `indexer.url.fieldname`, `indexer.text.maxlength`, `indexer.md.docid` and `indexer.ignore.empty.fields` have no effect: OIS has fixed field names, `content.text` is sent in full, and the OIS `id` is always the fetched URL.
+
+## Topology Wiring (`crawler.flux`)
+
+Starting from the StormCrawler archetype's `crawler.flux`, replace the indexer class and add a stream from the status updater to the bolt; the archetype already sends the parsers' output to `index` and the `status` stream of `index` to `status`:
+
+```yaml
+bolts:
+  - id: "index"
+    className: "org.opencrawling.stormcrawler.bolt.OpenCrawlingBolt"
+    parallelism: 1
+
+streams:
+  - from: "status"
+    to: "index"
+    grouping:
+      type: LOCAL_OR_SHUFFLE
+      streamId: "deletion"
+```
+
+The status updater can be any StormCrawler status updater that extends `AbstractStatusUpdaterBolt`, which declares the `deletion` stream.
 
 ## Topology Configuration (`crawler-conf.yaml`)
 
@@ -59,9 +81,12 @@ config:
   opencrawling.target.endpoint: "http://localhost:8080/api/v1/ingest/ois"
   opencrawling.transport.mode: "REST" # Options: REST, MEMORY
   opencrawling.emit.deletions: true
-  opencrawling.status.stream.id: "status"
   opencrawling.hash.algorithm: "SHA-256"
   opencrawling.instance.id: "stormcrawler-cluster-01"
+
+  # StormCrawler status updater: consecutive fetch errors (e.g. HTTP 404) after which a page
+  # becomes ERROR and is emitted on the deletion stream (StormCrawler default: 3)
+  max.fetch.errors: 3
 
   # StormCrawler indexer settings read by the bolt
   indexer.md.mapping:
