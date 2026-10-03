@@ -203,17 +203,33 @@ public class PipesForkTextExtractor implements TextExtractionService {
         }
     }
 
-    private static void extractFatJarLibs(Path jarPath, Path targetDir) {
+    static void extractFatJarLibs(Path jarPath, Path targetDir) {
         try {
-            Files.createDirectories(targetDir);
+            Path destinationDir = targetDir.toAbsolutePath().normalize();
+            Files.createDirectories(destinationDir);
             try (JarFile jarFile = new JarFile(jarPath.toFile())) {
                 var entries = jarFile.entries();
                 while (entries.hasMoreElements()) {
                     JarEntry entry = entries.nextElement();
                     String name = entry.getName();
                     if (name.startsWith("BOOT-INF/lib/") && name.endsWith(".jar") && !entry.isDirectory()) {
-                        String filename = Paths.get(name).getFileName().toString();
-                        Path outFile = targetDir.resolve(filename);
+                        if (name.contains("..")) {
+                            log.warn("Skipping zip entry with path traversal: {}", name);
+                            continue;
+                        }
+                        Path entryPath = Paths.get(name).getFileName();
+                        if (entryPath == null) {
+                            continue;
+                        }
+                        String filename = entryPath.toString();
+                        if (filename.isBlank() || filename.contains("..")) {
+                            log.warn("Skipping invalid zip entry filename: {}", filename);
+                            continue;
+                        }
+                        Path outFile = destinationDir.resolve(filename).normalize();
+                        if (!outFile.startsWith(destinationDir)) {
+                            throw new SecurityException("Zip entry is outside target directory: " + name);
+                        }
                         if (!Files.exists(outFile) || Files.size(outFile) != entry.getSize()) {
                             try (InputStream is = jarFile.getInputStream(entry)) {
                                 Files.copy(is, outFile, StandardCopyOption.REPLACE_EXISTING);

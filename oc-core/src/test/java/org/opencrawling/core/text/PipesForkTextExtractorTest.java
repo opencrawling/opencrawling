@@ -16,10 +16,16 @@
 package org.opencrawling.core.text;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -93,5 +99,49 @@ class PipesForkTextExtractorTest {
             assertTrue(resultNullStream.success());
             assertEquals("", resultNullStream.text());
         }
+    }
+
+    @Test
+    void testExtractFatJarLibsZipSlipProtection(@TempDir Path tempDir) throws IOException {
+        Path jarPath = tempDir.resolve("test-fatjar.jar");
+        Path extractDir = tempDir.resolve("target-libs");
+        Path escapedMaliciousFile = tempDir.resolve("escaped.jar");
+
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            // Valid library
+            JarEntry validEntry = new JarEntry("BOOT-INF/lib/valid-lib.jar");
+            jos.putNextEntry(validEntry);
+            jos.write("valid-jar-bytes".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+
+            // Malicious traversal library attempting to escape
+            JarEntry evilEntry = new JarEntry("BOOT-INF/lib/../../escaped.jar");
+            jos.putNextEntry(evilEntry);
+            jos.write("malicious-bytes".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+
+            // Directory entry inside BOOT-INF/lib
+            JarEntry dirEntry = new JarEntry("BOOT-INF/lib/sub/");
+            jos.putNextEntry(dirEntry);
+            jos.closeEntry();
+
+            // Non-lib entry
+            JarEntry otherEntry = new JarEntry("BOOT-INF/classes/App.class");
+            jos.putNextEntry(otherEntry);
+            jos.write("class-bytes".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+
+        PipesForkTextExtractor.extractFatJarLibs(jarPath, extractDir);
+
+        // Verify valid lib was extracted
+        Path extractedValid = extractDir.resolve("valid-lib.jar");
+        assertTrue(Files.exists(extractedValid), "Valid library should be extracted");
+        assertEquals("valid-jar-bytes", Files.readString(extractedValid));
+
+        // Verify malicious traversal was blocked and did NOT escape
+        assertFalse(Files.exists(escapedMaliciousFile), "Malicious zip entry must not escape destination directory");
+        assertFalse(Files.exists(extractDir.resolve("escaped.jar")), "Malicious zip entry with path traversal must be rejected");
+        assertFalse(Files.exists(extractDir.resolve("App.class")), "Non-jar entry should not be extracted");
     }
 }
