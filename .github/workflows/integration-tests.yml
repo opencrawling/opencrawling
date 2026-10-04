@@ -111,7 +111,7 @@ jobs:
           cache: 'maven'
 
       - name: Build internal snapshot dependencies
-        run: mvn -DskipTests install -pl oc-core,oc-observability -am
+        run: mvn clean install -DskipTests -DskipITs
 
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
