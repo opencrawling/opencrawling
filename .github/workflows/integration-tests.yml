@@ -30,7 +30,7 @@ permissions: read-all
 jobs:
   integration-tests:
     name: ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
@@ -134,7 +134,7 @@ jobs:
   integration-tests-summary:
     name: Integration Tests Summary
     needs: integration-tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always()
     permissions:
       contents: read

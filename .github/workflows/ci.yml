@@ -28,7 +28,7 @@ permissions: read-all
 jobs:
   backend-ci:
     name: Java 25 & Spring Boot 4 Backend Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 
@@ -49,7 +49,7 @@ jobs:
 
   frontend-ci:
     name: Admin UI React 19 Frontend Build & Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 
@@ -72,7 +72,7 @@ jobs:
 
   archetypes-ci:
     name: Connector Archetypes Suite Verification
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 
