@@ -116,6 +116,11 @@ jobs:
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
 
+      - name: Ensure data directories have write permissions
+        run: |
+          mkdir -p oc-runtime/data oc-cli/target oc-embedding-service/target
+          chmod 755 oc-runtime/data oc-cli/target oc-embedding-service/target
+
       - name: Execute ${{ matrix.test.name }}
         run: ./scripts/${{ matrix.test.script }}
 
