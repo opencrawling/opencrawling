@@ -110,6 +110,9 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      - name: Build internal snapshot dependencies
+        run: mvn clean install -DskipTests -DskipITs
+
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
 
