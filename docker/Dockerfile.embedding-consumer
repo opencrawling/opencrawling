@@ -69,6 +69,7 @@ COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/
 COPY oc-cli/src/ /app/oc-cli/src/
+COPY oc-mcf-migrator/src/ /app/oc-mcf-migrator/src/
 
 RUN mvn clean package -pl oc-embedding-service -am -DskipTests
 
