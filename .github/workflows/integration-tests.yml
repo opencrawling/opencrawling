@@ -110,6 +110,9 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      - name: Build internal snapshot dependencies
+        run: mvn -DskipTests install -pl oc-core,oc-observability -am
+
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
 
