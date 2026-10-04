@@ -111,6 +111,7 @@
         <module>oc-cmis-repository-connector</module>
         <module>oc-stormcrawler-bolt</module>
         <module>oc-stormcrawler-repository-connector</module>
+        <module>oc-jdbc-repository-connector</module>
         <module>oc-connector-archetypes</module>
         <module>oc-java-client-sdk</module>
         <module>oc-cli</module>

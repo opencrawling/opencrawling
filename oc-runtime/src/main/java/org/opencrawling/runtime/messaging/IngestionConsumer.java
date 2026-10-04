@@ -136,8 +136,32 @@ public class IngestionConsumer {
                 }
 
                 if (text.isBlank()) {
-                    log.warn("Document {} extracted text is empty, skipping.", message.documentId());
-                    return;
+                    boolean isBlob = message.metadata() != null &&
+                        (Boolean.parseBoolean(message.metadata().getOrDefault("is_blob", List.of("false")).get(0))
+                         || "image".equals(message.metadata().getOrDefault("media_type", List.of("")).get(0))
+                         || message.metadata().getOrDefault("mimeType", List.of("")).stream().anyMatch(m -> m.startsWith("image/")));
+
+                    if (isBlob) {
+                        String title = message.metadata().getOrDefault("title", message.metadata().getOrDefault("name", List.of())).stream().findFirst().orElse("");
+                        String filename = message.metadata().getOrDefault("filename", List.of()).stream().findFirst().orElse("");
+                        String mime = message.metadata().getOrDefault("mimeType", List.of()).stream().findFirst().orElse("image/binary");
+                        StringBuilder desc = new StringBuilder();
+                        desc.append("# Binary Item: ").append(message.documentId());
+                        if (!filename.isBlank()) desc.append(" (").append(filename).append(")");
+                        desc.append("\n\nType: ").append(mime);
+                        if (!title.isBlank()) desc.append("\nTitle: ").append(title);
+                        desc.append("\n\nAttributes:\n");
+                        message.metadata().forEach((k, vals) -> {
+                            if (!k.startsWith("tk:") && !k.equals("documentId") && !k.equals("uri") && !k.equals("acl") && !k.equals("security") && !k.equals("is_blob") && !k.equals("has_blob")) {
+                                desc.append("- **").append(k).append("**: ").append(String.join("; ", vals)).append("\n");
+                            }
+                        });
+                        text = desc.toString();
+                        log.info("Generated descriptive metadata text for BLOB item {} (MIME: {}) for direct embedding.", message.documentId(), mime);
+                    } else {
+                        log.warn("Document {} extracted text is empty, skipping.", message.documentId());
+                        return;
+                    }
                 }
 
                 long extractTime = System.currentTimeMillis() - startTime;
