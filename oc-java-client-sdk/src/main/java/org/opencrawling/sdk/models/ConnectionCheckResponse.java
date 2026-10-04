@@ -15,6 +15,13 @@
  */
 package org.opencrawling.sdk.models;
 
+/**
+ * Response DTO representing the outcome of a connector health check probe.
+ *
+ * @param success whether the connection probe succeeded
+ * @param message summary status message
+ * @param details detailed diagnostic information or stacktrace if failed
+ */
 public record ConnectionCheckResponse(
     boolean success,
     String message,

@@ -20,6 +20,10 @@ import java.util.List;
 
 /**
  * Response DTO containing error log records for a job.
+ *
+ * @param jobId the related crawling job identifier
+ * @param errorCount the total number of errors recorded
+ * @param errors the list of error log records
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ErrorLogsResponse(

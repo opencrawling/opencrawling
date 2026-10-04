@@ -22,7 +22,7 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Dependency Review Action
         uses: actions/dependency-review-action@v5.0.0

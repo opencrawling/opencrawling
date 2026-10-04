@@ -20,6 +20,9 @@ import java.util.Map;
 
 /**
  * Response DTO containing generated template and mock data from Auto-Narrativization Copilot.
+ *
+ * @param template the generated Mustache narrativization template
+ * @param mockData mock data map matching the schema
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CopilotResponse(
