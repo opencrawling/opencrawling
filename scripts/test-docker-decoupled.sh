@@ -132,9 +132,10 @@ echo -e "${GREEN}Apache Ozone 2.2.0 S3 Gateway is ready!${NC}"
 
 # Create a sample test document in the mounted directory
 TEST_DOC_DIR="./oc-runtime/data"
-mkdir -p "$TEST_DOC_DIR"
+mkdir -p "$TEST_DOC_DIR" || { echo -e "${RED}Failed to create directory $TEST_DOC_DIR${NC}" >&2; exit 1; }
+chmod 755 "$TEST_DOC_DIR"
 TEST_FILE="$TEST_DOC_DIR/decoupled-integration-test.txt"
-echo "OpenCrawling is an awesome open-source pipeline! Decoupled integration test worked successfully." > "$TEST_FILE"
+echo "OpenCrawling is an awesome open-source pipeline! Decoupled integration test worked successfully." > "$TEST_FILE" || { echo -e "${RED}Failed to write test file to $TEST_FILE${NC}" >&2; exit 1; }
 echo -e "${GREEN}Created test document: $TEST_FILE${NC}"
 
 # Restart crawler to trigger directory scan and Kafka publication
