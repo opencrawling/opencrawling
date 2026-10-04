@@ -17,6 +17,7 @@
 name: End-to-End Integration Tests
 
 on:
+  pull_request:
   push:
     tags:
       - '*'
@@ -76,6 +77,12 @@ jobs:
             script: "test-flowable-connector.sh"
           - name: "Flowable Decoupled Pipeline Test Suite"
             script: "test-flowable-decoupled.sh"
+          - name: "JDBC Connector Test Suite"
+            script: "test-jdbc-connector.sh"
+          - name: "JDBC Decoupled Pipeline Test Suite"
+            script: "test-jdbc-decoupled.sh"
+          - name: "Luxir Decoupled Pipeline Test Suite"
+            script: "test-luxir-decoupled.sh"
           - name: "Milvus Decoupled Pipeline Test Suite"
             script: "test-milvus-decoupled.sh"
           - name: "OpenSearch Decoupled Pipeline Test Suite"
