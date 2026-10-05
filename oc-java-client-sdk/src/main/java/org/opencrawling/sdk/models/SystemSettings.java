@@ -20,6 +20,14 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 /**
  * System-wide OpenCrawling settings and configuration parameters.
+ *
+ * @param embeddingProvider default embedding provider (e.g. ollama, openai)
+ * @param ollamaBaseUrl base URL for the Ollama service
+ * @param ollamaModel model name used for embedding generation
+ * @param vectorDimensions vector embedding dimensions
+ * @param chunkerType semantic chunking implementation
+ * @param chunkSize token chunk size
+ * @param chunkOverlap token chunk overlap
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)

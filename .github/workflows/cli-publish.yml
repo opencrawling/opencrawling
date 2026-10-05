@@ -32,11 +32,11 @@ env:
 jobs:
   build-and-test-cli:
     name: Build & Test CLI Executable
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -62,7 +62,7 @@ jobs:
 
   publish-cli-docker:
     name: Build & Push CLI Docker Image (GHCR)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-and-test-cli
     permissions:
       contents: read
@@ -70,7 +70,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Downcase repository owner
         id: repo-owner
@@ -120,7 +120,7 @@ jobs:
   publish-github-release-assets:
     name: Attach Assets to GitHub Release
     if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-and-test-cli
     permissions:
       contents: write
@@ -140,7 +140,7 @@ jobs:
   publish-homebrew-tap:
     name: Update Homebrew Tap Formula
     if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-and-test-cli, publish-github-release-assets]
     steps:
       - name: Download CLI Executable Artifact

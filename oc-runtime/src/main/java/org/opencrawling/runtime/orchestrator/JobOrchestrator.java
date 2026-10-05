@@ -143,8 +143,14 @@ public class JobOrchestrator {
                             RepositoryDocument doc = initialDoc;
                             if (mustacheConnector != null) {
                                 try {
-                                    doc = mustacheConnector.transform(initialDoc).blockFirst();
-                                    log.debug("Applied Mustache narrativization to document: {}", doc.id());
+                                    boolean isBlob = initialDoc.metadata() != null &&
+                                        Boolean.parseBoolean(initialDoc.metadata().getOrDefault("is_blob", List.of("false")).get(0));
+                                    if (!isBlob) {
+                                        doc = mustacheConnector.transform(initialDoc).blockFirst();
+                                        log.debug("Applied Mustache narrativization to tabular document: {}", doc.id());
+                                    } else {
+                                        log.debug("Preserving raw BLOB/document content stream for direct embedding: {}", initialDoc.id());
+                                    }
                                 } catch (Exception ex) {
                                     log.warn("Mustache transformation failed for doc {}: {}", initialDoc.id(), ex.getMessage());
                                 }
@@ -156,8 +162,13 @@ public class JobOrchestrator {
 
                             // Save stream via ClaimCheckStore if remote stream OR store requires non-local persistence
                             if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
-                                String filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0);
-                                filename = filename.replaceAll("[^a-zA-Z0-9.-]", "_");
+                                String resolvedName = doc.metadata().getOrDefault("filename", doc.metadata().getOrDefault("fileName", List.of())).stream().findFirst().orElse(null);
+                                String filename;
+                                if (resolvedName != null && !resolvedName.isBlank()) {
+                                    filename = doc.id() + "_" + resolvedName.replaceAll("[^a-zA-Z0-9.-]", "_");
+                                } else {
+                                    filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0).replaceAll("[^a-zA-Z0-9.-]", "_");
+                                }
                                 String mimeType = null;
                                 List<String> mimeList = doc.metadata().get("mimeType");
                                 if (mimeList != null && !mimeList.isEmpty()) {

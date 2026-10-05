@@ -23,6 +23,7 @@ COPY oc-flowable-repository-connector/pom.xml oc-flowable-repository-connector/
 COPY oc-camunda-repository-connector/pom.xml oc-camunda-repository-connector/
 COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
 COPY oc-cmis-repository-connector/pom.xml oc-cmis-repository-connector/
+COPY oc-jdbc-repository-connector/pom.xml oc-jdbc-repository-connector/
 COPY oc-stormcrawler-bolt/pom.xml oc-stormcrawler-bolt/
 COPY oc-stormcrawler-repository-connector/pom.xml oc-stormcrawler-repository-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
@@ -36,7 +37,7 @@ COPY oc-java-client-sdk/pom.xml oc-java-client-sdk/
 COPY oc-cli/pom.xml oc-cli/
 COPY oc-mcf-migrator/pom.xml oc-mcf-migrator/
 
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-seatunnel-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-jdbc-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-seatunnel-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
 
 # Copy source code
 COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
@@ -58,6 +59,7 @@ COPY oc-flowable-repository-connector/src/ /app/oc-flowable-repository-connector
 COPY oc-camunda-repository-connector/src/ /app/oc-camunda-repository-connector/src/
 COPY oc-aps-repository-connector/src/ /app/oc-aps-repository-connector/src/
 COPY oc-cmis-repository-connector/src/ /app/oc-cmis-repository-connector/src/
+COPY oc-jdbc-repository-connector/src/ /app/oc-jdbc-repository-connector/src/
 COPY oc-stormcrawler-bolt/src/ /app/oc-stormcrawler-bolt/src/
 COPY oc-stormcrawler-repository-connector/src/ /app/oc-stormcrawler-repository-connector/src/
 COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
@@ -67,6 +69,7 @@ COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/
 COPY oc-cli/src/ /app/oc-cli/src/
+COPY oc-mcf-migrator/src/ /app/oc-mcf-migrator/src/
 
 RUN mvn clean package -pl oc-embedding-service -am -DskipTests
 

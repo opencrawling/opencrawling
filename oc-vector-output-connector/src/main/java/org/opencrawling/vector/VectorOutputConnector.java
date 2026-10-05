@@ -108,8 +108,32 @@ public class VectorOutputConnector implements OutputConnector {
                 }
 
                 if (text.isBlank()) {
-                    log.warn("Document {} extracted text is empty, skipping vector store.", document.id());
-                    return;
+                    boolean isBlob = document.metadata() != null &&
+                        (Boolean.parseBoolean(document.metadata().getOrDefault("is_blob", List.of("false")).get(0))
+                         || "image".equals(document.metadata().getOrDefault("media_type", List.of("")).get(0))
+                         || document.metadata().getOrDefault("mimeType", List.of("")).stream().anyMatch(m -> m.startsWith("image/")));
+
+                    if (isBlob) {
+                        String title = document.metadata().getOrDefault("title", document.metadata().getOrDefault("name", List.of())).stream().findFirst().orElse("");
+                        String filename = document.metadata().getOrDefault("filename", List.of()).stream().findFirst().orElse("");
+                        String mime = document.metadata().getOrDefault("mimeType", List.of()).stream().findFirst().orElse("image/binary");
+                        StringBuilder desc = new StringBuilder();
+                        desc.append("# Binary Item: ").append(document.id());
+                        if (!filename.isBlank()) desc.append(" (").append(filename).append(")");
+                        desc.append("\n\nType: ").append(mime);
+                        if (!title.isBlank()) desc.append("\nTitle: ").append(title);
+                        desc.append("\n\nAttributes:\n");
+                        document.metadata().forEach((k, vals) -> {
+                            if (!k.startsWith("tk:") && !k.equals("documentId") && !k.equals("uri") && !k.equals("acl") && !k.equals("security") && !k.equals("is_blob") && !k.equals("has_blob")) {
+                                desc.append("- **").append(k).append("**: ").append(String.join("; ", vals)).append("\n");
+                            }
+                        });
+                        text = desc.toString();
+                        log.info("Generated descriptive metadata text for BLOB item {} (MIME: {}) for direct embedding.", document.id(), mime);
+                    } else {
+                        log.warn("Document {} extracted text is empty, skipping vector store.", document.id());
+                        return;
+                    }
                 }
 
                 log.info("Extracted {} characters from document: {}", text.length(), document.id());

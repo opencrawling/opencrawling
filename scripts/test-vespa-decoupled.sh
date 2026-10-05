@@ -156,6 +156,7 @@ echo -e "${GREEN}Ollama embedding models pulled successfully!${NC}"
 # Create a sample test document in the mounted directory
 TEST_DOC_DIR="./oc-runtime/data"
 mkdir -p "$TEST_DOC_DIR"
+rm -f "$TEST_DOC_DIR"/*.json "$TEST_DOC_DIR"/*.txt
 TEST_FILE="$TEST_DOC_DIR/vespa-decoupled-integration-test.txt"
 echo "OpenCrawling is an awesome open-source pipeline! Decoupled integration test with Vespa worked successfully." > "$TEST_FILE"
 echo -e "${GREEN}Created test document: $TEST_FILE${NC}"
@@ -241,13 +242,25 @@ if [ "$TYPE_1024_COUNT" -lt 1 ]; then
 fi
 echo -e "${GREEN}/api/vespa/document-counts confirms $TYPE_1024_COUNT chunk(s) in opencrawling_chunk_1024.${NC}"
 
-INSIGHTS_QUERY=$(curl -s -X POST http://localhost:8080/api/vespa/query \
-  -H "Content-Type: application/json" \
-  -d '{"endpoint":"http://vespa:8080","documentType":"opencrawling_chunk_1024","queryText":"decoupled integration test","rankProfile":"default"}')
-QUERY_HITS=$(echo "$INSIGHTS_QUERY" | jq -r '.totalCount // 0')
-if [ -z "$QUERY_HITS" ] || [ "$QUERY_HITS" == "null" ]; then
-  QUERY_HITS=0
-fi
+echo -e "${YELLOW}Waiting for Vespa BM25 query to return hits for the test document...${NC}"
+QUERY_HITS=0
+ELAPSED=0
+TIMEOUT=60
+until [ "$QUERY_HITS" -ge 1 ] || [ $ELAPSED -ge $TIMEOUT ]; do
+  INSIGHTS_QUERY=$(curl -s -X POST http://localhost:8080/api/vespa/query \
+    -H "Content-Type: application/json" \
+    -d '{"endpoint":"http://vespa:8080","documentType":"opencrawling_chunk_1024","queryText":"decoupled integration test","rankProfile":"default"}')
+  QUERY_HITS=$(echo "$INSIGHTS_QUERY" | jq -r '.totalCount // 0' 2>/dev/null || echo "0")
+  if [ -z "$QUERY_HITS" ] || [ "$QUERY_HITS" == "null" ]; then
+    QUERY_HITS=0
+  fi
+  if [ "$QUERY_HITS" -ge 1 ]; then
+    break
+  fi
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+done
+
 if [ "$QUERY_HITS" -lt 1 ]; then
   echo -e "${RED}Vespa decoupled integration test failed: /api/vespa/query (BM25) returned 0 hits: $INSIGHTS_QUERY${NC}"
   exit 1

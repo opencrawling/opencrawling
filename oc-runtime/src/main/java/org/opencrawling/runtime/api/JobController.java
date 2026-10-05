@@ -261,6 +261,68 @@ public class JobController {
                                 changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
                         );
                         log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
+                    } else if (connConfig.className().contains("Jdbc")) {
+                        String url = connConfig.configuration().getOrDefault("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1");
+                        String driverClassName = connConfig.configuration().getOrDefault("driverClassName", connConfig.configuration().getOrDefault("driver-class-name", ""));
+                        String username = connConfig.configuration().getOrDefault("username", "");
+                        String password = connConfig.configuration().getOrDefault("password", "");
+                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", connConfig.configuration().getOrDefault("mode", "table"));
+                        String tableName = connConfig.configuration().getOrDefault("tableName", connConfig.configuration().getOrDefault("table-name", ""));
+                        String schemaName = connConfig.configuration().getOrDefault("schemaName", connConfig.configuration().getOrDefault("schema-name", ""));
+                        String pkCols = connConfig.configuration().getOrDefault("primaryKeyColumns", connConfig.configuration().getOrDefault("primaryKeyColumn", "id"));
+                        java.util.Set<String> primaryKeyColumns = java.util.Arrays.stream(pkCols.split(","))
+                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
+                        String titleColumn = connConfig.configuration().getOrDefault("titleColumn", "title");
+                        String exclCols = connConfig.configuration().getOrDefault("excludedColumns", "");
+                        java.util.Set<String> excludedColumns = java.util.Arrays.stream(exclCols.split(","))
+                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
+                        String querySql = connConfig.configuration().getOrDefault("querySql", connConfig.configuration().getOrDefault("sql", ""));
+                        String blobColumnName = connConfig.configuration().getOrDefault("blobColumnName", "");
+                        String fileNameColumn = connConfig.configuration().getOrDefault("fileNameColumn", "");
+                        String mimeTypeColumn = connConfig.configuration().getOrDefault("mimeTypeColumn", "");
+                        boolean incrementalEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("incrementalEnabled", "false"));
+                        String hwmColumn = connConfig.configuration().getOrDefault("hwmColumn", "updated_at");
+                        String hwmType = connConfig.configuration().getOrDefault("hwmType", "timestamp");
+                        boolean softDeleteEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("softDeleteEnabled", "false"));
+                        String softDeleteColumn = connConfig.configuration().getOrDefault("softDeleteColumn", "is_deleted");
+                        String softDeleteValue = connConfig.configuration().getOrDefault("softDeleteValue", "true");
+                        boolean securityEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("securityEnabled", "false"));
+                        String userCols = connConfig.configuration().getOrDefault("userColumns", "");
+                        java.util.Set<String> userColumns = java.util.Arrays.stream(userCols.split(","))
+                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
+                        String groupCols = connConfig.configuration().getOrDefault("groupColumns", "");
+                        java.util.Set<String> groupColumns = java.util.Arrays.stream(groupCols.split(","))
+                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
+                        String tenantColumn = connConfig.configuration().getOrDefault("tenantColumn", "");
+                        String defaultPermission = connConfig.configuration().getOrDefault("defaultPermission", "read");
+                        int fetchSize = 1000;
+                        try { fetchSize = Integer.parseInt(connConfig.configuration().getOrDefault("fetchSize", "1000")); } catch (Exception ignored) {}
+                        int batchSize = 100;
+                        try { batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100")); } catch (Exception ignored) {}
+                        int maxPoolSize = 10;
+                        try { maxPoolSize = Integer.parseInt(connConfig.configuration().getOrDefault("maxPoolSize", "10")); } catch (Exception ignored) {}
+                        int minIdle = 2;
+                        try { minIdle = Integer.parseInt(connConfig.configuration().getOrDefault("minIdle", "2")); } catch (Exception ignored) {}
+                        long connectionTimeoutMs = 30000L;
+                        try { connectionTimeoutMs = Long.parseLong(connConfig.configuration().getOrDefault("connectionTimeoutMs", "30000")); } catch (Exception ignored) {}
+
+                        String narrativizationTemplate = connConfig.configuration().getOrDefault("narrativizationTemplate", "");
+
+                        org.opencrawling.jdbc.JdbcRepositoryConnector jdbcConn = new org.opencrawling.jdbc.JdbcRepositoryConnector(
+                                url, driverClassName, username, password,
+                                org.opencrawling.jdbc.JdbcCrawlMode.fromString(crawlModeStr),
+                                tableName, schemaName, primaryKeyColumns, titleColumn, excludedColumns,
+                                querySql, blobColumnName, fileNameColumn, mimeTypeColumn,
+                                incrementalEnabled, hwmColumn, hwmType,
+                                softDeleteEnabled, softDeleteColumn, softDeleteValue,
+                                securityEnabled, userColumns, groupColumns, tenantColumn, defaultPermission,
+                                fetchSize, batchSize, maxPoolSize, minIdle, connectionTimeoutMs
+                        );
+                        if (!narrativizationTemplate.isBlank()) {
+                            jdbcConn.setNarrativizationTemplate(narrativizationTemplate);
+                        }
+                        resolvedConnector = jdbcConn;
+                        log.info("Successfully resolved dynamic JDBC repository connector for URL '{}' (target table: '{}')", url, tableName);
                     } else {
                         resolvedConnector = fileSystemRepositoryConnector;
                     }

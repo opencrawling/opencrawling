@@ -20,6 +20,13 @@ import java.util.Map;
 
 /**
  * Response DTO representing an OpenCrawling Connector configuration.
+ *
+ * @param name the connector instance name
+ * @param description the connector description
+ * @param type the connector type (repository, transformation, output)
+ * @param className the fully qualified connector class name
+ * @param maxConnections maximum concurrent connections allowed
+ * @param configuration map of connector configuration key-value pairs
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ConnectorResponse(

@@ -19,6 +19,11 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 /**
  * Record representing a connector metric performance entry.
+ *
+ * @param connectorId the connector identifier
+ * @param metricName the metric name
+ * @param value the metric numeric value
+ * @param timestamp the timestamp of the metric
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MetricRecord(

@@ -20,6 +20,17 @@ import java.util.Map;
 
 /**
  * Record representing an OpenTelemetry span execution trace.
+ *
+ * @param spanId the unique span identifier
+ * @param traceId the parent trace identifier
+ * @param jobId the related crawling job identifier
+ * @param stage the processing stage
+ * @param component the executing component name
+ * @param startTimeMillis execution start time in milliseconds epoch
+ * @param durationMillis duration of the span in milliseconds
+ * @param status the span execution status (OK, ERROR)
+ * @param errorMessage error message if failed
+ * @param attributes additional span key-value attributes
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record SpanRecord(

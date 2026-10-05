@@ -70,6 +70,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
+  if (className.includes('Jdbc') || className.includes('jdbc')) {
+    return { icon: Database, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
   if (className.includes('VectorOutputConnector') || className.includes('vector')) {
     return { icon: Network, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
   }
@@ -235,6 +238,7 @@ export default function ConnectorForm() {
       { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
       { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
+      { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -1337,6 +1341,243 @@ export default function ConnectorForm() {
                         <div>
                           <span className="font-semibold text-sky-200">Lakehouse Collocated Lineage: </span>
                           Automatically stamps <code className="bg-sky-900/40 px-1 py-0.5 rounded text-sky-200">iceberg_table_name</code>, <code className="bg-sky-900/40 px-1 py-0.5 rounded text-sky-200">iceberg_record_id</code>, <code className="bg-sky-900/40 px-1 py-0.5 rounded text-sky-200">iceberg_snapshot_id</code>, and <code className="bg-sky-900/40 px-1 py-0.5 rounded text-sky-200">iceberg_table_location</code> for zero-lag joins and data warehouse governance pushdown.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Relational Database (JDBC) Repository */}
+                  {selectedClass === 'org.opencrawling.jdbc.JdbcRepositoryConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Database Engine Preset</label>
+                          <select
+                            onChange={(e) => {
+                              const val = e.target.value
+                              if (val === 'postgres') {
+                                setValue('configuration.driverClassName', 'org.postgresql.Driver')
+                                setValue('configuration.url', 'jdbc:postgresql://localhost:5432/opencrawling')
+                              } else if (val === 'mysql') {
+                                setValue('configuration.driverClassName', 'com.mysql.cj.jdbc.Driver')
+                                setValue('configuration.url', 'jdbc:mysql://localhost:3306/opencrawling')
+                              } else if (val === 'oracle') {
+                                setValue('configuration.driverClassName', 'oracle.jdbc.OracleDriver')
+                                setValue('configuration.url', 'jdbc:oracle:thin:@localhost:1521:xe')
+                              } else if (val === 'sqlserver') {
+                                setValue('configuration.driverClassName', 'com.microsoft.sqlserver.jdbc.SQLServerDriver')
+                                setValue('configuration.url', 'jdbc:sqlserver://localhost:1433;databaseName=opencrawling')
+                              } else if (val === 'sqlite') {
+                                setValue('configuration.driverClassName', 'org.sqlite.JDBC')
+                                setValue('configuration.url', 'jdbc:sqlite:/tmp/opencrawling.db')
+                              } else if (val === 'h2') {
+                                setValue('configuration.driverClassName', 'org.h2.Driver')
+                                setValue('configuration.url', 'jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1')
+                              }
+                            }}
+                            defaultValue="postgres"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="postgres">PostgreSQL</option>
+                            <option value="mysql">MySQL / MariaDB</option>
+                            <option value="oracle">Oracle Database</option>
+                            <option value="sqlserver">Microsoft SQL Server</option>
+                            <option value="sqlite">SQLite</option>
+                            <option value="h2">H2 (In-Memory / Testing)</option>
+                            <option value="custom">Custom JDBC Driver</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">JDBC URL</label>
+                          <input 
+                            {...register('configuration.url', { required: true })}
+                            placeholder="e.g. jdbc:postgresql://localhost:5432/crm_prod"
+                            defaultValue="jdbc:postgresql://localhost:5432/opencrawling"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Driver Class Name (Optional)</label>
+                          <input 
+                            {...register('configuration.driverClassName')}
+                            placeholder="e.g. org.postgresql.Driver"
+                            defaultValue="org.postgresql.Driver"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Crawl Mode</label>
+                          <select 
+                            {...register('configuration.crawlMode')}
+                            defaultValue="TABLE"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="TABLE">Table / View Ingestion Mode</option>
+                            <option value="QUERY">Custom SQL Query Mode</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.username')}
+                            placeholder="e.g. db_user"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.password')}
+                            placeholder="••••••••"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Name</label>
+                          <input 
+                            {...register('configuration.tableName')}
+                            placeholder="e.g. support_tickets"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Schema Name (Optional)</label>
+                          <input 
+                            {...register('configuration.schemaName')}
+                            placeholder="e.g. public"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Primary Key Column(s)</label>
+                          <input 
+                            {...register('configuration.primaryKeyColumns')}
+                            placeholder="e.g. id or ticket_id,tenant_id"
+                            defaultValue="id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Title Column</label>
+                          <input 
+                            {...register('configuration.titleColumn')}
+                            placeholder="e.g. title or subject"
+                            defaultValue="title"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Custom SQL Query (When Crawl Mode is QUERY)</label>
+                          <textarea 
+                            {...register('configuration.querySql')}
+                            placeholder="SELECT t.id, t.title, t.status, t.owner_id, t.is_deleted FROM support_tickets t WHERE (:lastCrawledTime IS NULL OR t.updated_at >= :lastCrawledTime)"
+                            rows={3}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">BLOB Column Name (Optional)</label>
+                          <input 
+                            {...register('configuration.blobColumnName')}
+                            placeholder="e.g. file_data or attachment_blob"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">File Name Column (Optional)</label>
+                          <input 
+                            {...register('configuration.fileNameColumn')}
+                            placeholder="e.g. file_name"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">MIME Type Column (Optional)</label>
+                          <input 
+                            {...register('configuration.mimeTypeColumn')}
+                            placeholder="e.g. content_type"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Excluded Columns (Comma-separated)</label>
+                          <input 
+                            {...register('configuration.excludedColumns')}
+                            placeholder="e.g. password_hash, internal_secret"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Soft-Delete Column (Optional)</label>
+                          <input 
+                            {...register('configuration.softDeleteColumn')}
+                            placeholder="e.g. is_deleted"
+                            defaultValue="is_deleted"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Soft-Delete Tombstone Value</label>
+                          <input 
+                            {...register('configuration.softDeleteValue')}
+                            placeholder="e.g. true or PURGED"
+                            defaultValue="true"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">User Column(s) (Comma-separated)</label>
+                          <input 
+                            {...register('configuration.userColumns')}
+                            placeholder="e.g. owner_id, assignee"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Group Column(s) (Comma-separated)</label>
+                          <input 
+                            {...register('configuration.groupColumns')}
+                            placeholder="e.g. department_id, security_group"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Tenant Column (Optional)</label>
+                          <input 
+                            {...register('configuration.tenantColumn')}
+                            placeholder="e.g. tenant_id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Fetch Size (Cursor Streaming)</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.fetchSize')}
+                            defaultValue={1000}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Narrativization Template (Mustache, Optional)</label>
+                          <textarea 
+                            {...register('configuration.narrativizationTemplate')}
+                            rows={3}
+                            placeholder="e.g. # Customer Record: {{first_name}} {{last_name}}&#10;Email: {{email}}&#10;Account Status: {{status}}"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Mustache template used to narrativize tabular rows into natural language markdown for Tabular RAG. When BLOB columns are present, binary data (images, PDFs, documents) bypasses this template to stream directly for vector embeddings.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-md text-xs text-amber-300 flex items-start gap-2">
+                        <Database className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                        <div>
+                          <span className="font-semibold text-amber-200">Relational Ingestion & Tabular RAG: </span>
+                          Leverages Java 25 Virtual Threads with server-side JDBC cursor streaming. Supports automated table schema inspection via <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">getSchema()</code> for Spring AI Narrativization Copilot, zero-trust column-based ACL mappings, and decoupled Claim-Check BLOB offloading.
                         </div>
                       </div>
                     </div>

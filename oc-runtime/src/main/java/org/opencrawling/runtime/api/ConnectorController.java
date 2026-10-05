@@ -84,6 +84,24 @@ public class ConnectorController {
             Map.entry("includeContentStream", "true"),
             Map.entry("batchSize", "100")
         )));
+        defaults.add(new ConnectorDTO("Relational_Database_JDBC", "Relational Database (JDBC)", "repository", "org.opencrawling.jdbc.JdbcRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1"),
+            Map.entry("driverClassName", "org.h2.Driver"),
+            Map.entry("username", "sa"),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "TABLE"),
+            Map.entry("tableName", "support_tickets"),
+            Map.entry("primaryKeyColumns", "id"),
+            Map.entry("titleColumn", "title"),
+            Map.entry("incrementalEnabled", "false"),
+            Map.entry("hwmColumn", "updated_at"),
+            Map.entry("softDeleteEnabled", "false"),
+            Map.entry("softDeleteColumn", "is_deleted"),
+            Map.entry("softDeleteValue", "true"),
+            Map.entry("securityEnabled", "false"),
+            Map.entry("batchSize", "100"),
+            Map.entry("fetchSize", "1000")
+        )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
             "pgVectorUsername", "opencrawling",

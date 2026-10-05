@@ -331,7 +331,7 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
     volumes:
-      - ../../oc-runtime/data:/app/data
+      - oc-mcp-server-data-vespa:/app/data
     depends_on:
       redis:
         condition: service_started
@@ -375,3 +375,5 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata-vespa:
     name: opencrawling-kafkadata-vespa
+  oc-mcp-server-data-vespa:
+    name: oc-mcp-server-data-vespa
