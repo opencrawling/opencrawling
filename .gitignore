@@ -20,6 +20,7 @@ Thumbs.db
 **/.project
 **/.classpath
 **/.factorypath
+**/src/main/java/META-INF/
 
 # IntelliJ IDEA
 .idea/

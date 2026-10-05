@@ -152,18 +152,12 @@
                 <configuration>
                     <source>25</source>
                     <target>25</target>
-                    <compilerArgs>
-                        <arg>--enable-preview</arg>
-                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.5</version>
-                <configuration>
-                    <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
-                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
