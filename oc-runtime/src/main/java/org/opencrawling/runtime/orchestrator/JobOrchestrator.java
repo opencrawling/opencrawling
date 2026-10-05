@@ -34,6 +34,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.claimcheck.CompositeClaimCheckStore;
+import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.pipeline.PipelineProperties;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
@@ -43,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -54,6 +58,12 @@ public class JobOrchestrator {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ClaimCheckStore claimCheckStore;
     private final TelemetryTraceStore traceStore;
+
+    @Autowired(required = false)
+    private PipelineProperties pipelineProperties;
+
+    @Value("${opencrawling.pipeline.mode:rag}")
+    private String defaultPipelineMode = "rag";
 
     @Value("${spring.ai.ollama.embedding.options.model:mxbai-embed-large}")
     private String defaultOllamaModel = "mxbai-embed-large";
@@ -85,25 +95,37 @@ public class JobOrchestrator {
     @SuppressWarnings("preview")
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, NarrativizationConfig narrativization) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, narrativization, null);
+    }
+
+    @SuppressWarnings("preview")
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, NarrativizationConfig narrativization, PipelineMode pipelineMode) {
         
+        PipelineMode resolvedMode = pipelineMode != null ? pipelineMode :
+            (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.fromString(defaultPipelineMode));
+
         final MustacheTransformationConnector mustacheConnector =
-            (narrativization != null && narrativization.enabled() &&
+            (resolvedMode != PipelineMode.MIGRATION &&
+             narrativization != null && narrativization.enabled() &&
              narrativization.template() != null && !narrativization.template().isBlank())
             ? new MustacheTransformationConnector(narrativization.template())
             : null;
 
-        if (mustacheConnector != null) {
+        if (resolvedMode == PipelineMode.MIGRATION) {
+            log.info("Job {} running in MIGRATION mode. Narrativization and vector embeddings are bypassed.", jobId);
+        } else if (mustacheConnector != null) {
             log.info("Narrativization enabled for job {}. Template preview: {}", jobId,
                 narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
         }
 
-        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector);
+        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector, resolvedMode);
     }
 
     @SuppressWarnings("preview")
     private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
-            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector) {
-        log.info("Starting job {} for path: {} with transformation connector: {}", jobId, path, transformationConnector);
+            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode) {
+        log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String currentJobId = jobId != null ? jobId : "1";
@@ -158,10 +180,12 @@ public class JobOrchestrator {
 
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
-                            boolean isSupportedByStore = finalUri != null && claimCheckStore.supports(URI.create(finalUri));
+                            boolean isSupportedByPrimary = claimCheckStore instanceof CompositeClaimCheckStore composite
+                                    ? composite.getPrimaryStore().supports(URI.create(finalUri))
+                                    : claimCheckStore.supports(URI.create(finalUri));
 
-                            // Save stream via ClaimCheckStore if remote stream OR store requires non-local persistence
-                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
+                            // Save stream via ClaimCheckStore if remote stream OR primary store requires non-local persistence
+                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByPrimary)) {
                                 String resolvedName = doc.metadata().getOrDefault("filename", doc.metadata().getOrDefault("fileName", List.of())).stream().findFirst().orElse(null);
                                 String filename;
                                 if (resolvedName != null && !resolvedName.isBlank()) {
@@ -199,7 +223,8 @@ public class JobOrchestrator {
                                 transformationConnector,
                                 finalEngine,
                                 finalConfig,
-                                doc.action()
+                                doc.action(),
+                                pipelineMode
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation

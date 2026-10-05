@@ -104,7 +104,7 @@ ${BOLD}OPTIONS:${NC}
 ${BOLD}POSITIONAL ARGUMENTS:${NC}
   Any positional argument can be:
   1. A file path to a specific test script (e.g., ${CYAN}scripts/test-cli.sh${NC} or ${CYAN}test-alfresco-decoupled.sh${NC})
-  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}aps${NC}, ${CYAN}cmis${NC}, ${CYAN}seatunnel${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
+  2. A filter keyword matching tests (e.g., ${CYAN}stormcrawler${NC}, ${CYAN}alfresco${NC}, ${CYAN}aps${NC}, ${CYAN}cmis${NC}, ${CYAN}seatunnel${NC}, ${CYAN}ozone${NC}, ${CYAN}migration${NC}, ${CYAN}decoupled${NC}, ${CYAN}grpc${NC})
 
 ${BOLD}EXAMPLES:${NC}
   ${DIM}# Run all integration tests${NC}
@@ -112,6 +112,12 @@ ${BOLD}EXAMPLES:${NC}
 
   ${DIM}# Run only StormCrawler tests (matching test-stormcrawler-*.sh)${NC}
   ./run-integration-tests.sh stormcrawler
+
+  ${DIM}# Run only Apache Ozone tests (matching test-ozone-*.sh)${NC}
+  ./run-integration-tests.sh ozone
+
+  ${DIM}# Run only Migration Mode tests (matching *migration*)${NC}
+  ./run-integration-tests.sh migration
 
   ${DIM}# Run only Alfresco tests (matching test-alfresco-*.sh)${NC}
   ./run-integration-tests.sh alfresco
@@ -353,7 +359,7 @@ cleanup_on_interrupt() {
   fi
   # Clean up any lingering containers publishing integration test ports
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801 9878 9879; do
       local c_ids
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
@@ -443,7 +449,7 @@ for test_path in ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"}; do
 
   # Ensure common integration test ports are not blocked by lingering containers from aborted/prior runs
   if command -v docker >/dev/null 2>&1; then
-    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801; do
+    for p in 8080 8081 8088 9092 5432 5433 6379 11434 5801 9878 9879; do
       c_ids=$(docker ps --filter "publish=$p" -q 2>/dev/null || true)
       if [ -n "$c_ids" ]; then
         docker stop $c_ids >/dev/null 2>&1 || true
@@ -473,15 +479,20 @@ for test_path in ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"}; do
         elapsed=$((now - test_start))
         spin_char="${spin_chars:$spin_idx:1}"
         spin_idx=$(( (spin_idx + 1) % 4 ))
-        printf "\r  ${YELLOW}%s${NC} Running ${BOLD}%s${NC} (Elapsed: %s)... " "$spin_char" "$test_base" "$(format_duration $elapsed)"
+        tail_msg=$(tail -n 1 "$test_log" 2>/dev/null | tr '\r\n' ' ' | cut -c 1-50 || true)
+        printf "\r  ${YELLOW}%s${NC} Running ${BOLD}%s${NC} (%s) ${DIM}%s${NC}\033[K" "$spin_char" "$test_base" "$(format_duration $elapsed)" "$tail_msg"
         sleep 1
       done
       # Clear status line
       printf "\r\033[K"
     else
-      # Non-interactive mode (e.g., CI)
+      # Non-interactive mode (e.g., CI or IDE terminal)
       while kill -0 "$CURRENT_CHILD_PID" 2>/dev/null; do
-        sleep 2
+        sleep 5
+        now=$(date +%s)
+        elapsed=$((now - test_start))
+        tail_msg=$(tail -n 1 "$test_log" 2>/dev/null | tr '\r\n' ' ' | cut -c 1-70 || true)
+        echo -e "  ${DIM}[$(format_duration $elapsed)] ${test_base}:${NC} ${tail_msg}"
       done
     fi
 

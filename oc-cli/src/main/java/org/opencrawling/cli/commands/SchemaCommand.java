@@ -78,6 +78,10 @@ public class SchemaCommand implements Runnable {
                     }
                 }
 
+                if (root.has("contentRef")) {
+                    System.out.println(AnsiColors.cyan("ℹ OIS Migration Mode document payload detected (contains contentRef binary locator)."));
+                }
+
                 if (valid) {
                     System.out.println(AnsiColors.green("✔ OIS JSON Schema structure is valid!"));
                 }

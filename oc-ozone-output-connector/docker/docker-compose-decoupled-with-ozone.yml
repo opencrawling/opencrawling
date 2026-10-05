@@ -1,0 +1,363 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- Infrastructure Services ---
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-decoupled-ozone
+    environment:
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+      POSTGRES_DB: opencrawling
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-pgdata-ozone:/var/lib/postgresql/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-ozone
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-ozone:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-ozone
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-ozone:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Primary Apache Ozone (Source Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm-source
+    hostname: scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.scm.names: scm
+      OZONE-SITE.XML_ozone.om.address: om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om-source
+    hostname: om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.scm.names: scm
+      OZONE-SITE.XML_ozone.om.address: om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "om"]
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode-source
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.scm.names: scm
+      OZONE-SITE.XML_ozone.om.address: om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "datanode"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g-source
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.scm.names: scm
+      OZONE-SITE.XML_ozone.om.address: om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  # --- Separated Apache Ozone Instance (Target Migration Storage) ---
+  target-ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: target-ozone-scm
+    hostname: target-scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: target-scm
+      OZONE-SITE.XML_ozone.scm.names: target-scm
+      OZONE-SITE.XML_ozone.om.address: target-om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  target-ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: target-ozone-om
+    hostname: target-om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: target-scm
+      OZONE-SITE.XML_ozone.scm.names: target-scm
+      OZONE-SITE.XML_ozone.om.address: target-om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "om"]
+    depends_on:
+      - target-ozone-scm
+    networks:
+      - opencrawling-network
+
+  target-ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: target-ozone-datanode
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: target-scm
+      OZONE-SITE.XML_ozone.scm.names: target-scm
+      OZONE-SITE.XML_ozone.om.address: target-om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "datanode"]
+    depends_on:
+      - target-ozone-scm
+      - target-ozone-om
+    networks:
+      - opencrawling-network
+
+  target-ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: target-ozone-s3g
+    hostname: target-s3g
+    ports:
+      - "9879:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: target-scm
+      OZONE-SITE.XML_ozone.scm.names: target-scm
+      OZONE-SITE.XML_ozone.om.address: target-om
+      OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+      OZONE_OPTS: "-Xmx256m"
+    command: ["ozone", "s3g"]
+    depends_on:
+      - target-ozone-scm
+      - target-ozone-om
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services in Migration Mode ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-ozone
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - OPENCRAWLING_PIPELINE_MODE=migration
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - OPENCRAWLING_TIKA_FORK_ENABLED=false
+    volumes:
+      - ../../oc-runtime/data:/data
+    depends_on:
+      - kafka
+      - redis
+      - ozone-s3g
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-ozone
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_PIPELINE_MODE=migration
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+    volumes:
+      - ../../oc-runtime/data:/data
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-ozone
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_PIPELINE_MODE=migration
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+    volumes:
+      - ../../oc-runtime/data:/data
+    depends_on:
+      - kafka
+      - redis
+      - ozone-s3g
+      - target-ozone-s3g
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-ozone
+    ports:
+      - "8080:8080"
+      - "9095:9095"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - OPENCRAWLING_PIPELINE_MODE=migration
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
+    volumes:
+      - ../../oc-runtime/data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network-ozone
+    driver: bridge
+
+volumes:
+  opencrawling-pgdata-ozone:
+    name: opencrawling-pgdata-ozone
+  opencrawling-redisdata-ozone:
+    name: opencrawling-redisdata-ozone
+  opencrawling-kafkadata-ozone:
+    name: opencrawling-kafkadata-ozone

@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.filesystem.FileSystemRepositoryConnector;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 
@@ -43,6 +45,9 @@ public class JobController {
     private final FileSystemRepositoryConnector fileSystemRepositoryConnector;
     private final OutputConnector outputConnector;
     private final JdbcTemplate jdbcTemplate;
+
+    @Autowired(required = false)
+    private PipelineProperties pipelineProperties;
 
     @Autowired
     public JobController(
@@ -95,7 +100,8 @@ public class JobController {
                 0,
                 "N/A",
                 job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
-                job.narrativization()
+                job.narrativization(),
+                job.pipelineMode()
             );
             jobs.add(newJob);
         } else {
@@ -115,7 +121,8 @@ public class JobController {
                         existing.documents(),
                         existing.lastRun(),
                         job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
-                        job.narrativization() != null ? job.narrativization() : existing.narrativization()
+                        job.narrativization() != null ? job.narrativization() : existing.narrativization(),
+                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode()
                     ));
                     break;
                 }
@@ -417,6 +424,32 @@ public class JobController {
                         org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
                         resolvedOutputConnector = new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
                         log.info("Successfully resolved dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
+                    } else if (cls.contains("Ozone") || cls.contains("ozone")) {
+                        String volume = outConfig.configuration().getOrDefault("volume", "opencrawling");
+                        String bucket = outConfig.configuration().getOrDefault("bucket", "migration");
+                        String clientType = outConfig.configuration().getOrDefault("clientType", "NATIVE");
+                        String omHost = outConfig.configuration().getOrDefault("omHost", "localhost");
+                        int omPort = 9862;
+                        try { omPort = Integer.parseInt(outConfig.configuration().getOrDefault("omPort", "9862")); } catch (Exception ignored) {}
+                        String s3Endpoint = outConfig.configuration().getOrDefault("s3Endpoint", "http://localhost:9878");
+                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "any");
+                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "any");
+
+                        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
+                        ozoneProps.setVolume(volume);
+                        ozoneProps.setBucket(bucket);
+                        ozoneProps.setClientType(clientType);
+                        ozoneProps.setOmHost(omHost);
+                        ozoneProps.setOmPort(omPort);
+                        ozoneProps.setS3Endpoint(s3Endpoint);
+                        ozoneProps.setAccessKey(accessKey);
+                        ozoneProps.setSecretKey(secretKey);
+
+                        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties, null);
+                        PipelineMode jobMode = activeJob.pipelineMode() != null ? PipelineMode.fromString(activeJob.pipelineMode()) : (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.RAG);
+                        ozoneConnector.setPipelineMode(jobMode);
+                        resolvedOutputConnector = ozoneConnector;
+                        log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
                     }
                 }
             } catch (Exception e) {
@@ -440,7 +473,10 @@ public class JobController {
             Thread.ofVirtual().start(() -> {
                 try {
                     log.info("Background Virtual Thread running. Path: {}, OutputConnector: {}", finalActiveJob.path(), finalOutputConnector.getName());
-                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization());
+                    PipelineMode mode = finalActiveJob.pipelineMode() != null
+                        ? PipelineMode.fromString(finalActiveJob.pipelineMode())
+                        : (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.RAG);
+                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization(), mode);
                     log.info("Background Virtual Thread completed successfully!");
                     // update status to completed when done, and pull actual db document count
                     updateJobStatusAndStage(id, "Finished", "Completed", getActualDbDocCount());
@@ -572,10 +608,28 @@ public class JobController {
         long documents,
         String lastRun,
         String transformationConnector,
-        NarrativizationConfig narrativization
+        NarrativizationConfig narrativization,
+        String pipelineMode
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
+        }
+
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
         }
     }
 }

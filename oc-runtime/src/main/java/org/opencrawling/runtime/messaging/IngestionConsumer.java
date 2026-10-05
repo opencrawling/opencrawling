@@ -24,6 +24,7 @@ import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
@@ -80,6 +81,10 @@ public class IngestionConsumer {
     @KafkaListener(topics = KafkaConfig.TOPIC_NAME)
     public void consume(IngestionMessage message) {
         log.info("Received document message from Kafka: {}", message.documentId());
+        if (message.pipelineMode() != null && message.pipelineMode().isMigration()) {
+            log.info("Document {} received in MIGRATION mode. Skipping Tika extraction, chunking, and embedding.", message.documentId());
+            return;
+        }
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String jobId = message.documentId();
