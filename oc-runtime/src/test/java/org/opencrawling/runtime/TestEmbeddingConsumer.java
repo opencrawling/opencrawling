@@ -54,7 +54,8 @@ public class TestEmbeddingConsumer {
             message.chunkId(),
             message.text(),
             message.metadata(),
-            dummyEmbedding
+            dummyEmbedding,
+            message.action()
         );
         
         try {
