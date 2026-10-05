@@ -16,6 +16,8 @@
 package org.opencrawling.runtime.messaging;
 
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -72,10 +74,12 @@ public class VectorStoreWriterConsumer {
         try {
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for document: {}. Purging document/chunks from pgvector store.", message.documentId());
-                vectorStore.delete(List.of(message.documentId()));
-                vectorStore384.delete(List.of(message.documentId()));
-                vectorStore768.delete(List.of(message.documentId()));
-                vectorStore1024.delete(List.of(message.documentId()));
+                // Chunks are stored under their own ids; the document id is in their metadata.
+                Filter.Expression byDocument = new FilterExpressionBuilder().eq("documentId", message.documentId()).build();
+                vectorStore.delete(byDocument);
+                vectorStore384.delete(byDocument);
+                vectorStore768.delete(byDocument);
+                vectorStore1024.delete(byDocument);
                 log.info("Successfully purged tombstone document {} from pgvector stores.", message.documentId());
                 return;
             }

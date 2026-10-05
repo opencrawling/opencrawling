@@ -37,6 +37,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
@@ -211,11 +212,12 @@ public class IngestionConsumer {
                 log.info("Split document {} into {} chunks. Publishing to Kafka topic: {}", 
                     message.documentId(), chunks.size(), KafkaConfig.CHUNKS_TOPIC_NAME);
                 
-                for (Document chunk : chunks) {
-                    String chunkId = chunk.getId();
-                    if (chunkId == null || chunkId.equals(message.documentId())) {
-                        chunkId = UUID.randomUUID().toString();
-                    }
+                // Chunk ids derive from the document id and the chunk position. Stable ids reuse chunk positions
+                // across re-crawls; they do not remove the extra chunks when a document shrinks or becomes empty.
+                for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
+                    Document chunk = chunks.get(chunkIndex);
+                    String chunkId = UUID.nameUUIDFromBytes(
+                            (message.documentId() + "#" + chunkIndex).getBytes(StandardCharsets.UTF_8)).toString();
                     DocumentChunkMessage chunkMsg = new DocumentChunkMessage(
                         message.documentId(),
                         chunkId,

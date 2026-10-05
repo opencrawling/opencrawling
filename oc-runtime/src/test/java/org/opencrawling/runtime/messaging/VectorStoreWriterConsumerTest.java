@@ -21,6 +21,8 @@ import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 
 import java.util.List;
@@ -75,10 +77,11 @@ class VectorStoreWriterConsumerTest {
     }
 
     @Test
-    void testConsumeDeleteTombstonePurgesAllVectorStores() {
+    void testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores() {
+        String documentId = "http://example.com/gone.html";
         DocumentEmbeddedMessage tombstone = new DocumentEmbeddedMessage(
-                "doc-delete-1",
-                "doc-delete-1",
+                documentId,
+                documentId,
                 "",
                 Map.of(),
                 new float[0],
@@ -87,9 +90,10 @@ class VectorStoreWriterConsumerTest {
 
         consumer.consume(tombstone);
 
-        verify(defaultStore).delete(List.of("doc-delete-1"));
-        verify(store384).delete(List.of("doc-delete-1"));
-        verify(store768).delete(List.of("doc-delete-1"));
-        verify(store1024).delete(List.of("doc-delete-1"));
+        Filter.Expression byDocument = new FilterExpressionBuilder().eq("documentId", documentId).build();
+        for (PgVectorStore store : List.of(defaultStore, store384, store768, store1024)) {
+            verify(store).delete(byDocument);
+            verify(store, never()).delete(anyList());
+        }
     }
 }
