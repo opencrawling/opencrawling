@@ -26,7 +26,6 @@ import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Values;
 import org.apache.stormcrawler.Constants;
 import org.apache.stormcrawler.Metadata;
-import org.apache.stormcrawler.persistence.Status;
 import org.opencrawling.stormcrawler.bolt.OpenCrawlingBolt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +35,7 @@ import java.util.Map;
 
 /**
  * Apache Storm test topology executing OpenCrawlingBolt in an active Storm cluster.
- * Emits parsed web page content tuples and status deletion tuples, verifying that
+ * Emits parsed web page content tuples and deletion tuples, verifying that
  * OpenCrawlingBolt normalizes and dispatches them correctly in a distributed Storm topology.
  */
 public class OpenCrawlingTestTopology {
@@ -86,25 +85,26 @@ public class OpenCrawlingTestTopology {
                     + "<p>OpenCrawling Bolt verification content for page " + emittedCount + "</p></body></html>")
                     .getBytes(StandardCharsets.UTF_8);
 
-            collector.emit(new Values(url, content, metadata));
+            String text = "StormCrawler Integration Test OpenCrawling Bolt verification content for page " + emittedCount;
+
+            collector.emit(new Values(url, content, metadata, text));
             spoutLog.info("Emitted parsed content tuple for URL: {}", url);
 
-            // On page 3, emit an HTTP 404 deletion signal on the status stream
+            // On page 3, emit a deletion as a StormCrawler status updater does for a page gone with a 404
             if (emittedCount == 3) {
                 String deletedUrl = "https://example.com/docs/stormcrawler-deleted-page";
                 Metadata delMetadata = new Metadata();
-                delMetadata.setValue("http.status", "404");
-                delMetadata.setValue("stormcrawler.status", "FETCH_ERROR");
+                delMetadata.setValue("fetch.statusCode", "404");
 
-                collector.emit(Constants.StatusStreamName, new Values(deletedUrl, Status.FETCH_ERROR, delMetadata));
-                spoutLog.info("Emitted status deletion tuple for URL: {}", deletedUrl);
+                collector.emit(Constants.DELETION_STREAM_NAME, new Values(deletedUrl, delMetadata));
+                spoutLog.info("Emitted deletion tuple for URL: {}", deletedUrl);
             }
         }
 
         @Override
         public void declareOutputFields(OutputFieldsDeclarer declarer) {
-            declarer.declare(new Fields("url", "content", "metadata"));
-            declarer.declareStream(Constants.StatusStreamName, new Fields("url", "status", "metadata"));
+            declarer.declare(new Fields("url", "content", "metadata", "text"));
+            declarer.declareStream(Constants.DELETION_STREAM_NAME, new Fields("url", "metadata"));
         }
     }
 
@@ -127,7 +127,7 @@ public class OpenCrawlingTestTopology {
 
         builder.setBolt(BOLT_ID, bolt, 1)
                 .shuffleGrouping(SPOUT_ID)
-                .shuffleGrouping(SPOUT_ID, Constants.StatusStreamName);
+                .shuffleGrouping(SPOUT_ID, Constants.DELETION_STREAM_NAME);
 
         Config conf = new Config();
         conf.setNumWorkers(1);
