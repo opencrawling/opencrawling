@@ -321,7 +321,8 @@ class DoxisRepositoryConnectorTest {
 
         StepVerifier.create(connector.scan("default"))
                 .expectErrorMatches(e -> e instanceof IllegalStateException && e.getMessage().contains("auth-type 'oauth2'")
-                        && e.getMessage().contains("repository-id"))
+                        && e.getMessage().contains("repository-id")
+                        && e.getMessage().contains("requires a valid, licensed Doxis 4 installation"))
                 .verify();
 
         assertTrue(requests.isEmpty());

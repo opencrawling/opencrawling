@@ -1102,6 +1102,15 @@ export default function ConnectorForm() {
                   {/* Doxis 4 CSB Repository Connector */}
                   {selectedClass === 'org.opencrawling.doxis.DoxisRepositoryConnector' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a valid, licensed Doxis 4 installation (SER Group).</span>{' '}
+                          OpenCrawling does not include Doxis or any Doxis licence. Your licence must allow API (technical-user)
+                          sessions, and you need a reachable CSB 14.4+ with its REST API and a technical user with read rights.
+                          See the connector&apos;s README, section Prerequisites.
+                        </p>
+                      </div>
                       <div className="space-y-2 col-span-2">
                         <label className="text-sm font-medium">Doxis CSB REST API URL</label>
                         <input 

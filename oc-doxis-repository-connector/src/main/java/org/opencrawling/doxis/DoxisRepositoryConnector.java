@@ -76,6 +76,11 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(DoxisRepositoryConnector.class);
 
+    /** Shown when connecting and by the connection check: OpenCrawling ships no Doxis licence. */
+    public static final String LICENCE_NOTICE = "This connector requires a valid, licensed Doxis 4 installation (SER Group) "
+            + "whose licence allows API (technical-user) sessions; OpenCrawling does not include Doxis or any Doxis licence. "
+            + "See the Prerequisites in the connector's README.";
+
     private final DoxisRepositorySettings settings;
     private DoxisClient client;
     private DoxisSchema schema;
@@ -112,9 +117,11 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
 
     @Override
     public synchronized void connect() throws Exception {
+        log.info(LICENCE_NOTICE);
         List<String> problems = settings.validate();
         if (!problems.isEmpty()) {
-            throw new IllegalStateException("Doxis repository connector is not configured: " + String.join(" ", problems));
+            throw new IllegalStateException("Doxis repository connector is not configured: " + String.join(" ", problems)
+                    + " " + LICENCE_NOTICE);
         }
         if (client == null) {
             client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
