@@ -125,6 +125,17 @@ The document id and URI are `doxis://<customer>/<repository>/documents/<uuid>`.
 Class-level rights ("All instances") can't be read through REST. A document with no instance ACEs therefore gets
 `fallback-principals`. When that is empty, the document gets **no** permission (deny by default). It is never made public.
 
+This case is common: documents that are not filed in an e-file usually carry no instance ACEs, so access comes only
+from class-level rights. To index them, name the group that should read them, for example:
+
+```yaml
+spring.opencrawling.connector.doxis.fallback-principals: group:Legal
+```
+
+or `"fallbackPrincipals": "group:Legal"` in the connector configuration. Several identities can be listed,
+comma-separated (`group:Legal, user:jane.doe`). The fallback applies only to documents with no readable instance ACEs.
+Documents with their own ACEs, or filed in an e-file that has ACEs, always keep the mapped Doxis permissions.
+
 ## Configuration
 
 There are two sources:
@@ -151,7 +162,7 @@ There are two sources:
 | `includeDescriptors` / `include-descriptors` | `true` | Emit descriptor values |
 | `includeAcls` / `include-acls` | `true` | Read document and e-file ACEs |
 | `descriptorPrefix` / `descriptor-prefix` | empty | Prefix for descriptor keys |
-| `fallbackPrincipals` / `fallback-principals` | empty | Read access when no instance ACEs exist (`group:X`, `user:Y`, `everybody`) |
+| `fallbackPrincipals` / `fallback-principals` | empty | Read access when no instance ACEs exist (`group:X`, `user:Y`, `everybody`), e.g. `group:Legal` |
 | `emitLogicalDeletes` / `emit-logical-deletes` | `true` | Search `ANY_OBJECTS` and send tombstones for removed documents |
 | `modifiedSince` / `modified-since`, `modifiedSinceAttribute` | empty / `DXE_MODDATE` | **Experimental, unverified** incremental filter |
 | `batchSize` / `batch-size` | `100` | Hits per search page |

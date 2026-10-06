@@ -244,6 +244,21 @@ class DoxisRepositoryConnectorTest {
     }
 
     @Test
+    void anUnfiledDocumentWithoutAcesIsReadableByTheFallbackGroupOnly() {
+        // as on the DX4 lab: no e-file, no instance ACEs; access is granted through fallback-principals
+        routes.put("POST /documents/search", r -> new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
+                .setBody("{\"searchId\":null,\"totalHitCount\":1,\"searchHits\":[{\"uuid\":\"d4\",\"documentTypeUUID\":\"t-mig\"}]}"));
+
+        List<RepositoryDocument> withFallback = connector(Map.of("fallbackPrincipals", "group:Legal")).scan("default").collectList().block();
+        List<RepositoryDocument> withoutFallback = connector(Map.of()).scan("default").collectList().block();
+
+        assertEquals(List.of(new PermissionRule("Legal", "group", "Legal", "read")),
+                withFallback.getFirst().security().permissions());
+        assertTrue(withoutFallback.getFirst().security().permissions().isEmpty(), "deny by default, never public");
+        assertEquals(2, count("POST /logout"));
+    }
+
+    @Test
     void searchSendsTheConfiguredCqlAndAnyObjectsFilter() throws Exception {
         List<String> bodies = new CopyOnWriteArrayList<>();
         routes.put("POST /documents/search", r -> {
