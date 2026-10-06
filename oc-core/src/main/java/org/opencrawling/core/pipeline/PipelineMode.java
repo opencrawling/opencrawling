@@ -37,6 +37,36 @@ public enum PipelineMode {
         }
     }
 
+    /**
+     * Strict variant of {@link #fromString(String)}: blank values resolve to {@code null}
+     * (meaning "inherit the global default"), while unknown values are rejected instead of
+     * silently falling back to {@link #RAG}.
+     *
+     * @param value the pipeline mode name (case-insensitive), e.g. {@code rag} or {@code migration}
+     * @return the matching mode, or {@code null} when the value is blank
+     * @throws IllegalArgumentException when the value is not a known pipeline mode
+     */
+    public static PipelineMode parseStrict(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        for (PipelineMode mode : values()) {
+            if (mode.name().equalsIgnoreCase(value.trim())) {
+                return mode;
+            }
+        }
+        throw new IllegalArgumentException("Unknown pipeline mode '" + value + "' (expected: rag or migration)");
+    }
+
+    /**
+     * Lower-case external representation used in job definitions, REST payloads and the CLI.
+     *
+     * @return the lower-case mode name
+     */
+    public String externalName() {
+        return name().toLowerCase();
+    }
+
     public boolean isMigration() {
         return this == MIGRATION;
     }

@@ -51,6 +51,8 @@ class OzoneOutputConnectorTest {
         properties.setBucket("test-bucket");
         properties.setClientType("NATIVE");
         properties.setSidecarSuffix(".ois.json");
+        properties.setOmPort(1); // nothing listens here -> deterministic in-memory fallback
+        properties.setAllowInMemoryFallback(true);
 
         client = new OzoneNativeStorageClient(properties);
         client.connect();
@@ -156,33 +158,108 @@ class OzoneOutputConnectorTest {
     }
 
     @Test
-    void testHandlesDeleteTombstoneAction() {
+    void testHandlesDeleteTombstoneWithoutMetadataAfterUpsert() {
         connector.setPipelineMode(PipelineMode.MIGRATION);
 
-        String key = "doc-del_deleted.pdf";
-        String sidecarKey = key + ".ois.json";
-
-        // Seed storage with existing item
-        client.getStorage().put(key, "data".getBytes(StandardCharsets.UTF_8));
-        client.getStorage().put(sidecarKey, "{}".getBytes(StandardCharsets.UTF_8));
-        assertTrue(client.exists(key));
-        assertTrue(client.exists(sidecarKey));
-
-        RepositoryDocument tombstone = new RepositoryDocument(
-                "doc-del",
-                "file:///data/deleted.pdf",
-                null,
-                Map.of("filename", List.of("deleted.pdf")),
+        // UPSERT through the claim-check path: uri is the claim-check URI, source path in metadata
+        RepositoryDocument upsert = new RepositoryDocument(
+                "/data/legal/deleted.pdf",
+                "s3://claims/abc_deleted.pdf",
+                new ByteArrayInputStream("data".getBytes(StandardCharsets.UTF_8)),
+                Map.of("file_name", List.of("deleted.pdf"), "file_path", List.of("/data/legal/deleted.pdf")),
                 "",
                 SecurityConfig.createPublic(),
                 Instant.now(),
-                DocumentAction.DELETE
+                DocumentAction.UPSERT
         );
+        connector.send(upsert).block();
 
-        connector.send(tombstone).block();
+        String key = "data/legal/deleted.pdf";
+        String sidecarKey = key + ".ois.json";
+        assertTrue(client.exists(key));
+        assertTrue(client.exists(sidecarKey));
+        assertTrue(client.exists(OzoneOutputConnector.indexKey("/data/legal/deleted.pdf")));
 
-        // Verify keys have been purged
+        // Real tombstones carry no metadata at all (RepositoryDocument.createTombstone)
+        connector.send(RepositoryDocument.createTombstone("/data/legal/deleted.pdf", "file:///somewhere/else.pdf")).block();
+
         assertFalse(client.exists(key));
         assertFalse(client.exists(sidecarKey));
+        assertFalse(client.exists(OzoneOutputConnector.indexKey("/data/legal/deleted.pdf")));
+    }
+
+    @Test
+    void testArchiveTombstoneWritesOisDeleteEnvelope() throws Exception {
+        properties.setTombstoneAction("ARCHIVE_TOMBSTONE");
+        connector.send(new RepositoryDocument(
+                "doc-arch", "http://repo/doc-arch", new ByteArrayInputStream(new byte[] {1, 2, 3}),
+                Map.of("filename", List.of("a.bin")), "", SecurityConfig.createPublic(), Instant.now(), DocumentAction.UPSERT)).block();
+
+        connector.send(RepositoryDocument.createTombstone("doc-arch", "http://repo/doc-arch")).block();
+
+        byte[] archived = client.getStorage().get(".tombstones/doc-arch_a.bin.ois.json");
+        assertNotNull(archived);
+        OisMigrationDocument tombstone = objectMapper.readValue(archived, OisMigrationDocument.class);
+        assertEquals("DELETE", tombstone.action());
+        assertEquals("doc-arch", tombstone.id());
+        assertNull(tombstone.contentRef());
+        assertFalse(client.exists("doc-arch_a.bin"));
+    }
+
+    @Test
+    void testChecksumAndContentRefMatchSourceBinary() throws Exception {
+        byte[] raw = new byte[256 * 1024];
+        new java.util.Random(42).nextBytes(raw);
+        String expectedSha = java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(raw));
+
+        connector.send(new RepositoryDocument(
+                "bin-1", "s3://claims/bin-1", new ByteArrayInputStream(raw),
+                Map.of("name", List.of("photo.png")), "", SecurityConfig.createPublic(),
+                Instant.parse("2026-10-05T20:00:00Z"), DocumentAction.UPSERT)).block();
+
+        String key = "bin-1_photo.png";
+        assertArrayEquals(raw, client.getStorage().get(key));
+        OisMigrationDocument ois = objectMapper.readValue(client.getStorage().get(key + ".ois.json"), OisMigrationDocument.class);
+        assertEquals(expectedSha, ois.contentRef().checksumSha256());
+        assertEquals(raw.length, ois.contentRef().contentLength());
+        assertEquals("photo.png", ois.contentRef().filename());
+        assertEquals("image/png", ois.contentRef().mimeType(), "MIME type is inferred from the file name when absent");
+        assertEquals("s3://claims/bin-1", ois.contentRef().claimCheckUri());
+    }
+
+    @Test
+    void testHierarchicalKeySanitizesTraversalSegments() {
+        RepositoryDocument doc = new RepositoryDocument(
+                "evil", "http://x", null,
+                Map.of("relativePath", List.of("../../etc/./passwd")), "", Instant.now());
+        assertEquals("etc/passwd", connector.resolveKey(doc));
+
+        assertNull(OzoneOutputConnector.sanitizePath("/../.."));
+        assertEquals("a/b/c.txt", OzoneOutputConnector.sanitizePath("\\a\\b\\c.txt"));
+    }
+
+    @Test
+    void testFlatKeySanitizesDocumentId() {
+        properties.setKeyStrategy("FLAT");
+        RepositoryDocument doc = new RepositoryDocument(
+                "/data/x y.txt", "file:///data/x%20y.txt", null,
+                Map.of("file_name", List.of("x y.txt")), "", Instant.now());
+        assertEquals("_data_x_y.txt_x_y.txt", connector.resolveKey(doc));
+    }
+
+    @Test
+    void testUnreachableOzoneFailsWhenFallbackDisabled() {
+        OzoneOutputProperties strict = new OzoneOutputProperties();
+        strict.setOmPort(1);
+        strict.setAllowInMemoryFallback(false);
+        OzoneOutputConnector strictConnector = new OzoneOutputConnector(strict, new OzoneNativeStorageClient(strict), pipelineProperties, objectMapper);
+
+        RepositoryDocument doc = new RepositoryDocument(
+                "doc-x", "s3://claims/doc-x", new ByteArrayInputStream(new byte[] {1}),
+                Map.of(), "", Instant.now());
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> strictConnector.send(doc).block());
+        assertTrue(ex.getMessage().contains("doc-x"));
     }
 }

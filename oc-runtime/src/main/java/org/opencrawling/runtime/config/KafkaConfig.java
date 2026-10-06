@@ -18,6 +18,7 @@ package org.opencrawling.runtime.config;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -32,6 +33,7 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
@@ -51,10 +53,32 @@ public class KafkaConfig {
     @Value("${spring.kafka.consumer.group-id:opencrawling-vector-group}")
     private String groupId;
 
+    /**
+     * Partitions of the documents topic: the upper bound for parallel consumers per consumer group
+     * (e.g. the Ozone migration writer). KafkaAdmin can increase, but never decrease, an existing topic.
+     */
+    @Value("${spring.opencrawling.kafka.topic.partitions:3}")
+    private int documentsTopicPartitions = 3;
+
+    /**
+     * Declares the topics below on the broker. Spring Boot 4 only auto-configures {@link KafkaAdmin}
+     * with the {@code spring-boot-kafka} module; without this bean the {@link NewTopic} declarations
+     * are ignored and the broker auto-creates topics with a single partition.
+     */
+    @Bean
+    public KafkaAdmin kafkaAdmin() {
+        Map<String, Object> configs = new HashMap<>();
+        configs.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        KafkaAdmin admin = new KafkaAdmin(configs);
+        // Don't fail startup if the broker isn't reachable yet (the broker then auto-creates topics with its defaults).
+        admin.setFatalIfBrokerNotAvailable(false);
+        return admin;
+    }
+
     @Bean
     public NewTopic opencrawlingDocumentsTopic() {
         return TopicBuilder.name(TOPIC_NAME)
-                .partitions(3)
+                .partitions(documentsTopicPartitions)
                 .replicas(1)
                 .build();
     }

@@ -15,7 +15,9 @@
  */
 package org.opencrawling.ozone.config;
 
+import org.opencrawling.core.s3.S3MultipartUploader;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 
 /**
  * Configuration properties for Apache Ozone Output Connector.
@@ -82,6 +84,72 @@ public class OzoneOutputProperties {
      * Key naming strategy: HIERARCHICAL (preserves source paths) or FLAT (id_name).
      */
     private String keyStrategy = "HIERARCHICAL";
+
+    /**
+     * NATIVE client only: buffer objects in memory when the Ozone Manager is unreachable.
+     * Intended for local development and unit tests ONLY — in-memory objects are lost on restart,
+     * so this must stay {@code false} for real migrations (connection failures then fail the document).
+     */
+    private boolean allowInMemoryFallback = false;
+
+    public boolean isAllowInMemoryFallback() {
+        return allowInMemoryFallback;
+    }
+
+    public void setAllowInMemoryFallback(boolean allowInMemoryFallback) {
+        this.allowInMemoryFallback = allowInMemoryFallback;
+    }
+
+    /**
+     * Number of parallel Kafka consumer threads of the decoupled migration writer. Effective
+     * parallelism is capped by the partitions of the documents topic
+     * ({@code spring.opencrawling.kafka.topic.partitions}). Per-document ordering is preserved.
+     */
+    private int consumerConcurrency = 3;
+
+    public int getConsumerConcurrency() {
+        return consumerConcurrency;
+    }
+
+    public void setConsumerConcurrency(int consumerConcurrency) {
+        this.consumerConcurrency = consumerConcurrency;
+    }
+
+    /**
+     * S3G client only: binaries of at least this size are uploaded with a parallel multipart upload
+     * (default {@code 256MB}); {@code 0} disables multipart. The NATIVE client always streams blocks directly.
+     */
+    private DataSize multipartThreshold = DataSize.ofBytes(S3MultipartUploader.DEFAULT_THRESHOLD);
+
+    /** S3G client only: multipart part size, at least {@code 5MB}. */
+    private DataSize multipartPartSize = DataSize.ofBytes(S3MultipartUploader.DEFAULT_PART_SIZE);
+
+    /** S3G client only: parallel part uploads per object. */
+    private int multipartConcurrency = S3MultipartUploader.DEFAULT_PART_CONCURRENCY;
+
+    public DataSize getMultipartThreshold() {
+        return multipartThreshold;
+    }
+
+    public void setMultipartThreshold(DataSize multipartThreshold) {
+        this.multipartThreshold = multipartThreshold;
+    }
+
+    public DataSize getMultipartPartSize() {
+        return multipartPartSize;
+    }
+
+    public void setMultipartPartSize(DataSize multipartPartSize) {
+        this.multipartPartSize = multipartPartSize;
+    }
+
+    public int getMultipartConcurrency() {
+        return multipartConcurrency;
+    }
+
+    public void setMultipartConcurrency(int multipartConcurrency) {
+        this.multipartConcurrency = multipartConcurrency;
+    }
 
     public String getClientType() {
         return clientType;

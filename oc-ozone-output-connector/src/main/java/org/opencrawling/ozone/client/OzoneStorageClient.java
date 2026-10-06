@@ -27,6 +27,16 @@ public interface OzoneStorageClient extends AutoCloseable {
 
     URI putObject(String key, InputStream content, long contentLength, String contentType) throws Exception;
 
+    /**
+     * Uploads a local file. Transports should override this to use a repeatable body
+     * (safe for SDK retries and checksum calculation); the default streams the file.
+     */
+    default URI putFile(String key, java.nio.file.Path file, long contentLength, String contentType) throws Exception {
+        try (InputStream in = java.nio.file.Files.newInputStream(file)) {
+            return putObject(key, in, contentLength, contentType);
+        }
+    }
+
     void putText(String key, String content, String contentType) throws Exception;
 
     InputStream getObject(String key) throws Exception;

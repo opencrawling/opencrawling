@@ -48,4 +48,14 @@ class PipelineModeTest {
         props.setMode(null);
         assertEquals(PipelineMode.RAG, props.getMode());
     }
+
+    @Test
+    void testParseStrict() {
+        assertNull(PipelineMode.parseStrict(null));
+        assertNull(PipelineMode.parseStrict("  "));
+        assertEquals(PipelineMode.MIGRATION, PipelineMode.parseStrict(" Migration "));
+        assertEquals(PipelineMode.RAG, PipelineMode.parseStrict("rag"));
+        assertThrows(IllegalArgumentException.class, () -> PipelineMode.parseStrict("migraton"));
+        assertEquals("migration", PipelineMode.MIGRATION.externalName());
+    }
 }

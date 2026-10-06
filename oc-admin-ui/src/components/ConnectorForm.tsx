@@ -34,7 +34,8 @@ import {
   Key,
   Network,
   Layers,
-  Globe
+  Globe,
+  Archive
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -99,6 +100,9 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.includes('seatunnel') || className.includes('SeaTunnel')) {
     return { icon: Network, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
+  }
+  if (className.toLowerCase().includes('ozone')) {
+    return { icon: Archive, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
   }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
@@ -254,6 +258,7 @@ export default function ConnectorForm() {
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
+      { label: 'Apache Ozone (Migration Mode only)', value: 'org.opencrawling.ozone.OzoneOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -2389,6 +2394,78 @@ export default function ConnectorForm() {
                           <option value="false">Disabled (Manual Deployment)</option>
                         </select>
                         <p className="text-xs text-muted-foreground">Automatically deploy generated HOCON job to Zeta cluster on startup.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache Ozone Output Connector (Migration Mode only) */}
+                  {selectedClass === 'org.opencrawling.ozone.OzoneOutputConnector' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2">
+                        This connector only runs in Migration Mode: binaries are copied as-is with a companion OIS JSON sidecar. Jobs using it must select Migration Mode.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-client-type" className="text-sm font-medium">Transport</label>
+                          <select
+                            id="ozone-client-type"
+                            {...register('configuration.clientType')}
+                            defaultValue="NATIVE"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          >
+                            <option value="NATIVE">NATIVE (ofs:// RPC to Ozone Manager)</option>
+                            <option value="S3G">S3G (S3 Gateway over HTTP)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-volume" className="text-sm font-medium">Volume / Bucket</label>
+                          <div className="flex gap-2">
+                            <input id="ozone-volume" {...register('configuration.volume', { required: true })} defaultValue="s3v" placeholder="s3v"
+                              className="w-1/2 bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                            <input aria-label="Bucket" {...register('configuration.bucket', { required: true })} defaultValue="migration" placeholder="migration"
+                              className="w-1/2 bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-om-host" className="text-sm font-medium">Ozone Manager Host / Port (NATIVE)</label>
+                          <div className="flex gap-2">
+                            <input id="ozone-om-host" {...register('configuration.omHost')} defaultValue="localhost" placeholder="localhost"
+                              className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                            <input aria-label="Ozone Manager port" type="number" {...register('configuration.omPort')} defaultValue="9862" placeholder="9862"
+                              className="w-28 bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-s3-endpoint" className="text-sm font-medium">S3 Gateway Endpoint (S3G)</label>
+                          <input id="ozone-s3-endpoint" type="url" {...register('configuration.s3Endpoint')} defaultValue="http://localhost:9878" placeholder="http://localhost:9878"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-access-key" className="text-sm font-medium">S3 Access Key</label>
+                          <input id="ozone-access-key" {...register('configuration.accessKey')} defaultValue="any" autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-secret-key" className="text-sm font-medium">S3 Secret Key</label>
+                          <input id="ozone-secret-key" type="password" {...register('configuration.secretKey')} defaultValue="any" autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-key-strategy" className="text-sm font-medium">Key Strategy</label>
+                          <select id="ozone-key-strategy" {...register('configuration.keyStrategy')} defaultValue="HIERARCHICAL"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="HIERARCHICAL">HIERARCHICAL (preserve source paths)</option>
+                            <option value="FLAT">FLAT (id_filename)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="ozone-tombstone-action" className="text-sm font-medium">On OIS DELETE</label>
+                          <select id="ozone-tombstone-action" {...register('configuration.tombstoneAction')} defaultValue="DELETE_KEY"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="DELETE_KEY">DELETE_KEY (purge binary + sidecar)</option>
+                            <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (purge + keep OIS tombstone)</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
                   )}

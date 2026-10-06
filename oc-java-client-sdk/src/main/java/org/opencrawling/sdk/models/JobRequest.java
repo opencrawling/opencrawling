@@ -77,7 +77,7 @@ public record JobRequest(
         private String lastRun = "N/A";
         private String transformationConnector = "Ollama_Embedding_Default";
         private NarrativizationConfig narrativization;
-        private String pipelineMode = "rag";
+        private String pipelineMode; // null = inherit the server-side opencrawling.pipeline.mode default
 
         public Builder id(String id) {
             this.id = id;

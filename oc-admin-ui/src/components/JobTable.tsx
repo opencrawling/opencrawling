@@ -54,11 +54,19 @@ import {
   ChevronUp,
   Check,
   Info,
-  Globe
+  Globe,
+  Archive
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
 
 type JobStatus = 'Running' | 'Paused' | 'Error' | 'Finished' | 'Ready'
+
+/** Pipeline execution mode (mirrors org.opencrawling.core.pipeline.PipelineMode). */
+type PipelineMode = 'rag' | 'migration'
+
+/** Output connectors that only support Migration Mode (as-is binary + OIS sidecar). */
+const isMigrationOnlyConnector = (className?: string) =>
+  !!className && className.toLowerCase().includes('ozone')
 
 interface NarrativizationConfig {
   enabled: boolean
@@ -79,6 +87,7 @@ interface Job {
   lastRun: string
   transformationConnector: string
   narrativization?: NarrativizationConfig
+  pipelineMode?: PipelineMode | null
 }
 
 const statusStyles: Record<JobStatus, string> = {
@@ -189,6 +198,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   const [formAuthority, setFormAuthority] = useState('')
   const [formPath, setFormPath] = useState('')
   const [formTransformationConnector, setFormTransformationConnector] = useState('Ollama_Embedding_Default')
+  const [formPipelineMode, setFormPipelineMode] = useState<PipelineMode>('rag')
   const [formError, setFormError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
@@ -472,6 +482,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormName('')
     setFormRepository(repositoryConnectors[0]?.name || '')
     setFormOutput(outputConnectors[0]?.name || '')
+    setFormPipelineMode(isMigrationOnlyConnector(outputConnectors[0]?.className) ? 'migration' : 'rag')
     setFormAuthority('')
     setFormPath('')
     setFormTransformationConnector('Ollama_Embedding_Default')
@@ -489,6 +500,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormName(job.name)
     setFormRepository(job.repositoryConnector)
     setFormOutput(job.outputConnector)
+    setFormPipelineMode(job.pipelineMode === 'migration' ? 'migration' : 'rag')
     setFormAuthority(job.authorityConnector || '')
     setFormPath(job.path)
     setFormTransformationConnector(job.transformationConnector || 'Ollama_Embedding_Default')
@@ -500,6 +512,15 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setFormError('')
     setIsFormOpen(true)
   }
+
+  const isSelectedOutputMigrationOnly = isMigrationOnlyConnector(
+    outputConnectors.find(c => c.name === formOutput)?.className
+  )
+
+  // Migration-only outputs (e.g. Apache Ozone) cannot run the RAG pipeline: switch automatically
+  useEffect(() => {
+    if (isSelectedOutputMigrationOnly) setFormPipelineMode('migration')
+  }, [isSelectedOutputMigrationOnly])
 
   const handleSaveJob = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -519,6 +540,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       setFormError('Scan path is required')
       return
     }
+    if (isSelectedOutputMigrationOnly && formPipelineMode !== 'migration') {
+      setFormError('The selected output connector only supports Migration Mode')
+      return
+    }
 
     setIsSaving(true)
     setFormError('')
@@ -535,6 +560,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
         documents: editingJob ? editingJob.documents : 0,
         lastRun: editingJob ? editingJob.lastRun : 'N/A',
         transformationConnector: formTransformationConnector,
+        pipelineMode: formPipelineMode,
         narrativization: {
           enabled: formNarrEnabled,
           template: formNarrTemplate,
@@ -657,7 +683,26 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                   <tr key={job.id} className="hover:bg-slate-800/30 transition-colors group">
                     {/* Job Details */}
                     <td className="px-3 sm:px-6 py-4">
-                      <div className="font-semibold text-foreground text-sm">{job.name}</div>
+                      <div className="font-semibold text-foreground text-sm flex items-center gap-2 flex-wrap">
+                        {job.name}
+                        {job.pipelineMode === 'migration' ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            title="Migration Mode: as-is binary + OIS sidecar, no embeddings"
+                          >
+                            <Archive className="w-3 h-3" aria-hidden="true" />
+                            Migration
+                          </span>
+                        ) : job.pipelineMode === 'rag' ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                            title="RAG Mode: extraction, narrativization, chunking and embeddings"
+                          >
+                            <Sparkles className="w-3 h-3" aria-hidden="true" />
+                            RAG
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="text-[10px] text-indigo-400 font-bold tracking-wide mt-1.5 flex items-center gap-1 font-mono uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded w-max" title="Transformation Connector">
                         <Cpu className="w-3 h-3 text-indigo-400" />
                         <span className="text-[10px] sm:text-xs font-mono bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-indigo-400 truncate max-w-[120px] sm:max-w-[180px] inline-block" title={job.transformationConnector || 'Ollama_Embedding_Default'}>
@@ -1027,16 +1072,79 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                     <select 
                       value={formTransformationConnector}
                       onChange={(e) => setFormTransformationConnector(e.target.value)}
-                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
-                      required
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                      required={formPipelineMode !== 'migration'}
+                      disabled={formPipelineMode === 'migration'}
+                      aria-describedby={formPipelineMode === 'migration' ? 'transformation-migration-hint' : undefined}
                     >
                       <option value="">Select transformation connector...</option>
                       {transformationConnectors.map(c => (
                         <option key={c.name} value={c.name}>{c.description || c.name}</option>
                       ))}
                     </select>
+                    {formPipelineMode === 'migration' && (
+                      <p id="transformation-migration-hint" className="text-xs text-muted-foreground">
+                        Not used in Migration Mode: vector embeddings are bypassed.
+                      </p>
+                    )}
                   </div>
                 </div>
+
+                {/* ─── Pipeline Mode ─────────────────────────────────────────────── */}
+                <fieldset className="space-y-2" aria-describedby="pipeline-mode-hint">
+                  <legend className="text-sm font-medium flex items-center gap-1.5 mb-2">
+                    <Layers className="w-4 h-4 text-sky-400" />
+                    Pipeline Mode
+                  </legend>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      {
+                        value: 'rag' as const,
+                        title: 'RAG Mode (Default)',
+                        description: 'Full text extraction, narrativization, chunking and vector embedding.',
+                        Icon: Sparkles,
+                        iconColor: 'text-indigo-400',
+                      },
+                      {
+                        value: 'migration' as const,
+                        title: 'Migration Mode',
+                        description: 'As-is binary migration + OIS Zero-Trust metadata sidecar. No embeddings.',
+                        Icon: Archive,
+                        iconColor: 'text-amber-400',
+                      },
+                    ]).map(({ value, title, description, Icon, iconColor }) => {
+                      const disabled = value === 'rag' && isSelectedOutputMigrationOnly
+                      return (
+                        <label
+                          key={value}
+                          className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/50 ${disabled ? 'opacity-50 cursor-not-allowed border-border' : 'cursor-pointer border-border hover:bg-secondary/40'}`}
+                        >
+                          <input
+                            type="radio"
+                            name="pipelineMode"
+                            value={value}
+                            checked={formPipelineMode === value}
+                            onChange={() => setFormPipelineMode(value)}
+                            disabled={disabled}
+                            className="mt-0.5 accent-primary"
+                          />
+                          <span className="space-y-0.5">
+                            <span className="flex items-center gap-1.5 font-medium text-foreground">
+                              <Icon className={`w-3.5 h-3.5 ${iconColor}`} aria-hidden="true" />
+                              {title}
+                            </span>
+                            <span className="block text-xs text-muted-foreground">{description}</span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <p id="pipeline-mode-hint" className="text-xs text-muted-foreground">
+                    {isSelectedOutputMigrationOnly
+                      ? 'The selected output connector (Apache Ozone) only supports Migration Mode.'
+                      : 'Overrides the server default (opencrawling.pipeline.mode) for this job.'}
+                  </p>
+                </fieldset>
 
                 {/* ─── Narrativization Section ──────────────────────────────────── */}
                 <div className="border border-border rounded-xl overflow-hidden">

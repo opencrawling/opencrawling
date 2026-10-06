@@ -85,6 +85,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: scm
       OZONE-SITE.XML_ozone.scm.names: scm
       OZONE-SITE.XML_ozone.om.address: om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
       OZONE_OPTS: "-Xmx256m"
@@ -100,6 +115,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: scm
       OZONE-SITE.XML_ozone.scm.names: scm
       OZONE-SITE.XML_ozone.om.address: om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
       OZONE_OPTS: "-Xmx256m"
@@ -116,6 +146,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: scm
       OZONE-SITE.XML_ozone.scm.names: scm
       OZONE-SITE.XML_ozone.om.address: om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       OZONE_OPTS: "-Xmx256m"
     command: ["ozone", "datanode"]
@@ -135,6 +180,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: scm
       OZONE-SITE.XML_ozone.scm.names: scm
       OZONE-SITE.XML_ozone.om.address: om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       OZONE_OPTS: "-Xmx256m"
     command: ["ozone", "s3g"]
@@ -153,6 +213,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: target-scm
       OZONE-SITE.XML_ozone.scm.names: target-scm
       OZONE-SITE.XML_ozone.om.address: target-om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
       OZONE_OPTS: "-Xmx256m"
@@ -168,6 +243,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: target-scm
       OZONE-SITE.XML_ozone.scm.names: target-scm
       OZONE-SITE.XML_ozone.om.address: target-om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
       OZONE_OPTS: "-Xmx256m"
@@ -184,6 +274,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: target-scm
       OZONE-SITE.XML_ozone.scm.names: target-scm
       OZONE-SITE.XML_ozone.om.address: target-om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       OZONE_OPTS: "-Xmx256m"
     command: ["ozone", "datanode"]
@@ -203,6 +308,21 @@ services:
       OZONE-SITE.XML_ozone.scm.client.address: target-scm
       OZONE-SITE.XML_ozone.scm.names: target-scm
       OZONE-SITE.XML_ozone.om.address: target-om
+      # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+      # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+      OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+      OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+      OZONE-SITE.XML_ozone.server.default.replication: "1"
+      OZONE-SITE.XML_ozone.replication: "1"
+      # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+      OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+      # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+      OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+      # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+      # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+      OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+      OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+      OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
       OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
       OZONE_OPTS: "-Xmx256m"
     command: ["ozone", "s3g"]
@@ -221,18 +341,31 @@ services:
     container_name: oc-crawler-service-ozone
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_KAFKA_TOPIC_PARTITIONS=${OC_KAFKA_PARTITIONS:-3}
+      # Parallel claim-check upload + Kafka publish lanes (per-document order preserved); 1 = sequential
+      - SPRING_OPENCRAWLING_CRAWLER_CONCURRENCY=${OC_CRAWLER_CONCURRENCY:-4}
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
-      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_OPENCRAWLING_SCAN_PATH=/crawl
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - OPENCRAWLING_PIPELINE_MODE=migration
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
-      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      # NATIVE (default, Ozone RPC to the source OM + datanodes) or S3 (source S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
-      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      # Parallel multipart upload for large claim-check objects (S3 client)
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_MULTIPART_THRESHOLD=${OC_MULTIPART_THRESHOLD:-256MB}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_MULTIPART_PART_SIZE=${OC_MULTIPART_PART_SIZE:-16MB}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_MULTIPART_CONCURRENCY=${OC_MULTIPART_CONCURRENCY:-4}
+      # NATIVE (Ozone RPC to the OM + Ratis gRPC to datanodes, default) or S3G (S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_HOST=target-om
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
@@ -242,7 +375,10 @@ services:
       - OPENCRAWLING_MCP_SERVER_ENABLED=false
       - OPENCRAWLING_TIKA_FORK_ENABLED=false
     volumes:
+      # Runtime state (settings, connectors, jobs) stays in /data and is NOT crawled.
       - ../../oc-runtime/data:/data
+      # Dedicated crawl source: only the documents to migrate.
+      - ${OC_CRAWL_SOURCE_DIR:-../../oc-runtime/crawl-data/ozone-migration}:/crawl
     depends_on:
       - kafka
       - redis
@@ -259,12 +395,16 @@ services:
     container_name: oc-ingestion-consumer-service-ozone
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_KAFKA_TOPIC_PARTITIONS=${OC_KAFKA_PARTITIONS:-3}
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - OPENCRAWLING_PIPELINE_MODE=migration
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
-      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      # NATIVE (default, Ozone RPC to the source OM + datanodes) or S3 (source S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
       - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
@@ -287,19 +427,32 @@ services:
     container_name: oc-writer-service-ozone
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_KAFKA_TOPIC_PARTITIONS=${OC_KAFKA_PARTITIONS:-3}
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - OPENCRAWLING_PIPELINE_MODE=migration
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
-      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      # NATIVE (Ozone RPC to the OM + Ratis gRPC to datanodes, default) or S3G (S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_HOST=target-om
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
-      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=S3
+      # NATIVE (default, Ozone RPC to the source OM + datanodes) or S3 (source S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_BUCKET=claims
       - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      # Parallel migration threads; effective parallelism = min(this, OC_KAFKA_PARTITIONS)
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CONSUMER_CONCURRENCY=${OZONE_WRITER_CONCURRENCY:-3}
+      # Parallel multipart upload for large binaries (S3G client only; NATIVE streams blocks directly)
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_MULTIPART_THRESHOLD=${OC_MULTIPART_THRESHOLD:-256MB}
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_MULTIPART_PART_SIZE=${OC_MULTIPART_PART_SIZE:-16MB}
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_MULTIPART_CONCURRENCY=${OC_MULTIPART_CONCURRENCY:-4}
       - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
       - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
     volumes:
@@ -330,9 +483,13 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_OPENCRAWLING_KAFKA_TOPIC_PARTITIONS=${OC_KAFKA_PARTITIONS:-3}
       - OPENCRAWLING_PIPELINE_MODE=migration
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
-      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=S3G
+      # NATIVE (Ozone RPC to the OM + Ratis gRPC to datanodes, default) or S3G (S3 Gateway HTTP)
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_HOST=target-om
+      - SPRING_OPENCRAWLING_OUTPUT_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target

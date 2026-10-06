@@ -49,6 +49,7 @@ public class OzoneNativeStorageClient implements OzoneStorageClient {
     private final String omHost;
     private final int omPort;
     private final boolean autoCreateBucket;
+    private final boolean allowInMemoryFallback;
 
     private OzoneClient ozoneClient;
     private OzoneBucket ozoneBucket;
@@ -62,6 +63,7 @@ public class OzoneNativeStorageClient implements OzoneStorageClient {
         this.omHost = properties.getOmHost() != null ? properties.getOmHost() : "localhost";
         this.omPort = properties.getOmPort() > 0 ? properties.getOmPort() : 9862;
         this.autoCreateBucket = properties.isAutoCreateBucket();
+        this.allowInMemoryFallback = properties.isAllowInMemoryFallback();
     }
 
     @Override
@@ -126,10 +128,25 @@ public class OzoneNativeStorageClient implements OzoneStorageClient {
                     omHost, omPort, volume, bucket);
 
         } catch (Exception ex) {
-            log.warn("Failed to connect to live Apache Ozone OM at {}:{}: {}. Enabling in-memory fallback buffer.",
-                    omHost, omPort, ex.getMessage());
+            if (!allowInMemoryFallback) {
+                closeQuietly();
+                throw new IOException("Failed to connect to Apache Ozone OM at " + omHost + ":" + omPort + ": " + ex.getMessage(), ex);
+            }
+            log.warn("Failed to connect to live Apache Ozone OM at {}:{}: {}. Enabling in-memory fallback buffer " +
+                    "(allow-in-memory-fallback=true; NOT for production migrations).", omHost, omPort, ex.getMessage());
             this.fallbackMode = true;
             this.connected = true;
+        }
+    }
+
+    private void closeQuietly() {
+        if (ozoneClient != null) {
+            try {
+                ozoneClient.close();
+            } catch (Exception ignored) {
+                // best effort
+            }
+            ozoneClient = null;
         }
     }
 
@@ -147,7 +164,7 @@ public class OzoneNativeStorageClient implements OzoneStorageClient {
             return uri;
         }
 
-        long size = contentLength > 0 ? contentLength : -1;
+        long size = Math.max(contentLength, 0);
         try (OzoneOutputStream out = ozoneBucket.createKey(key, size)) {
             content.transferTo(out);
         }

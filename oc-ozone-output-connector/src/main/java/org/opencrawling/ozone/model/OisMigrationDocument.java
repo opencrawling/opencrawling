@@ -48,10 +48,24 @@ public record OisMigrationDocument(
         String originalPath
     ) {}
 
+    /**
+     * Locator and integrity information for the migrated binary.
+     *
+     * @param key            object key of the binary inside the target Ozone bucket
+     * @param volume         target Ozone volume
+     * @param bucket         target Ozone bucket
+     * @param claimCheckUri  Claim Check URI the pristine binary was streamed from
+     * @param filename       original file name in the source repository
+     * @param mimeType       content MIME type
+     * @param contentLength  binary size in bytes
+     * @param checksumSha256 hex-encoded SHA-256 digest of the binary (bit-for-bit parity check)
+     */
     public record ContentRef(
         String key,
         String volume,
         String bucket,
+        String claimCheckUri,
+        String filename,
         String mimeType,
         long contentLength,
         String checksumSha256

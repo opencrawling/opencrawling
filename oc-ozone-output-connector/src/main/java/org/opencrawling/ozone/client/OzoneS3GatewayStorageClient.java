@@ -15,6 +15,7 @@
  */
 package org.opencrawling.ozone.client;
 
+import org.opencrawling.core.s3.S3MultipartUploader;
 import org.opencrawling.ozone.config.OzoneOutputProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,15 +46,26 @@ public class OzoneS3GatewayStorageClient implements OzoneStorageClient {
     private static final Logger log = LoggerFactory.getLogger(OzoneS3GatewayStorageClient.class);
 
     private final S3Client s3Client;
+    private final S3MultipartUploader uploader;
     private final String bucket;
     private final boolean autoCreateBucket;
+    private volatile boolean bucketReady = false;
 
     public OzoneS3GatewayStorageClient(OzoneOutputProperties properties) {
-        this(createS3Client(properties), properties.getBucket(), properties.isAutoCreateBucket());
+        this(createS3Client(properties), properties.getBucket(), properties.isAutoCreateBucket(),
+                properties.getMultipartThreshold().toBytes(), properties.getMultipartPartSize().toBytes(),
+                properties.getMultipartConcurrency());
     }
 
     public OzoneS3GatewayStorageClient(S3Client s3Client, String bucket, boolean autoCreateBucket) {
+        this(s3Client, bucket, autoCreateBucket, S3MultipartUploader.DEFAULT_THRESHOLD,
+                S3MultipartUploader.DEFAULT_PART_SIZE, S3MultipartUploader.DEFAULT_PART_CONCURRENCY);
+    }
+
+    public OzoneS3GatewayStorageClient(S3Client s3Client, String bucket, boolean autoCreateBucket,
+            long multipartThreshold, long multipartPartSize, int multipartConcurrency) {
         this.s3Client = s3Client;
+        this.uploader = new S3MultipartUploader(s3Client, multipartThreshold, multipartPartSize, multipartConcurrency);
         this.bucket = bucket != null && !bucket.isBlank() ? bucket : "migration";
         this.autoCreateBucket = autoCreateBucket;
     }
@@ -74,16 +86,26 @@ public class OzoneS3GatewayStorageClient implements OzoneStorageClient {
 
     @Override
     public void connect() throws Exception {
-        log.info("Connecting to Apache Ozone via S3 Gateway for bucket '{}'...", bucket);
-        if (autoCreateBucket) {
+        // Called by the connector for every document: only the first successful check hits the gateway.
+        if (!autoCreateBucket || bucketReady) {
+            return;
+        }
+        synchronized (this) {
+            if (bucketReady) {
+                return;
+            }
+            log.info("Connecting to Apache Ozone via S3 Gateway for bucket '{}'...", bucket);
             try {
                 s3Client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
                 log.info("Ozone S3 bucket '{}' verified.", bucket);
+                bucketReady = true;
             } catch (Exception e) {
                 try {
                     s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
                     log.info("Created Ozone S3 bucket '{}'.", bucket);
+                    bucketReady = true;
                 } catch (Exception ex) {
+                    // Not cached: the next document retries the check
                     log.debug("Bucket '{}' check/creation notice: {}", bucket, ex.getMessage());
                 }
             }
@@ -92,7 +114,16 @@ public class OzoneS3GatewayStorageClient implements OzoneStorageClient {
 
     @Override
     public URI putObject(String key, InputStream content, long contentLength, String contentType) throws Exception {
-        byte[] bytes = content.readAllBytes();
+        // The SDK re-reads the request body (flexible checksums, retries), so it must be repeatable.
+        // RequestBody.fromInputStream on a non-markable stream yields 0 bytes on the second read:
+        // the uploader buffers small streams and spools large ones to a temp file (multipart above the threshold).
+        if (!(content instanceof java.io.ByteArrayInputStream)) {
+            long uploaded = uploader.uploadStream(bucket, key, content, contentType);
+            URI uri = URI.create("s3://" + bucket + "/" + key);
+            log.info("Saved binary to Apache Ozone S3 Gateway: {} ({} bytes)", uri, uploaded);
+            return uri;
+        }
+
         PutObjectRequest.Builder requestBuilder = PutObjectRequest.builder()
                 .bucket(bucket)
                 .key(key);
@@ -100,9 +131,20 @@ public class OzoneS3GatewayStorageClient implements OzoneStorageClient {
             requestBuilder.contentType(contentType);
         }
 
+        byte[] bytes = content.readAllBytes();
         s3Client.putObject(requestBuilder.build(), RequestBody.fromBytes(bytes));
         URI uri = URI.create("s3://" + bucket + "/" + key);
         log.info("Saved binary to Apache Ozone S3 Gateway: {} ({} bytes)", uri, bytes.length);
+        return uri;
+    }
+
+    @Override
+    public URI putFile(String key, java.nio.file.Path file, long contentLength, String contentType) throws Exception {
+        // File-backed bodies are repeatable (SDK retries, flexible checksums); large files use parallel multipart.
+        uploader.uploadFile(bucket, key, file, contentType);
+        URI uri = URI.create("s3://" + bucket + "/" + key);
+        log.info("Saved binary to Apache Ozone S3 Gateway: {} ({} bytes{})", uri, contentLength,
+                uploader.isMultipart(contentLength) ? ", multipart" : "");
         return uri;
     }
 

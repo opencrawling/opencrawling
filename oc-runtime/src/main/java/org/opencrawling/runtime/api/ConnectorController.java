@@ -178,6 +178,16 @@ public class ConnectorController {
             "seaTunnelKafkaTopic", "opencrawling-embedded",
             "seaTunnelTargetSinks", "clickhouse,milvus"
         )));
+        defaults.add(new ConnectorDTO("Ozone_Migration_Output", "Apache Ozone Migration Target (Migration Mode only)", "output", "org.opencrawling.ozone.OzoneOutputConnector", 10, Map.of(
+            "clientType", "NATIVE",
+            "volume", "s3v",
+            "bucket", "migration",
+            "omHost", "localhost",
+            "omPort", "9862",
+            "s3Endpoint", "http://localhost:9878",
+            "keyStrategy", "HIERARCHICAL",
+            "tombstoneAction", "DELETE_KEY"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         

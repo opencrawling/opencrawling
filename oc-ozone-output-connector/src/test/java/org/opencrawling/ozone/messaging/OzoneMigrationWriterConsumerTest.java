@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -101,6 +102,46 @@ class OzoneMigrationWriterConsumerTest {
         consumer.consume(message);
 
         verify(connector, never()).send(any());
+        verifyNoInteractions(claimCheckStore);
+    }
+
+    @Test
+    void testUpsertWithoutClaimCheckContentFailsInsteadOfWritingEmptyBinary() throws Exception {
+        URI claimUri = URI.create("s3://claims/missing.pdf");
+        when(claimCheckStore.get(claimUri)).thenThrow(new java.io.FileNotFoundException("gone"));
+
+        IngestionMessage message = new IngestionMessage(
+                "doc-missing", claimUri.toString(), Map.of(), "", SecurityConfig.createPublic(),
+                "2026-10-05T20:00:00Z", null, null, Map.of(), DocumentAction.UPSERT, PipelineMode.MIGRATION);
+
+        assertThrows(IllegalStateException.class, () -> consumer.consume(message));
+        verify(connector, never()).send(any());
+    }
+
+    @Test
+    void testConnectorFailureIsPropagatedForKafkaRetry() throws Exception {
+        URI claimUri = URI.create("s3://claims/doc.pdf");
+        when(claimCheckStore.get(claimUri)).thenReturn(new ByteArrayInputStream(new byte[] {1}));
+        when(connector.send(any())).thenReturn(Mono.error(new RuntimeException("ozone down")));
+
+        IngestionMessage message = new IngestionMessage(
+                "doc-fail", claimUri.toString(), Map.of(), "", SecurityConfig.createPublic(),
+                "2026-10-05T20:00:00Z", null, null, Map.of(), DocumentAction.UPSERT, PipelineMode.MIGRATION);
+
+        assertThrows(IllegalStateException.class, () -> consumer.consume(message));
+    }
+
+    @Test
+    void testDeleteTombstoneDoesNotTouchClaimCheck() {
+        IngestionMessage message = new IngestionMessage(
+                "doc-del", "file:///data/doc.pdf", Map.of(), "", SecurityConfig.createPublic(),
+                "2026-10-05T20:00:00Z", null, null, Map.of(), DocumentAction.DELETE, PipelineMode.MIGRATION);
+
+        consumer.consume(message);
+
+        ArgumentCaptor<RepositoryDocument> captor = ArgumentCaptor.forClass(RepositoryDocument.class);
+        verify(connector).send(captor.capture());
+        assertEquals(DocumentAction.DELETE, captor.getValue().action());
         verifyNoInteractions(claimCheckStore);
     }
 }

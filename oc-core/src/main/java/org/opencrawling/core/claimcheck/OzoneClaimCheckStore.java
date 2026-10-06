@@ -36,12 +36,20 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
     private final List<OzoneClientStrategy> strategies;
 
     public OzoneClaimCheckStore(ClaimCheckProperties.Ozone ozoneProps) {
+        this(ozoneProps, new OzoneNativeClientStrategy(ozoneProps));
+    }
+
+    /**
+     * @param nativeStrategy strategy for the NATIVE (ofs) transport, e.g. a real Ozone RPC client provided through
+     *                       {@link OzoneNativeClaimCheckStrategyFactory}, or the in-process {@link OzoneNativeClientStrategy}
+     */
+    public OzoneClaimCheckStore(ClaimCheckProperties.Ozone ozoneProps, OzoneClientStrategy nativeStrategy) {
         OzoneS3GatewayClientStrategy s3Strategy = new OzoneS3GatewayClientStrategy(ozoneProps);
-        OzoneNativeClientStrategy nativeStrategy = new OzoneNativeClientStrategy(ozoneProps);
 
         if ("NATIVE".equalsIgnoreCase(ozoneProps.getClientType())) {
             this.primaryStrategy = nativeStrategy;
-            log.info("OzoneClaimCheckStore configured with Primary Strategy: NATIVE (ofs/o3fs RPC)");
+            log.info("OzoneClaimCheckStore configured with Primary Strategy: NATIVE (ofs/o3fs RPC) via {}",
+                    nativeStrategy.getClass().getSimpleName());
         } else {
             this.primaryStrategy = s3Strategy;
             log.info("OzoneClaimCheckStore configured with Primary Strategy: S3 Gateway (s3/s3g HTTP)");

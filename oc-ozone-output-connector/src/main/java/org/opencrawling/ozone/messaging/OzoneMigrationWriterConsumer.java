@@ -56,7 +56,16 @@ public class OzoneMigrationWriterConsumer {
         this.claimCheckStore = claimCheckStore;
     }
 
-    @KafkaListener(topics = "${spring.opencrawling.kafka.topic.ingestion:opencrawling-documents}")
+    /**
+     * Each listener thread owns a subset of the topic partitions. Messages are keyed by document id,
+     * so all events of one document (UPSERT, later DELETE) stay on one partition and are applied in
+     * order, while different documents migrate in parallel. Effective parallelism is
+     * min(consumer-concurrency, topic partitions).
+     */
+    @KafkaListener(
+            topics = "${spring.opencrawling.kafka.topic.ingestion:opencrawling-documents}",
+            groupId = "${spring.opencrawling.output.ozone.consumer-group:opencrawling-ozone-migration-group}",
+            concurrency = "${spring.opencrawling.output.ozone.consumer-concurrency:3}")
     public void consume(IngestionMessage message) {
         if (message.pipelineMode() != PipelineMode.MIGRATION) {
             log.debug("OzoneMigrationWriterConsumer ignoring document {} in non-migration mode: {}",
@@ -68,11 +77,16 @@ public class OzoneMigrationWriterConsumer {
 
         try {
             InputStream contentStream = null;
-            if (message.action() != DocumentAction.DELETE && message.uri() != null && claimCheckStore != null) {
-                try {
-                    contentStream = claimCheckStore.get(URI.create(message.uri()));
-                } catch (Exception ex) {
-                    log.warn("Could not retrieve claim check stream for URI {}: {}", message.uri(), ex.getMessage());
+            if (message.action() != DocumentAction.DELETE) {
+                // Bit-for-bit parity: an UPSERT without its pristine binary must fail rather than
+                // produce an empty object with a seemingly valid OIS sidecar.
+                if (message.uri() == null || claimCheckStore == null) {
+                    throw new IllegalStateException("No Claim Check store/URI available to resolve binary for document "
+                            + message.documentId());
+                }
+                contentStream = claimCheckStore.get(URI.create(message.uri()));
+                if (contentStream == null) {
+                    throw new IllegalStateException("Claim Check returned no content for URI " + message.uri());
                 }
             }
 
@@ -99,6 +113,8 @@ public class OzoneMigrationWriterConsumer {
 
         } catch (Exception e) {
             log.error("Failed to migrate document {} to Apache Ozone: {}", message.documentId(), e.getMessage(), e);
+            // Rethrow so the Kafka container error handler can retry / dead-letter the record
+            throw new IllegalStateException("Ozone migration failed for document " + message.documentId(), e);
         }
     }
 }

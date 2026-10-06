@@ -85,6 +85,13 @@ public class JobController {
     @PostMapping
     public ResponseEntity<Void> saveJob(@RequestBody JobDTO job) {
         log.info("Saving job: {}", job.name());
+        try {
+            PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
+            job = job.withPipelineMode(requestedMode != null ? requestedMode.externalName() : null);
+        } catch (IllegalArgumentException e) {
+            log.warn("Rejecting job '{}': {}", job.name(), e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
             // Generate unique ID based on timestamp
             String newId = String.valueOf(System.currentTimeMillis());
@@ -444,10 +451,11 @@ public class JobController {
                         ozoneProps.setS3Endpoint(s3Endpoint);
                         ozoneProps.setAccessKey(accessKey);
                         ozoneProps.setSecretKey(secretKey);
+                        ozoneProps.setKeyStrategy(outConfig.configuration().getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
+                        ozoneProps.setTombstoneAction(outConfig.configuration().getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
 
                         org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties, null);
-                        PipelineMode jobMode = activeJob.pipelineMode() != null ? PipelineMode.fromString(activeJob.pipelineMode()) : (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.RAG);
-                        ozoneConnector.setPipelineMode(jobMode);
+                        ozoneConnector.setPipelineMode(resolvePipelineMode(activeJob));
                         resolvedOutputConnector = ozoneConnector;
                         log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
                     }
@@ -462,20 +470,26 @@ public class JobController {
             if (resolvedOutputConnector == null) {
                 resolvedOutputConnector = this.outputConnector; // Fallback
             }
+
+            final PipelineMode mode = resolvePipelineMode(activeJob);
+
+            // Fail fast: the Apache Ozone output connector is dedicated to Migration Mode only
+            if (resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector && !mode.isMigration()) {
+                log.error("Job {} rejected: OzoneOutputConnector requires pipeline mode 'migration' but job resolved to '{}'", id, mode.externalName());
+                updateJobStatusAndStage(id, "Error", "Rejected: Ozone output requires migration mode", getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
             
             final RepositoryConnector finalConnector = resolvedConnector;
             final OutputConnector finalOutputConnector = resolvedOutputConnector;
             final JobDTO finalActiveJob = activeJob;
 
-            log.info("Launching background Virtual Thread for job {} with OutputConnector: {}", id, finalOutputConnector.getName());
+            log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
             Thread.ofVirtual().start(() -> {
                 try {
                     log.info("Background Virtual Thread running. Path: {}, OutputConnector: {}", finalActiveJob.path(), finalOutputConnector.getName());
-                    PipelineMode mode = finalActiveJob.pipelineMode() != null
-                        ? PipelineMode.fromString(finalActiveJob.pipelineMode())
-                        : (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.RAG);
                     jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization(), mode);
                     log.info("Background Virtual Thread completed successfully!");
                     // update status to completed when done, and pull actual db document count
@@ -502,6 +516,27 @@ public class JobController {
         log.info("Pausing job {}", id);
         updateJobStatus(id, "Paused");
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Resolves the effective pipeline mode for a job: the per-job override wins, otherwise the
+     * global {@code opencrawling.pipeline.mode} default applies.
+     */
+    PipelineMode resolvePipelineMode(JobDTO job) {
+        return resolvePipelineMode(job != null ? job.id() : null, job != null ? job.pipelineMode() : null, pipelineProperties);
+    }
+
+    static PipelineMode resolvePipelineMode(String jobId, String jobPipelineMode, PipelineProperties globalProperties) {
+        PipelineMode jobMode = null;
+        try {
+            jobMode = PipelineMode.parseStrict(jobPipelineMode);
+        } catch (IllegalArgumentException e) {
+            log.warn("Job {} has an invalid pipeline mode '{}', falling back to the global default", jobId, jobPipelineMode);
+        }
+        if (jobMode != null) {
+            return jobMode;
+        }
+        return globalProperties != null ? globalProperties.getMode() : PipelineMode.RAG;
     }
 
     private void updateJobStatus(String id, String status) {
@@ -630,6 +665,10 @@ public class JobController {
             NarrativizationConfig narrativization
         ) {
             this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+        }
+
+        public JobDTO withPipelineMode(String mode) {
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode);
         }
     }
 }
