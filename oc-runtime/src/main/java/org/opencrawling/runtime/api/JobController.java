@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.filesystem.FileSystemRepositoryConnector;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 
@@ -43,6 +45,9 @@ public class JobController {
     private final FileSystemRepositoryConnector fileSystemRepositoryConnector;
     private final OutputConnector outputConnector;
     private final JdbcTemplate jdbcTemplate;
+
+    @Autowired(required = false)
+    private PipelineProperties pipelineProperties;
 
     @Autowired
     public JobController(
@@ -80,6 +85,13 @@ public class JobController {
     @PostMapping
     public ResponseEntity<Void> saveJob(@RequestBody JobDTO job) {
         log.info("Saving job: {}", job.name());
+        try {
+            PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
+            job = job.withPipelineMode(requestedMode != null ? requestedMode.externalName() : null);
+        } catch (IllegalArgumentException e) {
+            log.warn("Rejecting job '{}': {}", job.name(), e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
             // Generate unique ID based on timestamp
             String newId = String.valueOf(System.currentTimeMillis());
@@ -95,7 +107,8 @@ public class JobController {
                 0,
                 "N/A",
                 job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
-                job.narrativization()
+                job.narrativization(),
+                job.pipelineMode()
             );
             jobs.add(newJob);
         } else {
@@ -115,7 +128,8 @@ public class JobController {
                         existing.documents(),
                         existing.lastRun(),
                         job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
-                        job.narrativization() != null ? job.narrativization() : existing.narrativization()
+                        job.narrativization() != null ? job.narrativization() : existing.narrativization(),
+                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode()
                     ));
                     break;
                 }
@@ -417,6 +431,33 @@ public class JobController {
                         org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
                         resolvedOutputConnector = new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
                         log.info("Successfully resolved dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
+                    } else if (cls.contains("Ozone") || cls.contains("ozone")) {
+                        String volume = outConfig.configuration().getOrDefault("volume", "opencrawling");
+                        String bucket = outConfig.configuration().getOrDefault("bucket", "migration");
+                        String clientType = outConfig.configuration().getOrDefault("clientType", "NATIVE");
+                        String omHost = outConfig.configuration().getOrDefault("omHost", "localhost");
+                        int omPort = 9862;
+                        try { omPort = Integer.parseInt(outConfig.configuration().getOrDefault("omPort", "9862")); } catch (Exception ignored) {}
+                        String s3Endpoint = outConfig.configuration().getOrDefault("s3Endpoint", "http://localhost:9878");
+                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "any");
+                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "any");
+
+                        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
+                        ozoneProps.setVolume(volume);
+                        ozoneProps.setBucket(bucket);
+                        ozoneProps.setClientType(clientType);
+                        ozoneProps.setOmHost(omHost);
+                        ozoneProps.setOmPort(omPort);
+                        ozoneProps.setS3Endpoint(s3Endpoint);
+                        ozoneProps.setAccessKey(accessKey);
+                        ozoneProps.setSecretKey(secretKey);
+                        ozoneProps.setKeyStrategy(outConfig.configuration().getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
+                        ozoneProps.setTombstoneAction(outConfig.configuration().getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
+
+                        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties, null);
+                        ozoneConnector.setPipelineMode(resolvePipelineMode(activeJob));
+                        resolvedOutputConnector = ozoneConnector;
+                        log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
                     }
                 }
             } catch (Exception e) {
@@ -429,18 +470,27 @@ public class JobController {
             if (resolvedOutputConnector == null) {
                 resolvedOutputConnector = this.outputConnector; // Fallback
             }
+
+            final PipelineMode mode = resolvePipelineMode(activeJob);
+
+            // Fail fast: the Apache Ozone output connector is dedicated to Migration Mode only
+            if (resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector && !mode.isMigration()) {
+                log.error("Job {} rejected: OzoneOutputConnector requires pipeline mode 'migration' but job resolved to '{}'", id, mode.externalName());
+                updateJobStatusAndStage(id, "Error", "Rejected: Ozone output requires migration mode", getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
             
             final RepositoryConnector finalConnector = resolvedConnector;
             final OutputConnector finalOutputConnector = resolvedOutputConnector;
             final JobDTO finalActiveJob = activeJob;
 
-            log.info("Launching background Virtual Thread for job {} with OutputConnector: {}", id, finalOutputConnector.getName());
+            log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
             Thread.ofVirtual().start(() -> {
                 try {
                     log.info("Background Virtual Thread running. Path: {}, OutputConnector: {}", finalActiveJob.path(), finalOutputConnector.getName());
-                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization());
+                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization(), mode);
                     log.info("Background Virtual Thread completed successfully!");
                     // update status to completed when done, and pull actual db document count
                     updateJobStatusAndStage(id, "Finished", "Completed", getActualDbDocCount());
@@ -466,6 +516,27 @@ public class JobController {
         log.info("Pausing job {}", id);
         updateJobStatus(id, "Paused");
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Resolves the effective pipeline mode for a job: the per-job override wins, otherwise the
+     * global {@code opencrawling.pipeline.mode} default applies.
+     */
+    PipelineMode resolvePipelineMode(JobDTO job) {
+        return resolvePipelineMode(job != null ? job.id() : null, job != null ? job.pipelineMode() : null, pipelineProperties);
+    }
+
+    static PipelineMode resolvePipelineMode(String jobId, String jobPipelineMode, PipelineProperties globalProperties) {
+        PipelineMode jobMode = null;
+        try {
+            jobMode = PipelineMode.parseStrict(jobPipelineMode);
+        } catch (IllegalArgumentException e) {
+            log.warn("Job {} has an invalid pipeline mode '{}', falling back to the global default", jobId, jobPipelineMode);
+        }
+        if (jobMode != null) {
+            return jobMode;
+        }
+        return globalProperties != null ? globalProperties.getMode() : PipelineMode.RAG;
     }
 
     private void updateJobStatus(String id, String status) {
@@ -572,10 +643,32 @@ public class JobController {
         long documents,
         String lastRun,
         String transformationConnector,
-        NarrativizationConfig narrativization
+        NarrativizationConfig narrativization,
+        String pipelineMode
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
+        }
+
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+        }
+
+        public JobDTO withPipelineMode(String mode) {
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode);
         }
     }
 }

@@ -24,4 +24,18 @@ public non-sealed interface RepositoryConnector extends Connector {
     default ConnectorSchema getSchema(String basePath) {
         return new ConnectorSchema(java.util.List.of());
     }
+
+    /**
+     * Whether the standalone crawler may process this connector's documents in parallel lanes
+     * ({@code spring.opencrawling.crawler.concurrency}).
+     *
+     * <p>Parallel processing decouples the scan from document processing, so the scan runs ahead and up to a few
+     * hundred emitted documents are buffered. Return {@code true} only if a buffered document holds no scarce
+     * resource (open connection, cursor, large in-memory payload) until its content is read, e.g. content streams
+     * that are opened lazily, and if documents can be handled from any thread. Defaults to {@code false}
+     * (sequential processing, the scan is paced by processing).
+     */
+    default boolean supportsConcurrentProcessing() {
+        return false;
+    }
 }

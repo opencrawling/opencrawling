@@ -18,10 +18,11 @@ package org.opencrawling.core.messaging;
 import java.util.List;
 import java.util.Map;
 import org.opencrawling.core.document.DocumentAction;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.security.SecurityConfig;
 
 /**
- * Message payload sent to Kafka to trigger vector store processing.
+ * Message payload sent to Kafka to trigger vector store processing or content migration.
  * Follows the Claim Check pattern: carries metadata and URI, consumer pulls content.
  */
 public record IngestionMessage(
@@ -34,8 +35,36 @@ public record IngestionMessage(
     String transformationConnector,
     String transformationEngine,
     Map<String, String> transformationConfig,
-    DocumentAction action
+    DocumentAction action,
+    PipelineMode pipelineMode
 ) {
+    public IngestionMessage {
+        if (pipelineMode == null) {
+            pipelineMode = PipelineMode.RAG;
+        }
+        if (security == null) {
+            security = SecurityConfig.createPublic();
+        }
+        if (action == null) {
+            action = DocumentAction.UPSERT;
+        }
+    }
+
+    public IngestionMessage(
+        String documentId,
+        String uri,
+        Map<String, List<String>> metadata,
+        String acl,
+        SecurityConfig security,
+        String lastModified,
+        String transformationConnector,
+        String transformationEngine,
+        Map<String, String> transformationConfig,
+        DocumentAction action
+    ) {
+        this(documentId, uri, metadata, acl, security, lastModified, transformationConnector, transformationEngine, transformationConfig, action, PipelineMode.RAG);
+    }
+
     public IngestionMessage(
         String documentId,
         String uri,
@@ -47,7 +76,7 @@ public record IngestionMessage(
         String transformationEngine,
         Map<String, String> transformationConfig
     ) {
-        this(documentId, uri, metadata, acl, security, lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT);
+        this(documentId, uri, metadata, acl, security, lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT, PipelineMode.RAG);
     }
 
     public IngestionMessage(
@@ -60,6 +89,6 @@ public record IngestionMessage(
         String transformationEngine,
         Map<String, String> transformationConfig
     ) {
-        this(documentId, uri, metadata, acl, SecurityConfig.createPublic(), lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT);
+        this(documentId, uri, metadata, acl, SecurityConfig.createPublic(), lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT, PipelineMode.RAG);
     }
 }

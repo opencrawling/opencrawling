@@ -82,6 +82,12 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
     @Override
     public void disconnect() throws Exception {}
 
+    /** Safe: documents carry metadata only, files are opened lazily on first read ({@link LazyFileInputStream}). */
+    @Override
+    public boolean supportsConcurrentProcessing() {
+        return true;
+    }
+
     @Override
     public Flux<RepositoryDocument> scan(String basePath) {
         return Flux.create(sink -> {
@@ -199,7 +205,7 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
         return new RepositoryDocument(
             file.toAbsolutePath().toString(),
             file.toUri().toString(),
-            Files.newInputStream(file),
+            new LazyFileInputStream(file),
             metadata,
             isPublic ? "public" : "secured",
             securityConfig,

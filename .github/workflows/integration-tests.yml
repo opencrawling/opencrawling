@@ -59,6 +59,16 @@ jobs:
             script: "test-ozone-claimcheck-gc.sh"
           - name: "Apache Ozone Decoupled Pipeline Test Suite"
             script: "test-ozone-decoupled.sh"
+          - name: "Apache Ozone Migration Mode Test Suite"
+            script: "test-ozone-migration.sh"
+          - name: "Apache Ozone Migration Decoupled Pipeline Test Suite (NATIVE)"
+            script: "test-ozone-migration-decoupled.sh"
+            ozone_client_type: "NATIVE"
+            claim_check_client_type: "NATIVE"
+          - name: "Apache Ozone Migration Decoupled Pipeline Test Suite (S3G)"
+            script: "test-ozone-migration-decoupled.sh"
+            ozone_client_type: "S3G"
+            claim_check_client_type: "S3"
           - name: "Alfresco Decoupled Pipeline Test Suite"
             script: "test-alfresco-decoupled.sh"
           - name: "Alfresco Process Services Connector Test Suite"
@@ -129,6 +139,9 @@ jobs:
           chmod 755 oc-runtime/data oc-cli/target oc-embedding-service/target
 
       - name: Execute ${{ matrix.test.name }}
+        env:
+          OUTPUT_OZONE_CLIENT_TYPE: ${{ matrix.test.ozone_client_type || '' }}
+          CLAIM_CHECK_OZONE_CLIENT_TYPE: ${{ matrix.test.claim_check_client_type || '' }}
         run: ./scripts/${{ matrix.test.script }}
 
   integration-tests-summary:

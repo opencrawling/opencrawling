@@ -15,7 +15,9 @@
  */
 package org.opencrawling.core.claimcheck;
 
+import org.opencrawling.core.s3.S3MultipartUploader;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 
 /**
  * Configuration properties for OpenCrawling Claim Check Pattern storage.
@@ -177,6 +179,37 @@ public class ClaimCheckProperties {
 
         public void setAutoCreateBucket(boolean autoCreateBucket) {
             this.autoCreateBucket = autoCreateBucket;
+        }
+
+        /** S3 client only: objects of at least this size use a parallel multipart upload; {@code 0} disables it. */
+        private DataSize multipartThreshold = DataSize.ofBytes(S3MultipartUploader.DEFAULT_THRESHOLD);
+        /** S3 client only: multipart part size, at least {@code 5MB}. */
+        private DataSize multipartPartSize = DataSize.ofBytes(S3MultipartUploader.DEFAULT_PART_SIZE);
+        /** S3 client only: parallel part uploads per object. */
+        private int multipartConcurrency = S3MultipartUploader.DEFAULT_PART_CONCURRENCY;
+
+        public DataSize getMultipartThreshold() {
+            return multipartThreshold;
+        }
+
+        public void setMultipartThreshold(DataSize multipartThreshold) {
+            this.multipartThreshold = multipartThreshold;
+        }
+
+        public DataSize getMultipartPartSize() {
+            return multipartPartSize;
+        }
+
+        public void setMultipartPartSize(DataSize multipartPartSize) {
+            this.multipartPartSize = multipartPartSize;
+        }
+
+        public int getMultipartConcurrency() {
+            return multipartConcurrency;
+        }
+
+        public void setMultipartConcurrency(int multipartConcurrency) {
+            this.multipartConcurrency = multipartConcurrency;
         }
     }
 

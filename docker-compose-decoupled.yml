@@ -14,6 +14,30 @@
 # limitations under the License.
 #
 
+# Shared Apache Ozone settings for the single-datanode claim-check cluster (merged into each Ozone service).
+x-ozone-env: &ozone-env
+  OZONE-SITE.XML_ozone.scm.client.address: scm
+  OZONE-SITE.XML_ozone.scm.names: scm
+  OZONE-SITE.XML_ozone.om.address: om
+  # Required: without it SCM, OM and the datanode exit at startup ("ozone.metadata.dirs must be defined").
+  OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+  # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+  # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+  OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+  OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+  OZONE-SITE.XML_ozone.server.default.replication: "1"
+  OZONE-SITE.XML_ozone.replication: "1"
+  # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+  OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+  # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+  OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+  # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+  # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+  OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+  OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+  OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
+  OZONE_OPTS: "-Xmx256m"
+
 services:
   # --- Infrastructure Services ---
   postgres:
@@ -104,13 +128,14 @@ services:
       - opencrawling-network
 
   # --- Apache Ozone Object Storage (Claim Check Store) ---
+  # Same single-node dev configuration as oc-ozone-output-connector/docker/docker-compose-decoupled-with-ozone.yml.
   ozone-scm:
     image: apache/ozone:2.2.0
     container_name: ozone-scm
     hostname: scm
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
+      ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
     command: ["ozone", "scm"]
     networks:
       - opencrawling-network
@@ -120,8 +145,8 @@ services:
     container_name: ozone-om
     hostname: om
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
+      ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
     command: ["ozone", "om"]
     depends_on:
       - ozone-scm
@@ -132,8 +157,7 @@ services:
     image: apache/ozone:2.2.0
     container_name: ozone-datanode
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
     command: ["ozone", "datanode"]
     depends_on:
       - ozone-scm
@@ -148,8 +172,7 @@ services:
     ports:
       - "9878:9878"
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
     command: ["ozone", "s3g"]
     depends_on:
       - ozone-scm
@@ -175,6 +198,10 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
       - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
@@ -207,6 +234,10 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true

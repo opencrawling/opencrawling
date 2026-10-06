@@ -21,8 +21,10 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OzoneClaimCheckStoreTest {
 
@@ -73,7 +75,21 @@ class OzoneClaimCheckStoreTest {
         assertThat(retrievedText).isEqualTo(text);
 
         ozoneStore.delete(storedUri);
-        InputStream emptyStream = ozoneStore.get(storedUri);
-        assertThat(emptyStream.readAllBytes()).isEmpty();
+        // A missing object must fail loudly, never yield empty content (which would be written as a 0-byte document)
+        assertThatThrownBy(() -> ozoneStore.get(storedUri))
+                .isInstanceOf(NoSuchFileException.class)
+                .hasMessageContaining("native-doc-1");
+    }
+
+    @Test
+    void testNativeStrategyFailsForObjectWrittenByAnotherProcess() {
+        ClaimCheckProperties.Ozone ozoneProps = new ClaimCheckProperties.Ozone();
+        ozoneProps.setClientType("NATIVE");
+        // Simulates the decoupled writer reading a claim check URI produced by the crawler in another JVM
+        OzoneClaimCheckStore writerSideStore = new OzoneClaimCheckStore(ozoneProps);
+
+        assertThatThrownBy(() -> writerSideStore.get(URI.create("ofs://s3v/claims/_crawl_doc.txt_doc.txt")))
+                .isInstanceOf(NoSuchFileException.class)
+                .hasMessageContaining("in-process only");
     }
 }

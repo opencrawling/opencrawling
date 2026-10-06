@@ -105,6 +105,7 @@
         <module>oc-solr-output-connector</module>
         <module>oc-luxir-output-connector</module>
         <module>oc-seatunnel-output-connector</module>
+        <module>oc-ozone-output-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
         <module>oc-aps-repository-connector</module>

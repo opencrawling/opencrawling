@@ -1,2 +1,3 @@
 org.opencrawling.core.claimcheck.ClaimCheckAutoConfiguration
 org.opencrawling.core.text.TextExtractionAutoConfiguration
+org.opencrawling.core.pipeline.PipelineAutoConfiguration

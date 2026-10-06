@@ -15,6 +15,9 @@
  */
 package org.opencrawling.core.claimcheck;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -31,6 +34,8 @@ import java.util.List;
 @EnableConfigurationProperties(ClaimCheckProperties.class)
 public class ClaimCheckAutoConfiguration {
 
+    private static final Logger log = LoggerFactory.getLogger(ClaimCheckAutoConfiguration.class);
+
     @Bean("localFileClaimCheckStore")
     @ConditionalOnMissingBean(LocalFileClaimCheckStore.class)
     public LocalFileClaimCheckStore localFileClaimCheckStore(
@@ -45,8 +50,21 @@ public class ClaimCheckAutoConfiguration {
 
     @Bean("ozoneClaimCheckStore")
     @ConditionalOnMissingBean(OzoneClaimCheckStore.class)
-    public OzoneClaimCheckStore ozoneClaimCheckStore(ClaimCheckProperties properties) {
-        return new OzoneClaimCheckStore(properties.getOzone());
+    public OzoneClaimCheckStore ozoneClaimCheckStore(ClaimCheckProperties properties,
+            ObjectProvider<OzoneNativeClaimCheckStrategyFactory> nativeStrategyFactory) {
+        ClaimCheckProperties.Ozone ozoneProps = properties.getOzone();
+        OzoneNativeClaimCheckStrategyFactory factory = nativeStrategyFactory.getIfAvailable();
+        if (factory != null) {
+            return new OzoneClaimCheckStore(ozoneProps, factory.create(ozoneProps));
+        }
+        boolean nativeActive = "NATIVE".equalsIgnoreCase(ozoneProps.getClientType())
+                && ("ozone".equalsIgnoreCase(properties.getStore()) || "s3".equalsIgnoreCase(properties.getStore()));
+        if (nativeActive) {
+            log.warn("Claim check uses the NATIVE Ozone transport but no Ozone RPC client is on the classpath: "
+                    + "falling back to an IN-PROCESS store. Content is NOT shared across services; use "
+                    + "client-type=S3 or add oc-ozone-output-connector for decoupled deployments.");
+        }
+        return new OzoneClaimCheckStore(ozoneProps);
     }
 
     @Bean("claimCheckStore")
