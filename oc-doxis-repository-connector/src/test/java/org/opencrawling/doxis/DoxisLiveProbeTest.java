@@ -63,6 +63,7 @@ class DoxisLiveProbeTest {
     static final class RecordingHttpClient extends HttpClient {
         private final HttpClient delegate;
         final ArrayNode calls;
+        boolean keepBodies = true;
 
         RecordingHttpClient(HttpClient delegate, ArrayNode calls) {
             this.delegate = delegate;
@@ -85,7 +86,7 @@ class DoxisLiveProbeTest {
                 java.net.http.HttpResponse<T> response = delegate.send(request, handler);
                 call.put("status", response.statusCode());
                 call.put("ms", (System.nanoTime() - start) / 1_000_000);
-                if (response.body() instanceof String body && (path.endsWith("/permissions") || path.endsWith("/versions"))) {
+                if (keepBodies && response.body() instanceof String body && (path.endsWith("/permissions") || path.endsWith("/versions"))) {
                     call.put("body", body.length() > 4000 ? body.substring(0, 4000) + "…" : body);
                 }
                 return response;
@@ -158,6 +159,90 @@ class DoxisLiveProbeTest {
                 }
             }
         } finally {
+            String path = System.getenv("DOXIS_PROBE_REPORT");
+            if (path != null) {
+                Files.writeString(Path.of(path), mapper.writeValueAsString(report));
+            }
+        }
+    }
+
+    /**
+     * Full crawl (DOXIS_PROBE_MODE=crawl): the connector over every document of DOXIS_QUERY, one at a time, with
+     * DOXIS_FALLBACK readers; content is read, checked against the recorded size and discarded. One session.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DOXIS_PROBE_MODE", matches = "crawl")
+    void fullReadOnlyCrawl() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        ObjectNode report = mapper.createObjectNode();
+        RecordingHttpClient http = new RecordingHttpClient(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(60)).build(),
+                report.putArray("calls"));
+        http.keepBodies = false;
+        DoxisClient client = new DoxisClient(env("DOXIS_URL"), env("DOXIS_CUSTOMER"), env("DOXIS_USER"), env("DOXIS_PASSWORD"),
+                env("DOXIS_ROLE"), "OpenCrawling-LiveCrawl", Duration.ofSeconds(180), 0, Duration.ofSeconds(5), http, new ObjectMapper());
+        long started = System.currentTimeMillis();
+        try {
+            DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(Map.of(
+                    "url", env("DOXIS_URL"), "customerName", env("DOXIS_CUSTOMER"), "username", env("DOXIS_USER"),
+                    "password", env("DOXIS_PASSWORD"), "role", env("DOXIS_ROLE"), "repositoryId", env("DOXIS_REPOSITORY"),
+                    "searchQuery", env("DOXIS_QUERY"), "batchSize", "50", "parallelism", "1",
+                    "fallbackPrincipals", env("DOXIS_FALLBACK")));
+            // the connector logs in, crawls and logs out itself: one session
+            List<RepositoryDocument> docs = new DoxisRepositoryConnector(settings, client).scan("default").collectList().block();
+            assertNotNull(docs);
+            Set<String> ids = new HashSet<>();
+            int upserts = 0, deletes = 0, withContent = 0, sizeMismatch = 0, missingTitle = 0, missingExternalId = 0;
+            long bytes = 0;
+            Map<String, Integer> permissionShapes = new java.util.TreeMap<>();
+            Map<String, Integer> classes = new java.util.TreeMap<>();
+            for (RepositoryDocument doc : docs) {
+                ids.add(doc.id());
+                if (doc.action() == org.opencrawling.core.document.DocumentAction.DELETE) {
+                    deletes++;
+                    continue;
+                }
+                upserts++;
+                Map<String, List<String>> m = doc.metadata();
+                classes.merge(String.valueOf(m.get("doxis.documentClass")), 1, Integer::sum);
+                if (m.get("ObjectName") == null) missingTitle++;
+                if (m.get("ObjectNumberExternal") == null) missingExternalId++;
+                if (doc.contentStream() != null) {
+                    try (InputStream in = doc.contentStream()) {
+                        long n = in.readAllBytes().length;
+                        bytes += n;
+                        withContent++;
+                        List<String> size = m.get("doxis.fileSize");
+                        if (size == null || Long.parseLong(size.getFirst()) != n) sizeMismatch++;
+                    }
+                }
+                permissionShapes.merge(doc.security().permissions().toString(), 1, Integer::sum);
+            }
+            ObjectNode summary = report.putObject("summary");
+            summary.put("emitted", docs.size());
+            summary.put("distinctIds", ids.size());
+            summary.put("upserts", upserts);
+            summary.put("tombstones", deletes);
+            summary.put("withContent", withContent);
+            summary.put("contentBytes", bytes);
+            summary.put("sizeMismatches", sizeMismatch);
+            summary.put("missingObjectName", missingTitle);
+            summary.put("missingObjectNumberExternal", missingExternalId);
+            summary.putPOJO("documentClasses", classes);
+            summary.putPOJO("permissionShapes", permissionShapes);
+        } finally {
+            report.put("seconds", (System.currentTimeMillis() - started) / 1000);
+            Map<String, Integer> byCall = new java.util.TreeMap<>();
+            int notOk = 0;
+            for (JsonNode call : report.path("calls")) {
+                String path = call.path("path").asText().replaceAll("[0-9a-f]{8}-[0-9a-f-]{27}", "{id}").replaceAll("\\?.*", "");
+                byCall.merge(call.path("method").asText() + " " + path + " " + call.path("status").asText("ERR"), 1, Integer::sum);
+                int status = call.path("status").asInt(0);
+                if (status < 200 || status >= 300) notOk++;
+            }
+            report.putPOJO("callsByType", byCall);
+            report.put("totalCalls", report.path("calls").size());
+            report.put("callsNot2xx", notOk);
+            report.remove("calls");
             String path = System.getenv("DOXIS_PROBE_REPORT");
             if (path != null) {
                 Files.writeString(Path.of(path), mapper.writeValueAsString(report));
