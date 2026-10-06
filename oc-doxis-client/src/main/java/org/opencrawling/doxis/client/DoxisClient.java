@@ -28,6 +28,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
@@ -430,6 +434,140 @@ public class DoxisClient implements AutoCloseable {
         executeTolerating404("Delete document " + documentId, () -> plainRequest(path, "DELETE"));
     }
 
+    // ------------------------------------------------------------------ crawling reads (repository connector)
+
+    /**
+     * One page of a CQL document search. A non-null {@code searchId} is a server-side result set that must be closed with
+     * {@link #closeSearch(String)}; {@code restrictionMode} is CSB's {@code searchResultRestrictionMode}.
+     */
+    public record SearchPage(String searchId, int totalHitCount, String restrictionMode, int maxSearchResults,
+                             List<JsonNode> hits) {
+    }
+
+    public List<JsonNode> listRoles() throws IOException, InterruptedException {
+        return list(get("List roles", "/roles"));
+    }
+
+    /**
+     * {@code POST /documents/search} returning the first page of current versions ({@code DocumentWsTO} hits).
+     * {@code logicallyDeletedFilter} is {@code NON_DELETED_OBJECTS}, {@code ONLY_DELETED_OBJECTS} or {@code ANY_OBJECTS}.
+     */
+    public SearchPage searchDocuments(String cqlStatement, String logicallyDeletedFilter, int pageSize)
+            throws IOException, InterruptedException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("cqlStatement", cqlStatement);
+        params.put("currentVersionOnly", true);
+        params.put("fetchResultLimitation", pageSize);
+        params.put("logicallyDeletedFilter", logicallyDeletedFilter);
+        return toSearchPage(execute("Search documents", () -> jsonRequest("/documents/search", "POST", params, true), true, true));
+    }
+
+    /**
+     * {@code GET /documents/searchResults/{searchId}?offset&limit}: a further page of an open search result.
+     */
+    public SearchPage nextSearchResults(String searchId, int offset, int limit) throws IOException, InterruptedException {
+        return toSearchPage(get("Get search results " + searchId + " from " + offset,
+                "/documents/searchResults/" + enc(searchId) + "?offset=" + offset + "&limit=" + limit));
+    }
+
+    /**
+     * {@code DELETE /documents/searchResults/{searchId}}; failures are logged, not thrown.
+     */
+    public void closeSearch(String searchId) throws InterruptedException {
+        if (searchId == null || searchId.isBlank() || "null".equals(searchId)) {
+            return;
+        }
+        try {
+            execute("Close search " + searchId, () -> plainRequest("/documents/searchResults/" + enc(searchId), "DELETE"), true, true);
+        } catch (IOException e) {
+            log.debug("Closing Doxis search {} failed: {}", searchId, e.getMessage());
+        }
+    }
+
+    /**
+     * {@code GET …/documents/{uuid}/versions?initializeRepresentations=true}: the whole {@code DocumentWsTO} (primary parent,
+     * dates, type, logical-delete state) with its {@code versions[]}.
+     */
+    public JsonNode getDocumentWithVersions(String repository, String documentId) throws IOException, InterruptedException {
+        return get("Get versions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
+                + enc(documentId) + "/versions?initializeRepresentations=true");
+    }
+
+    /**
+     * {@code GET …/versions/{v}/representations/{rep}/contentObjects/{id}}: streams the binary into {@code target} and returns
+     * its length. Each attempt writes a truncated sibling {@code .part} file that is moved onto {@code target} only on success,
+     * so a failed or retried attempt never leaves a partial file. Content-link documents cannot be downloaded through REST
+     * ({@code SEDNA0104}); callers skip them.
+     */
+    public long downloadContentObject(String repository, String documentId, String versionNr, String representationId,
+                                      String contentObjectId, Path target) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions/" + enc(versionNr)
+                + "/representations/" + enc(representationId) + "/contentObjects/" + enc(contentObjectId);
+        String operation = "Download content object " + contentObjectId + " of " + documentId;
+        Path part = target.resolveSibling(target.getFileName() + ".part");
+        login();
+        int attempt = 0;
+        boolean reloggedIn = false;
+        try {
+            while (true) {
+                HttpRequest request = builder(path, true).setHeader("Accept", "*/*").GET().build();
+                HttpResponse<Path> response;
+                try {
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofFile(part,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING));
+                } catch (ConnectException e) {
+                    if (attempt >= maxRetries) {
+                        throw e;
+                    }
+                    backoff(operation, ++attempt, "connection refused", null);
+                    continue;
+                }
+                int status = response.statusCode();
+                if (status >= 200 && status < 300) {
+                    Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                    return Files.size(target);
+                }
+                String body = Files.readString(part, StandardCharsets.UTF_8);
+                if (status == 401 && !reloggedIn) {
+                    log.info("Doxis session expired during {}, logging in again.", operation);
+                    sessionLock.lock();
+                    try {
+                        token = doLogin();
+                    } finally {
+                        sessionLock.unlock();
+                    }
+                    reloggedIn = true;
+                    continue;
+                }
+                if (RETRYABLE_STATUS.contains(status) && attempt < maxRetries) {
+                    backoff(operation, ++attempt, "HTTP " + status, response.headers().firstValue("Retry-After").orElse(null));
+                    continue;
+                }
+                throw toException(operation, status, body);
+            }
+        } finally {
+            Files.deleteIfExists(part);
+        }
+    }
+
+    /**
+     * {@code GET …/records/{uuid}/nodes/{nodeId}/referencedInformationObjects}: what a folder node of an e-file holds —
+     * documents in {@code searchHitsDocumentWsTO[]}, sub-e-files in {@code searchHitsCompoundEntityWsTO[]}.
+     */
+    public JsonNode getNodeReferencedObjects(String repository, String recordId, String nodeId) throws IOException, InterruptedException {
+        return get("Get objects in node " + nodeId + " of record " + recordId, "/dmsRepositories/" + enc(repository) + "/records/"
+                + enc(recordId) + "/nodes/" + enc(nodeId) + "/referencedInformationObjects");
+    }
+
+    private SearchPage toSearchPage(JsonNode result) {
+        String searchId = result.path("searchId").asText(null);
+        if (searchId != null && (searchId.isBlank() || "null".equals(searchId))) {
+            searchId = null;
+        }
+        return new SearchPage(searchId, result.path("totalHitCount").asInt(-1), result.path("searchResultRestrictionMode").asText(null),
+                result.path("maxSearchResults").asInt(-1), list(result.path("searchHits")));
+    }
+
     // ------------------------------------------------------------------ plumbing
 
     /** JSON bodies as a tree; operations declared as {@code string} may answer with a bare, unquoted value. */
@@ -596,10 +734,14 @@ public class DoxisClient implements AutoCloseable {
     }
 
     private DoxisApiException toException(String operation, HttpResponse<String> response) {
+        return toException(operation, response.statusCode(), response.body());
+    }
+
+    private DoxisApiException toException(String operation, int statusCode, String body) {
         String errorCode = null;
-        String message = response.body();
+        String message = body;
         try {
-            JsonNode error = objectMapper.readTree(response.body());
+            JsonNode error = objectMapper.readTree(body);
             errorCode = error.path("errorCode").asText(null);
             message = error.path("message").asText(message);
         } catch (Exception ignored) {
@@ -608,6 +750,6 @@ public class DoxisClient implements AutoCloseable {
         if (message != null && message.length() > 500) {
             message = message.substring(0, 500) + "…";
         }
-        return new DoxisApiException("Doxis " + operation, response.statusCode(), errorCode, message);
+        return new DoxisApiException("Doxis " + operation, statusCode, errorCode, message);
     }
 }

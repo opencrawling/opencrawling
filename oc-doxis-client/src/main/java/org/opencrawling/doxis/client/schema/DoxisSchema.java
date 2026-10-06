@@ -44,6 +44,8 @@ public class DoxisSchema {
     private volatile Map<String, String> principalsByName;
     private volatile Set<String> mimeTypes;
     private volatile Map<String, String> recordTypeIdsByName;
+    private volatile Map<String, String> documentTypeNames = Map.of();
+    private volatile Map<String, Principal> principalsById;
 
     public DoxisSchema(DoxisClient client) {
         this.client = client;
@@ -175,13 +177,73 @@ public class DoxisSchema {
     }
 
     /**
+     * The name of a document type given by UUID, if known.
+     */
+    public Optional<String> documentTypeName(String uuid) throws IOException, InterruptedException {
+        if (uuid == null) {
+            return Optional.empty();
+        }
+        documentTypes();
+        return Optional.ofNullable(documentTypeNames.get(uuid.toLowerCase(Locale.ROOT)));
+    }
+
+    /**
+     * An organisational element (user, group or role) as named in ACEs ({@code organizationalElementId}).
+     * {@code type} is {@code user}, {@code group} or {@code role}; {@code name} is the login name for users.
+     */
+    public record Principal(String uuid, String name, String type) {
+    }
+
+    /**
+     * Resolves an ACE's organisational element UUID to its user, group or role.
+     */
+    public Optional<Principal> principalById(String uuid) throws IOException, InterruptedException {
+        if (uuid == null || uuid.isBlank()) {
+            return Optional.empty();
+        }
+        Map<String, Principal> cached = principalsById;
+        if (cached == null) {
+            lock.lock();
+            try {
+                if (principalsById == null) {
+                    Map<String, Principal> map = new HashMap<>();
+                    for (JsonNode role : client.listRoles()) {
+                        putPrincipal(map, role, role.path("name").asText(), "role");
+                    }
+                    for (JsonNode group : client.listGroups()) {
+                        putPrincipal(map, group, group.path("name").asText(), "group");
+                    }
+                    for (JsonNode user : client.listUsers()) {
+                        String login = user.path("loginName").asText(null);
+                        putPrincipal(map, user, login != null && !login.isBlank() ? login : user.path("name").asText(), "user");
+                    }
+                    principalsById = map;
+                }
+                cached = principalsById;
+            } finally {
+                lock.unlock();
+            }
+        }
+        return Optional.ofNullable(cached.get(uuid.toLowerCase(Locale.ROOT)));
+    }
+
+    private static void putPrincipal(Map<String, Principal> map, JsonNode node, String name, String type) {
+        String uuid = node.path("uuid").asText(null);
+        if (uuid != null && !uuid.isBlank()) {
+            map.put(uuid.toLowerCase(Locale.ROOT), new Principal(uuid, name, type));
+        }
+    }
+
+    /**
      * Drops cached schema and organisation data (e.g. after a schema change in cubeDesigner).
      */
     public void invalidate() {
         attributesByName = null;
         documentTypeIdsByName = null;
+        documentTypeNames = Map.of();
         allowedMimeTypesByType = null;
         principalsByName = null;
+        principalsById = null;
         mimeTypes = null;
         recordTypeIdsByName = null;
     }
@@ -224,14 +286,17 @@ public class DoxisSchema {
             if (documentTypeIdsByName == null) {
                 Map<String, String> map = new LinkedHashMap<>();
                 Map<String, Set<String>> mimes = new HashMap<>();
+                Map<String, String> names = new HashMap<>();
                 for (JsonNode node : client.listDocumentTypes()) {
                     String uuid = node.path("uuid").asText();
                     map.put(node.path("name").asText().toLowerCase(Locale.ROOT), uuid);
+                    names.put(uuid.toLowerCase(Locale.ROOT), node.path("name").asText());
                     Set<String> allowed = new LinkedHashSet<>();
                     node.path("allowedMimeTypes").forEach(m -> allowed.add(m.path("mimeName").asText().toLowerCase(Locale.ROOT)));
                     mimes.put(uuid, allowed);
                 }
                 allowedMimeTypesByType = mimes;
+                documentTypeNames = names;
                 documentTypeIdsByName = map;
             }
             return documentTypeIdsByName;

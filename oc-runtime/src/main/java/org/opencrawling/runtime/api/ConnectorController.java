@@ -157,6 +157,29 @@ public class ConnectorController {
             Map.entry("doxisConflictResolution", "NEW_VERSION"),
             Map.entry("doxisDeleteMode", "LOGICAL")
         )));
+        defaults.add(new ConnectorDTO("Doxis_Repository", "Doxis 4 ECM Repository (CSB REST API)", "repository", "org.opencrawling.doxis.DoxisRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8080/restws/publicws/rest/api/v1"),
+            Map.entry("authType", "basic"),
+            Map.entry("customerName", ""),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("role", "admins"),
+            Map.entry("repositoryId", ""),
+            Map.entry("crawlMode", "search"),
+            Map.entry("documentClasses", ""),
+            Map.entry("searchQuery", ""),
+            Map.entry("rootFolderId", ""),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "latest_only"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("includeDescriptors", "true"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("descriptorPrefix", ""),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "2"),
+            Map.entry("timeoutSeconds", "120")
+        )));
         defaults.add(new ConnectorDTO("SeaTunnel_Output", "Apache SeaTunnel Distributed Fan-Out", "output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector", 10, Map.of(
             "seaTunnelRestUrl", "http://localhost:8080",
             "seaTunnelJobName", "opencrawling_ingestion_pipeline",

@@ -1,0 +1,16 @@
+{"uuid":"d1","documentTypeUUID":"t-mig","ownerId":"u-sup","creationDate":"2026-10-05T21:45:00.000+01:00",
+ "modificationDate":"2026-10-05T21:50:00.000+01:00","primaryParentObjectUUID":"e1","lifecycleState":"EXTENDABLE",
+ "versions":[
+   {"versionNumber":"1","currentVersion":false,"modificatorId":"u-sup","modificationDate":"2026-10-05T21:45:00.000+01:00",
+    "attributes":[{"attributeDefinitionUUID":"a-name","values":["Mutual NDA (draft)"]}],
+    "representations":[{"uuid":"r0","defaultRepresentation":true,"contentObjects":[
+      {"uuid":"c0","index":0,"length":8,"mimeTypeName":"application/pdf","fullFilename":"NDA-001-draft.pdf"}]}]},
+   {"versionNumber":"2","currentVersion":true,"modificatorId":"u-maya","modificationDate":"2026-10-05T21:50:00.000+01:00",
+    "attributes":[
+      {"attributeDefinitionUUID":"a-name","values":["Mutual NDA"]},
+      {"attributeDefinitionUUID":"a-ext","values":["contracts-2026/NDA-001"]},
+      {"attributeDefinitionUUID":"a-authors","values":["Acme Energy","Legal Ops"]}],
+    "representations":[
+      {"uuid":"r-rend","defaultRepresentation":false,"contentObjects":[{"uuid":"c-x","index":0,"length":5}]},
+      {"uuid":"r1","defaultRepresentation":true,"mimeTypeName":"application/pdf","contentObjects":[
+        {"uuid":"c1","index":0,"length":13,"mimeTypeName":"application/pdf","fullFilename":"NDA-001.pdf"}]}]}]}

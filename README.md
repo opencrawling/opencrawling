@@ -72,6 +72,7 @@ graph TD
         ACS_Conn[Alfresco Repository - oc-alfresco-repository-connector]
         APS_Conn[Alfresco Process Services - oc-aps-repository-connector]
         CMIS_Conn[OASIS CMIS Repository - oc-cmis-repository-connector]
+        Doxis_Repo_Conn[Doxis 4 Repository - oc-doxis-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
         Camunda_Conn[Camunda Repository - oc-camunda-repository-connector]
@@ -479,7 +480,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
   - **S3 Gateway Client (`s3g`)**: Standard AWS S3 SDK integration hitting Ozone's S3 Gateway endpoint for maximum cloud versatility.
-- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, Apache Iceberg, Flowable BPMN, Camunda, and Apache StormCrawler.
+- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, Apache Iceberg, Flowable BPMN, Camunda, and Apache StormCrawler.
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Qdrant**: Rust-based vector search engine with payload-indexed ACL pre-filtering and optional scalar/binary quantization.
@@ -764,6 +765,33 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 - `AUTO` (the default) chooses among these per document.
 
 Every write is verified by reading back the content object's length and SHA-256. Files above `opencrawling.ingestion.max-extract-bytes` skip text extraction and embedding but are still archived. See [oc-doxis-output-connector/README.md](oc-doxis-output-connector/README.md).
+
+### Option A.9.b: Doxis 4 Repository Crawling
+
+[![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
+
+To crawl a [Doxis 4](https://www.doxis.com/en/) DMS repository, select the Doxis repository connector and point it at a Doxis CSB:
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=doxis \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=doxis \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_URL=http://<csb-host>:8080/restws/publicws/rest/api/v1 \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_CUSTOMER_NAME=<customer> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_REPOSITORY_ID=<repository> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_SEARCH_QUERY="OBJECTNAME LIKE 'Contract*'" \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`DoxisRepositoryConnector` reads documents through the Doxis CSB REST API.
+- **What it crawls:** either one CQL search (`crawl-mode: search`) or an e-file (*Akte*) and its folder nodes (`crawl-mode: folder`).
+- **What each document carries:** its descriptors, the content of its default representation, and the document and e-file ACLs as OIS permissions.
+- **Deletes:** logically removed documents become `DELETE` tombstones.
+- **Sessions:** a scan uses one CSB session and always logs out.
+
+In the Admin UI it is the **Doxis Repository** repository connector. See
+[oc-doxis-repository-connector/README.md](oc-doxis-repository-connector/README.md).
 
 ### Option A.10: Decoupled Apache SeaTunnel-Based Deployment
 

@@ -27,12 +27,14 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.doxis.output.config.DoxisConnectorSettings;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.client.DoxisClient;
+import org.opencrawling.doxis.DoxisRepositorySettings;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
 
@@ -81,6 +83,11 @@ public class ConnectorCheckerService {
             // --- Luxir Output Connector ---
             if (className.contains("LuxirOutputConnector") || className.contains("Luxir")) {
                 return checkLuxir(config);
+            }
+
+            // --- Doxis Repository Connector (before the generic Doxis match below) ---
+            if (className.contains("DoxisRepositoryConnector")) {
+                return checkDoxisRepository(config);
             }
 
             // --- Doxis AI.dp Output Connector ---
@@ -623,6 +630,24 @@ public class ConnectorCheckerService {
             return new ConnectionCheckResult(true, message + ".", user.path("uuid").asText(null));
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + props.baseUrl() + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkDoxisRepository(Map<String, String> config) {
+        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "Doxis repository connector is not configured: " + String.join(" ", problems), null);
+        }
+        DoxisClient client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
+                settings.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(30), 0);
+        try (client) {
+            JsonNode repository = client.getRepository(settings.repositoryId());
+            String shortName = repository.path("shortName").asText(repository.path("name").asText(settings.repositoryId()));
+            return new ConnectionCheckResult(true, "Successfully logged in to Doxis CSB at " + client.getBaseUrl() + " (customer '"
+                    + settings.customerName() + "'); repository '" + shortName + "' is accessible.", repository.path("uuid").asText(null));
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + settings.url() + ": " + e.getMessage(), e.toString());
         }
     }
 

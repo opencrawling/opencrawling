@@ -1,0 +1,4 @@
+[
+  {"organizationalElementId":"g-legal","permissionName":"VIEW_FOLDER_CONTENTS","authorizationVariant":"GRANT"},
+  {"organizationalElementId":"u-maya","permissionName":"VIEW_FOLDER_CONTENTS","authorizationVariant":"DENY"}
+]

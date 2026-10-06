@@ -1,0 +1,6 @@
+[
+  {"uuid":"a-name","name":"ObjectName","shortName":"OBJECTNAME","attributeDataType":"STRING","length":250,"multivalueType":"NONE"},
+  {"uuid":"a-ext","name":"ObjectNumberExternal","shortName":"OBJECTNUMBER2","attributeDataType":"STRING","length":255,"multivalueType":"NONE"},
+  {"uuid":"a-date","name":"ObjectDate","shortName":"OBJECTDATE","attributeDataType":"DATE","length":0,"multivalueType":"NONE"},
+  {"uuid":"a-authors","name":"ObjectAuthors","shortName":"OBJECTAUTHORS","attributeDataType":"STRING","length":250,"multivalueType":"SET"}
+]

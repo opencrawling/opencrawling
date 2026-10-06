@@ -106,6 +106,7 @@
         <module>oc-luxir-output-connector</module>
         <module>oc-doxis-client</module>
         <module>oc-doxis-output-connector</module>
+        <module>oc-doxis-repository-connector</module>
         <module>oc-seatunnel-output-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>

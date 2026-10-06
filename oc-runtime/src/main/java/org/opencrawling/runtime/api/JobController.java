@@ -224,6 +224,12 @@ public class JobController {
                                 changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
                         );
                         log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
+                    } else if (connConfig.className().contains("DoxisRepositoryConnector")) {
+                        org.opencrawling.doxis.DoxisRepositorySettings doxisSettings =
+                                org.opencrawling.doxis.DoxisRepositorySettings.fromConfiguration(connConfig.configuration());
+                        resolvedConnector = new org.opencrawling.doxis.DoxisRepositoryConnector(doxisSettings);
+                        log.info("Successfully resolved dynamic Doxis repository connector for '{}' (repository '{}', {} mode)",
+                                doxisSettings.url(), doxisSettings.repositoryId(), doxisSettings.crawlMode());
                     } else {
                         resolvedConnector = fileSystemRepositoryConnector;
                     }

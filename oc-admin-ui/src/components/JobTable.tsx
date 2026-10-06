@@ -346,6 +346,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. -root-, /Company Home/Shared, or a specific Node UUID',
           description: 'Define the starting location in Alfresco. Use -root- to scan the whole repository, or provide a folder path or node UUID.'
         };
+      case 'org.opencrawling.doxis.DoxisRepositoryConnector':
+        return {
+          label: 'CQL Statement / E-File ID',
+          placeholder: "e.g. default, SELECT * FROM DB1 WHERE OBJECTNAME LIKE 'NDA*', or an e-file UUID",
+          description: 'Use default for the connector configuration. A SELECT statement replaces the search; in folder mode an e-file UUID replaces the root e-file.'
+        };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {
           label: 'Iceberg Table Name',

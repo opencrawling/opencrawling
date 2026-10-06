@@ -151,6 +151,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-doxis-repository-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-seatunnel-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>
