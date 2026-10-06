@@ -182,7 +182,7 @@ class DoxisLiveProbeTest {
                 env("DOXIS_ROLE"), "OpenCrawling-LiveCrawl", Duration.ofSeconds(180), 0, Duration.ofSeconds(5), http, new ObjectMapper());
         long started = System.currentTimeMillis();
         try {
-            DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(Map.of(
+            DoxisProperties settings = DoxisProperties.fromConfiguration(Map.of(
                     "url", env("DOXIS_URL"), "customerName", env("DOXIS_CUSTOMER"), "username", env("DOXIS_USER"),
                     "password", env("DOXIS_PASSWORD"), "role", env("DOXIS_ROLE"), "repositoryId", env("DOXIS_REPOSITORY"),
                     "searchQuery", env("DOXIS_QUERY"), "batchSize", "50", "parallelism", "1",
@@ -243,6 +243,85 @@ class DoxisLiveProbeTest {
             report.put("totalCalls", report.path("calls").size());
             report.put("callsNot2xx", notOk);
             report.remove("calls");
+            String path = System.getenv("DOXIS_PROBE_REPORT");
+            if (path != null) {
+                Files.writeString(Path.of(path), mapper.writeValueAsString(report));
+            }
+        }
+    }
+
+    /**
+     * DOXIS_PROBE_MODE=verify2: (A) session-ticket login: a basic session hands out a ticket, a second client logs in with it,
+     * reads the repository and logs out, then the first logs out; (B) incremental: a full incremental crawl (state in
+     * DOXIS_STATE_DIR), then a rerun that must skip everything; (C) typed values on real data. Read-only, sequential.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DOXIS_PROBE_MODE", matches = "verify2")
+    void ticketIncrementalAndTypedValues() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        ObjectNode report = mapper.createObjectNode();
+        Map<String, String> base = new java.util.HashMap<>(Map.of("url", env("DOXIS_URL"), "customerName", env("DOXIS_CUSTOMER"),
+                "username", env("DOXIS_USER"), "password", env("DOXIS_PASSWORD"), "role", env("DOXIS_ROLE"),
+                "repositoryId", env("DOXIS_REPOSITORY"), "searchQuery", env("DOXIS_QUERY"), "batchSize", "50",
+                "parallelism", "1", "maxRetries", "0"));
+        base.put("fallbackPrincipals", env("DOXIS_FALLBACK"));
+        try {
+            // (A) session ticket
+            ObjectNode ticket = report.putObject("A_sessionTicket");
+            try (DoxisClient basic = DoxisRepositoryConnector.newClient(DoxisProperties.fromConfiguration(base), "OpenCrawling-LiveProbe",
+                    Duration.ofSeconds(180), 0)) {
+                String sessionTicket = basic.getSessionTicket();
+                ticket.put("ticketReceived", !sessionTicket.isBlank());
+                Map<String, String> viaTicket = new java.util.HashMap<>(base);
+                viaTicket.put("authType", "ticket");
+                viaTicket.put("sessionTicket", sessionTicket);
+                try (DoxisClient fromTicket = DoxisRepositoryConnector.newClient(DoxisProperties.fromConfiguration(viaTicket),
+                        "OpenCrawling-LiveProbe", Duration.ofSeconds(180), 0)) {
+                    fromTicket.login();
+                    ticket.put("ticketLogin", "ok");
+                    ticket.put("repositoryViaTicket", fromTicket.getRepository(env("DOXIS_REPOSITORY")).path("shortName").asText());
+                }
+            } catch (DoxisApiException e) {
+                ticket.put("error", e.getStatusCode() + " " + e.getErrorCode() + " " + e.getMessage());
+            }
+
+            // (B) incremental: first run, then a rerun
+            Map<String, String> inc = new java.util.HashMap<>(base);
+            inc.put("incremental", "true");
+            inc.put("stateDirectory", env("DOXIS_STATE_DIR"));
+            for (String run : List.of("B_incrementalRun1", "B_incrementalRun2")) {
+                long started = System.currentTimeMillis();
+                List<RepositoryDocument> docs = new DoxisRepositoryConnector(DoxisProperties.fromConfiguration(inc))
+                        .scan("default").collectList().block();
+                assertNotNull(docs);
+                ObjectNode r = report.putObject(run);
+                r.put("seconds", (System.currentTimeMillis() - started) / 1000);
+                r.put("upserts", docs.stream().filter(d -> d.action() == org.opencrawling.core.document.DocumentAction.UPSERT).count());
+                r.put("tombstones", docs.stream().filter(d -> d.action() == org.opencrawling.core.document.DocumentAction.DELETE).count());
+                if (run.endsWith("1")) {
+                    // (C) typed values on real data
+                    ObjectNode typed = report.putObject("C_typedValues");
+                    java.util.Map<String, Integer> objectDateShapes = new java.util.TreeMap<>();
+                    int raw = 0;
+                    for (RepositoryDocument d : docs) {
+                        if (d.contentStream() != null) {
+                            d.contentStream().close();
+                        }
+                        List<String> date = d.metadata().get("ObjectDate");
+                        objectDateShapes.merge(date == null ? "missing" : date.getFirst().replaceAll("\\d", "9"), 1, Integer::sum);
+                        if (d.metadata().containsKey("doxis.raw.ObjectDate")) raw++;
+                    }
+                    typed.putPOJO("ObjectDateShapes", objectDateShapes);
+                    typed.put("withRawObjectDate", raw);
+                    if (!docs.isEmpty()) {
+                        typed.putPOJO("sample", Map.of("ObjectDate", docs.getFirst().metadata().get("ObjectDate"),
+                                "doxis.raw.ObjectDate", String.valueOf(docs.getFirst().metadata().get("doxis.raw.ObjectDate"))));
+                    }
+                }
+            }
+            JsonNode state = mapper.readTree(java.nio.file.Files.list(Path.of(env("DOXIS_STATE_DIR"))).findFirst().orElseThrow().toFile());
+            report.put("stateEntries", state.size());
+        } finally {
             String path = System.getenv("DOXIS_PROBE_REPORT");
             if (path != null) {
                 Files.writeString(Path.of(path), mapper.writeValueAsString(report));
@@ -324,7 +403,7 @@ class DoxisLiveProbeTest {
             }
 
             // (b + c) the connector itself, 3 documents, one at a time
-            DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(Map.of(
+            DoxisProperties settings = DoxisProperties.fromConfiguration(Map.of(
                     "url", env("DOXIS_URL"), "customerName", env("DOXIS_CUSTOMER"), "username", env("DOXIS_USER"),
                     "password", env("DOXIS_PASSWORD"), "role", env("DOXIS_ROLE"), "repositoryId", repository,
                     "searchQuery", query, "batchSize", "3", "parallelism", "1", "maxDocuments", "3"));

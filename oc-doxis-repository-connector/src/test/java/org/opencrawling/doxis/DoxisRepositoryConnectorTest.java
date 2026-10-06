@@ -15,6 +15,7 @@
  */
 package org.opencrawling.doxis;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -136,7 +137,7 @@ class DoxisRepositoryConnectorTest {
                 "url", server.url(BASE).toString(), "customerName", "DX4", "username", "crawler", "password", "secret",
                 "repositoryId", "DB1", "batchSize", "2"));
         config.putAll(extra);
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(config);
+        DoxisProperties settings = DoxisProperties.fromConfiguration(config);
         DoxisClient client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
                 settings.role(), "OpenCrawling-Test", Duration.ofSeconds(5), 0, Duration.ofMillis(1), HttpClient.newHttpClient(),
                 new ObjectMapper());
@@ -316,7 +317,7 @@ class DoxisRepositoryConnectorTest {
 
     @Test
     void anInvalidConfigurationFailsBeforeAnyRequest() {
-        DoxisRepositoryConnector connector = new DoxisRepositoryConnector(DoxisRepositorySettings.fromConfiguration(Map.of(
+        DoxisRepositoryConnector connector = new DoxisRepositoryConnector(DoxisProperties.fromConfiguration(Map.of(
                 "url", server.url(BASE).toString(), "authType", "oauth2")));
 
         StepVerifier.create(connector.scan("default"))
@@ -411,6 +412,98 @@ class DoxisRepositoryConnectorTest {
             assertEquals("%PDF old", new String(in.readAllBytes(), StandardCharsets.UTF_8));
         }
         v2.contentStream().close();
+    }
+
+    // ------------------------------------------------------------------ incremental
+
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path stateDir;
+
+    private List<RepositoryDocument> incrementalRun(Map<String, String> extra) {
+        Map<String, String> config = new HashMap<>(Map.of("incremental", "true", "stateDirectory", stateDir.toString(),
+                "includeContentStream", "false"));
+        config.putAll(extra);
+        return connector(config).scan("default").collectList().block();
+    }
+
+    private static List<String> ids(List<RepositoryDocument> docs, DocumentAction action) {
+        return docs.stream().filter(d -> d.action() == action).map(RepositoryDocument::id).sorted().toList();
+    }
+
+    @Test
+    void anIncrementalRerunSkipsUnchangedDocumentsWithoutPerDocumentCalls() throws Exception {
+        searchFixtures();
+
+        List<RepositoryDocument> first = incrementalRun(Map.of());
+        assertEquals(List.of("doxis://DX4/DB1/documents/d1", "doxis://DX4/DB1/documents/d3"), ids(first, DocumentAction.UPSERT));
+        java.nio.file.Path state = stateDir.resolve("DX4-DB1.json");
+        assertTrue(java.nio.file.Files.exists(state));
+        JsonNode saved = new ObjectMapper().readTree(state.toFile());
+        assertEquals("2026-10-05T21:50:00.000+01:00", saved.path("d1").path("modified").asText());
+        assertFalse(saved.has("d2"), "a logically removed document is not kept");
+        requests.clear();
+
+        List<RepositoryDocument> second = incrementalRun(Map.of());
+
+        assertTrue(ids(second, DocumentAction.UPSERT).isEmpty(), "nothing changed");
+        assertEquals(List.of("doxis://DX4/DB1/documents/d2"), ids(second, DocumentAction.DELETE), "the removed one stays deleted");
+        assertEquals(0, requests.stream().filter(r -> r.contains("/versions") || r.contains("/permissions")).count());
+        assertEquals(1, count("POST /logout"));
+    }
+
+    @Test
+    void aChangedDocumentIsRecrawledAndAVanishedOneIsDeleted() throws Exception {
+        searchFixtures();
+        incrementalRun(Map.of());
+        // d1 modified, d3 physically deleted
+        routes.put("POST /documents/search", r -> new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
+                .setBody("{\"searchId\":null,\"totalHitCount\":1,\"searchHits\":[{\"uuid\":\"d1\",\"documentTypeUUID\":\"t-mig\","
+                        + "\"modificationDate\":\"2026-10-06T09:00:00.000+01:00\"}]}"));
+        requests.clear();
+
+        List<RepositoryDocument> docs = incrementalRun(Map.of());
+
+        assertEquals(List.of("doxis://DX4/DB1/documents/d1"), ids(docs, DocumentAction.UPSERT));
+        assertEquals(List.of("doxis://DX4/DB1/documents/d3"), ids(docs, DocumentAction.DELETE));
+        JsonNode saved = new ObjectMapper().readTree(stateDir.resolve("DX4-DB1.json").toFile());
+        assertEquals("2026-10-06T09:00:00.000+01:00", saved.path("d1").path("modified").asText());
+        assertFalse(saved.has("d3"));
+    }
+
+    @Test
+    void aPartialListingInfersNoDeletesAndKeepsTheUnlistedState() throws Exception {
+        searchFixtures();
+        incrementalRun(Map.of());
+        routes.put("POST /documents/search", r -> new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
+                .setBody("{\"searchId\":\"s-2\",\"totalHitCount\":5,\"searchHits\":[{\"uuid\":\"d1\",\"documentTypeUUID\":\"t-mig\","
+                        + "\"modificationDate\":\"2026-10-06T09:00:00.000+01:00\"}]}"));
+        routes.put("DELETE /documents/searchResults/s-2", r -> new MockResponse().setResponseCode(204));
+
+        List<RepositoryDocument> docs = incrementalRun(Map.of("maxDocuments", "1"));
+
+        assertTrue(ids(docs, DocumentAction.DELETE).isEmpty(), "a capped listing proves nothing about the rest");
+        JsonNode saved = new ObjectMapper().readTree(stateDir.resolve("DX4-DB1.json").toFile());
+        assertTrue(saved.has("d3"), "unlisted documents keep their state");
+        assertEquals("2026-10-06T09:00:00.000+01:00", saved.path("d1").path("modified").asText());
+    }
+
+    @Test
+    void aFailedDocumentKeepsItsStateAndIsRetriedNextTime() throws Exception {
+        searchFixtures();
+        incrementalRun(Map.of());
+        routes.put("POST /documents/search", r -> new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
+                .setBody("{\"searchId\":null,\"totalHitCount\":1,\"searchHits\":[{\"uuid\":\"d1\",\"documentTypeUUID\":\"t-mig\","
+                        + "\"modificationDate\":\"2026-10-06T09:00:00.000+01:00\"}]}"));
+        routes.put("GET " + DOCS + "d1/versions?initializeRepresentations=true",
+                r -> new MockResponse().setResponseCode(500).setBody("{\"errorCode\":\"SEDNA9999\",\"message\":\"boom\"}"));
+
+        List<RepositoryDocument> docs = incrementalRun(Map.of());
+
+        // the listing is complete, so d3 is gone whatever happened to d1
+        assertEquals(List.of("doxis://DX4/DB1/documents/d3"), ids(docs, DocumentAction.DELETE));
+        JsonNode saved = new ObjectMapper().readTree(stateDir.resolve("DX4-DB1.json").toFile());
+        assertEquals("2026-10-05T21:50:00.000+01:00", saved.path("d1").path("modified").asText(), "old date kept, so d1 is retried");
+        assertFalse(saved.has("d3"));
     }
 
     // ------------------------------------------------------------------ FOLDER mode

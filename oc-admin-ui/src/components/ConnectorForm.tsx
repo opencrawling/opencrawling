@@ -1588,6 +1588,39 @@ export default function ConnectorForm() {
                           Send Deletes for Logically Removed Documents
                         </label>
                       </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="incrementalDoxis"
+                          {...register('configuration.incremental')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalDoxis" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Skip Unchanged, Detect Deletes; Search Mode)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="tenantIsolationDoxis"
+                          {...register('configuration.tenantIsolation')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="tenantIsolationDoxis" className="text-sm font-medium cursor-pointer">
+                          Tenant Isolation (Qualify Readers with the Customer, e.g. DX4/Legal)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input 
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/doxis-state"
+                          defaultValue="data/doxis-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
                     </div>
                   )}
 

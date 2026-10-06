@@ -32,7 +32,7 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.doxis.DoxisRepositoryConnector;
-import org.opencrawling.doxis.DoxisRepositorySettings;
+import org.opencrawling.doxis.DoxisProperties;
 import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
@@ -475,7 +475,7 @@ public class ConnectorCheckerService {
     }
 
     private ConnectionCheckResult checkDoxisRepository(Map<String, String> config) {
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(config);
+        DoxisProperties settings = DoxisProperties.fromConfiguration(config);
         List<String> problems = settings.validate();
         if (!problems.isEmpty()) {
             return new ConnectionCheckResult(false, "Doxis repository connector is not configured: " + String.join(" ", problems)

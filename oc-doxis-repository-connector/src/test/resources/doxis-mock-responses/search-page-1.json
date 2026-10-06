@@ -1,4 +1,20 @@
-{"searchId":"s-1","totalHitCount":3,"searchResultRestrictionMode":"NOT_RESTRICTED","maxSearchResults":1000,
- "searchHits":[
-   {"uuid":"d1","documentTypeUUID":"t-mig","logicalDeleted":false},
-   {"uuid":"d2","documentTypeUUID":"t-mig","logicalDeleted":true}]}
+{
+ "searchId": "s-1",
+ "totalHitCount": 3,
+ "searchResultRestrictionMode": "NOT_RESTRICTED",
+ "maxSearchResults": 1000,
+ "searchHits": [
+  {
+   "uuid": "d1",
+   "documentTypeUUID": "t-mig",
+   "logicalDeleted": false,
+   "modificationDate": "2026-10-05T21:50:00.000+01:00"
+  },
+  {
+   "uuid": "d2",
+   "documentTypeUUID": "t-mig",
+   "logicalDeleted": true,
+   "modificationDate": "2026-10-05T21:55:00.000+01:00"
+  }
+ ]
+}

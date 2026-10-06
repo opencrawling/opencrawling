@@ -52,8 +52,13 @@ import java.util.Map;
  * @param batchSize              hits per search page
  * @param parallelism            documents processed at the same time; keep low, CSB sessions are licence-capped
  * @param maxDocuments           stop after this many documents (0 = no limit); meant for test runs against shared systems
+ * @param tenantIsolation        qualify every permission identity with the CSB customer ({@code DX4/Legal}), so groups and users
+ *                               of different Doxis tenants (Mandanten) never match each other in OpenCrawling
+ * @param incremental            search mode only: keep a crawl state between runs, skip documents whose modification date is
+ *                               unchanged, and after a complete listing send DELETE tombstones for documents that disappeared
+ * @param stateDirectory         where the incremental crawl state is kept (one JSON file per customer and repository)
  */
-public record DoxisRepositorySettings(
+public record DoxisProperties(
         String url,
         String authType,
         String customerName,
@@ -87,7 +92,10 @@ public record DoxisRepositorySettings(
         int parallelism,
         Duration timeout,
         int maxRetries,
-        int maxDocuments) {
+        int maxDocuments,
+        boolean tenantIsolation,
+        boolean incremental,
+        String stateDirectory) {
 
     public enum CrawlMode { SEARCH, FOLDER }
 
@@ -102,11 +110,11 @@ public record DoxisRepositorySettings(
             "repositoryId", "crawlMode", "documentClasses", "searchQuery", "rootFolderId", "includeSubfolders", "versionMode",
             "includeContentStream", "maxContentSizeBytes", "includeDescriptors", "includeAcls", "descriptorPrefix",
             "fallbackPrincipals", "emitLogicalDeletes", "modifiedSince", "modifiedSinceAttribute", "batchSize", "parallelism",
-            "timeoutSeconds", "maxRetries", "maxDocuments");
+            "timeoutSeconds", "maxRetries", "maxDocuments", "tenantIsolation", "incremental", "stateDirectory");
 
-    public static DoxisRepositorySettings fromConfiguration(Map<String, String> config) {
+    public static DoxisProperties fromConfiguration(Map<String, String> config) {
         Map<String, String> c = config == null ? Map.of() : config;
-        return new DoxisRepositorySettings(
+        return new DoxisProperties(
                 value(c, "url", DEFAULT_URL),
                 value(c, "authType", "basic").toLowerCase(Locale.ROOT),
                 value(c, "customerName", null),
@@ -141,14 +149,17 @@ public record DoxisRepositorySettings(
                 Math.max(1, integer(c, "parallelism", 2)),
                 Duration.ofSeconds(Math.max(1, integer(c, "timeoutSeconds", 120))),
                 Math.max(0, integer(c, "maxRetries", 2)),
-                Math.max(0, integer(c, "maxDocuments", 0)));
+                Math.max(0, integer(c, "maxDocuments", 0)),
+                bool(c, "tenantIsolation", false),
+                bool(c, "incremental", false),
+                value(c, "stateDirectory", "data/doxis-state"));
     }
 
     /**
      * Reads {@code spring.opencrawling.connector.doxis.*}. List properties may be comma-separated strings or YAML lists
      * ({@code document-classes[0]}, {@code document-classes[1]}, …).
      */
-    public static DoxisRepositorySettings fromEnvironment(PropertyResolver environment) {
+    public static DoxisProperties fromEnvironment(PropertyResolver environment) {
         Map<String, String> config = new HashMap<>();
         for (String key : KEYS) {
             String property = SPRING_PREFIX + springName(key);
@@ -201,6 +212,9 @@ public record DoxisRepositorySettings(
         }
         if (crawlMode == CrawlMode.FOLDER && rootFolderId == null) {
             problems.add("root-folder-id (an e-file UUID) is required in folder crawl mode.");
+        }
+        if (incremental && crawlMode == CrawlMode.FOLDER) {
+            problems.add("incremental crawling is supported in search crawl mode only.");
         }
         return problems;
     }
@@ -285,12 +299,13 @@ public record DoxisRepositorySettings(
     @Override
     public String toString() {
         // never log passwords, session tickets, client secrets or access tokens
-        return "DoxisRepositorySettings[url=" + url + ", authType=" + authType + ", customer=" + customerName + ", user=" + username
+        return "DoxisProperties[url=" + url + ", authType=" + authType + ", customer=" + customerName + ", user=" + username
                 + ", oauth2TokenUrl=" + oauth2TokenUrl + ", oauth2ClientId=" + oauth2ClientId + ", role=" + role
                 + ", repository=" + repositoryId + ", crawlMode=" + crawlMode + ", searchQuery=" + searchQuery + ", rootFolderId="
                 + rootFolderId + ", documentClasses=" + documentClasses + ", versionMode=" + versionMode + ", batchSize=" + batchSize
                 + ", parallelism=" + parallelism + ", includeContentStream=" + includeContentStream + ", includeDescriptors="
                 + includeDescriptors + ", includeAcls=" + includeAcls + ", emitLogicalDeletes=" + emitLogicalDeletes
-                + ", modifiedSince=" + modifiedSince + ", maxDocuments=" + maxDocuments + "]";
+                + ", modifiedSince=" + modifiedSince + ", maxDocuments=" + maxDocuments + ", tenantIsolation=" + tenantIsolation
+                + ", incremental=" + incremental + "]";
     }
 }

@@ -56,14 +56,14 @@ class DoxisAuthTest {
         server.shutdown();
     }
 
-    private DoxisRepositorySettings settings(Map<String, String> extra) {
+    private DoxisProperties settings(Map<String, String> extra) {
         Map<String, String> config = new java.util.HashMap<>(Map.of("url", server.url(BASE).toString(), "customerName", "DX4",
                 "repositoryId", "DB1", "role", "admins"));
         config.putAll(extra);
-        return DoxisRepositorySettings.fromConfiguration(config);
+        return DoxisProperties.fromConfiguration(config);
     }
 
-    private JsonNode loginBody(DoxisRepositorySettings settings, String expectedPath) throws Exception {
+    private JsonNode loginBody(DoxisProperties settings, String expectedPath) throws Exception {
         server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(JWT));
         server.enqueue(new MockResponse().setResponseCode(204));
         try (DoxisClient client = DoxisRepositoryConnector.newClient(settings, "OpenCrawling-Test", Duration.ofSeconds(5), 0)) {
@@ -107,7 +107,7 @@ class DoxisAuthTest {
     void oauth2FetchesATokenWithTheClientCredentialsGrant() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
                 .setBody("{\"access_token\":\"eyJ.from-idp\",\"expires_in\":3600,\"token_type\":\"Bearer\"}"));
-        DoxisRepositorySettings settings = settings(Map.of("authType", "oauth2", "oauth2TokenUrl", server.url("/oauth/token").toString(),
+        DoxisProperties settings = settings(Map.of("authType", "oauth2", "oauth2TokenUrl", server.url("/oauth/token").toString(),
                 "oauth2ClientId", "opencrawling-client", "oauth2ClientSecret", "s e/cret", "oauth2Scope", "doxis.read"));
         server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(JWT));
         server.enqueue(new MockResponse().setResponseCode(204));

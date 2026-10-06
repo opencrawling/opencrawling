@@ -123,7 +123,10 @@ public class ConnectorController {
             Map.entry("descriptorPrefix", ""),
             Map.entry("batchSize", "100"),
             Map.entry("parallelism", "2"),
-            Map.entry("timeoutSeconds", "120")
+            Map.entry("timeoutSeconds", "120"),
+            Map.entry("incremental", "false"),
+            Map.entry("stateDirectory", "data/doxis-state"),
+            Map.entry("tenantIsolation", "false")
         )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",

@@ -41,6 +41,10 @@ import java.util.Set;
  *
  * <p>Class-level rights ("All instances") are not readable through REST. A document with no instance ACEs therefore gets
  * the configured fallback principals, or no permission at all (deny by default) — never public.
+ *
+ * <p>With a tenant (tenant isolation), every identity is qualified with the CSB customer — {@code DX4/Legal},
+ * {@code DX4/maya.collins} — and {@code everybody} becomes the group {@code DX4/everybody} instead of {@code public}, so
+ * principals of different Doxis tenants (Mandanten) never match each other in OpenCrawling.
  */
 public class DoxisSecurityMapper {
 
@@ -57,10 +61,17 @@ public class DoxisSecurityMapper {
 
     private final PrincipalResolver resolver;
     private final List<String> fallbackPrincipals;
+    private final String tenant;
 
     public DoxisSecurityMapper(PrincipalResolver resolver, List<String> fallbackPrincipals) {
+        this(resolver, fallbackPrincipals, null);
+    }
+
+    /** {@code tenant}: the CSB customer to qualify identities with, or {@code null} for unqualified names. */
+    public DoxisSecurityMapper(PrincipalResolver resolver, List<String> fallbackPrincipals, String tenant) {
         this.resolver = resolver;
         this.fallbackPrincipals = fallbackPrincipals == null ? List.of() : fallbackPrincipals;
+        this.tenant = tenant == null || tenant.isBlank() ? null : tenant;
     }
 
     public SecurityConfig map(List<JsonNode> documentAces, List<JsonNode> recordAces) throws IOException, InterruptedException {
@@ -95,7 +106,7 @@ public class DoxisSecurityMapper {
             }
         }
         if (rules.isEmpty()) {
-            List<PermissionRule> fallback = fallbackPrincipals.stream().map(DoxisSecurityMapper::fallbackRule).toList();
+            List<PermissionRule> fallback = fallbackPrincipals.stream().map(this::fallbackRule).toList();
             return new SecurityConfig(false, fallback);
         }
         return new SecurityConfig(inherited, List.copyOf(rules.values()));
@@ -108,31 +119,41 @@ public class DoxisSecurityMapper {
         Optional<DoxisSchema.Principal> principal = resolver.resolve(organizationalElementId);
         if (principal.isEmpty()) {
             log.debug("Doxis organisational element {} is not a known user, group or role; kept by UUID.", organizationalElementId);
-            return new PermissionRule(organizationalElementId, "user", organizationalElementId, access);
+            return qualified(organizationalElementId, "user", access);
         }
         DoxisSchema.Principal p = principal.get();
         if ("group".equals(p.type()) && "everybody".equalsIgnoreCase(p.name())) {
-            return new PermissionRule("public", "public", "Public Access", access);
+            return everybody(access);
         }
-        String type = "user".equals(p.type()) ? "user" : "group";
-        return new PermissionRule(p.name(), type, p.name(), access);
+        return qualified(p.name(), "user".equals(p.type()) ? "user" : "group", access);
     }
 
-    private static PermissionRule fallbackRule(String identity) {
+    private PermissionRule fallbackRule(String identity) {
         String key = identity.strip();
         String lower = key.toLowerCase(Locale.ROOT);
         if ("public".equals(lower) || "everybody".equals(lower)) {
-            return new PermissionRule("public", "public", "Public Access", "read");
+            return everybody("read");
         }
         if (lower.startsWith("group:")) {
-            String name = key.substring(6);
-            return new PermissionRule(name, "group", name, "read");
+            return qualified(key.substring(6), "group", "read");
         }
         if (lower.startsWith("user:")) {
-            String name = key.substring(5);
-            return new PermissionRule(name, "user", name, "read");
+            return qualified(key.substring(5), "user", "read");
         }
-        return new PermissionRule(key, "group", key, "read");
+        return qualified(key, "group", "read");
+    }
+
+    /** {@code public} without tenant isolation; the tenant's own {@code everybody} group with it. */
+    private PermissionRule everybody(String access) {
+        if (tenant == null) {
+            return new PermissionRule("public", "public", "Public Access", access);
+        }
+        return qualified("everybody", "group", access);
+    }
+
+    private PermissionRule qualified(String name, String type, String access) {
+        String identity = tenant == null ? name : tenant + "/" + name;
+        return new PermissionRule(identity, type, identity, access);
     }
 
     private static int rank(String access) {

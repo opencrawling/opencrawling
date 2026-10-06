@@ -229,6 +229,16 @@ public class DoxisClient implements AutoCloseable {
         return get("Get repository " + repository, "/dmsRepositories/" + enc(repository));
     }
 
+    /**
+     * {@code GET /session/ticket}: a session ticket for the current session, which another client can use with
+     * {@link LoginMode#SESSION_TICKET}.
+     */
+    public String getSessionTicket() throws IOException, InterruptedException {
+        JsonNode ticket = get("Get session ticket", "/session/ticket");
+        String value = ticket.isTextual() ? ticket.textValue() : ticket.path("sessionTicket").asText(ticket.toString());
+        return value.strip();
+    }
+
     public JsonNode getLoggedInUser() throws IOException, InterruptedException {
         return get("Get session user", "/session/user");
     }

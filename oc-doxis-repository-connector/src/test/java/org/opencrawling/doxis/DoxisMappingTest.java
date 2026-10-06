@@ -33,7 +33,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * {@link DoxisDocumentBuilder}, {@link DoxisSecurityMapper} and {@link DoxisRepositorySettings}, without HTTP.
+ * {@link DoxisDocumentBuilder}, {@link DoxisSecurityMapper} and {@link DoxisProperties}, without HTTP.
  */
 class DoxisMappingTest {
 
@@ -246,6 +246,39 @@ class DoxisMappingTest {
     }
 
     @Test
+    void tenantIsolationQualifiesEveryIdentityAndScopesEverybody() throws Exception {
+        DoxisSecurityMapper isolated = new DoxisSecurityMapper(id -> Optional.ofNullable(PRINCIPALS.get(id)), List.of(), "DX4");
+
+        SecurityConfig security = isolated.map(List.of(
+                ace("g-every", "VIEW_DOCUMENT_CONTENTS", "GRANT"),
+                ace("g-legal", "VIEW_DOCUMENT_CONTENTS", "GRANT"),
+                ace("u-maya", "VIEW_DOCUMENT_CONTENTS", "DENY")), List.of());
+
+        assertEquals(java.util.Set.of(
+                new PermissionRule("DX4/everybody", "group", "DX4/everybody", "read"),
+                new PermissionRule("DX4/Legal", "group", "DX4/Legal", "read"),
+                new PermissionRule("DX4/maya.collins", "user", "DX4/maya.collins", "deny")), java.util.Set.copyOf(security.permissions()));
+        assertTrue(security.permissions().stream().noneMatch(r -> "public".equals(r.identityType())), "never public across tenants");
+    }
+
+    @Test
+    void tenantIsolationAlsoQualifiesTheFallback() throws Exception {
+        DoxisSecurityMapper isolated = new DoxisSecurityMapper(id -> Optional.empty(), List.of("group:Legal", "everybody"), "DX4");
+
+        assertEquals(List.of(new PermissionRule("DX4/Legal", "group", "DX4/Legal", "read"),
+                new PermissionRule("DX4/everybody", "group", "DX4/everybody", "read")),
+                isolated.map(List.of(), List.of()).permissions());
+    }
+
+    @Test
+    void incrementalIsSearchModeOnly() {
+        List<String> problems = DoxisProperties.fromConfiguration(Map.of("customerName", "DX4", "username", "u", "password", "p",
+                "repositoryId", "DB1", "crawlMode", "folder", "rootFolderId", "e1", "incremental", "true")).validate();
+
+        assertEquals(List.of("incremental crawling is supported in search crawl mode only."), problems);
+    }
+
+    @Test
     void noInstanceAcesIsDenyByDefaultNeverPublic() throws Exception {
         assertTrue(mapper(List.of()).map(List.of(), List.of()).permissions().isEmpty());
     }
@@ -264,14 +297,14 @@ class DoxisMappingTest {
 
     @Test
     void settingsDefaultsAndCql() {
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(Map.of(
+        DoxisProperties settings = DoxisProperties.fromConfiguration(Map.of(
                 "customerName", "DX4", "username", "Supervisor", "password", "s3cret",
                 "repositoryId", "DB1", "searchQuery", "OBJECTNUMBER2 LIKE 'contracts-2026*'"));
 
         assertEquals("admins", settings.role());
         assertEquals("basic", settings.authType());
-        assertEquals(DoxisRepositorySettings.CrawlMode.SEARCH, settings.crawlMode());
-        assertEquals(DoxisRepositorySettings.VersionMode.LATEST_ONLY, settings.versionMode());
+        assertEquals(DoxisProperties.CrawlMode.SEARCH, settings.crawlMode());
+        assertEquals(DoxisProperties.VersionMode.LATEST_ONLY, settings.versionMode());
         assertEquals(100, settings.batchSize());
         assertEquals(2, settings.parallelism());
         assertTrue(settings.includeContentStream());
@@ -285,7 +318,7 @@ class DoxisMappingTest {
 
     @Test
     void settingsModifiedSinceAddsACondition() {
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(Map.of(
+        DoxisProperties settings = DoxisProperties.fromConfiguration(Map.of(
                 "modifiedSince", "2026-10-01T00:00:00.000+01:00", "batchSize", "0", "parallelism", "abc"));
 
         assertEquals("SELECT * FROM DB1 WHERE DXE_MODDATE >= '2026-10-01T00:00:00.000+01:00'", settings.cql("DB1"));
@@ -295,7 +328,7 @@ class DoxisMappingTest {
 
     @Test
     void validationNamesEveryProblem() {
-        List<String> problems = DoxisRepositorySettings.fromConfiguration(Map.of("authType", "kerberos", "crawlMode", "folder"))
+        List<String> problems = DoxisProperties.fromConfiguration(Map.of("authType", "kerberos", "crawlMode", "folder"))
                 .validate();
 
         assertEquals(4, problems.size(), problems.toString());
@@ -309,14 +342,14 @@ class DoxisMappingTest {
     @Test
     void ticketAndOauth2AuthTypesAreValidatedAndMapped() {
         Map<String, String> base = Map.of("customerName", "DX4", "repositoryId", "DB1");
-        DoxisRepositorySettings ticketMissing = DoxisRepositorySettings.fromConfiguration(merge(base, Map.of("authType", "ticket")));
-        DoxisRepositorySettings ticket = DoxisRepositorySettings.fromConfiguration(
+        DoxisProperties ticketMissing = DoxisProperties.fromConfiguration(merge(base, Map.of("authType", "ticket")));
+        DoxisProperties ticket = DoxisProperties.fromConfiguration(
                 merge(base, Map.of("authType", "ticket", "sessionTicket", "t-123")));
-        DoxisRepositorySettings oauthMissing = DoxisRepositorySettings.fromConfiguration(
+        DoxisProperties oauthMissing = DoxisProperties.fromConfiguration(
                 merge(base, Map.of("authType", "oauth2", "oauth2TokenUrl", "https://idp/token")));
-        DoxisRepositorySettings oauthGrant = DoxisRepositorySettings.fromConfiguration(merge(base, Map.of("authType", "oauth2",
+        DoxisProperties oauthGrant = DoxisProperties.fromConfiguration(merge(base, Map.of("authType", "oauth2",
                 "oauth2TokenUrl", "https://idp/token", "oauth2ClientId", "oc", "oauth2ClientSecret", "s3cret-client")));
-        DoxisRepositorySettings oauthToken = DoxisRepositorySettings.fromConfiguration(
+        DoxisProperties oauthToken = DoxisProperties.fromConfiguration(
                 merge(base, Map.of("authType", "oidc", "oauth2AccessToken", "eyJ.token")));
 
         assertEquals(DoxisClient.LoginMode.SESSION_TICKET, ticket.loginMode());
@@ -342,7 +375,7 @@ class DoxisMappingTest {
                 .withProperty("spring.opencrawling.connector.doxis.oauth2.scope", "doxis.read")
                 .withProperty("spring.opencrawling.connector.doxis.session-ticket", "t-1");
 
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromEnvironment(env);
+        DoxisProperties settings = DoxisProperties.fromEnvironment(env);
 
         assertEquals("https://idp/token", settings.oauth2TokenUrl());
         assertEquals("opencrawling-client", settings.oauth2ClientId());
@@ -405,14 +438,14 @@ class DoxisMappingTest {
                 .withProperty("spring.opencrawling.connector.doxis.max-content-size-bytes", "1024")
                 .withProperty("spring.opencrawling.connector.doxis.descriptor-prefix", "doxis_desc_");
 
-        DoxisRepositorySettings settings = DoxisRepositorySettings.fromEnvironment(env);
+        DoxisProperties settings = DoxisProperties.fromEnvironment(env);
 
         assertEquals("http://csb:8080/restws/publicws/rest/api/v1", settings.url());
         assertEquals("DX4", settings.customerName());
-        assertEquals(DoxisRepositorySettings.CrawlMode.FOLDER, settings.crawlMode());
+        assertEquals(DoxisProperties.CrawlMode.FOLDER, settings.crawlMode());
         assertEquals("e1", settings.rootFolderId());
         assertEquals(List.of("TX_MigratedDocument", "TX_LargeExternalDocument"), settings.documentClasses());
-        assertEquals(DoxisRepositorySettings.VersionMode.ALL_VERSIONS, settings.versionMode());
+        assertEquals(DoxisProperties.VersionMode.ALL_VERSIONS, settings.versionMode());
         assertEquals(1024, settings.maxContentSizeBytes());
         assertEquals("doxis_desc_", settings.descriptorPrefix());
     }

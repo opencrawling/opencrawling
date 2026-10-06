@@ -20,8 +20,8 @@ import org.opencrawling.core.connector.ConnectorSchema;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
-import org.opencrawling.doxis.DoxisRepositorySettings.CrawlMode;
-import org.opencrawling.doxis.DoxisRepositorySettings.VersionMode;
+import org.opencrawling.doxis.DoxisProperties.CrawlMode;
+import org.opencrawling.doxis.DoxisProperties.VersionMode;
 import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.client.schema.DoxisSchema;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
@@ -81,7 +81,7 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
             + "whose licence allows API (technical-user) sessions; OpenCrawling does not include Doxis or any Doxis licence. "
             + "See the Prerequisites in the connector's README.";
 
-    private final DoxisRepositorySettings settings;
+    private final DoxisProperties settings;
     private DoxisClient client;
     private DoxisSchema schema;
     private String repositoryShortName;
@@ -89,19 +89,19 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
 
     /** Used by SPI discovery only. */
     public DoxisRepositoryConnector() {
-        this(DoxisRepositorySettings.fromConfiguration(Map.of()));
+        this(DoxisProperties.fromConfiguration(Map.of()));
     }
 
     @Autowired
     public DoxisRepositoryConnector(Environment environment) {
-        this(DoxisRepositorySettings.fromEnvironment(environment));
+        this(DoxisProperties.fromEnvironment(environment));
     }
 
-    public DoxisRepositoryConnector(DoxisRepositorySettings settings) {
+    public DoxisRepositoryConnector(DoxisProperties settings) {
         this.settings = settings;
     }
 
-    DoxisRepositoryConnector(DoxisRepositorySettings settings, DoxisClient client) {
+    DoxisRepositoryConnector(DoxisProperties settings, DoxisClient client) {
         this.settings = settings;
         this.client = client;
     }
@@ -111,7 +111,7 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         return "DoxisRepositoryConnector";
     }
 
-    public DoxisRepositorySettings settings() {
+    public DoxisProperties settings() {
         return settings;
     }
 
@@ -142,7 +142,7 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
      * A CSB client for these settings, logging in as {@code auth-type} says: user name and password, a session ticket, or an
      * OIDC/OAuth2 access token (given directly, or fetched with the client-credentials grant and refreshed before it expires).
      */
-    public static DoxisClient newClient(DoxisRepositorySettings settings, String clientId, java.time.Duration timeout, int maxRetries) {
+    public static DoxisClient newClient(DoxisProperties settings, String clientId, java.time.Duration timeout, int maxRetries) {
         java.util.function.Supplier<String> credential = switch (settings.loginMode()) {
             case SESSION_TICKET -> settings::sessionTicket;
             case OIDC_ACCESS_TOKEN -> settings.oauth2AccessToken() != null
@@ -172,15 +172,20 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
                 Crawl crawl = new Crawl();
                 String path = basePath == null ? "" : basePath.strip();
                 if (path.toLowerCase(Locale.ROOT).startsWith("select ")) {
+                    if (settings.incremental()) {
+                        log.info("A SELECT job path replaces the configured search, so this run is not incremental.");
+                    }
                     crawlSearch(path, crawl, sink);
                 } else if (settings.crawlMode() == CrawlMode.FOLDER) {
                     boolean override = !path.isEmpty() && !"default".equals(path) && !"/".equals(path);
                     crawlFolder(override ? path : settings.rootFolderId(), crawl, sink);
+                } else if (settings.incremental()) {
+                    crawlIncrementally(crawl, sink);
                 } else {
                     crawlSearch(settings.cql(repositoryShortName), crawl, sink);
                 }
-                log.info("Doxis scan of '{}' finished: {} documents, {} tombstones, {} skipped, {} failed.", repositoryShortName,
-                        crawl.documents, crawl.tombstones, crawl.skipped, crawl.failed);
+                log.info("Doxis scan of '{}' finished: {} documents, {} unchanged, {} tombstones, {} skipped, {} failed.",
+                        repositoryShortName, crawl.documents, crawl.unchanged, crawl.tombstones, crawl.skipped, crawl.failed);
                 sink.complete();
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
@@ -205,6 +210,14 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         final Set<String> visitedRecords = new HashSet<>();
         final Map<String, List<JsonNode>> recordAcls = new ConcurrentHashMap<>();
         final Map<String, Optional<String>> recordNames = new ConcurrentHashMap<>();
+        final AtomicLong unchanged = new AtomicLong();
+        /** Every document the search listed this run (processed, unchanged, skipped or failed). */
+        final Set<String> listed = ConcurrentHashMap.newKeySet();
+        /** Incremental state: the previous run's entries, and the entries recorded by this run. */
+        Map<String, DoxisCrawlState.Entry> previous;
+        final Map<String, DoxisCrawlState.Entry> next = new ConcurrentHashMap<>();
+        /** True when the search listed every hit, so documents missing from it really are gone. */
+        boolean listingComplete;
         private int accepted;
 
         /** The hits not seen before, cut to {@code maxDocuments}. */
@@ -246,17 +259,18 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
             int offset = 0;
             int nextOffset = 1;
             int total = page.totalHitCount();
-            Set<String> listed = new HashSet<>();
+            Set<String> listed = crawl.listed;
             while (true) {
                 List<JsonNode> hits = page.hits();
                 int before = listed.size();
                 hits.forEach(hit -> listed.add(hit.path("uuid").asText("")));
-                process(crawl.take(hits), null, crawl, sink);
+                process(crawl.take(changedOnly(hits, crawl)), null, crawl, sink);
                 offset += hits.size();
                 nextOffset = (page.start() > 0 ? page.start() : nextOffset) + hits.size();
                 // an empty page or a page with nothing new ends the listing, whatever the restriction mode says
                 // (RESTRICTED_BY_SERVER only means the result is paged)
                 if (hits.isEmpty() || listed.size() == before || searchId == null || (total >= 0 && listed.size() >= total)) {
+                    crawl.listingComplete = total < 0 || listed.size() >= total;
                     break;
                 }
                 if (crawl.limitReached()) {
@@ -271,6 +285,71 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         } finally {
             client.closeSearch(searchId);
         }
+    }
+
+    // ------------------------------------------------------------------ incremental SEARCH mode
+
+    /**
+     * The configured search, skipping documents whose search hit carries the same {@code modificationDate} as in the previous
+     * run. After a complete listing, documents of the previous run that are no longer listed get DELETE tombstones (physical
+     * deletes, or documents that left the search's scope). The state is saved only when the scan gets this far.
+     */
+    private void crawlIncrementally(Crawl crawl, FluxSink<RepositoryDocument> sink) throws IOException, InterruptedException {
+        java.nio.file.Path file = DoxisCrawlState.file(settings, repositoryShortName);
+        crawl.previous = DoxisCrawlState.load(file);
+        log.info("Incremental Doxis crawl: {} documents known from {}.", crawl.previous.size(), file);
+        crawlSearch(settings.cql(repositoryShortName), crawl, sink);
+
+        Map<String, DoxisCrawlState.Entry> state = new java.util.LinkedHashMap<>();
+        // listed but not recorded (failed, or skipped by the class filter): keep the old entry, so the document is retried
+        // (its date no longer matches) and stays tracked for deletion
+        crawl.previous.forEach((uuid, entry) -> {
+            if (crawl.listed.contains(uuid) && !crawl.next.containsKey(uuid)) {
+                state.put(uuid, entry);
+            }
+        });
+        if (crawl.listingComplete) {
+            for (Map.Entry<String, DoxisCrawlState.Entry> gone : crawl.previous.entrySet()) {
+                if (!crawl.listed.contains(gone.getKey())) {
+                    for (String id : gone.getValue().ids()) {
+                        emit(sink, DoxisDocumentBuilder.tombstone(id, settings.customerName(), repositoryShortName, gone.getKey()));
+                        crawl.tombstones.incrementAndGet();
+                    }
+                }
+            }
+        } else {
+            // a partial listing proves nothing about the documents it did not reach: keep them
+            log.info("Doxis listing incomplete: no deletes are inferred in this run.");
+            crawl.previous.forEach((uuid, entry) -> {
+                if (!crawl.listed.contains(uuid)) {
+                    state.put(uuid, entry);
+                }
+            });
+        }
+        state.putAll(crawl.next);
+        DoxisCrawlState.save(file, state);
+    }
+
+    /** Without incremental state, every hit; with it, the hits whose modification date changed (unchanged ones are recorded). */
+    private List<JsonNode> changedOnly(List<JsonNode> hits, Crawl crawl) {
+        if (crawl.previous == null) {
+            return hits;
+        }
+        List<JsonNode> changed = new ArrayList<>();
+        for (JsonNode hit : hits) {
+            String uuid = hit.path("uuid").asText("");
+            DoxisCrawlState.Entry known = crawl.previous.get(uuid);
+            String modified = hit.path("modificationDate").asText(null);
+            if (known != null && modified != null && modified.equals(known.modified())
+                    && !hit.path("logicalDeleted").asBoolean(false) && !crawl.seen.contains(uuid)) {
+                crawl.seen.add(uuid);
+                crawl.next.put(uuid, known);
+                crawl.unchanged.incrementAndGet();
+            } else {
+                changed.add(hit);
+            }
+        }
+        return changed;
     }
 
     // ------------------------------------------------------------------ FOLDER mode
@@ -376,13 +455,15 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         String parentId = Optional.ofNullable(DoxisDocumentBuilder.text(document, "primaryParentObjectUUID"))
                 .filter(s -> !s.isBlank() && !"null".equals(s)).orElse(folderRecordId);
         SecurityConfig security = settings.includeAcls()
-                ? new DoxisSecurityMapper(schema::principalById, settings.fallbackPrincipals())
+                ? new DoxisSecurityMapper(schema::principalById, settings.fallbackPrincipals(),
+                        settings.tenantIsolation() ? settings.customerName() : null)
                         .map(client.getPermissions(settings.repositoryId(), uuid), recordAcl(parentId, crawl))
                 : SecurityConfig.createPublic();
         String documentClass = schema.documentTypeName(DoxisDocumentBuilder.text(document, "documentTypeUUID")).orElse(null);
         String createdBy = principalName(DoxisDocumentBuilder.text(document, "ownerId"));
         String parentName = parentId == null ? null : recordName(parentId, crawl);
 
+        List<String> emittedIds = new ArrayList<>();
         List<JsonNode> versions = new ArrayList<>();
         if (settings.versionMode() == VersionMode.ALL_VERSIONS) {
             document.path("versions").forEach(versions::add);
@@ -414,7 +495,11 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
                 throw e;
             }
             emit(sink, built);
+            emittedIds.add(id);
             crawl.documents.incrementAndGet();
+        }
+        if (crawl.previous != null) {
+            crawl.next.put(uuid, new DoxisCrawlState.Entry(hit.path("modificationDate").asText(null), emittedIds));
         }
     }
 

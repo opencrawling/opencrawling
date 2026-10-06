@@ -125,6 +125,23 @@ changes, the original is kept under `doxis.raw.<Doxis name>`.
 
 The document id and URI are `doxis://<customer>/<repository>/documents/<uuid>`.
 
+## Incremental crawls and delete detection
+
+Doxis 14.4 offers no usable change feed: on the tested CSB the audit trail was off and the `DXE_MODDATE` attribute matched
+nothing. Every search hit, however, carries the document's `modificationDate`. With `incremental: true` (search mode), the
+connector keeps a small state file per customer and repository, recording each document's modification date and the ids it
+emitted:
+- **Unchanged documents** (same modification date as last run) are skipped without any further call.
+- **Changed and new documents** are crawled as usual.
+- **Deletes:** after a complete listing, documents of the previous run that are no longer listed get DELETE tombstones. That
+  covers physical deletes, and documents that left the search's scope. A listing cut short (`max-documents`, a server
+  limit) infers no deletes.
+- **Failures:** a document that fails keeps its previous entry, so it's retried in the next run and stays tracked.
+
+The state is saved only when the scan completes. A change that doesn't touch the document's modification date (for
+example a permission change on its e-file) is picked up by a full crawl, so run one now and then: set `incremental: false`
+or delete the state file.
+
 ## Security mapping
 
 | Doxis ACE | OIS rule |
@@ -134,6 +151,10 @@ The document id and URI are `doxis://<customer>/<repository>/documents/<uuid>`.
 | DENY on a view permission | `deny` (wins) |
 | group `everybody` | `public` |
 | user / group / role | the user's login name, or the group or role name |
+
+With `tenant-isolation: true`, every reader is qualified with the customer (`DX4/Legal`, `DX4/maya.collins`), and
+`everybody` maps to the group `DX4/everybody` instead of `public`. Principals of different Doxis tenants (Mandanten) then
+never match each other in OpenCrawling; the users and groups you pass to OpenCrawling's search must carry the same prefix.
 
 Class-level rights ("All instances") can't be read through REST. A document with no instance ACEs therefore gets
 `fallback-principals`. When that is empty, the document gets **no** permission (deny by default). It is never made public.
@@ -186,6 +207,9 @@ There are two sources:
 | `timeoutSeconds` / `timeout-seconds` | `120` | HTTP timeout. A busy CSB can take minutes to log in |
 | `maxRetries` / `max-retries` | `2` | Retries on 429 (honours `Retry-After`), 502–504 and refused connections |
 | `maxDocuments` / `max-documents` | `0` | Stop after N documents (for test runs) |
+| `incremental` | `false` | Search mode: skip unchanged documents and detect deletes between runs (see below) |
+| `stateDirectory` / `state-directory` | `data/doxis-state` | Where the incremental state is kept: one JSON file per customer and repository |
+| `tenantIsolation` / `tenant-isolation` | `false` | Qualify every reader with the customer (`DX4/Legal`); `everybody` becomes `DX4/everybody`, never `public` |
 
 The Admin UI's **Test Connection** button and `oc connector check --name <name> --type repository` both log in, read the
 repository, and log out.
@@ -217,11 +241,11 @@ Verified read-only on a Doxis 4 CSB 14.4 lab:
   document's versions;
 - `searchResultRestrictionMode` is `RESTRICTED_BY_SERVER` on any paged result, so it doesn't mean the listing is truncated;
 - the audit trail returned no records (auditing off), and `DXE_MODDATE` matched nothing.
+- the **session-ticket login** (`/session/ticket` from a basic session, then `/loginBySessionTicket`);
+- an **incremental** first run (120 documents) followed by a rerun that skipped all 120 as unchanged, in 7 calls;
+- **typed values** on real data: `ObjectDate` `20230222` became `2023-02-22`, with the original in `doxis.raw.ObjectDate`.
 
 Open:
-- **Session-ticket and OAuth2 logins** are implemented against the 14.4.1 API contract and unit-tested, but not yet run
-  against a live CSB. OAuth2 needs a CSB customer configured for an identity provider.
+- **OAuth2 login** is implemented against the 14.4.1 API contract and unit-tested, but not run against a live CSB: it needs a
+  CSB customer configured for an identity provider.
 - **Folder mode** is unit-tested only; the lab's documents aren't filed in e-files.
-- **Incremental crawling and physical deletes:** with no usable audit trail or modification attribute, an incremental
-  crawl has to compare each hit's `modificationDate` with the previous crawl, and detecting physical deletes needs a
-  reconciliation run. Neither is implemented yet.
