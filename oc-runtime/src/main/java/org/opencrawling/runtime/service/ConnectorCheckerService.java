@@ -32,7 +32,7 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.doxis.output.config.DoxisConnectorSettings;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
 

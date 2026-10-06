@@ -15,7 +15,7 @@
  */
 package org.opencrawling.doxis.output.content;
 
-import org.opencrawling.doxis.output.client.ContentBody;
+import org.opencrawling.doxis.client.ContentBody;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
 
 /**

@@ -19,11 +19,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
 import org.opencrawling.doxis.output.content.ContentPlan;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 
 import java.time.Instant;
 import java.util.List;

@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.opencrawling.doxis.output.schema;
+package org.opencrawling.doxis.client.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

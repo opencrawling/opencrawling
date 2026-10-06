@@ -24,8 +24,8 @@ import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
-import org.opencrawling.doxis.output.client.ContentBody;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.client.ContentBody;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ConflictResolution;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.Content;
@@ -34,7 +34,7 @@ import org.opencrawling.doxis.output.config.DoxisOutputProperties.DeleteMode;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.Locator;
 import org.opencrawling.doxis.output.content.ContentPlanner;
 import org.opencrawling.doxis.output.content.PrefixLocatorResolver;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -168,7 +168,7 @@ class DoxisOutputConnectorTest {
     void typeWithoutInstanceRightsKeepsTheDocument() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
-        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
+        doThrow(new org.opencrawling.doxis.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
                 .when(client).addPermissions(eq(REPO), eq("doc-0001"), anyList());
 
         assertDoesNotThrow(() -> connector().send(document(file.toUri().toString(), Map.of())).block());
@@ -443,7 +443,7 @@ class DoxisOutputConnectorTest {
         Path b = Files.writeString(folder.resolve("b.pdf"), "%PDF-1.7 contract");
         when(client.searchDocumentIds(anyString(), eq(false))).thenReturn(List.of());
         when(client.searchRecordIds(anyString())).thenReturn(List.of("rec-gone"), List.of("rec-new"));
-        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Set primary parent", 404, "INSTANCE0001", "record not found"))
+        doThrow(new org.opencrawling.doxis.client.DoxisApiException("Doxis Set primary parent", 404, "INSTANCE0001", "record not found"))
                 .when(client).setDocumentPrimaryParent(REPO, "doc-0001", "rec-gone");
 
         DoxisOutputConnector connector = filingConnector(filing(DoxisOutputProperties.FilingMode.SOURCE_FOLDER, null,
@@ -488,7 +488,7 @@ class DoxisOutputConnectorTest {
     void strictSecurityRollsBackWhenPermissionsCannotBeApplied() throws Exception {
         Path file = Files.writeString(tmp.resolve("msa.pdf"), "%PDF-1.7 contract");
         when(client.searchDocumentIds(LOOKUP, false)).thenReturn(List.of());
-        doThrow(new org.opencrawling.doxis.output.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
+        doThrow(new org.opencrawling.doxis.client.DoxisApiException("Doxis Add permissions", 500, "SECU0050", "no instance rights"))
                 .when(client).addPermissions(eq(REPO), eq("doc-0001"), anyList());
 
         RuntimeException e = assertThrows(RuntimeException.class, () -> filingConnector(

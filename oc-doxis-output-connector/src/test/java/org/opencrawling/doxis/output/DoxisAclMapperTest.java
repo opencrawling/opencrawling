@@ -19,8 +19,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
-import org.opencrawling.doxis.output.client.DoxisClient;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.DoxisClient;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 
 import java.util.List;
 import java.util.Map;

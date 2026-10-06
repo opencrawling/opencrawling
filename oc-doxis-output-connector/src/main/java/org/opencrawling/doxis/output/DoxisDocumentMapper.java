@@ -19,7 +19,7 @@ import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
 import org.opencrawling.doxis.output.content.ContentPlan;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

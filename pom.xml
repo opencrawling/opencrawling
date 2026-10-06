@@ -104,6 +104,7 @@
         <module>oc-vespa-output-connector</module>
         <module>oc-solr-output-connector</module>
         <module>oc-luxir-output-connector</module>
+        <module>oc-doxis-client</module>
         <module>oc-doxis-output-connector</module>
         <module>oc-seatunnel-output-connector</module>
         <module>oc-flowable-repository-connector</module>

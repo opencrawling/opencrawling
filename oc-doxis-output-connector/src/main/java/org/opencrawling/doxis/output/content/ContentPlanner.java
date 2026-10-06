@@ -17,7 +17,7 @@ package org.opencrawling.doxis.output.content;
 
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.doxis.output.DoxisConstants;
-import org.opencrawling.doxis.output.client.ContentBody;
+import org.opencrawling.doxis.client.ContentBody;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.ContentStrategy;
 import org.slf4j.Logger;

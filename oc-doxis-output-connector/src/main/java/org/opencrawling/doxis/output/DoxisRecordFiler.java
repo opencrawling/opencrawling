@@ -17,11 +17,11 @@ package org.opencrawling.doxis.output;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.doxis.output.client.DoxisApiException;
-import org.opencrawling.doxis.output.client.DoxisClient;
+import org.opencrawling.doxis.client.DoxisApiException;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties.Filing;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

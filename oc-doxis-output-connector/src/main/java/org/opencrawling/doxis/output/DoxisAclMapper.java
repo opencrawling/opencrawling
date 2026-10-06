@@ -17,7 +17,7 @@ package org.opencrawling.doxis.output;
 
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
-import org.opencrawling.doxis.output.schema.DoxisSchema;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
