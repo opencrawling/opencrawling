@@ -53,6 +53,41 @@ public class JobCommand implements Runnable {
         System.out.println(AnsiColors.yellow("Please specify a subcommand: list, start, status, pause, stop, delete, create"));
     }
 
+    /** Allowed values for {@code --mode}; mirrors {@code org.opencrawling.core.pipeline.PipelineMode}. */
+    static final List<String> PIPELINE_MODES = List.of("rag", "migration");
+
+    /**
+     * Validates and normalizes a {@code --mode} value.
+     *
+     * @return the lower-case mode, or {@code null} when not specified (inherit server default)
+     * @throws IllegalArgumentException for unknown modes
+     */
+    static String normalizeMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return null;
+        }
+        String normalized = mode.trim().toLowerCase();
+        if (!PIPELINE_MODES.contains(normalized)) {
+            throw new IllegalArgumentException("Invalid --mode '" + mode + "' (expected one of: " + String.join(", ", PIPELINE_MODES) + ")");
+        }
+        return normalized;
+    }
+
+    static String displayMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return "default";
+        }
+        return "migration".equalsIgnoreCase(mode) ? AnsiColors.cyan("migration") : "rag";
+    }
+
+    /** Shell completion candidates for {@code --mode}. */
+    static class PipelineModeCandidates implements Iterable<String> {
+        @Override
+        public java.util.Iterator<String> iterator() {
+            return PIPELINE_MODES.iterator();
+        }
+    }
+
     @Command(name = "list", description = "List all active and historic ingestion jobs")
     public static class JobListCommand implements Callable<Integer> {
 
@@ -75,7 +110,7 @@ public class JobCommand implements Runnable {
                     System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(jobs));
                 } else {
                     TableFormatter table = new TableFormatter()
-                            .setHeaders("ID", "NAME", "CONNECTOR", "STATUS", "STAGE", "DOCUMENTS", "LAST RUN");
+                            .setHeaders("ID", "NAME", "CONNECTOR", "MODE", "STATUS", "STAGE", "DOCUMENTS", "LAST RUN");
 
                     for (JobResponse job : jobs) {
                         String statusColor = switch (job.status().toUpperCase()) {
@@ -88,6 +123,7 @@ public class JobCommand implements Runnable {
                                 job.id(),
                                 job.name(),
                                 job.repositoryConnector(),
+                                displayMode(job.pipelineMode()),
                                 statusColor,
                                 job.currentStage(),
                                 String.valueOf(job.documents()),
@@ -119,6 +155,10 @@ public class JobCommand implements Runnable {
         @Option(names = {"--wait"}, description = "Wait for job completion")
         private boolean wait;
 
+        @Option(names = {"--mode"}, description = "Pipeline mode: rag (AI ingestion) or migration (as-is binary + OIS sidecar). Defaults to the server's opencrawling.pipeline.mode",
+                completionCandidates = PipelineModeCandidates.class)
+        private String mode;
+
         @Option(names = {"--url"}, description = "Override OpenCrawling server URL")
         private String serverUrl;
 
@@ -127,16 +167,25 @@ public class JobCommand implements Runnable {
 
         @Override
         public Integer call() {
+            String pipelineMode;
+            try {
+                pipelineMode = normalizeMode(mode);
+            } catch (IllegalArgumentException e) {
+                System.err.println(AnsiColors.red(e.getMessage()));
+                return 2;
+            }
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
                 JobRequest request = JobRequest.builder()
                         .name(name)
                         .repositoryConnector(connector)
                         .path(path)
+                        .pipelineMode(pipelineMode)
                         .build();
 
                 JobResponse response = client.jobs().create(request);
                 client.jobs().start(response.id());
-                System.out.println(AnsiColors.green("✔ Job started successfully! Job ID: ") + AnsiColors.bold(response.id()));
+                System.out.println(AnsiColors.green("✔ Job started successfully! Job ID: ") + AnsiColors.bold(response.id())
+                        + (pipelineMode != null ? " (mode: " + pipelineMode + ")" : ""));
 
                 if (wait) {
                     System.out.println("Polling job completion status...");
@@ -189,6 +238,7 @@ public class JobCommand implements Runnable {
                     System.out.println(AnsiColors.bold("Job ID: ") + job.id());
                     System.out.println(AnsiColors.bold("Name: ") + job.name());
                     System.out.println(AnsiColors.bold("Status: ") + job.status());
+                    System.out.println(AnsiColors.bold("Pipeline Mode: ") + displayMode(job.pipelineMode()));
                     System.out.println(AnsiColors.bold("Current Stage: ") + job.currentStage());
                     System.out.println(AnsiColors.bold("Processed Documents: ") + job.documents());
                     System.out.println(AnsiColors.bold("Last Run: ") + job.lastRun());
@@ -288,6 +338,10 @@ public class JobCommand implements Runnable {
         @Option(names = {"--file"}, required = true, description = "Path to job JSON file")
         private String filePath;
 
+        @Option(names = {"--mode"}, description = "Override the job file's pipelineMode: rag or migration",
+                completionCandidates = PipelineModeCandidates.class)
+        private String mode;
+
         @Option(names = {"--url"}, description = "Override OpenCrawling server URL")
         private String serverUrl;
 
@@ -298,9 +352,16 @@ public class JobCommand implements Runnable {
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
                 ObjectMapper mapper = new ObjectMapper();
-                JobRequest request = mapper.readValue(new java.io.File(filePath), JobRequest.class);
+                JobRequest fromFile = mapper.readValue(new java.io.File(filePath), JobRequest.class);
+                String pipelineMode = normalizeMode(mode != null ? mode : fromFile.pipelineMode());
+                JobRequest request = new JobRequest(
+                        fromFile.id(), fromFile.name(), fromFile.repositoryConnector(), fromFile.outputConnector(),
+                        fromFile.authorityConnector(), fromFile.path(), fromFile.status(), fromFile.currentStage(),
+                        fromFile.documents(), fromFile.lastRun(), fromFile.transformationConnector(),
+                        fromFile.narrativization(), pipelineMode);
                 JobResponse response = client.jobs().create(request);
-                System.out.println(AnsiColors.green("✔ Job created successfully! Job ID: ") + AnsiColors.bold(response.id()));
+                System.out.println(AnsiColors.green("✔ Job created successfully! Job ID: ") + AnsiColors.bold(response.id())
+                        + (pipelineMode != null ? " (mode: " + pipelineMode + ")" : ""));
                 return 0;
             } catch (Exception e) {
                 System.err.println(AnsiColors.red("Error creating job: " + e.getMessage()));

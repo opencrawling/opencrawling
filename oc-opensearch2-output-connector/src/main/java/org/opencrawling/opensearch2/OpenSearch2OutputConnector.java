@@ -19,7 +19,9 @@ import org.apache.hc.client5.http.auth.AuthScope;
 import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
 import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
 import org.apache.hc.core5.http.HttpHost;
-import org.apache.tika.Tika;
+import org.opencrawling.core.text.TextExtractionService;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
@@ -49,7 +51,7 @@ public class OpenSearch2OutputConnector implements OutputConnector {
     private static final Logger log = LoggerFactory.getLogger(OpenSearch2OutputConnector.class);
 
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
 
     @Value("${spring.opencrawling.output.opensearch2.uris:http://localhost:9200}")
     private String uris = "http://localhost:9200";
@@ -72,11 +74,18 @@ public class OpenSearch2OutputConnector implements OutputConnector {
     @Autowired
     public OpenSearch2OutputConnector(
             @Autowired(required = false) OpenSearchClient client,
-            @Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel) {
+            @Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
+            @Autowired(required = false) TextExtractionService textExtractionService) {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+    }
+
+    public OpenSearch2OutputConnector(
+            OpenSearchClient client,
+            EmbeddingModel embeddingModel) {
+        this(client, embeddingModel, null);
     }
 
     private synchronized OpenSearchClient getOrInitClient() {
@@ -128,24 +137,17 @@ public class OpenSearch2OutputConnector implements OutputConnector {
                     return;
                 }
 
-                // Parse document text using Tika
-                String text = "";
-                try {
-                    text = tika.parseToString(new java.io.ByteArrayInputStream(contentBytes));
-                } catch (Exception e) {
-                    log.warn("Tika failed to parse document {}: {}. Falling back to plain text check.", document.id(), e.getMessage());
+                // Parse document text using TextExtractionService (process-isolated PipesForkParser)
+                TextExtractionResult extractionResult = textExtractionService.extractText(contentBytes, document.metadata());
+                String text = extractionResult.text();
+
+                if (!extractionResult.success()) {
+                    log.warn("Text extraction failed for document {}: {}", document.id(), extractionResult.errorMessage());
                 }
 
-                // Fallback for plain text
-                if (text.isBlank() && contentBytes.length > 0) {
-                    String mimeType = String.valueOf(document.metadata().getOrDefault("mimeType", List.of("text/plain")));
-                    if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                        text = new String(contentBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    }
+                if (extractionResult.trimmed()) {
+                    log.info("Document {} text was trimmed during extraction.", document.id());
                 }
-
-                // Remove null characters
-                text = text.replace("\u0000", "");
 
                 if (text.isBlank()) {
                     log.warn("Document {} extracted text is empty, skipping OpenSearch ingestion.", document.id());

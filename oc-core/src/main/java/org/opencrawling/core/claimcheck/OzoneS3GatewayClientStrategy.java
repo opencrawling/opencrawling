@@ -15,6 +15,7 @@
  */
 package org.opencrawling.core.claimcheck;
 
+import org.opencrawling.core.s3.S3MultipartUploader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -46,15 +47,25 @@ public class OzoneS3GatewayClientStrategy implements OzoneClientStrategy {
 
     private final AtomicBoolean bucketInitialized = new AtomicBoolean(false);
     private final S3Client s3Client;
+    private final S3MultipartUploader uploader;
     private final String bucket;
     private final boolean autoCreateBucket;
 
     public OzoneS3GatewayClientStrategy(ClaimCheckProperties.Ozone ozoneProps) {
-        this(createS3Client(ozoneProps), ozoneProps.getBucket(), ozoneProps.isAutoCreateBucket());
+        this(createS3Client(ozoneProps), ozoneProps.getBucket(), ozoneProps.isAutoCreateBucket(),
+                ozoneProps.getMultipartThreshold().toBytes(), ozoneProps.getMultipartPartSize().toBytes(),
+                ozoneProps.getMultipartConcurrency());
     }
 
     public OzoneS3GatewayClientStrategy(S3Client s3Client, String bucket, boolean autoCreateBucket) {
+        this(s3Client, bucket, autoCreateBucket, S3MultipartUploader.DEFAULT_THRESHOLD,
+                S3MultipartUploader.DEFAULT_PART_SIZE, S3MultipartUploader.DEFAULT_PART_CONCURRENCY);
+    }
+
+    public OzoneS3GatewayClientStrategy(S3Client s3Client, String bucket, boolean autoCreateBucket,
+            long multipartThreshold, long multipartPartSize, int multipartConcurrency) {
         this.s3Client = s3Client;
+        this.uploader = new S3MultipartUploader(s3Client, multipartThreshold, multipartPartSize, multipartConcurrency);
         this.bucket = bucket != null && !bucket.isBlank() ? bucket : "claims";
         this.autoCreateBucket = autoCreateBucket;
     }
@@ -115,23 +126,22 @@ public class OzoneS3GatewayClientStrategy implements OzoneClientStrategy {
     public URI put(String id, InputStream content, long contentLength, String contentType) throws Exception {
         ensureBucketInitialized();
         String safeKey = id.replaceAll("[^a-zA-Z0-9.-]", "_");
-        PutObjectRequest.Builder putBuilder = PutObjectRequest.builder()
-                .bucket(bucket)
-                .key(safeKey);
 
-        if (contentType != null && !contentType.isBlank()) {
-            putBuilder.contentType(contentType);
-        }
-
-        RequestBody requestBody;
-        if (contentLength > 0) {
-            requestBody = RequestBody.fromInputStream(content, contentLength);
+        if (contentLength > 0 && content instanceof java.io.ByteArrayInputStream) {
+            // In-memory and markable: repeatable as is.
+            PutObjectRequest.Builder putBuilder = PutObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(safeKey);
+            if (contentType != null && !contentType.isBlank()) {
+                putBuilder.contentType(contentType);
+            }
+            s3Client.putObject(putBuilder.build(), RequestBody.fromInputStream(content, contentLength));
         } else {
-            byte[] bytes = content.readAllBytes();
-            requestBody = RequestBody.fromBytes(bytes);
+            // Non-markable streams cannot be re-read by the SDK (flexible checksums / retries), and the crawler
+            // passes an unknown length (-1): the uploader buffers small streams in memory, spools larger ones to a
+            // temp file, and uses a parallel multipart upload above the threshold. Memory stays bounded for any size.
+            uploader.uploadStream(bucket, safeKey, content, contentType);
         }
-
-        s3Client.putObject(putBuilder.build(), requestBody);
 
         URI uri = URI.create("s3://" + bucket + "/" + safeKey);
         log.info("Uploaded claim check object to Apache Ozone via S3 Gateway: {}", uri);

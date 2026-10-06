@@ -17,6 +17,11 @@
 name: Publish OpenCrawling CLI (oc-cli)
 
 on:
+  release:
+    types: [ published ]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       release_version:
@@ -32,11 +37,14 @@ env:
 jobs:
   build-and-test-cli:
     name: Build & Test CLI Executable
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -44,6 +52,31 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
+
+      - name: Resolve and Set Release Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VER="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VER="${TAG_NAME#v}"
+          elif [ -n "${{ inputs.release_version }}" ]; then
+            VER="${{ inputs.release_version }}"
+            TAG_NAME="v${VER}"
+          else
+            VER=""
+            TAG_NAME=""
+          fi
+          if [ -n "$VER" ]; then
+            echo "Setting oc-cli release version to $VER"
+            cd oc-cli
+            mvn versions:set -DnewVersion="$VER" -DgenerateBackupPoms=false
+            cd ..
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Build & Test CLI Module
         run: |
@@ -62,7 +95,7 @@ jobs:
 
   publish-cli-docker:
     name: Build & Push CLI Docker Image (GHCR)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-and-test-cli
     permissions:
       contents: read
@@ -70,7 +103,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Downcase repository owner
         id: repo-owner
@@ -80,13 +113,13 @@ jobs:
           OWNER: '${{ github.repository_owner }}'
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -94,7 +127,7 @@ jobs:
 
       - name: Extract Metadata for CLI Image
         id: meta-cli
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ steps.repo-owner.outputs.owner }}/oc-cli
           tags: |
@@ -103,10 +136,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ needs.build-and-test-cli.outputs.version }},enable=${{ needs.build-and-test-cli.outputs.version != '' }}
 
       - name: Build and Push CLI Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: docker/Dockerfile.cli
@@ -119,8 +153,8 @@ jobs:
 
   publish-github-release-assets:
     name: Attach Assets to GitHub Release
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    runs-on: ubuntu-24.04
     needs: build-and-test-cli
     permissions:
       contents: write
@@ -135,12 +169,13 @@ jobs:
       - name: Upload Assets to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.build-and-test-cli.outputs.tag_name }}
           files: release-assets/oc-cli-*.jar
 
   publish-homebrew-tap:
     name: Update Homebrew Tap Formula
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    runs-on: ubuntu-24.04
     needs: [build-and-test-cli, publish-github-release-assets]
     steps:
       - name: Download CLI Executable Artifact
@@ -152,12 +187,9 @@ jobs:
       - name: Calculate SHA256 Checksum
         id: shasum
         run: |
-          JAR_FILE=$(ls release-assets/oc-cli-*.jar | head -n 1)
+          JAR_FILE=$(ls release-assets/oc-cli-*.jar 2>/dev/null | grep -v 'original' | head -n 1)
           SHA=$(sha256sum "$JAR_FILE" | awk '{print $1}')
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG_NAME#v}"
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Update Homebrew Tap Formula
         uses: mislav/bump-homebrew-formula-action@v3
@@ -165,7 +197,7 @@ jobs:
           formula-name: oc
           formula-path: Formula/oc.rb
           homebrew-tap: opencrawling/homebrew-tap
-          download-url: https://github.com/opencrawling/opencrawling/releases/download/${{ github.ref_name }}/oc-cli-${{ steps.shasum.outputs.version }}.jar
+          download-url: https://github.com/opencrawling/opencrawling/releases/download/${{ needs.build-and-test-cli.outputs.tag_name }}/oc-cli-${{ needs.build-and-test-cli.outputs.version }}.jar
           download-sha256: ${{ steps.shasum.outputs.sha256 }}
         env:
           COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

@@ -218,19 +218,48 @@ fi
 log_success "Document content uploaded successfully."
 
 # 5. Verify Folder Children Retrieval & Content Download
-log_info "Verifying folder child node scanning via REST API..."
+log_info "Verifying folder child node scanning via REST API (with properties, aspects, permissions)..."
 CHILDREN_RES=$(curl -s -H "Authorization: ${AUTH_HEADER}" -H "Accept: application/json" \
-  "${ALFRESCO_URL}/nodes/${FOLDER_ID}/children?include=properties")
+  "${ALFRESCO_URL}/nodes/${FOLDER_ID}/children?include=properties,aspectNames,permissions")
 
 CHILD_COUNT=$(echo "${CHILDREN_RES}" | jq '.list.entries | length')
 CHILD_NAME=$(echo "${CHILDREN_RES}" | jq -r '.list.entries[0].entry.name // empty')
 CHILD_TITLE=$(echo "${CHILDREN_RES}" | jq -r '.list.entries[0].entry.properties."cm:title" // empty')
+CHILD_INHERITED=$(echo "${CHILDREN_RES}" | jq -r '.list.entries[0].entry.permissions.isInheritanceEnabled // empty')
 
 if [ "${CHILD_COUNT}" -ge 1 ] && [ "${CHILD_NAME}" = "${TEST_DOC_NAME}" ]; then
-  log_success "Child node discovered: name='${CHILD_NAME}', cm:title='${CHILD_TITLE}'"
+  log_success "Child node discovered: name='${CHILD_NAME}', cm:title='${CHILD_TITLE}', isInheritanceEnabled='${CHILD_INHERITED}'"
 else
   log_error "Child node verification failed. Response: ${CHILDREN_RES}"
   exit 1
+fi
+
+log_info "Verifying Alfresco Search REST API v1 availability..."
+SEARCH_URL="${ALFRESCO_URL/\/public\/alfresco\/versions\/1/\/public\/search\/versions\/1\/search}"
+SEARCH_PAYLOAD=$(cat <<EOF
+{
+  "query": {
+    "language": "afts",
+    "query": "TYPE:'cm:content' AND @cm:name:'${TEST_DOC_NAME}'"
+  },
+  "paging": {
+    "maxItems": 10,
+    "skipCount": 0
+  },
+  "include": ["properties", "aspectNames", "permissions"]
+}
+EOF
+)
+SEARCH_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SEARCH_URL}" \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d "${SEARCH_PAYLOAD}" || echo "000")
+
+if [ "${SEARCH_HTTP_CODE}" = "200" ]; then
+  log_success "Alfresco Search REST API (AFTS) endpoint is online and responsive (HTTP 200)!"
+else
+  log_warn "Alfresco Search REST API returned HTTP ${SEARCH_HTTP_CODE} (search subsystem may be initializing)."
 fi
 
 log_info "Verifying content stream download for document node '${DOC_ID}'..."

@@ -209,6 +209,16 @@ public class StormCrawlerRepositoryConnector implements RepositoryConnector {
                 metadata.put("mimeType", List.of(contentType));
                 metadata.put("http.status", List.of(String.valueOf(statusCode)));
                 metadata.put("canonical.url", List.of(url));
+                try {
+                    URI parsedUri = URI.create(url);
+                    if (parsedUri.getHost() != null) {
+                        metadata.put("web_domain", List.of(parsedUri.getHost()));
+                    }
+                    if (parsedUri.getScheme() != null) {
+                        metadata.put("web_scheme", List.of(parsedUri.getScheme()));
+                    }
+                } catch (Exception ignored) {}
+                metadata.put("stormcrawler_topology", List.of(properties.getTopologyName()));
                 metadata.put("stormcrawler.depth", List.of("1"));
                 metadata.put("stormcrawler.status", List.of("FETCHED"));
                 metadata.put("crawledAt", List.of(Instant.now().toString()));

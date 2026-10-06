@@ -41,7 +41,16 @@ public class ConnectorController {
         // Initial mock data defaults
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
-        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1", "username", "admin", "password", "admin", "batchSize", "100")));
+        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
+            "url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
+            "username", "admin",
+            "password", "admin",
+            "batchSize", "100",
+            "crawlMode", "folder",
+            "includeSubfolders", "true",
+            "includeAcls", "true",
+            "includeContentStream", "true"
+        )));
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));
         defaults.add(new ConnectorDTO("Camunda_7_REST_Engine", "Camunda 7 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://localhost:8080/engine-rest", "username", "demo", "password", "demo")));
@@ -74,6 +83,24 @@ public class ConnectorController {
             Map.entry("includeAcls", "true"),
             Map.entry("includeContentStream", "true"),
             Map.entry("batchSize", "100")
+        )));
+        defaults.add(new ConnectorDTO("Relational_Database_JDBC", "Relational Database (JDBC)", "repository", "org.opencrawling.jdbc.JdbcRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1"),
+            Map.entry("driverClassName", "org.h2.Driver"),
+            Map.entry("username", "sa"),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "TABLE"),
+            Map.entry("tableName", "support_tickets"),
+            Map.entry("primaryKeyColumns", "id"),
+            Map.entry("titleColumn", "title"),
+            Map.entry("incrementalEnabled", "false"),
+            Map.entry("hwmColumn", "updated_at"),
+            Map.entry("softDeleteEnabled", "false"),
+            Map.entry("softDeleteColumn", "is_deleted"),
+            Map.entry("softDeleteValue", "true"),
+            Map.entry("securityEnabled", "false"),
+            Map.entry("batchSize", "100"),
+            Map.entry("fetchSize", "1000")
         )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
@@ -164,6 +191,16 @@ public class ConnectorController {
             "seaTunnelKafkaBootstrapServers", "localhost:9092",
             "seaTunnelKafkaTopic", "opencrawling-embedded",
             "seaTunnelTargetSinks", "clickhouse,milvus"
+        )));
+        defaults.add(new ConnectorDTO("Ozone_Migration_Output", "Apache Ozone Migration Target (Migration Mode only)", "output", "org.opencrawling.ozone.OzoneOutputConnector", 10, Map.of(
+            "clientType", "NATIVE",
+            "volume", "s3v",
+            "bucket", "migration",
+            "omHost", "localhost",
+            "omPort", "9862",
+            "s3Endpoint", "http://localhost:9878",
+            "keyStrategy", "HIERARCHICAL",
+            "tombstoneAction", "DELETE_KEY"
         )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));

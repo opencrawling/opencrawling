@@ -277,6 +277,16 @@ public class IcebergRepositoryConnector implements RepositoryConnector {
         docMetadata.put("mimeType", List.of("application/json"));
         docMetadata.put("sizeInBytes", List.of(String.valueOf(jsonBytes.length)));
 
+        // Collocated entity references
+        docMetadata.put("iceberg_table_name", List.of(table.name()));
+        docMetadata.put("iceberg_record_id", List.of(docId));
+        if (table.location() != null && !table.location().isBlank()) {
+            docMetadata.put("iceberg_table_location", List.of(table.location()));
+        }
+        if (table.currentSnapshot() != null) {
+            docMetadata.put("iceberg_snapshot_id", List.of(String.valueOf(table.currentSnapshot().snapshotId())));
+        }
+
         Instant lastModified = Instant.now();
         for (String tsCol : List.of("last_modified", "updated_at", "timestamp", "date")) {
             if (recordMap.containsKey(tsCol)) {

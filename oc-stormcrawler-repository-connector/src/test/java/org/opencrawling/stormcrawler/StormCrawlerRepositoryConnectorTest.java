@@ -166,15 +166,12 @@ class StormCrawlerRepositoryConnectorTest {
                     return okResponse;
                 });
 
-        StepVerifier.create(connector.scan("https://example.com/docs/page1, https://example.com/docs/page2"))
-                .assertNext(doc -> {
-                    assertEquals(DocumentAction.UPSERT, doc.action());
-                    assertEquals("https://example.com/docs/page1", doc.id());
-                })
-                .assertNext(tombstone -> {
-                    assertEquals(DocumentAction.DELETE, tombstone.action());
-                    assertEquals("https://example.com/docs/page2", tombstone.id());
-                })
+        // scan() fetches the URLs concurrently: documents arrive in completion order, not input order
+        StepVerifier.create(connector.scan("https://example.com/docs/page1, https://example.com/docs/page2")
+                        .collectMap(RepositoryDocument::id, RepositoryDocument::action))
+                .assertNext(actions -> assertEquals(Map.of(
+                        "https://example.com/docs/page1", DocumentAction.UPSERT,
+                        "https://example.com/docs/page2", DocumentAction.DELETE), actions))
                 .verifyComplete();
     }
 

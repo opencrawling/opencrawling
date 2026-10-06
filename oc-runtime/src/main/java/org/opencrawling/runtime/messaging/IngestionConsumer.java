@@ -15,13 +15,16 @@
  */
 package org.opencrawling.runtime.messaging;
 
-import org.apache.tika.Tika;
+import org.opencrawling.core.text.TextExtractionService;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
@@ -51,7 +54,7 @@ public class IngestionConsumer {
     
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties claimCheckProperties;
     private final TelemetryTraceStore traceStore;
@@ -67,13 +70,14 @@ public class IngestionConsumer {
             KafkaTemplate<String, Object> kafkaTemplate,
             @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
             ClaimCheckProperties claimCheckProperties,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TextExtractionService textExtractionService) {
         this.kafkaTemplate = kafkaTemplate;
         this.claimCheckStore = claimCheckStore;
         this.claimCheckProperties = claimCheckProperties;
         this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
     }
 
     @jakarta.annotation.PostConstruct
@@ -84,6 +88,10 @@ public class IngestionConsumer {
     @KafkaListener(topics = KafkaConfig.TOPIC_NAME)
     public void consume(IngestionMessage message) {
         log.info("Received document message from Kafka: {}", message.documentId());
+        if (message.pipelineMode() != null && message.pipelineMode().isMigration()) {
+            log.info("Document {} received in MIGRATION mode. Skipping Tika extraction, chunking, and embedding.", message.documentId());
+            return;
+        }
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String jobId = message.documentId();
@@ -134,28 +142,45 @@ public class IngestionConsumer {
                     return;
                 }
 
-                // Extract raw text using Apache Tika
-                String text = "";
-                try {
-                    text = tika.parseToString(new java.io.ByteArrayInputStream(contentBytes));
-                } catch (Exception e) {
-                    log.warn("Tika failed to parse document {}: {}. Falling back to plain text check.", message.documentId(), e.getMessage());
-                }
-                
-                // Fallback for plain text if Tika fails but we have bytes
-                if (text.isBlank() && contentBytes.length > 0) {
-                    String mimeType = String.valueOf(message.metadata().getOrDefault("mimeType", List.of("text/plain")));
-                    if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                        text = new String(contentBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    }
+                // Extract raw text using Apache Tika via TextExtractionService (isolated in child process if configured)
+                TextExtractionResult extractionResult = textExtractionService.extractText(contentBytes, message.metadata());
+                String text = extractionResult.text();
+
+                if (!extractionResult.success()) {
+                    log.warn("Tika text extraction failed for document {}: {}", message.documentId(), extractionResult.errorMessage());
                 }
 
-                // Remove null characters to prevent PostgreSQL "invalid byte sequence for encoding UTF8: 0x00" error
-                text = text.replace("\u0000", "");
+                if (extractionResult.trimmed()) {
+                    log.info("Document {} text was trimmed during extraction.", message.documentId());
+                }
 
                 if (text.isBlank()) {
-                    log.warn("Document {} extracted text is empty, skipping.", message.documentId());
-                    return;
+                    boolean isBlob = message.metadata() != null &&
+                        (Boolean.parseBoolean(message.metadata().getOrDefault("is_blob", List.of("false")).get(0))
+                         || "image".equals(message.metadata().getOrDefault("media_type", List.of("")).get(0))
+                         || message.metadata().getOrDefault("mimeType", List.of("")).stream().anyMatch(m -> m.startsWith("image/")));
+
+                    if (isBlob) {
+                        String title = message.metadata().getOrDefault("title", message.metadata().getOrDefault("name", List.of())).stream().findFirst().orElse("");
+                        String filename = message.metadata().getOrDefault("filename", List.of()).stream().findFirst().orElse("");
+                        String mime = message.metadata().getOrDefault("mimeType", List.of()).stream().findFirst().orElse("image/binary");
+                        StringBuilder desc = new StringBuilder();
+                        desc.append("# Binary Item: ").append(message.documentId());
+                        if (!filename.isBlank()) desc.append(" (").append(filename).append(")");
+                        desc.append("\n\nType: ").append(mime);
+                        if (!title.isBlank()) desc.append("\nTitle: ").append(title);
+                        desc.append("\n\nAttributes:\n");
+                        message.metadata().forEach((k, vals) -> {
+                            if (!k.startsWith("tk:") && !k.equals("documentId") && !k.equals("uri") && !k.equals("acl") && !k.equals("security") && !k.equals("is_blob") && !k.equals("has_blob")) {
+                                desc.append("- **").append(k).append("**: ").append(String.join("; ", vals)).append("\n");
+                            }
+                        });
+                        text = desc.toString();
+                        log.info("Generated descriptive metadata text for BLOB item {} (MIME: {}) for direct embedding.", message.documentId(), mime);
+                    } else {
+                        log.warn("Document {} extracted text is empty, skipping.", message.documentId());
+                        return;
+                    }
                 }
 
                 long extractTime = System.currentTimeMillis() - startTime;

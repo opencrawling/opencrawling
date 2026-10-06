@@ -3,6 +3,7 @@ name: Publish Docker Images
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions: read-all
@@ -12,7 +13,7 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write

@@ -242,6 +242,9 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=vespa
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
     volumes:
       - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
     depends_on:
@@ -328,7 +331,7 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_VESPA_ENDPOINT=http://vespa:8080
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
     volumes:
-      - ../../oc-runtime/data:/app/data
+      - oc-mcp-server-data-vespa:/app/data
     depends_on:
       redis:
         condition: service_started
@@ -372,3 +375,5 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata-vespa:
     name: opencrawling-kafkadata-vespa
+  oc-mcp-server-data-vespa:
+    name: oc-mcp-server-data-vespa

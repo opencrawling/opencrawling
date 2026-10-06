@@ -30,6 +30,7 @@ COPY oc-flowable-repository-connector/pom.xml oc-flowable-repository-connector/
 COPY oc-camunda-repository-connector/pom.xml oc-camunda-repository-connector/
 COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
 COPY oc-cmis-repository-connector/pom.xml oc-cmis-repository-connector/
+COPY oc-jdbc-repository-connector/pom.xml oc-jdbc-repository-connector/
 COPY oc-stormcrawler-bolt/pom.xml oc-stormcrawler-bolt/
 COPY oc-stormcrawler-repository-connector/pom.xml oc-stormcrawler-repository-connector/
 COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
@@ -40,8 +41,10 @@ COPY oc-qdrant-output-connector/pom.xml oc-qdrant-output-connector/
 COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
 COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
 COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
+COPY oc-doxis-client/pom.xml oc-doxis-client/
 COPY oc-doxis-output-connector/pom.xml oc-doxis-output-connector/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
+COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
 COPY oc-embedding-service/pom.xml oc-embedding-service/
@@ -54,7 +57,7 @@ COPY oc-cli/pom.xml oc-cli/
 COPY oc-mcf-migrator/pom.xml oc-mcf-migrator/
 
 # Download maven dependencies first (saves time on rebuilds if code changes but dependencies do not)
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-doxis-output-connector,oc-seatunnel-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-jdbc-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-doxis-client,oc-doxis-output-connector,oc-seatunnel-output-connector,oc-ozone-output-connector,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
 
 # Copy all source files
 COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
@@ -67,6 +70,7 @@ COPY oc-flowable-repository-connector/src/ /app/oc-flowable-repository-connector
 COPY oc-camunda-repository-connector/src/ /app/oc-camunda-repository-connector/src/
 COPY oc-aps-repository-connector/src/ /app/oc-aps-repository-connector/src/
 COPY oc-cmis-repository-connector/src/ /app/oc-cmis-repository-connector/src/
+COPY oc-jdbc-repository-connector/src/ /app/oc-jdbc-repository-connector/src/
 COPY oc-stormcrawler-bolt/src/ /app/oc-stormcrawler-bolt/src/
 COPY oc-stormcrawler-repository-connector/src/ /app/oc-stormcrawler-repository-connector/src/
 COPY oc-vector-output-connector/src/ /app/oc-vector-output-connector/src/
@@ -78,8 +82,10 @@ COPY oc-vespa-output-connector/src/ /app/oc-vespa-output-connector/src/
 COPY oc-vespa-output-connector/vespa-app/ /app/oc-vespa-output-connector/vespa-app/
 COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
 COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
+COPY oc-doxis-client/src/ /app/oc-doxis-client/src/
 COPY oc-doxis-output-connector/src/ /app/oc-doxis-output-connector/src/
 COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
+COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
 COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/
@@ -95,16 +101,23 @@ COPY oc-runtime/src/ /app/oc-runtime/src/
 
 # Build and package the application
 RUN mvn clean package -pl oc-runtime -am -DskipTests
+RUN java -Djarmode=tools -jar /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar extract --destination /app/extracted
 
 # Runtime stage
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
-# Copy the fat jar from the builder stage
-COPY --from=builder /app/oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
+# Copy the extracted thin jar and dependency libraries from the builder stage
+COPY --from=builder /app/extracted/lib ./lib
+COPY --from=builder /app/extracted/oc-runtime-1.0.0-SNAPSHOT.jar app.jar
 
 # Expose the ports the backend runs on (8080 HTTP/REST, 9095 gRPC Transport)
 EXPOSE 8080 9095
 
+ENV TIKA_EXTRAS_DIR=/app/lib
+ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
+ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+
 # Run the Spring Boot application enabling Java 25 preview features
-ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-Dtika.extras.dir=/app/lib", "-jar", "app.jar"]

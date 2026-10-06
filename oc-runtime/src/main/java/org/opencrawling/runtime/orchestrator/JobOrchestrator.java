@@ -34,15 +34,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.claimcheck.CompositeClaimCheckStore;
+import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.pipeline.PipelineProperties;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.function.Function;
 import java.util.List;
-import java.util.ArrayList;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -55,8 +65,23 @@ public class JobOrchestrator {
     private final ClaimCheckStore claimCheckStore;
     private final TelemetryTraceStore traceStore;
 
+    @Autowired(required = false)
+    private PipelineProperties pipelineProperties;
+
+    @Value("${opencrawling.pipeline.mode:rag}")
+    private String defaultPipelineMode = "rag";
+
     @Value("${spring.ai.ollama.embedding.options.model:mxbai-embed-large}")
     private String defaultOllamaModel = "mxbai-embed-large";
+
+    /**
+     * Parallel lanes used by the standalone crawler to externalize content (claim check) and publish documents
+     * to Kafka. Documents are assigned to lanes by id, so per-document ordering is preserved. {@code 1} restores
+     * fully sequential processing. Ignored (always sequential) when a direct OutputConnector is used, or when the
+     * repository connector does not opt in via {@link RepositoryConnector#supportsConcurrentProcessing()}.
+     */
+    @Value("${spring.opencrawling.crawler.concurrency:4}")
+    private int crawlerConcurrency = 4;
 
     public JobOrchestrator(
             KafkaTemplate<String, Object> kafkaTemplate,
@@ -65,6 +90,10 @@ public class JobOrchestrator {
         this.kafkaTemplate = kafkaTemplate;
         this.claimCheckStore = claimCheckStore;
         this.traceStore = traceStore;
+    }
+
+    void setCrawlerConcurrency(int crawlerConcurrency) {
+        this.crawlerConcurrency = crawlerConcurrency;
     }
 
     @SuppressWarnings("preview")
@@ -85,25 +114,37 @@ public class JobOrchestrator {
     @SuppressWarnings("preview")
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, NarrativizationConfig narrativization) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, narrativization, null);
+    }
+
+    @SuppressWarnings("preview")
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, NarrativizationConfig narrativization, PipelineMode pipelineMode) {
         
+        PipelineMode resolvedMode = pipelineMode != null ? pipelineMode :
+            (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.fromString(defaultPipelineMode));
+
         final MustacheTransformationConnector mustacheConnector =
-            (narrativization != null && narrativization.enabled() &&
+            (resolvedMode != PipelineMode.MIGRATION &&
+             narrativization != null && narrativization.enabled() &&
              narrativization.template() != null && !narrativization.template().isBlank())
             ? new MustacheTransformationConnector(narrativization.template())
             : null;
 
-        if (mustacheConnector != null) {
+        if (resolvedMode == PipelineMode.MIGRATION) {
+            log.info("Job {} running in MIGRATION mode. Narrativization and vector embeddings are bypassed.", jobId);
+        } else if (mustacheConnector != null) {
             log.info("Narrativization enabled for job {}. Template preview: {}", jobId,
                 narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
         }
 
-        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector);
+        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector, resolvedMode);
     }
 
     @SuppressWarnings("preview")
     private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
-            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector) {
-        log.info("Starting job {} for path: {} with transformation connector: {}", jobId, path, transformationConnector);
+            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode) {
+        log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String currentJobId = jobId != null ? jobId : "1";
@@ -136,15 +177,19 @@ public class JobOrchestrator {
         try (var scope = StructuredTaskScope.open()) {
             
             StructuredTaskScope.Subtask<List<ScanResult>> scanTask = scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
-                List<ScanResult> results = new ArrayList<>();
-                repositoryConnector.scan(path)
-                    .flatMap(initialDoc -> {
+                Function<RepositoryDocument, ScanResult> processDocument = initialDoc -> {
                         try {
                             RepositoryDocument doc = initialDoc;
                             if (mustacheConnector != null) {
                                 try {
-                                    doc = mustacheConnector.transform(initialDoc).blockFirst();
-                                    log.debug("Applied Mustache narrativization to document: {}", doc.id());
+                                    boolean isBlob = initialDoc.metadata() != null &&
+                                        Boolean.parseBoolean(initialDoc.metadata().getOrDefault("is_blob", List.of("false")).get(0));
+                                    if (!isBlob) {
+                                        doc = mustacheConnector.transform(initialDoc).blockFirst();
+                                        log.debug("Applied Mustache narrativization to tabular document: {}", doc.id());
+                                    } else {
+                                        log.debug("Preserving raw BLOB/document content stream for direct embedding: {}", initialDoc.id());
+                                    }
                                 } catch (Exception ex) {
                                     log.warn("Mustache transformation failed for doc {}: {}", initialDoc.id(), ex.getMessage());
                                 }
@@ -152,12 +197,19 @@ public class JobOrchestrator {
 
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
-                            boolean isSupportedByStore = finalUri != null && claimCheckStore.supports(URI.create(finalUri));
+                            boolean isSupportedByPrimary = claimCheckStore instanceof CompositeClaimCheckStore composite
+                                    ? composite.getPrimaryStore().supports(URI.create(finalUri))
+                                    : claimCheckStore.supports(URI.create(finalUri));
 
-                            // Save stream via ClaimCheckStore if remote stream OR store requires non-local persistence
-                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByStore)) {
-                                String filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0);
-                                filename = filename.replaceAll("[^a-zA-Z0-9.-]", "_");
+                            // Save stream via ClaimCheckStore if remote stream OR primary store requires non-local persistence
+                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() != null && (!isLocalFileUri || !isSupportedByPrimary)) {
+                                String resolvedName = doc.metadata().getOrDefault("filename", doc.metadata().getOrDefault("fileName", List.of())).stream().findFirst().orElse(null);
+                                String filename;
+                                if (resolvedName != null && !resolvedName.isBlank()) {
+                                    filename = doc.id() + "_" + resolvedName.replaceAll("[^a-zA-Z0-9.-]", "_");
+                                } else {
+                                    filename = doc.id() + "_" + doc.metadata().getOrDefault("name", List.of("document")).get(0).replaceAll("[^a-zA-Z0-9.-]", "_");
+                                }
                                 String mimeType = null;
                                 List<String> mimeList = doc.metadata().get("mimeType");
                                 if (mimeList != null && !mimeList.isEmpty()) {
@@ -173,8 +225,12 @@ public class JobOrchestrator {
                                         log.warn("Document content stream is null for id: {}", doc.id());
                                     }
                                 } catch (Exception e) {
-                                    log.error("Failed to write Claim Check content for doc: {}", doc.id(), e);
+                                    // The content could not be externalized, so downstream consumers would only receive
+                                    // a reference they cannot resolve (e.g. a crawler-local file: URI). Do not publish
+                                    // or ingest a dangling reference: report the document as failed instead.
+                                    log.error("Failed to write Claim Check content for doc: {}. Document will not be published.", doc.id(), e);
                                     traceStore.recordError(currentJobId, "ERROR", "ClaimCheckStore", "Failed to write Claim Check content for doc: " + doc.id(), e.toString());
+                                    return new ScanResult.Failure(doc.id(), e);
                                 }
                             }
 
@@ -188,7 +244,8 @@ public class JobOrchestrator {
                                 transformationConnector,
                                 finalEngine,
                                 finalConfig,
-                                doc.action()
+                                doc.action(),
+                                pipelineMode
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation
@@ -196,6 +253,12 @@ public class JobOrchestrator {
                                 kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), msg).get();
                                 log.info("Published document reference to Kafka: {}", doc.id());
                             } catch (Exception kafkaEx) {
+                                if (outputConnector == null) {
+                                    // Standalone crawler: Kafka is the only delivery path, losing the message means losing the document.
+                                    log.error("Kafka publish failed for doc {}: {}", doc.id(), kafkaEx.getMessage());
+                                    traceStore.recordError(currentJobId, "ERROR", "Kafka", "Kafka publish failed for doc: " + doc.id(), kafkaEx.toString());
+                                    return new ScanResult.Failure(doc.id(), kafkaEx);
+                                }
                                 log.warn("Kafka publish skipped or unavailable for doc {}: {}", doc.id(), kafkaEx.getMessage());
                             }
                             
@@ -227,15 +290,43 @@ public class JobOrchestrator {
                                 }
                             }
                             
-                            return Mono.just((ScanResult) new ScanResult.Success(doc.id(), "1.0"));
+                            return new ScanResult.Success(doc.id(), "1.0");
                         } catch (Exception e) {
                             traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + initialDoc.id() + ": " + e.getMessage(), e.toString());
-                            return Mono.just(new ScanResult.Failure(initialDoc.id(), e));
+                            return new ScanResult.Failure(initialDoc.id(), e);
                         }
-                    })
-                    .doOnNext(results::add)
-                    .blockLast(); 
-                return results;
+                };
+
+                // Standalone crawler (no direct OutputConnector): externalize and publish documents in parallel lanes.
+                // A document always maps to the same lane (hash of its id), so events of one document keep their order,
+                // like Kafka partitions. With a direct OutputConnector processing stays sequential, because output
+                // connectors are not required to be thread-safe. Repository connectors must opt in: when processing is
+                // decoupled the scan runs ahead, and buffered documents must not hold open connections or cursors.
+                boolean parallel = outputConnector == null && crawlerConcurrency > 1
+                        && repositoryConnector.supportsConcurrentProcessing();
+                int lanes = parallel ? crawlerConcurrency : 1;
+                if (lanes == 1) {
+                    if (outputConnector == null && crawlerConcurrency > 1) {
+                        log.info("Job {}: {} does not support concurrent processing, processing documents sequentially",
+                                currentJobId, repositoryConnector.getName());
+                    }
+                    return repositoryConnector.scan(path)
+                        .map(processDocument)
+                        .collectList()
+                        .block();
+                }
+                log.info("Job {} processing documents with {} parallel lanes", currentJobId, lanes);
+                try (ExecutorService laneExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    Scheduler laneScheduler = Schedulers.fromExecutorService(laneExecutor, "oc-crawl-lanes");
+                    return repositoryConnector.scan(path)
+                        .groupBy(doc -> Math.floorMod(Objects.hashCode(doc.id()), lanes))
+                        .flatMap(lane -> lane.concatMap(doc ->
+                                Mono.fromCallable(org.opencrawling.observability.concurrency.ObservabilityTask.observed(
+                                        () -> processDocument.apply(doc)))
+                                    .subscribeOn(laneScheduler)), lanes)
+                        .collectList()
+                        .block();
+                }
             }));
             
             scope.join();

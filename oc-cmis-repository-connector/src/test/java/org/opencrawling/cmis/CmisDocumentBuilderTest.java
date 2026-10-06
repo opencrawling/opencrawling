@@ -82,6 +82,10 @@ public class CmisDocumentBuilderTest {
         assertThat(doc.metadata().get("name")).containsExactly("Architecture_Charter.pdf");
         assertThat(doc.metadata().get("mimeType")).containsExactly("application/pdf");
         assertThat(doc.metadata().get("cmis.objectId")).containsExactly("doc-101");
+        assertThat(doc.metadata().get("cmis_object_id")).containsExactly("doc-101");
+        assertThat(doc.metadata().get("cmis_object_type")).containsExactly("cmis:document");
+        assertThat(doc.metadata().get("cmis_repository_id")).containsExactly("repo-01");
+        assertThat(doc.metadata().get("cmis_identity_users")).containsExactly("piergiorgio.lucidi");
         assertThat(doc.metadata().get("cmis.versionLabel")).containsExactly("2.1");
         assertThat(doc.metadata().get("cmis.isLatestMajorVersion")).containsExactly("true");
         assertThat(doc.metadata().get("cmis.secondaryObjectTypeIds")).containsExactly("P:custom:aspect");

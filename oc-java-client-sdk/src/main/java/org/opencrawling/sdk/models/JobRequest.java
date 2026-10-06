@@ -33,8 +33,32 @@ public record JobRequest(
     long documents,
     String lastRun,
     String transformationConnector,
-    NarrativizationConfig narrativization
+    NarrativizationConfig narrativization,
+    String pipelineMode
 ) {
+
+    public JobRequest {
+        if (narrativization == null) {
+            narrativization = NarrativizationConfig.disabled();
+        }
+    }
+
+    public JobRequest(
+        String id,
+        String name,
+        String repositoryConnector,
+        String outputConnector,
+        String authorityConnector,
+        String path,
+        String status,
+        String currentStage,
+        long documents,
+        String lastRun,
+        String transformationConnector,
+        NarrativizationConfig narrativization
+    ) {
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+    }
 
     public static Builder builder() {
         return new Builder();
@@ -53,6 +77,7 @@ public record JobRequest(
         private String lastRun = "N/A";
         private String transformationConnector = "Ollama_Embedding_Default";
         private NarrativizationConfig narrativization;
+        private String pipelineMode; // null = inherit the server-side opencrawling.pipeline.mode default
 
         public Builder id(String id) {
             this.id = id;
@@ -119,6 +144,11 @@ public record JobRequest(
             return this;
         }
 
+        public Builder pipelineMode(String pipelineMode) {
+            this.pipelineMode = pipelineMode;
+            return this;
+        }
+
         public JobRequest build() {
             return new JobRequest(
                 id,
@@ -132,7 +162,8 @@ public record JobRequest(
                 documents,
                 lastRun,
                 transformationConnector,
-                narrativization != null ? narrativization : NarrativizationConfig.disabled()
+                narrativization != null ? narrativization : NarrativizationConfig.disabled(),
+                pipelineMode
             );
         }
     }

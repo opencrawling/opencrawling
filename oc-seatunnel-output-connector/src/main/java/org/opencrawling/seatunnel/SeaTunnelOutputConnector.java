@@ -15,11 +15,13 @@
  */
 package org.opencrawling.seatunnel;
 
-import org.apache.tika.Tika;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
+import org.opencrawling.core.text.PipesForkTextExtractor;
+import org.opencrawling.core.text.TextExtractionResult;
+import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.seatunnel.client.SeaTunnelJobConfigBuilder;
 import org.opencrawling.seatunnel.client.SeaTunnelRestClient;
 import org.opencrawling.seatunnel.config.SeaTunnelOutputProperties;
@@ -35,7 +37,6 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -53,10 +54,18 @@ public class SeaTunnelOutputConnector implements OutputConnector {
     private final EmbeddingModel embeddingModel;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final TokenTextSplitter textSplitter;
-    private final Tika tika;
+    private final TextExtractionService textExtractionService;
 
     public SeaTunnelOutputConnector() {
-        this(null, new SeaTunnelOutputProperties(null, null, null, 5000, 4, null, null, null, null, 1024, false, 30), null, null);
+        this(null, new SeaTunnelOutputProperties(null, null, null, 5000, 4, null, null, null, null, 1024, false, 30), null, null, null);
+    }
+
+    public SeaTunnelOutputConnector(
+            SeaTunnelRestClient restClient,
+            SeaTunnelOutputProperties properties,
+            EmbeddingModel embeddingModel,
+            KafkaTemplate<String, Object> kafkaTemplate) {
+        this(restClient, properties, embeddingModel, kafkaTemplate, null);
     }
 
     @Autowired
@@ -64,14 +73,15 @@ public class SeaTunnelOutputConnector implements OutputConnector {
             @Autowired(required = false) SeaTunnelRestClient restClient,
             SeaTunnelOutputProperties properties,
             @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
-            @Autowired(required = false) KafkaTemplate<String, Object> kafkaTemplate) {
+            @Autowired(required = false) KafkaTemplate<String, Object> kafkaTemplate,
+            @Autowired(required = false) TextExtractionService textExtractionService) {
         this.properties = properties != null ? properties : new SeaTunnelOutputProperties(null, null, null, 5000, 4, null, null, null, null, 1024, false, 30);
         this.restClient = restClient != null ? restClient : new SeaTunnelRestClient(this.properties.restUrl(), this.properties.timeoutSeconds());
         this.jobConfigBuilder = new SeaTunnelJobConfigBuilder(this.properties);
         this.embeddingModel = embeddingModel;
         this.kafkaTemplate = kafkaTemplate;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.tika = new Tika();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
     }
 
     @Override
@@ -142,7 +152,12 @@ public class SeaTunnelOutputConnector implements OutputConnector {
                     return;
                 }
 
-                String text = extractText(contentBytes, document);
+                TextExtractionResult result = textExtractionService.extractText(contentBytes, document.metadata());
+                String text = result.text();
+                if (!result.success()) {
+                    log.warn("Text extraction failed for document {}: {}", document.id(), result.errorMessage());
+                }
+
                 if (text.isBlank()) {
                     log.warn("Document {} extracted text is empty, skipping SeaTunnel ingestion.", document.id());
                     return;
@@ -196,24 +211,6 @@ public class SeaTunnelOutputConnector implements OutputConnector {
         } else {
             log.debug("KafkaTemplate not injected, buffered message {} for SeaTunnel topic {}", message.chunkId(), properties.kafkaTopic());
         }
-    }
-
-    private String extractText(byte[] contentBytes, RepositoryDocument document) {
-        String text = "";
-        try {
-            text = tika.parseToString(new ByteArrayInputStream(contentBytes));
-        } catch (Exception e) {
-            log.warn("Tika failed to parse document {}: {}. Falling back to text check.", document.id(), e.getMessage());
-        }
-
-        if (text.isBlank()) {
-            String mimeType = String.valueOf(document.metadata().getOrDefault("mimeType", List.of("text/plain")));
-            if (mimeType.contains("text") || mimeType.contains("json") || mimeType.contains("xml") || mimeType.contains("csv")) {
-                text = new String(contentBytes, StandardCharsets.UTF_8);
-            }
-        }
-
-        return text.replace(NUL_CHAR, "");
     }
 
     private Map<String, Object> cleanedMetadata(RepositoryDocument document) {

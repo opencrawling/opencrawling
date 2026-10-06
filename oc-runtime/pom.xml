@@ -89,6 +89,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-jdbc-repository-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-vector-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -152,6 +157,11 @@
         <dependency>
             <groupId>org.opencrawling</groupId>
             <artifactId>oc-seatunnel-output-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
+            <artifactId>oc-ozone-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

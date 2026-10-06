@@ -23,6 +23,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import org.opencrawling.core.text.TextExtractionProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -38,14 +40,26 @@ public class SystemController {
     private SystemSettingsDTO settings;
     private final JdbcTemplate jdbcTemplate;
     private final TelemetryTraceStore traceStore;
+    private final TextExtractionProperties textExtractionProperties;
 
     @Autowired
     public SystemController(
             @Autowired(required = false) JdbcTemplate jdbcTemplate,
-            @Autowired(required = false) TelemetryTraceStore traceStore) {
+            @Autowired(required = false) TelemetryTraceStore traceStore,
+            @Autowired(required = false) TextExtractionProperties textExtractionProperties) {
         this.jdbcTemplate = jdbcTemplate;
         this.traceStore = traceStore;
+        this.textExtractionProperties = textExtractionProperties;
         String defaultOllamaUrl = System.getenv().getOrDefault("SPRING_AI_OLLAMA_BASE_URL", "http://127.0.0.1:11434");
+
+        boolean forkEnabled = textExtractionProperties != null ? textExtractionProperties.isForkEnabled() : true;
+        long timeoutMs = textExtractionProperties != null ? textExtractionProperties.getTimeoutMs() : 30000L;
+        String heap = (textExtractionProperties != null && textExtractionProperties.getJvmArgs() != null && !textExtractionProperties.getJvmArgs().isEmpty())
+                ? textExtractionProperties.getJvmArgs().get(0) : "-Xmx512m";
+        int maxFiles = textExtractionProperties != null ? textExtractionProperties.getMaxFilesPerProcess() : 10000;
+        boolean extractEmbedded = textExtractionProperties != null ? textExtractionProperties.isExtractEmbedded() : false;
+        int writeLimit = textExtractionProperties != null ? textExtractionProperties.getWriteLimit() : 20000000;
+
         SystemSettingsDTO defaultSettings = new SystemSettingsDTO(
             "Ollama",
             defaultOllamaUrl,
@@ -53,7 +67,23 @@ public class SystemController {
             1024,
             "TokenTextSplitter",
             800,
-            100
+            100,
+            "ozone",
+            "NATIVE",
+            "http://127.0.0.1:9878",
+            "127.0.0.1",
+            9862,
+            "s3v",
+            "claims",
+            "4.1.0",
+            forkEnabled ? "PipesForkParser (Process-Isolated)" : "In-Process Embedded Tika",
+            forkEnabled,
+            timeoutMs,
+            heap,
+            maxFiles,
+            true,
+            extractEmbedded,
+            writeLimit
         );
         this.settings = PersistenceHelper.loadObject("settings.json", SystemSettingsDTO.class, defaultSettings);
 
@@ -92,6 +122,10 @@ public class SystemController {
         status.put("postgres", pgStatus);
         status.put("redis", redisStatus);
         status.put("ollama", ollamaStatus);
+        status.put("tika", "UP");
+        status.put("tikaVersion", (settings != null && settings.tikaVersion() != null) ? settings.tikaVersion() : "4.1.0");
+        status.put("tikaEngine", (settings != null && settings.tikaForkEnabled() != null && settings.tikaForkEnabled()) 
+                ? "PipesForkParser (Process-Isolated)" : "In-Process Embedded Tika");
         status.put("totalIndexedDocs", String.valueOf(getActualDbDocCount()));
 
         if ("UP".equals(pgStatus) && "UP".equals(redisStatus) && "UP".equals(ollamaStatus)) {
@@ -266,23 +300,89 @@ public class SystemController {
     @PostMapping("/settings")
     public ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
         this.settings = newSettings;
+        if (textExtractionProperties != null) {
+            if (newSettings.tikaForkEnabled() != null) {
+                textExtractionProperties.setForkEnabled(newSettings.tikaForkEnabled());
+            }
+            if (newSettings.tikaTimeoutMs() != null && newSettings.tikaTimeoutMs() > 0) {
+                textExtractionProperties.setTimeoutMs(newSettings.tikaTimeoutMs());
+            }
+            if (newSettings.tikaJvmHeap() != null && !newSettings.tikaJvmHeap().isBlank()) {
+                textExtractionProperties.setJvmArgs(new ArrayList<>(List.of(newSettings.tikaJvmHeap())));
+            }
+            if (newSettings.tikaMaxFilesPerProcess() != null && newSettings.tikaMaxFilesPerProcess() > 0) {
+                textExtractionProperties.setMaxFilesPerProcess(newSettings.tikaMaxFilesPerProcess());
+            }
+            if (newSettings.tikaExtractEmbedded() != null) {
+                textExtractionProperties.setExtractEmbedded(newSettings.tikaExtractEmbedded());
+            }
+            if (newSettings.tikaWriteLimit() != null && newSettings.tikaWriteLimit() > 0) {
+                textExtractionProperties.setWriteLimit(newSettings.tikaWriteLimit());
+            }
+        }
         PersistenceHelper.save("settings.json", newSettings);
         InMemoryLogAppender.getLogs().add(formatLog("SUCCESS", "System settings updated: Model set to '" 
             + newSettings.ollamaModel() + "' (" + newSettings.vectorDimensions() + "d) via " 
             + newSettings.embeddingProvider() + ". Chunker: " + newSettings.chunkerType() 
-            + " [Size: " + newSettings.chunkSize() + ", Overlap: " + newSettings.chunkOverlap() + "]"));
+            + " [Size: " + newSettings.chunkSize() + ", Overlap: " + newSettings.chunkOverlap() + "]"
+            + ". Tika 4.1.0 Fork: " + newSettings.tikaForkEnabled() + " (Timeout: " + newSettings.tikaTimeoutMs() + "ms, Heap: " + newSettings.tikaJvmHeap() + ")"));
         return ResponseEntity.ok().build();
     }
 
-    public static record SystemSettingsDTO(
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SystemSettingsDTO(
         String embeddingProvider,
         String ollamaBaseUrl,
         String ollamaModel,
         int vectorDimensions,
         String chunkerType,
         int chunkSize,
-        int chunkOverlap
-    ) {}
+        int chunkOverlap,
+        String claimCheckStore,
+        String ozoneClientType,
+        String ozoneS3Endpoint,
+        String ozoneOmHost,
+        int ozoneOmPort,
+        String ozoneVolume,
+        String ozoneBucket,
+        String tikaVersion,
+        String tikaEngine,
+        Boolean tikaForkEnabled,
+        Long tikaTimeoutMs,
+        String tikaJvmHeap,
+        Integer tikaMaxFilesPerProcess,
+        Boolean tikaFallbackToEmbedded,
+        Boolean tikaExtractEmbedded,
+        Integer tikaWriteLimit
+    ) {
+        public SystemSettingsDTO {
+            if (embeddingProvider == null) embeddingProvider = "Ollama";
+            if (ollamaBaseUrl == null) ollamaBaseUrl = "http://127.0.0.1:11434";
+            if (ollamaModel == null) ollamaModel = "mxbai-embed-large";
+            if (vectorDimensions <= 0) vectorDimensions = 1024;
+            if (chunkerType == null) chunkerType = "TokenTextSplitter";
+            if (chunkSize <= 0) chunkSize = 800;
+            if (chunkOverlap < 0) chunkOverlap = 100;
+            if (claimCheckStore == null) claimCheckStore = "ozone";
+            if (ozoneClientType == null) ozoneClientType = "NATIVE";
+            if (ozoneS3Endpoint == null) ozoneS3Endpoint = "http://127.0.0.1:9878";
+            if (ozoneOmHost == null) ozoneOmHost = "127.0.0.1";
+            if (ozoneOmPort <= 0) ozoneOmPort = 9862;
+            if (ozoneVolume == null) ozoneVolume = "s3v";
+            if (ozoneBucket == null) ozoneBucket = "claims";
+            if (tikaVersion == null) tikaVersion = "4.1.0";
+            if (tikaForkEnabled == null) tikaForkEnabled = Boolean.TRUE;
+            if (tikaEngine == null) {
+                tikaEngine = tikaForkEnabled ? "PipesForkParser (Process-Isolated)" : "In-Process Embedded Tika";
+            }
+            if (tikaTimeoutMs == null || tikaTimeoutMs <= 0) tikaTimeoutMs = 30000L;
+            if (tikaJvmHeap == null || tikaJvmHeap.isBlank()) tikaJvmHeap = "-Xmx512m";
+            if (tikaMaxFilesPerProcess == null || tikaMaxFilesPerProcess <= 0) tikaMaxFilesPerProcess = 10000;
+            if (tikaFallbackToEmbedded == null) tikaFallbackToEmbedded = Boolean.TRUE;
+            if (tikaExtractEmbedded == null) tikaExtractEmbedded = Boolean.FALSE;
+            if (tikaWriteLimit == null || tikaWriteLimit <= 0) tikaWriteLimit = 20000000;
+        }
+    }
 
     // Custom Logback appender to record root system logs in memory
     public static class InMemoryLogAppender extends ch.qos.logback.core.AppenderBase<ch.qos.logback.classic.spi.ILoggingEvent> {

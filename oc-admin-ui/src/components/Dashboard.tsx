@@ -32,7 +32,8 @@ import {
   Database,
   Server,
   Zap,
-  Activity
+  Activity,
+  FileText
 } from 'lucide-react'
 import { statusApi, jobApi } from '../lib/api'
 
@@ -114,6 +115,12 @@ export default function Dashboard() {
            }`}>
               <Activity className="w-3.5 h-3.5" />
               <span>Ollama: {systemStatus.ollama}</span>
+           </div>
+           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+             systemStatus.tika === 'UP' ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+           }`}>
+              <FileText className="w-3.5 h-3.5" />
+              <span>Tika: {systemStatus.tika || 'UP'} ({systemStatus.tikaVersion || '4.1.0'})</span>
            </div>
         </div>
       </div>

@@ -1,6 +1,8 @@
 name: Publish Docker Hub Images
 
 on:
+  push:
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions: read-all
@@ -10,7 +12,7 @@ env:
 
 jobs:
   build-and-push-dockerhub:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 

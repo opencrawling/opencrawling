@@ -25,7 +25,8 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Set Ozone as active Claim Check store and configure client implementation strategy (NATIVE vs S3)
+# Set Ozone as active Claim Check store and configure client implementation strategy:
+# NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
 export SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=ozone
 export SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE="${OZONE_CLIENT_TYPE:-NATIVE}"
 
@@ -129,12 +130,32 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
 fi
 echo -e "${GREEN}Apache Ozone 2.2.0 S3 Gateway is ready!${NC}"
 
-# Create a sample test document in the mounted directory
+# The S3 Gateway answers HTTP before OM/SCM accept writes: create the claims bucket and wait for a successful write
+docker exec ozone-om ozone sh bucket create /s3v/claims >/dev/null 2>&1 || true
+echo -e "${YELLOW}Waiting for a writable Ozone pipeline (/s3v/claims)...${NC}"
+ELAPSED=0
+until docker exec ozone-om ozone admin pipeline list 2>/dev/null | grep -q "State:OPEN" \
+   && docker exec ozone-om sh -c "echo probe > /tmp/oc-probe && ozone sh key put /s3v/claims/.oc-write-probe /tmp/oc-probe" >/dev/null 2>&1; do
+  if [ $ELAPSED -ge 300 ]; then
+    echo -e "${RED}Timeout waiting for a writable Ozone pipeline.${NC}"
+    compose logs ozone-scm ozone-om ozone-datanode | tail -40
+    exit 1
+  fi
+  sleep 5
+  ELAPSED=$((ELAPSED + 5))
+done
+docker exec ozone-om ozone sh key delete /s3v/claims/.oc-write-probe >/dev/null 2>&1 || true
+echo -e "${GREEN}Apache Ozone is writable (after ${ELAPSED}s).${NC}"
+
+# Create a sample test document in the mounted directory.
+# A unique per-run marker changes the content hash (so dedupe state from earlier runs can't skip it) and lets the
+# verification below match only the chunks of THIS run: the pgvector volume persists across runs and suites.
 TEST_DOC_DIR="./oc-runtime/data"
 mkdir -p "$TEST_DOC_DIR"
 TEST_FILE="$TEST_DOC_DIR/ozone-claim-check-test.txt"
-echo "Apache Ozone S3 Gateway Claim Check pattern test for OpenCrawling! Decoupled object storage integration test worked successfully." > "$TEST_FILE"
-echo -e "${GREEN}Created test document: $TEST_FILE${NC}"
+RUN_MARKER="ozonerun$(date +%s)$$"
+echo "Apache Ozone S3 Gateway Claim Check pattern test for OpenCrawling! Decoupled object storage integration test worked successfully. Run marker: ${RUN_MARKER}" > "$TEST_FILE"
+echo -e "${GREEN}Created test document: $TEST_FILE (marker ${RUN_MARKER})${NC}"
 
 # Restart crawler service to trigger directory scan and Ozone upload
 echo -e "${YELLOW}Restarting crawler service with Apache Ozone Claim Check store...${NC}"
@@ -154,7 +175,17 @@ until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service 2>/dev/null
 done
 echo -e "${GREEN}oc-crawler-service finished directory scanning and Ozone upload!${NC}"
 
-# Wait for messaging pipeline to process document vectors (with retries)
+# The claim check of this run's document must use the selected transport (s3:// for S3, ofs:// for NATIVE)
+EXPECTED_CC_SCHEME="s3"
+[ "$(echo "$SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE" | tr '[:lower:]' '[:upper:]')" == "NATIVE" ] && EXPECTED_CC_SCHEME="ofs"
+if ! docker logs oc-crawler-service 2>&1 | grep -q "Saved document content to Claim Check store: ${EXPECTED_CC_SCHEME}://.*ozone-claim-check-test.txt"; then
+  echo -e "${RED}FAIL: crawler did not store ozone-claim-check-test.txt via the ${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE} claim check (${EXPECTED_CC_SCHEME}://)${NC}"
+  docker logs oc-crawler-service 2>&1 | grep -E "Claim Check|ClaimCheck|ERROR" | tail -20
+  exit 1
+fi
+echo -e "${GREEN}PASSED: crawler stored the document via the ${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE} claim check (${EXPECTED_CC_SCHEME}://).${NC}"
+
+# Wait for messaging pipeline to process this run's document vectors (with retries)
 echo -e "${YELLOW}Waiting for Kafka consumers to process and store vectors via Ozone claim check...${NC}"
 RECORD_COUNT=0
 ELAPSED=0
@@ -163,26 +194,27 @@ until [ "$RECORD_COUNT" -gt 0 ] 2>/dev/null || [ $ELAPSED -ge $TIMEOUT ]; do
   sleep 2
   ELAPSED=$((ELAPSED + 2))
   RECORD_COUNT=$(docker exec -i postgres-vector-decoupled psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-    "SELECT (SELECT count(*) FROM vector_store) \
-          + (SELECT count(*) FROM vector_store_384) \
-          + (SELECT count(*) FROM vector_store_768) \
-          + (SELECT count(*) FROM vector_store_1024);" 2>/dev/null || echo "0")
+    "SELECT (SELECT count(*) FROM vector_store WHERE content LIKE '%${RUN_MARKER}%') \
+          + (SELECT count(*) FROM vector_store_384 WHERE content LIKE '%${RUN_MARKER}%') \
+          + (SELECT count(*) FROM vector_store_768 WHERE content LIKE '%${RUN_MARKER}%') \
+          + (SELECT count(*) FROM vector_store_1024 WHERE content LIKE '%${RUN_MARKER}%');" 2>/dev/null || echo "0")
   RECORD_COUNT=$(echo "$RECORD_COUNT" | tr -d '[:space:]')
-  if [ -z "$RECORD_COUNT" ]; then
+  if ! [ "$RECORD_COUNT" -eq "$RECORD_COUNT" ] 2>/dev/null; then
     RECORD_COUNT=0
   fi
-  printf "  Elapsed: %ds, Total vector records across all tables: %s\r" "$ELAPSED" "$RECORD_COUNT"
+  printf "  Elapsed: %ds, vector records for this run's document: %s\r" "$ELAPSED" "$RECORD_COUNT"
 done
 echo ""
 
 # Verify pgvector database content
 echo -e "${YELLOW}Verifying PgVector table records for Ozone claim check test...${NC}"
-echo -e "PgVector Records count: ${GREEN}$RECORD_COUNT${NC}"
-if [ "$RECORD_COUNT" -eq 0 ] || [ "$RECORD_COUNT" == "failed" ]; then
-  echo -e "${RED}Apache Ozone integration test failed: 0 records found in pgvector database!${NC}"
+echo -e "PgVector Records count (marker ${RUN_MARKER}): ${GREEN}$RECORD_COUNT${NC}"
+if [ "$RECORD_COUNT" -eq 0 ]; then
+  echo -e "${RED}Apache Ozone integration test failed: no pgvector records for this run's document (marker ${RUN_MARKER})!${NC}"
+  compose logs oc-crawler
   compose logs oc-ingestion-consumer
   compose logs oc-embedding-consumer
-  compose logs oc-writer
+  compose logs oc-writer-consumer
   compose logs ozone-s3g
   exit 1
 fi

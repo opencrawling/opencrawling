@@ -128,6 +128,11 @@ public class ConnectorCheckerService {
                 return checkFileSystem(config);
             }
 
+            // --- Relational Database (JDBC) Repository Connector ---
+            if (className.contains("JdbcRepositoryConnector") || className.contains("Jdbc")) {
+                return checkJdbc(config);
+            }
+
             // --- Ollama Embedding Connector ---
             if (className.contains("OllamaEmbeddingConnector") || className.contains("Ollama")) {
                 return checkOllama(config);
@@ -657,6 +662,37 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Apache SeaTunnel cluster at " + cleanEndpoint + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkJdbc(Map<String, String> config) {
+        String url = config.getOrDefault("url", "");
+        if (url.isBlank()) {
+            return new ConnectionCheckResult(false, "JDBC connection check failed: 'url' parameter is required.", null);
+        }
+        String driver = config.getOrDefault("driverClassName", config.getOrDefault("driver-class-name", ""));
+        String username = config.getOrDefault("username", "");
+        String password = config.getOrDefault("password", "");
+
+        try {
+            if (!driver.isBlank()) {
+                try {
+                    Class.forName(driver);
+                } catch (ClassNotFoundException e) {
+                    return new ConnectionCheckResult(false, "JDBC driver class not found on classpath: " + driver, e.toString());
+                }
+            }
+            try (Connection conn = DriverManager.getConnection(url, username, password)) {
+                if (conn.isValid(5)) {
+                    String product = conn.getMetaData().getDatabaseProductName();
+                    String version = conn.getMetaData().getDatabaseProductVersion();
+                    return new ConnectionCheckResult(true, "Successfully connected to JDBC Database: " + product + " (" + version + ")", "Database: " + product + " " + version);
+                } else {
+                    return new ConnectionCheckResult(false, "Connection check failed: database rejected validation ping.", null);
+                }
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to JDBC database at " + url + ": " + e.getMessage(), e.toString());
         }
     }
 

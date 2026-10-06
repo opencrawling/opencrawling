@@ -33,7 +33,8 @@ public record JobResponse(
     long documents,
     String lastRun,
     String transformationConnector,
-    NarrativizationConfig narrativization
+    NarrativizationConfig narrativization,
+    String pipelineMode
 ) {
     public String getId() {
         return id;

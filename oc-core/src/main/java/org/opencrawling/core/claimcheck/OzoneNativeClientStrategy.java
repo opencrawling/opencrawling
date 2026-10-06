@@ -21,13 +21,17 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.file.NoSuchFileException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * High-performance Native RPC Client (`ofs` / `o3fs` protocol) strategy for Apache Ozone.
- * Connects directly to DataNodes and Ozone Manager (OM) via direct RPC stream transport,
- * bypassing HTTP translation overheads of the S3 Gateway.
+ * In-process fallback for the NATIVE (`ofs` / `o3fs`) claim-check transport.
+ * <p>
+ * Objects are kept in this JVM's memory and are NOT written to Apache Ozone, so they are invisible to other
+ * services (e.g. decoupled consumers). It is used only when no {@link OzoneNativeClaimCheckStrategyFactory} bean
+ * provides a real Ozone RPC client (see {@code OzoneRpcClaimCheckStrategy} in {@code oc-ozone-output-connector}),
+ * and is suitable for single-process deployments and tests only.
  */
 public class OzoneNativeClientStrategy implements OzoneClientStrategy {
 
@@ -66,8 +70,12 @@ public class OzoneNativeClientStrategy implements OzoneClientStrategy {
         ParsedOfsUri parsed = ParsedOfsUri.parse(claimCheckUri, volume, bucket);
         byte[] data = nativeStorage.get(parsed.key());
         if (data == null) {
-            log.warn("Native Ozone object not found for key: {}", parsed.key());
-            return new ByteArrayInputStream(new byte[0]);
+            // Fail loudly (like LocalFileClaimCheckStore) instead of returning empty content: an empty stream would be
+            // migrated/indexed as a 0-byte document. This store is in-process only, so objects written by another
+            // service (e.g. the crawler in decoupled mode) are never visible here.
+            throw new NoSuchFileException(claimCheckUri.toString(), null,
+                    "Native Ozone claim check object not found (key: " + parsed.key()
+                            + "); the NATIVE claim-check strategy is in-process only and not shared across services");
         }
         return new ByteArrayInputStream(data);
     }

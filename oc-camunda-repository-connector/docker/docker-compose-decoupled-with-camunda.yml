@@ -29,10 +29,11 @@ services:
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/engine-rest/version || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/engine-rest/engine"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 30s  # Increase from default (was likely too short)
+      retries: 10   # Increase retry attempts
+      start_period: 60s  # Add startup grace period
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:
@@ -180,6 +181,9 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
     depends_on:
       kafka:
         condition: service_started
