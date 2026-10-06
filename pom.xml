@@ -110,6 +110,8 @@
         <module>oc-camunda-repository-connector</module>
         <module>oc-aps-repository-connector</module>
         <module>oc-cmis-repository-connector</module>
+        <module>oc-doxis-client</module>
+        <module>oc-doxis-repository-connector</module>
         <module>oc-stormcrawler-bolt</module>
         <module>oc-stormcrawler-repository-connector</module>
         <module>oc-jdbc-repository-connector</module>

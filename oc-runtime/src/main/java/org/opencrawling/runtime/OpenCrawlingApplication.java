@@ -105,6 +105,7 @@ public class OpenCrawlingApplication {
                     !"alfresco".equalsIgnoreCase(repositoryConnectorType) &&
                     !"aps".equalsIgnoreCase(repositoryConnectorType) &&
                     !"cmis".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"doxis".equalsIgnoreCase(repositoryConnectorType) &&
                     !"jdbc".equalsIgnoreCase(repositoryConnectorType)) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {

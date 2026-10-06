@@ -1,0 +1,4 @@
+{"searchId":"s-1","totalHitCount":3,"searchResultRestrictionMode":"NOT_RESTRICTED","maxSearchResults":1000,
+ "searchHits":[
+   {"uuid":"d1","documentTypeUUID":"t-mig","logicalDeleted":false},
+   {"uuid":"d2","documentTypeUUID":"t-mig","logicalDeleted":true}]}

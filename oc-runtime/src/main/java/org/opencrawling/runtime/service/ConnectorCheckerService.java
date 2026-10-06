@@ -27,8 +27,13 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import org.opencrawling.doxis.DoxisRepositoryConnector;
+import org.opencrawling.doxis.DoxisRepositorySettings;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
 
@@ -107,6 +112,11 @@ public class ConnectorCheckerService {
             // --- Alfresco Repository Connector ---
             if (className.contains("AlfrescoRepositoryConnector") || className.contains("Alfresco")) {
                 return checkAlfresco(config);
+            }
+
+            // --- Doxis Repository Connector ---
+            if (className.contains("DoxisRepositoryConnector")) {
+                return checkDoxisRepository(config);
             }
 
             // --- CMIS Repository Connector ---
@@ -461,6 +471,27 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + url + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkDoxisRepository(Map<String, String> config) {
+        DoxisRepositorySettings settings = DoxisRepositorySettings.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "Doxis repository connector is not configured: " + String.join(" ", problems)
+                    + " " + DoxisRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        DoxisClient client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
+                settings.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(30), 0);
+        try (client) {
+            JsonNode repository = client.getRepository(settings.repositoryId());
+            String shortName = repository.path("shortName").asText(repository.path("name").asText(settings.repositoryId()));
+            return new ConnectionCheckResult(true, "Successfully logged in to Doxis CSB at " + client.getBaseUrl() + " (customer '"
+                    + settings.customerName() + "'); repository '" + shortName + "' is accessible. " + DoxisRepositoryConnector.LICENCE_NOTICE,
+                    repository.path("uuid").asText(null));
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + settings.url() + ": " + e.getMessage() + " "
+                    + DoxisRepositoryConnector.LICENCE_NOTICE, e.toString());
         }
     }
 

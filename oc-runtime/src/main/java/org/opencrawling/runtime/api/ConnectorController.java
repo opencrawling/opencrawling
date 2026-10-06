@@ -102,6 +102,29 @@ public class ConnectorController {
             Map.entry("batchSize", "100"),
             Map.entry("fetchSize", "1000")
         )));
+        defaults.add(new ConnectorDTO("Doxis_Repository", "Doxis 4 ECM Repository (CSB REST API)", "repository", "org.opencrawling.doxis.DoxisRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8080/restws/publicws/rest/api/v1"),
+            Map.entry("authType", "basic"),
+            Map.entry("customerName", ""),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("role", "admins"),
+            Map.entry("repositoryId", ""),
+            Map.entry("crawlMode", "search"),
+            Map.entry("documentClasses", ""),
+            Map.entry("searchQuery", ""),
+            Map.entry("rootFolderId", ""),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "latest_only"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("includeDescriptors", "true"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("descriptorPrefix", ""),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "2"),
+            Map.entry("timeoutSeconds", "120")
+        )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
             "pgVectorUsername", "opencrawling",

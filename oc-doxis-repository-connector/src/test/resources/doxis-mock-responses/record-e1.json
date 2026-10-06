@@ -1,0 +1,5 @@
+{"uuid":"e1","name":"Acme Energy Master File",
+ "versions":[{"versionNumber":"1","currentVersion":true,"attributes":[],
+   "folderNodes":[
+     {"uuid":"n-docs","name":"Documents","childrenFolderNodes":[
+       {"uuid":"n-sub","name":"Amendments","childrenFolderNodes":[]}]}]}]}

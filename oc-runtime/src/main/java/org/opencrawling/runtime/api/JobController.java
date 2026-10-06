@@ -275,6 +275,12 @@ public class JobController {
                                 changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
                         );
                         log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
+                    } else if (connConfig.className().contains("DoxisRepositoryConnector")) {
+                        org.opencrawling.doxis.DoxisRepositorySettings doxisSettings =
+                                org.opencrawling.doxis.DoxisRepositorySettings.fromConfiguration(connConfig.configuration());
+                        resolvedConnector = new org.opencrawling.doxis.DoxisRepositoryConnector(doxisSettings);
+                        log.info("Successfully resolved dynamic Doxis repository connector for '{}' (repository '{}', {} mode)",
+                                doxisSettings.url(), doxisSettings.repositoryId(), doxisSettings.crawlMode());
                     } else if (connConfig.className().contains("Jdbc")) {
                         String url = connConfig.configuration().getOrDefault("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1");
                         String driverClassName = connConfig.configuration().getOrDefault("driverClassName", connConfig.configuration().getOrDefault("driver-class-name", ""));

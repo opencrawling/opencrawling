@@ -242,6 +242,7 @@ export default function ConnectorForm() {
       { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
       { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
+      { label: 'Doxis Repository (Intelligent Content Automation)', value: 'org.opencrawling.doxis.DoxisRepositoryConnector' },
       { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
     ],
     transformation: [
@@ -1286,6 +1287,244 @@ export default function ConnectorForm() {
                           <span className="font-semibold text-teal-200">Zero-Trust ACL & Collocated Pushdown: </span>
                           Stamps <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_object_id</code>, <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_repository_id</code>, <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_identity_users</code>, and <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_identity_groups</code>. Pre-populates security permissions for collocated CMIS/Alfresco repository filtering and OIS envelopes.
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Doxis 4 CSB Repository Connector */}
+                  {selectedClass === 'org.opencrawling.doxis.DoxisRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a valid, licensed Doxis 4 installation (SER Group).</span>{' '}
+                          OpenCrawling does not include Doxis or any Doxis licence. Your licence must allow API (technical-user)
+                          sessions, and you need a reachable CSB 14.4+ with its REST API and a technical user with read rights.
+                          See the connector&apos;s README, section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Doxis CSB REST API URL</label>
+                        <input 
+                          {...register('configuration.url', { required: true })}
+                          placeholder="http://localhost:8080/restws/publicws/rest/api/v1"
+                          defaultValue="http://localhost:8080/restws/publicws/rest/api/v1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select 
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">Basic (CSB user name + password login)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Customer (Tenant)</label>
+                        <input 
+                          {...register('configuration.customerName')}
+                          placeholder="e.g. DX4"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.username')}
+                          placeholder="Supervisor"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Role</label>
+                        <input 
+                          {...register('configuration.role')}
+                          placeholder="admins"
+                          defaultValue="admins"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Repository / Archive ID</label>
+                        <input 
+                          {...register('configuration.repositoryId')}
+                          placeholder="e.g. DB1 or the repository UUID"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select 
+                          {...register('configuration.crawlMode')}
+                          defaultValue="search"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="search">Document Class & Search Query (CQL)</option>
+                          <option value="folder">Electronic File / Folder Traversal</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Mode</label>
+                        <select 
+                          {...register('configuration.versionMode')}
+                          defaultValue="latest_only"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="latest_only">Latest Version Only</option>
+                          <option value="all_versions">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Document Classes (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.documentClasses')}
+                          placeholder="TX_MigratedDocument,TX_LargeExternalDocument"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root E-File ID (Folder Mode)</label>
+                        <input 
+                          {...register('configuration.rootFolderId')}
+                          placeholder="e-file (record) UUID"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Search Query / Descriptors Filter (CQL WHERE)</label>
+                        <input 
+                          {...register('configuration.searchQuery')}
+                          placeholder="OBJECTNUMBER2 LIKE 'contracts-2026*'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Descriptor Metadata Prefix (Optional)</label>
+                        <input 
+                          {...register('configuration.descriptorPrefix')}
+                          placeholder="empty = Doxis names as-is, or doxis_desc_"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback Readers (No Instance ACEs)</label>
+                        <input 
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="e.g. group:Legal, everybody"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.batchSize', { valueAsNumber: true })}
+                          placeholder="100"
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallel Documents</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.parallelism', { valueAsNumber: true })}
+                          placeholder="2"
+                          defaultValue={2}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.maxContentSizeBytes', { valueAsNumber: true })}
+                          placeholder="52428800"
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (Seconds)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.timeoutSeconds', { valueAsNumber: true })}
+                          placeholder="120"
+                          defaultValue={120}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeSubfoldersDoxis"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Child Folders & Sub-E-Files
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeContentStreamDoxis"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeDescriptorsDoxis"
+                          {...register('configuration.includeDescriptors')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeDescriptorsDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Descriptors
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsDoxis"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Security & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="emitLogicalDeletesDoxis"
+                          {...register('configuration.emitLogicalDeletes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="emitLogicalDeletesDoxis" className="text-sm font-medium cursor-pointer">
+                          Send Deletes for Logically Removed Documents
+                        </label>
                       </div>
                     </div>
                   )}

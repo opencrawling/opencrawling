@@ -1,0 +1,4 @@
+[
+  {"uuid":"t-mig","name":"TX_MigratedDocument","allowedMimeTypes":[]},
+  {"uuid":"t-link","name":"TX_LargeExternalDocument","allowedMimeTypes":[]}
+]
