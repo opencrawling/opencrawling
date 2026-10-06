@@ -772,6 +772,11 @@ Every write is verified by reading back the content object's length and SHA-256.
 
 To crawl a [Doxis 4](https://www.doxis.com/en/) DMS repository, select the Doxis repository connector and point it at a Doxis CSB:
 
+> **Prerequisites:** you need a valid Doxis licence that allows API (technical-user) sessions, and a reachable Doxis 4 CSB
+> 14.4+ with its REST API enabled. You also need a technical user and role with read rights on the repository, its classes,
+> e-files and users/groups/roles, and an existing DMS repository. OpenCrawling doesn't include Doxis or any Doxis licence.
+> See the [full prerequisites](oc-doxis-repository-connector/README.md#prerequisites) before configuring a crawl.
+
 ```bash
 SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=doxis \
 SPRING_OPENCRAWLING_CONNECTOR_TYPE=doxis \

@@ -4,6 +4,67 @@ Crawls a **Doxis 4 CSB** DMS repository (SER Group) through the CSB REST API (`/
 against 14.4.1). It is the input-side counterpart of `oc-doxis-output-connector`; both use the shared `oc-doxis-client`
 (issue #122).
 
+## Prerequisites
+
+> **The connector needs a licensed, running Doxis installation. It does not include Doxis, and it does not include any
+> Doxis licence.** OpenCrawling only talks to a Doxis CSB that you already operate and are licensed to use. Doxis is a
+> product of SER Group, and its licence terms are agreed between you and SER.
+
+Make sure all of the following are in place before you configure the connector or start a crawl. If any of them is
+missing, the connection check or the crawl fails.
+
+### 1. A valid Doxis licence
+
+- A **valid, unexpired Doxis 4 licence** for the CSB you connect to, with the CSB REST API (`restws`) enabled.
+- The licence must allow **API / technical-user sessions** for the connector. CSB counts these sessions against the licence.
+  A crawl holds exactly one session for its whole run and logs out at the end, and the connection check opens and closes
+  one more. Plan session capacity with your Doxis administrator, especially if other integrations share the same CSB.
+- Using Doxis through this connector must be allowed under your agreement with SER. Check the terms with SER or your Doxis
+  partner if you're unsure, for example about automated mass reading or indexing of content into a search or AI system.
+
+### 2. A reachable Doxis CSB
+
+- **Doxis 4 CSB 14.4 or later** with the public REST API at `<scheme>://<csb-host>:<port>/restws/publicws/rest/api/v1`.
+  The connector was built and tested against the 14.4.1 REST contract.
+- **Network access** from the OpenCrawling runtime to that URL (firewalls, proxies, TLS certificates). The connector
+  doesn't use the SOAP, Blueline or webCube interfaces.
+- The **customer (tenant) name** the repository belongs to.
+
+### 3. A technical user, a role, and their rights
+
+A dedicated Doxis user for the connector, with a password and a role (`role`, default `admins`) that has at least these
+rights:
+
+| Needed for | Doxis right |
+|---|---|
+| Logging in | Login allowed. No "change password at next login" flag, which blocks API sign-in |
+| Searching | `searchInContentRepository` on the DMS repository |
+| Reading documents | Read and `VIEW_DOCUMENT_CONTENTS` on the document classes to crawl, and read on their descriptors |
+| Folder mode and e-file ACLs | Read and `VIEW_FOLDER_CONTENTS` on the e-file (record) classes |
+| Mapping ACLs to users and groups | Read access to users, groups and roles (`/users`, `/groups`, `/roles`) |
+
+The connector only **reads**. It never creates, changes or deletes anything in Doxis, so it doesn't need write or delete
+rights. Grant only what is listed. A document or e-file the user can't see isn't crawled. Only the instance ACEs the user
+can read are mapped to OpenCrawling permissions.
+
+### 4. Repository configuration
+
+- The **DMS repository** to crawl (`repository-id`) must exist, and the technical user must be able to access it.
+- For **CQL filters** (`search-query`): the descriptor short names used in the condition (for example `OBJECTNUMBER2` for
+  `ObjectNumberExternal`) must exist in that repository.
+- For **folder mode**: the e-file UUID to start from (`root-folder-id`).
+- **Content-link documents** (binaries stored outside Doxis) are indexed with their link only. Indexing their content
+  needs separate access to that external storage.
+
+### 5. OpenCrawling side
+
+- A running OpenCrawling runtime (Java 25), with the claim-check store and pipeline it normally uses.
+- The **password is a secret**. Supply it through the Admin UI, an environment variable
+  (`SPRING_OPENCRAWLING_CONNECTOR_DOXIS_PASSWORD`) or your secret store. Never commit it to source control.
+
+Use the Admin UI's **Test Connection** button, or `oc connector check --name <name> --type repository`, to check items
+1–4 before the first crawl. They log in, read the repository, and log out.
+
 ## Crawl modes
 
 - **`search`** (the default) runs one CQL search: `SELECT * FROM <repository short name> [WHERE <search-query>]`. It is paged
