@@ -215,25 +215,33 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
                 log.warn("Doxis reports {} hits but serves at most {}; narrow search-query to crawl everything.",
                         page.totalHitCount(), page.maxSearchResults());
             }
+            // CSB 14.4 pages with a 1-based offset (verified on DX4 2026-10-06: the first page reports start=1, offset=1
+            // repeats it, offset=3 returns hits 3-4), so the next offset is start + hits on the page. The listing also ends
+            // on the number of DISTINCT documents seen, so a repeated hit can neither loop nor hide the last one.
             int offset = 0;
+            int nextOffset = 1;
+            int total = page.totalHitCount();
+            Set<String> listed = new HashSet<>();
             while (true) {
                 List<JsonNode> hits = page.hits();
+                int before = listed.size();
+                hits.forEach(hit -> listed.add(hit.path("uuid").asText("")));
                 process(crawl.take(hits), null, crawl, sink);
                 offset += hits.size();
-                // an empty page ends the listing, whatever the restriction mode says (an empty RESTRICTED_BY_SERVER
-                // result is not a truncated listing)
-                if (hits.isEmpty() || searchId == null || (page.totalHitCount() >= 0 && offset >= page.totalHitCount())) {
+                nextOffset = (page.start() > 0 ? page.start() : nextOffset) + hits.size();
+                // an empty page or a page with nothing new ends the listing, whatever the restriction mode says
+                // (RESTRICTED_BY_SERVER only means the result is paged)
+                if (hits.isEmpty() || listed.size() == before || searchId == null || (total >= 0 && listed.size() >= total)) {
                     break;
                 }
                 if (crawl.limitReached()) {
                     log.info("Doxis scan stopped at max-documents={}.", settings.maxDocuments());
                     return;
                 }
-                page = client.nextSearchResults(searchId, offset, settings.batchSize());
+                page = client.nextSearchResults(searchId, nextOffset, settings.batchSize());
             }
-            if (page.totalHitCount() >= 0 && offset < page.totalHitCount()) {
-                log.warn("Doxis search delivered {} of {} hits (restriction mode {}).", offset, page.totalHitCount(),
-                        page.restrictionMode());
+            if (total >= 0 && listed.size() < total) {
+                log.warn("Doxis search delivered {} of {} hits (restriction mode {}).", listed.size(), total, page.restrictionMode());
             }
         } finally {
             client.closeSearch(searchId);
@@ -363,6 +371,11 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
             DoxisDocumentBuilder.Context context = new DoxisDocumentBuilder.Context(customer, repositoryShortName, documentClass,
                     createdBy, principalName(DoxisDocumentBuilder.text(version, "modificatorId")), parentId, parentName);
             DoxisDocumentBuilder.ContentRef content = DoxisDocumentBuilder.content(version).orElse(null);
+            if (content == null && version.path("representations").isEmpty()) {
+                // CSB 14.4 answers 200 without representations when the caller lacks read on the class
+                log.warn("Doxis document {} version {} has no representations: no content, or the technical user lacks "
+                        + "read rights on its class.", uuid, version.path("versionNumber").asText("?"));
+            }
             InputStream stream = contentStream(uuid, content);
             RepositoryDocument built;
             try {

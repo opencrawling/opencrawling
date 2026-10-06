@@ -119,7 +119,7 @@ class DoxisRepositoryConnectorTest {
 
     private void searchFixtures() {
         json("POST /documents/search", "search-page-1.json");
-        json("GET /documents/searchResults/s-1?offset=2&limit=2", "search-page-2.json");
+        json("GET /documents/searchResults/s-1?offset=3&limit=2", "search-page-2.json");
         routes.put("DELETE /documents/searchResults/s-1", r -> new MockResponse().setResponseCode(204));
     }
 
@@ -200,7 +200,7 @@ class DoxisRepositoryConnectorTest {
 
         // one search, one further page, the result closed; the tombstone and the content link need no further reads
         assertEquals(1, count("POST /documents/search"));
-        assertEquals(1, count("GET /documents/searchResults/s-1?offset=2&limit=2"));
+        assertEquals(1, count("GET /documents/searchResults/s-1?offset=3&limit=2"));
         assertEquals(1, count("DELETE /documents/searchResults/s-1"));
         assertEquals(0, count("GET " + DOCS + "d2/versions?initializeRepresentations=true"));
         assertEquals(0, requests.stream().filter(r -> r.contains("/contentObjects/c3")).count());
@@ -208,6 +208,39 @@ class DoxisRepositoryConnectorTest {
         assertEquals(1, count("POST /login"));
         assertEquals(1, count("POST /logout"));
         assertEquals("POST /logout", requests.getLast());
+    }
+
+    @Test
+    void aPageThatRepeatsAHitStillDeliversEveryDocumentOnce() {
+        // a server that restarts a page one hit early (page 2 repeats d2) must not duplicate or drop documents
+        json("POST /documents/search", "search-page-1.json");
+        routes.put("GET /documents/searchResults/s-1?offset=3&limit=2", r -> new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/json").setBody(
+                        "{\"searchId\":\"s-1\",\"totalHitCount\":3,\"searchHits\":[{\"uuid\":\"d2\",\"documentTypeUUID\":\"t-mig\","
+                                + "\"logicalDeleted\":true},{\"uuid\":\"d3\",\"documentTypeUUID\":\"t-link\"}]}"));
+        routes.put("DELETE /documents/searchResults/s-1", r -> new MockResponse().setResponseCode(204));
+
+        List<RepositoryDocument> docs = connector(Map.of("includeContentStream", "false")).scan("default").collectList().block();
+
+        assertNotNull(docs);
+        assertEquals(List.of("doxis://DX4/DB1/documents/d1", "doxis://DX4/DB1/documents/d2", "doxis://DX4/DB1/documents/d3"),
+                docs.stream().map(RepositoryDocument::id).sorted().toList(), "each document once, the last one included");
+        assertEquals(1, requests.stream().filter(r -> r.startsWith("GET /documents/searchResults/")).count());
+        assertEquals(1, count("POST /logout"));
+    }
+
+    @Test
+    void aPageWithNothingNewEndsTheListing() {
+        json("POST /documents/search", "search-page-1.json");
+        routes.put("GET /documents/searchResults/s-1?offset=3&limit=2", r -> new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/json").setBody(
+                        "{\"searchId\":\"s-1\",\"totalHitCount\":3,\"searchHits\":[{\"uuid\":\"d2\",\"logicalDeleted\":true}]}"));
+        routes.put("DELETE /documents/searchResults/s-1", r -> new MockResponse().setResponseCode(204));
+
+        StepVerifier.create(connector(Map.of("includeContentStream", "false")).scan("default").then()).verifyComplete();
+
+        assertEquals(1, requests.stream().filter(r -> r.startsWith("GET /documents/searchResults/")).count());
+        assertEquals(1, count("DELETE /documents/searchResults/s-1"));
     }
 
     @Test

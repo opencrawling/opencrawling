@@ -440,7 +440,7 @@ public class DoxisClient implements AutoCloseable {
      * One page of a CQL document search. A non-null {@code searchId} is a server-side result set that must be closed with
      * {@link #closeSearch(String)}; {@code restrictionMode} is CSB's {@code searchResultRestrictionMode}.
      */
-    public record SearchPage(String searchId, int totalHitCount, String restrictionMode, int maxSearchResults,
+    public record SearchPage(String searchId, int totalHitCount, String restrictionMode, int maxSearchResults, int start,
                              List<JsonNode> hits) {
     }
 
@@ -559,13 +559,21 @@ public class DoxisClient implements AutoCloseable {
                 + enc(recordId) + "/nodes/" + enc(nodeId) + "/referencedInformationObjects");
     }
 
+    /**
+     * {@code POST /auditTrail/search} with an {@code AuditQueryWsTO} (operation types, date range, content repository ids,
+     * {@code maxHits}); returns the audit records. Empty when auditing is switched off on the CSB.
+     */
+    public List<JsonNode> searchAuditTrail(Map<String, Object> auditQuery) throws IOException, InterruptedException {
+        return list(execute("Search audit trail", () -> jsonRequest("/auditTrail/search", "POST", auditQuery, true), true, true));
+    }
+
     private SearchPage toSearchPage(JsonNode result) {
         String searchId = result.path("searchId").asText(null);
         if (searchId != null && (searchId.isBlank() || "null".equals(searchId))) {
             searchId = null;
         }
         return new SearchPage(searchId, result.path("totalHitCount").asInt(-1), result.path("searchResultRestrictionMode").asText(null),
-                result.path("maxSearchResults").asInt(-1), list(result.path("searchHits")));
+                result.path("maxSearchResults").asInt(-1), result.path("start").asInt(-1), list(result.path("searchHits")));
     }
 
     // ------------------------------------------------------------------ plumbing
