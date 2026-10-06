@@ -96,4 +96,40 @@ class VectorStoreWriterConsumerTest {
             verify(store, never()).delete(anyList());
         }
     }
+
+    @Test
+    void testFirstChunkPurgesTheChunksBeyondTheDocumentsNewLength() {
+        String documentId = "http://example.com/shrunk.html";
+        DocumentEmbeddedMessage firstChunk = new DocumentEmbeddedMessage(
+                documentId,
+                "chunk-0",
+                "The only chunk left",
+                Map.of("documentId", documentId, "chunk_index", 0, "total_chunks", 1),
+                new float[1024]
+        );
+
+        consumer.consume(firstChunk);
+
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
+        Filter.Expression beyondNewLength = b.and(b.eq("documentId", documentId), b.gte("chunk_index", 1)).build();
+        verify(store1024).add(anyList());
+        verify(store1024).delete(beyondNewLength);
+    }
+
+    @Test
+    void testLaterChunksDoNotPurge() {
+        String documentId = "http://example.com/page.html";
+        DocumentEmbeddedMessage secondChunk = new DocumentEmbeddedMessage(
+                documentId,
+                "chunk-1",
+                "Second chunk",
+                Map.of("documentId", documentId, "chunk_index", 1, "total_chunks", 3),
+                new float[1024]
+        );
+
+        consumer.consume(secondChunk);
+
+        verify(store1024).add(anyList());
+        verify(store1024, never()).delete(any(Filter.Expression.class));
+    }
 }

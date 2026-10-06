@@ -63,6 +63,14 @@ public class VectorStoreWriterConsumer {
         this.traceStore = traceStore;
     }
 
+    /**
+     * Stores one embedded chunk, or purges a document.
+     *
+     * <p>A chunk is upserted under its chunk id into the store matching its embedding dimensions. The chunk with
+     * {@code chunk_index} 0 also deletes, from that store, the rows of the same {@code documentId} whose
+     * {@code chunk_index} is at or past its {@code total_chunks}. A DELETE removes every row whose
+     * {@code documentId} metadata equals the message's document id, from all four stores.
+     */
     @KafkaListener(topics = KafkaConfig.EMBEDDED_TOPIC_NAME)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for storage: {} (Dimensions: {})", message.chunkId(), 
@@ -108,6 +116,12 @@ public class VectorStoreWriterConsumer {
                 targetStore.add(List.of(doc));
             } finally {
                 PrecomputedEmbeddingModel.clear();
+            }
+            // A re-crawled document that got shorter keeps rows past its new length; its first chunk removes them.
+            if (message.metadata().get("chunk_index") instanceof Number index && index.intValue() == 0
+                    && message.metadata().get("total_chunks") instanceof Number total) {
+                FilterExpressionBuilder b = new FilterExpressionBuilder();
+                targetStore.delete(b.and(b.eq("documentId", message.documentId()), b.gte("chunk_index", total.intValue())).build());
             }
             long duration = System.currentTimeMillis() - startTime;
 

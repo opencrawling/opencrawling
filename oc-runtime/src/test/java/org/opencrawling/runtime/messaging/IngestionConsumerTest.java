@@ -84,15 +84,31 @@ class IngestionConsumerTest {
         assertEquals(a.size() + b.size(), all.size());
     }
 
+    @Test
+    void chunksCarryTheirPositionAndTheDocumentsChunkCount() {
+        // VectorStoreWriterConsumer drops the rows past a shorter document's length using these two keys.
+        List<DocumentChunkMessage> chunks = publishedChunks("http://example.com/a.html");
+
+        for (int i = 0; i < chunks.size(); i++) {
+            assertEquals(i, chunks.get(i).metadata().get("chunk_index"));
+            assertEquals(chunks.size(), chunks.get(i).metadata().get("total_chunks"));
+        }
+    }
+
     /** Consumes one UPSERT message for {@code documentId} and returns the chunk ids it published, in order. */
     private List<String> ingest(String documentId) {
+        return publishedChunks(documentId).stream().map(DocumentChunkMessage::chunkId).toList();
+    }
+
+    /** Consumes one UPSERT message for {@code documentId} and returns the chunk messages it published, in order. */
+    private List<DocumentChunkMessage> publishedChunks(String documentId) {
         clearInvocations(kafkaTemplate);
         consumer.consume(new IngestionMessage(documentId, "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of()));
 
         ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
         verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaConfig.CHUNKS_TOPIC_NAME), anyString(), sent.capture());
         return sent.getAllValues().stream()
-                .map(message -> ((DocumentChunkMessage) message).chunkId())
+                .map(DocumentChunkMessage.class::cast)
                 .toList();
     }
 }

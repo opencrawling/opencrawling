@@ -18,6 +18,8 @@ package org.opencrawling.runtime;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
+import org.opencrawling.runtime.messaging.VectorStoreWriterConsumer;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector;
 import org.opencrawling.stormcrawler.config.StormCrawlerProperties;
@@ -35,6 +37,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,7 +49,8 @@ import static org.assertj.core.api.Assertions.fail;
 /**
  * Crawls a local 100-page site three times through the Kafka pipeline (test embeddings, 1024
  * dimensions) and checks {@code vector_store_1024}: a second crawl of the same pages leaves one row
- * per page, and pages that turn 404 are purged.
+ * per page, and pages that turn 404 are purged. A second test feeds chunks straight to the writer and
+ * checks that a document re-crawled with fewer chunks loses its extra rows.
  *
  * <p>Requires PostgreSQL and Kafka from {@code docker-compose.yml}.
  */
@@ -73,6 +77,9 @@ class RecrawlAndDeleteIT {
     @Autowired
     @Qualifier("pgVectorJdbcTemplate")
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private VectorStoreWriterConsumer writer;
 
     /** Prefix of every document id this run creates; set once the local site is up. */
     private String prefix;
@@ -117,6 +124,33 @@ class RecrawlAndDeleteIT {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shorterDocumentLosesTheRowsPastItsNewLength() {
+        prefix = "http://shrink-" + UUID.randomUUID().toString().substring(0, 8) + "/";
+        String documentId = prefix + "p0.html";
+        for (int i = 0; i < 3; i++) {
+            writer.consume(chunk(documentId, i, 3));
+        }
+        assertThat(rowsOf(documentId)).as("rows before the document shrinks").isEqualTo(3);
+
+        writer.consume(chunk(documentId, 0, 1));
+
+        assertThat(rowsOf(documentId)).as("rows after the document shrinks").isEqualTo(1);
+    }
+
+    private static DocumentEmbeddedMessage chunk(String documentId, int index, int total) {
+        float[] embedding = new float[1024];
+        embedding[0] = 1.0f;
+        String chunkId = UUID.nameUUIDFromBytes((documentId + "#" + index).getBytes(StandardCharsets.UTF_8)).toString();
+        return new DocumentEmbeddedMessage(documentId, chunkId, "chunk " + index,
+                Map.of("documentId", documentId, "chunk_index", index, "total_chunks", total), embedding);
+    }
+
+    private int rowsOf(String documentId) {
+        return jdbc.queryForObject("SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = ?",
+                Integer.class, documentId);
     }
 
     /**
