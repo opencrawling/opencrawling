@@ -63,6 +63,8 @@ public class DoxisClient implements AutoCloseable {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final ReentrantLock sessionLock = new ReentrantLock();
+    private final LoginMode loginMode;
+    private final Supplier<String> credential;
     private volatile String token;
 
     public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
@@ -75,6 +77,18 @@ public class DoxisClient implements AutoCloseable {
     public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
                        String clientId, Duration timeout, int maxRetries, Duration retryBackoff,
                        HttpClient httpClient, ObjectMapper objectMapper) {
+        this(baseUrl, customerName, username, password, role, clientId, timeout, maxRetries, retryBackoff, httpClient,
+                objectMapper, LoginMode.PASSWORD, null);
+    }
+
+    /**
+     * As above, choosing how the session is opened. {@code credential} supplies the session ticket
+     * ({@link LoginMode#SESSION_TICKET}) or the OIDC access token ({@link LoginMode#OIDC_ACCESS_TOKEN}); it is asked again on
+     * every (re-)login, so a token source can hand out a fresh token. Ignored for {@link LoginMode#PASSWORD}.
+     */
+    public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
+                       String clientId, Duration timeout, int maxRetries, Duration retryBackoff,
+                       HttpClient httpClient, ObjectMapper objectMapper, LoginMode loginMode, Supplier<String> credential) {
         String base = baseUrl.trim();
         while (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
@@ -90,6 +104,8 @@ public class DoxisClient implements AutoCloseable {
         this.retryBackoff = retryBackoff;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
+        this.loginMode = loginMode == null ? LoginMode.PASSWORD : loginMode;
+        this.credential = credential;
     }
 
     public String getBaseUrl() {
@@ -99,6 +115,13 @@ public class DoxisClient implements AutoCloseable {
     public ObjectMapper objectMapper() {
         return objectMapper;
     }
+
+    /**
+     * How the CSB session is opened (Doxis REST 14.4.1): {@code POST /login} with user name and password,
+     * {@code POST /loginBySessionTicket} with a session ticket, or {@code POST /loginOIDCWithAccessToken} with an OIDC/OAuth2
+     * access token issued by the identity provider the CSB customer is configured for.
+     */
+    public enum LoginMode { PASSWORD, SESSION_TICKET, OIDC_ACCESS_TOKEN }
 
     // ------------------------------------------------------------------ session
 
@@ -124,22 +147,51 @@ public class DoxisClient implements AutoCloseable {
     private String doLogin() throws IOException, InterruptedException {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("customerName", customerName);
-        params.put("userName", username);
-        params.put("password", password);
-        if (role != null && !role.isBlank()) {
-            params.put("role", role);
+        String path;
+        String who;
+        switch (loginMode) {
+            case SESSION_TICKET -> {
+                path = "/loginBySessionTicket";
+                params.put("sessionTicket", requiredCredential("session ticket"));
+                params.put("createOwnSession", true);
+                who = "session ticket";
+            }
+            case OIDC_ACCESS_TOKEN -> {
+                path = "/loginOIDCWithAccessToken";
+                params.put("accessToken", requiredCredential("OIDC access token"));
+                if (role != null && !role.isBlank()) {
+                    params.put("roleName", role);
+                }
+                who = "OIDC access token";
+            }
+            default -> {
+                path = "/login";
+                params.put("userName", username);
+                params.put("password", password);
+                if (role != null && !role.isBlank()) {
+                    params.put("role", role);
+                }
+                who = username;
+            }
         }
         params.put("clientImplementationId", clientId);
-        JsonNode jwt = execute("Login as " + username + "@" + customerName,
-                () -> jsonRequest("/login", "POST", params, false), true, false);
+        JsonNode jwt = execute("Login (" + who + ") to " + customerName, () -> jsonRequest(path, "POST", params, false), true, false);
         String value = jwt.isTextual() ? jwt.textValue() : jwt.toString();
         value = value.strip();
         if (value.length() > 1 && value.startsWith("\"") && value.endsWith("\"")) {
             value = value.substring(1, value.length() - 1);
         }
-        log.info("Logged in to Doxis CSB at {} as {} (customer {}, role {}).", baseUrl, username, customerName,
+        log.info("Logged in to Doxis CSB at {} via {} (customer {}, role {}).", baseUrl, who, customerName,
                 role != null ? role : "-");
         return value;
+    }
+
+    private String requiredCredential(String what) {
+        String value = credential == null ? null : credential.get();
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("No " + what + " available for the Doxis login.");
+        }
+        return value.strip();
     }
 
     /**

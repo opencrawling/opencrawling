@@ -481,8 +481,7 @@ public class ConnectorCheckerService {
             return new ConnectionCheckResult(false, "Doxis repository connector is not configured: " + String.join(" ", problems)
                     + " " + DoxisRepositoryConnector.LICENCE_NOTICE, null);
         }
-        DoxisClient client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
-                settings.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(30), 0);
+        DoxisClient client = DoxisRepositoryConnector.newClient(settings, "OpenCrawling-ConnectionCheck", Duration.ofSeconds(30), 0);
         try (client) {
             JsonNode repository = client.getRepository(settings.repositoryId());
             String shortName = repository.path("shortName").asText(repository.path("name").asText(settings.repositoryId()));

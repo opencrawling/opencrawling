@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
+import org.opencrawling.doxis.client.schema.DoxisSchema;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,7 +36,9 @@ import java.util.Set;
 /**
  * Builds OIS {@link RepositoryDocument}s from Doxis {@code DocumentWsTO}s.
  *
- * <p>Descriptors are emitted as {@code <descriptorPrefix><Doxis name>}. The default empty prefix gives the Doxis names as-is
+ * <p>Descriptors are emitted as {@code <descriptorPrefix><Doxis name>}, their values normalised by data type
+ * ({@link DoxisValues}: dates, date-times, numbers, booleans); a value that changed is also kept as
+ * {@code doxis.raw.<Doxis name>}. The default empty prefix gives the Doxis names as-is
  * ({@code ObjectName}, {@code ObjectDate}, …), the keys the ManifoldCF Doxis 4 connector emits; {@code doxis_desc_} gives the
  * issue #122 style. System data goes under {@code doxis.*} ({@code documentId}, {@code documentClass}, {@code version},
  * {@code isLatestVersion}, {@code createdBy}, {@code modifiedBy}, {@code parentFolderId}, {@code parentFolderName}, …).
@@ -45,10 +48,10 @@ public final class DoxisDocumentBuilder {
     /** Metadata keys OpenCrawling itself uses; an unprefixed descriptor with one of these names becomes {@code doxis.attr.<name>}. */
     static final Set<String> RESERVED_KEYS = Set.of("name", "title", "mimeType", "acl", "security", "uri", "id");
 
-    /** Resolves an {@code attributeDefinitionUUID} to the descriptor's name. */
+    /** Resolves an {@code attributeDefinitionUUID} to the descriptor's definition (name and data type). */
     @FunctionalInterface
-    public interface AttributeNameResolver {
-        Optional<String> name(String attributeDefinitionUuid) throws IOException, InterruptedException;
+    public interface AttributeResolver {
+        Optional<DoxisSchema.Attribute> attribute(String attributeDefinitionUuid) throws IOException, InterruptedException;
     }
 
     /** The binary chosen for a document version: the default representation's first content object. */
@@ -139,7 +142,7 @@ public final class DoxisDocumentBuilder {
 
     public static RepositoryDocument build(String id, Context context, JsonNode document, JsonNode version, boolean latest,
                                            ContentRef content, boolean includeDescriptors, String descriptorPrefix,
-                                           AttributeNameResolver attributes, InputStream contentStream, SecurityConfig security)
+                                           AttributeResolver attributes, InputStream contentStream, SecurityConfig security)
             throws IOException, InterruptedException {
         String uuid = text(document, "uuid");
         String prefix = descriptorPrefix == null ? "" : descriptorPrefix;
@@ -147,25 +150,31 @@ public final class DoxisDocumentBuilder {
         String title = null;
 
         for (JsonNode attribute : version.path("attributes")) {
-            Optional<String> name = attributes.name(attribute.path("attributeDefinitionUUID").asText(""));
-            if (name.isEmpty()) {
+            Optional<DoxisSchema.Attribute> definition = attributes.attribute(attribute.path("attributeDefinitionUUID").asText(""));
+            if (definition.isEmpty()) {
                 continue;
             }
-            List<String> values = new ArrayList<>();
+            String name = definition.get().name();
+            String dataType = definition.get().dataType();
+            List<String> raw = new ArrayList<>();
             attribute.path("values").forEach(v -> {
                 if (!v.isNull() && !v.asText().isEmpty()) {
-                    values.add(v.asText());
+                    raw.add(v.asText());
                 }
             });
-            if (values.isEmpty()) {
+            if (raw.isEmpty()) {
                 continue;
             }
-            if ("ObjectName".equals(name.get())) {
+            List<String> values = raw.stream().map(v -> DoxisValues.normalize(dataType, v)).toList();
+            if ("ObjectName".equals(name)) {
                 title = values.getFirst();
             }
             if (includeDescriptors) {
-                String key = prefix.isEmpty() && RESERVED_KEYS.contains(name.get()) ? "doxis.attr." + name.get() : prefix + name.get();
+                String key = prefix.isEmpty() && RESERVED_KEYS.contains(name) ? "doxis.attr." + name : prefix + name;
                 metadata.put(key, values);
+                if (!values.equals(raw)) {
+                    metadata.put("doxis.raw." + name, raw);
+                }
             }
         }
 

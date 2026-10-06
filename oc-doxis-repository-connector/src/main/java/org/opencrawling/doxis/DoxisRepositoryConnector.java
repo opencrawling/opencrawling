@@ -124,8 +124,7 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
                     + " " + LICENCE_NOTICE);
         }
         if (client == null) {
-            client = new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(),
-                    settings.role(), settings.clientId(), settings.timeout(), settings.maxRetries());
+            client = newClient(settings, settings.clientId(), settings.timeout(), settings.maxRetries());
         }
         schema = new DoxisSchema(client);
         JsonNode repository = client.getRepository(settings.repositoryId());
@@ -137,6 +136,25 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         }
         documentClassIds = ids;
         log.info("Connected to Doxis repository '{}' at {} ({}).", repositoryShortName, client.getBaseUrl(), settings);
+    }
+
+    /**
+     * A CSB client for these settings, logging in as {@code auth-type} says: user name and password, a session ticket, or an
+     * OIDC/OAuth2 access token (given directly, or fetched with the client-credentials grant and refreshed before it expires).
+     */
+    public static DoxisClient newClient(DoxisRepositorySettings settings, String clientId, java.time.Duration timeout, int maxRetries) {
+        java.util.function.Supplier<String> credential = switch (settings.loginMode()) {
+            case SESSION_TICKET -> settings::sessionTicket;
+            case OIDC_ACCESS_TOKEN -> settings.oauth2AccessToken() != null
+                    ? settings::oauth2AccessToken
+                    : new DoxisOAuth2TokenSource(settings.oauth2TokenUrl(), settings.oauth2ClientId(), settings.oauth2ClientSecret(),
+                            settings.oauth2Scope(), timeout);
+            case PASSWORD -> null;
+        };
+        return new DoxisClient(settings.url(), settings.customerName(), settings.username(), settings.password(), settings.role(),
+                clientId, timeout, maxRetries, java.time.Duration.ofMillis(500),
+                java.net.http.HttpClient.newBuilder().connectTimeout(timeout).followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build(),
+                new com.fasterxml.jackson.databind.ObjectMapper(), settings.loginMode(), credential);
     }
 
     @Override
@@ -387,7 +405,7 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
             RepositoryDocument built;
             try {
                 built = DoxisDocumentBuilder.build(id, context, document, version, latest, content, settings.includeDescriptors(),
-                        settings.descriptorPrefix(), uuidOrName -> schema.findAttribute(uuidOrName).map(DoxisSchema.Attribute::name),
+                        settings.descriptorPrefix(), schema::findAttribute,
                         stream, security);
             } catch (IOException | RuntimeException e) {
                 if (stream != null) {

@@ -149,6 +149,7 @@ export default function ConnectorForm() {
   const vespaTlsEnabledBool = vespaTlsEnabled === true || vespaTlsEnabled === 'true'
   const vespaEndpointValue = watch('configuration.vespaEndpoint')
   const solrMode = watch('configuration.solrMode') || 'standalone'
+  const doxisAuthType = watch('configuration.authType') || 'basic'
 
   const fetchConnectors = async () => {
     setIsLoading(true)
@@ -1320,6 +1321,8 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
                           <option value="basic">Basic (CSB user name + password login)</option>
+                          <option value="ticket">CSB Session Ticket</option>
+                          <option value="oauth2">OAuth2 / OIDC Access Token</option>
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -1347,6 +1350,65 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
+                      {doxisAuthType === 'ticket' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Session Ticket</label>
+                          <input
+                            type="password"
+                            {...register('configuration.sessionTicket')}
+                            placeholder="CSB session ticket"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
+                      {doxisAuthType === 'oauth2' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Token URL</label>
+                          <input
+                            {...register('configuration.oauth2TokenUrl')}
+                            placeholder="https://auth.example.com/oauth/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.oauth2ClientId')}
+                            placeholder="opencrawling-client"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2ClientSecret')}
+                            placeholder="client secret"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                          <input
+                            {...register('configuration.oauth2Scope')}
+                            placeholder="doxis.read"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Access Token (Optional, Instead of Client Credentials)</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2AccessToken')}
+                            placeholder="eyJ…"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Role</label>
                         <input 

@@ -22,6 +22,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.client.schema.DoxisSchema;
 
 import java.time.Instant;
@@ -131,8 +132,11 @@ class DoxisMappingTest {
         }
     }
 
-    private static final Map<String, String> NAMES = Map.of("a-name", "ObjectName", "a-authors", "ObjectAuthors",
-            "a-reserved", "title", "a-empty", "ObjectDate");
+    private static final Map<String, DoxisSchema.Attribute> NAMES = Map.of(
+            "a-name", new DoxisSchema.Attribute("a-name", "ObjectName", "OBJECTNAME", "STRING", 250, false),
+            "a-authors", new DoxisSchema.Attribute("a-authors", "ObjectAuthors", "OBJECTAUTHORS", "STRING", 250, true),
+            "a-reserved", new DoxisSchema.Attribute("a-reserved", "title", "TITLE", "STRING", 50, false),
+            "a-empty", new DoxisSchema.Attribute("a-empty", "ObjectDate", "OBJECTDATE", "DATE", 0, false));
     private static final DoxisDocumentBuilder.Context CONTEXT = new DoxisDocumentBuilder.Context("DX4", "DB1",
             "TX_MigratedDocument", "Supervisor", "maya.collins", "e1", "Acme Master File");
     private static final DoxisDocumentBuilder.ContentRef CONTENT = new DoxisDocumentBuilder.ContentRef("1", "r1", "c1",
@@ -291,12 +295,100 @@ class DoxisMappingTest {
 
     @Test
     void validationNamesEveryProblem() {
-        List<String> problems = DoxisRepositorySettings.fromConfiguration(Map.of("authType", "ticket", "crawlMode", "folder"))
+        List<String> problems = DoxisRepositorySettings.fromConfiguration(Map.of("authType", "kerberos", "crawlMode", "folder"))
                 .validate();
 
-        assertEquals(5, problems.size(), problems.toString());
-        assertTrue(problems.getFirst().contains("auth-type 'ticket'"));
-        assertTrue(problems.getLast().contains("root-folder-id"));
+        assertEquals(4, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains("customer-name"));
+        assertTrue(problems.get(1).contains("auth-type 'kerberos' is not supported"));
+        assertTrue(problems.get(1).contains("'ticket'") && problems.get(1).contains("'oauth2'"));
+        assertTrue(problems.get(2).contains("repository-id"));
+        assertTrue(problems.get(3).contains("root-folder-id"));
+    }
+
+    @Test
+    void ticketAndOauth2AuthTypesAreValidatedAndMapped() {
+        Map<String, String> base = Map.of("customerName", "DX4", "repositoryId", "DB1");
+        DoxisRepositorySettings ticketMissing = DoxisRepositorySettings.fromConfiguration(merge(base, Map.of("authType", "ticket")));
+        DoxisRepositorySettings ticket = DoxisRepositorySettings.fromConfiguration(
+                merge(base, Map.of("authType", "ticket", "sessionTicket", "t-123")));
+        DoxisRepositorySettings oauthMissing = DoxisRepositorySettings.fromConfiguration(
+                merge(base, Map.of("authType", "oauth2", "oauth2TokenUrl", "https://idp/token")));
+        DoxisRepositorySettings oauthGrant = DoxisRepositorySettings.fromConfiguration(merge(base, Map.of("authType", "oauth2",
+                "oauth2TokenUrl", "https://idp/token", "oauth2ClientId", "oc", "oauth2ClientSecret", "s3cret-client")));
+        DoxisRepositorySettings oauthToken = DoxisRepositorySettings.fromConfiguration(
+                merge(base, Map.of("authType", "oidc", "oauth2AccessToken", "eyJ.token")));
+
+        assertEquals(DoxisClient.LoginMode.SESSION_TICKET, ticket.loginMode());
+        assertEquals(DoxisClient.LoginMode.OIDC_ACCESS_TOKEN, oauthGrant.loginMode());
+        assertEquals(DoxisClient.LoginMode.OIDC_ACCESS_TOKEN, oauthToken.loginMode());
+        assertTrue(ticketMissing.validate().getFirst().contains("session-ticket"));
+        assertTrue(ticket.validate().isEmpty());
+        assertTrue(oauthMissing.validate().getFirst().contains("oauth2.client-id"));
+        assertTrue(oauthGrant.validate().isEmpty());
+        assertTrue(oauthToken.validate().isEmpty());
+        assertFalse(oauthGrant.toString().contains("s3cret-client"));
+        assertFalse(ticket.toString().contains("t-123"));
+        assertFalse(oauthToken.toString().contains("eyJ.token"));
+    }
+
+    @Test
+    void oauth2SpringPropertiesAreNestedAsInTheIssue() {
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment()
+                .withProperty("spring.opencrawling.connector.doxis.auth-type", "oauth2")
+                .withProperty("spring.opencrawling.connector.doxis.oauth2.token-url", "https://idp/token")
+                .withProperty("spring.opencrawling.connector.doxis.oauth2.client-id", "opencrawling-client")
+                .withProperty("spring.opencrawling.connector.doxis.oauth2.client-secret", "secret")
+                .withProperty("spring.opencrawling.connector.doxis.oauth2.scope", "doxis.read")
+                .withProperty("spring.opencrawling.connector.doxis.session-ticket", "t-1");
+
+        DoxisRepositorySettings settings = DoxisRepositorySettings.fromEnvironment(env);
+
+        assertEquals("https://idp/token", settings.oauth2TokenUrl());
+        assertEquals("opencrawling-client", settings.oauth2ClientId());
+        assertEquals("secret", settings.oauth2ClientSecret());
+        assertEquals("doxis.read", settings.oauth2Scope());
+        assertEquals("t-1", settings.sessionTicket());
+    }
+
+    @Test
+    void typedValuesAreNormalisedByDataType() {
+        assertEquals("2023-02-22", DoxisValues.normalize("DATE", "20230222"));
+        assertEquals("2023-02-22", DoxisValues.normalize("DATE", "2023-02-22"));
+        assertEquals("2023-02-22T14:30:05", DoxisValues.normalize("DATETIME", "20230222143005"));
+        assertEquals("2026-10-05T20:45:51.491Z", DoxisValues.normalize("DATETIME", "2026-10-05T20:45:51.491Z"));
+        assertEquals("42", DoxisValues.normalize("INTEGER", " 042 "));
+        assertEquals("9000000000", DoxisValues.normalize("LONGINTEGER", "9000000000"));
+        assertEquals("750000.50", DoxisValues.normalize("FLOATINGPOINT", "750000,50"));
+        assertEquals("1234.5", DoxisValues.normalize("FLOATINGPOINT", "1,234.5"));
+        assertEquals("true", DoxisValues.normalize("BOOL", "1"));
+        assertEquals("false", DoxisValues.normalize("BOOL", "No"));
+        assertEquals("not-a-date", DoxisValues.normalize("DATE", "not-a-date"));
+        assertEquals("CTR-2026-0042", DoxisValues.normalize("STRING", "CTR-2026-0042"));
+        assertEquals("x", DoxisValues.normalize("ENUMERATION", "x"));
+    }
+
+    @Test
+    void aNormalisedDescriptorKeepsItsRawValue() throws Exception {
+        JsonNode version = json("""
+                {"versionNumber":"1","attributes":[{"attributeDefinitionUUID":"a-date","values":["20230222"]},
+                                                   {"attributeDefinitionUUID":"a-name","values":["NDA"]}]}""");
+        Map<String, DoxisSchema.Attribute> defs = Map.of(
+                "a-date", new DoxisSchema.Attribute("a-date", "ObjectDate", "OBJECTDATE", "DATE", 0, false),
+                "a-name", new DoxisSchema.Attribute("a-name", "ObjectName", "OBJECTNAME", "STRING", 250, false));
+
+        Map<String, List<String>> m = DoxisDocumentBuilder.build("id", CONTEXT, DOCUMENT, version, true, CONTENT, true, "",
+                uuid -> Optional.ofNullable(defs.get(uuid)), null, SecurityConfig.createPublic()).metadata();
+
+        assertEquals(List.of("2023-02-22"), m.get("ObjectDate"));
+        assertEquals(List.of("20230222"), m.get("doxis.raw.ObjectDate"));
+        assertFalse(m.containsKey("doxis.raw.ObjectName"), "unchanged values have no raw copy");
+    }
+
+    private static Map<String, String> merge(Map<String, String> a, Map<String, String> b) {
+        Map<String, String> merged = new java.util.HashMap<>(a);
+        merged.putAll(b);
+        return merged;
     }
 
     @Test

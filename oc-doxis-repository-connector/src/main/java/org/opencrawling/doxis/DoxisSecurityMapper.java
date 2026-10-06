@@ -35,8 +35,7 @@ import java.util.Set;
  * Maps Doxis instance ACEs ({@code RestAce}: {@code organizationalElementId}, {@code permissionName},
  * {@code authorizationVariant}) to an OIS {@link SecurityConfig}.
  *
- * <p>The mirror of the output connector's {@code DoxisAclMapper}: {@code VIEW_DOCUMENT_CONTENTS} (document) and
- * {@code VIEW_FOLDER_CONTENTS} (e-file) GRANT → {@code read}; {@code UPDATE_DOCUMENT} / {@code UPDATE_FOLDER} GRANT →
+ * <p>{@code VIEW_DOCUMENT_CONTENTS} (document) and {@code VIEW_FOLDER_CONTENTS} (e-file) GRANT → {@code read}; {@code UPDATE_DOCUMENT} / {@code UPDATE_FOLDER} GRANT →
  * {@code write}; a DENY on a view permission → {@code deny}. A filed document's effective ACL is its e-file's (pass down
  * permissions), so e-file ACEs are merged with the document's own. The built-in {@code everybody} group maps to {@code public}.
  *

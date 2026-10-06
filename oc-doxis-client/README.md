@@ -1,11 +1,11 @@
 # OpenCrawling - Doxis Client
 
-The shared **Doxis 4 CSB REST client** for the OpenCrawling Doxis connectors: `oc-doxis-output-connector` (archiving, #128) and the Doxis repository connector (#122).
+The shared **Doxis 4 CSB REST client** for the OpenCrawling Doxis connectors, starting with the Doxis repository connector (#122).
 
 ## Feature Overview
 
 1. **`DoxisClient`** (`org.opencrawling.doxis.client`) is a Java `HttpClient`-based REST client for `…/restws/publicws/rest/api/v1`. It covers:
-   - JWT login with role and logout;
+   - login with role (user name and password, a session ticket, or an OIDC/OAuth2 access token) returning a JWT, and logout;
    - CQL document and record search (the follow-up search result is always closed);
    - multipart document create and versioning, streamed;
    - version read-back;

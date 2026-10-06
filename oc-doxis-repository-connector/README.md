@@ -1,8 +1,7 @@
 # OpenCrawling - Doxis Repository Connector
 
 Crawls a **Doxis 4 CSB** DMS repository (SER Group) through the CSB REST API (`/restws/publicws/rest/api/v1`, verified
-against 14.4.1). It is the input-side counterpart of `oc-doxis-output-connector`; both use the shared `oc-doxis-client`
-(issue #122).
+against 14.4.1), using the shared Doxis REST client in `oc-doxis-client` (issue #122).
 
 ## Prerequisites
 
@@ -109,6 +108,20 @@ CSB licences count technical sessions.
 | `doxis.fileName`, `doxis.fileSize`, `doxis.contentLink` | Content object |
 | `doxis.customer`, `doxis.repository`, `doxis.lifecycleState` | Tenant, repository short name, lifecycle state |
 | `name`, `title`, `mimeType` | File name, `ObjectName`, MIME type |
+| `doxis.raw.<Doxis name>` | The original value of a descriptor whose value was normalised (see below) |
+
+Descriptor values are normalised by their Doxis data type, so typed descriptors arrive in a standard form:
+
+| Doxis type | Example | Emitted |
+|---|---|---|
+| `DATE` | `20230222` | `2023-02-22` |
+| `DATETIME` | `20230222143005` | `2023-02-22T14:30:05` (ISO-8601 values unchanged) |
+| `INTEGER`, `LONGINTEGER` | ` 042` | `42` |
+| `FLOATINGPOINT` | `750000,50` | `750000.50` |
+| `BOOL` | `1`, `yes` | `true` (and `false`) |
+
+Other types (strings, references, enumerations, …) and values that don't parse are passed through unchanged. When a value
+changes, the original is kept under `doxis.raw.<Doxis name>`.
 
 The document id and URI are `doxis://<customer>/<repository>/documents/<uuid>`.
 
@@ -146,9 +159,12 @@ There are two sources:
 | Key (`connectors.json` / Spring) | Default | Meaning |
 |---|---|---|
 | `url` / `url` | `http://localhost:8080/restws/publicws/rest/api/v1` | CSB REST base |
-| `authType` / `auth-type` | `basic` | CSB `POST /login` with user name and password. CSB 14.4 REST offers no other scheme for technical users. Anything else is rejected |
+| `authType` / `auth-type` | `basic` | How the CSB session is opened: `basic` (user name and password, `POST /login`), `ticket` (a CSB session ticket, `POST /loginBySessionTicket`) or `oauth2` (an OIDC/OAuth2 access token, `POST /loginOIDCWithAccessToken`). Anything else is rejected |
 | `customerName` / `customer-name` | — | Required. The CSB tenant, e.g. `DX4` |
-| `username`, `password` | — | Required |
+| `username`, `password` | — | Required for `basic` |
+| `sessionTicket` / `session-ticket` | — | Required for `ticket` |
+| `oauth2TokenUrl`, `oauth2ClientId`, `oauth2ClientSecret`, `oauth2Scope` / `oauth2.token-url`, `oauth2.client-id`, `oauth2.client-secret`, `oauth2.scope` | — | For `oauth2`: the identity provider's token endpoint and client credentials. The connector requests a token with the client-credentials grant and refreshes it before it expires. The CSB customer must be configured for that identity provider |
+| `oauth2AccessToken` / `oauth2.access-token` | — | For `oauth2`: a ready access token, instead of the client credentials |
 | `role` | `admins` | Role to log in with |
 | `repositoryId` / `repository-id` | — | Required. DMS repository (name or UUID); CQL uses its short name |
 | `crawlMode` / `crawl-mode` | `search` | `search` or `folder` |
@@ -164,7 +180,7 @@ There are two sources:
 | `descriptorPrefix` / `descriptor-prefix` | empty | Prefix for descriptor keys |
 | `fallbackPrincipals` / `fallback-principals` | empty | Read access when no instance ACEs exist (`group:X`, `user:Y`, `everybody`), e.g. `group:Legal` |
 | `emitLogicalDeletes` / `emit-logical-deletes` | `true` | Search `ANY_OBJECTS` and send tombstones for removed documents |
-| `modifiedSince` / `modified-since`, `modifiedSinceAttribute` | empty / `DXE_MODDATE` | **Experimental, unverified** incremental filter |
+| `modifiedSince` / `modified-since`, `modifiedSinceAttribute` | empty / `DXE_MODDATE` | **Experimental.** A CQL lower bound on a date attribute. On the tested CSB 14.4 lab, `DXE_MODDATE` matched nothing in any literal format, so leave it empty unless your CSB maintains that attribute |
 | `batchSize` / `batch-size` | `100` | Hits per search page |
 | `parallelism` | `2` | Documents processed at once. Keep it low on shared systems |
 | `timeoutSeconds` / `timeout-seconds` | `120` | HTTP timeout. A busy CSB can take minutes to log in |
@@ -176,13 +192,15 @@ repository, and log out.
 
 ## Notes on issue #122
 
-Issue #122 was written before the CSB REST contract was available. Its endpoints don't exist on CSB 14.4: there is no
-`/doxis/rest/auth/login`, `/system/info` or `X-Doxis-Ticket`, and no OAuth2 for technical users. The connector uses the
-verified 14.4.1 paths instead:
+Issue #122 was written before the CSB REST contract was available, and its endpoint paths (`/doxis/rest/auth/login`,
+`/system/info`, the `X-Doxis-Ticket` header) don't exist on CSB 14.4. The connector uses the documented 14.4.1 paths instead.
+The three authentication types the issue asks for all map onto CSB logins:
 
 | Issue #122 | CSB REST 14.4.1 |
 |---|---|
-| login / ticket | `POST /login` → JWT as `Authorization: Bearer` |
+| basic login | `POST /login` (user name, password, role) → JWT as `Authorization: Bearer` |
+| session ticket | `POST /loginBySessionTicket` |
+| OAuth2 | client-credentials token from `oauth2.token-url`, then `POST /loginOIDCWithAccessToken` |
 | system info | `GET /dmsRepositories/{repo}` (connection check) |
 | search with pagination | `POST /documents/search` + `GET /documents/searchResults/{id}?offset&limit` |
 | document metadata | `GET …/documents/{uuid}/versions?initializeRepresentations=true` |
@@ -190,12 +208,20 @@ verified 14.4.1 paths instead:
 | folder children | `GET …/records/{uuid}?initializeNodeHierarchy=true` + `…/nodes/{nodeId}/referencedInformationObjects` |
 | security | `GET …/documents/{uuid}/permissions` + `GET …/records/{uuid}/permissions` |
 
-## Not yet verified against a live CSB
+## Verified against a live CSB, and open points
 
-- Search paging: whether `offset` is absolute.
-- What search hits contain.
-- The node listing of e-files filed via primary parent only.
-- The `DXE_MODDATE` incremental filter. Auditing is off on the DX4 lab, so the audit trail isn't used.
-- The effective ACLs of filed documents.
+Verified read-only on a Doxis 4 CSB 14.4 lab:
+- a full crawl of 120 documents in one session, with every call successful and every downloaded file matching the
+  recorded size;
+- search paging is 1-based: the first page reports `start=1`, and `offset=3` returns hits 3–4. Search hits include the
+  document's versions;
+- `searchResultRestrictionMode` is `RESTRICTED_BY_SERVER` on any paged result, so it doesn't mean the listing is truncated;
+- the audit trail returned no records (auditing off), and `DXE_MODDATE` matched nothing.
 
-Physical deletes aren't detected yet; finding them needs a full reconciliation run.
+Open:
+- **Session-ticket and OAuth2 logins** are implemented against the 14.4.1 API contract and unit-tested, but not yet run
+  against a live CSB. OAuth2 needs a CSB customer configured for an identity provider.
+- **Folder mode** is unit-tested only; the lab's documents aren't filed in e-files.
+- **Incremental crawling and physical deletes:** with no usable audit trail or modification attribute, an incremental
+  crawl has to compare each hit's `modificationDate` with the previous crawl, and detecting physical deletes needs a
+  reconciliation run. Neither is implemented yet.

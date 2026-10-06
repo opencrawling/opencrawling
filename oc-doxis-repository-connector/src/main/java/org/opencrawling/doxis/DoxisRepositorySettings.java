@@ -33,8 +33,10 @@ import java.util.Map;
  * e.g. {@code repository-id}; YAML lists allowed) via {@link #fromEnvironment(PropertyResolver)}.
  *
  * @param url                    CSB REST base, e.g. {@code http://csb:8080/restws/publicws/rest/api/v1}
- * @param authType               {@code basic}: user name + password via CSB {@code POST /login} (the only scheme CSB REST 14.4
- *                               offers for technical users)
+ * @param authType               {@code basic}: user name + password ({@code POST /login}); {@code ticket}: a CSB session
+ *                               ticket ({@code POST /loginBySessionTicket}); {@code oauth2}: an OIDC/OAuth2 access token
+ *                               ({@code POST /loginOIDCWithAccessToken}), given directly or obtained with the client-credentials
+ *                               grant from {@code oauth2TokenUrl}
  * @param crawlMode              {@code SEARCH} (one CQL search) or {@code FOLDER} (traverse an e-file's folder nodes)
  * @param documentClasses        document classes to keep (names or UUIDs); empty keeps every class
  * @param searchQuery            CQL condition appended as {@code WHERE …} (descriptor short names, {@code LIKE} with {@code *})
@@ -57,6 +59,12 @@ public record DoxisRepositorySettings(
         String customerName,
         String username,
         String password,
+        String sessionTicket,
+        String oauth2TokenUrl,
+        String oauth2ClientId,
+        String oauth2ClientSecret,
+        String oauth2Scope,
+        String oauth2AccessToken,
         String role,
         String clientId,
         String repositoryId,
@@ -88,8 +96,9 @@ public record DoxisRepositorySettings(
     public static final String SPRING_PREFIX = "spring.opencrawling.connector.doxis.";
     public static final String DEFAULT_URL = "http://localhost:8080/restws/publicws/rest/api/v1";
 
-    /** Every configuration key (camelCase); the Spring property is {@link #SPRING_PREFIX} + its kebab-case form. */
-    static final List<String> KEYS = List.of("url", "authType", "customerName", "username", "password", "role", "clientId",
+    /** Every configuration key (camelCase); the Spring property is {@link #SPRING_PREFIX} + {@link #springName(String)}. */
+    static final List<String> KEYS = List.of("url", "authType", "customerName", "username", "password", "sessionTicket",
+            "oauth2TokenUrl", "oauth2ClientId", "oauth2ClientSecret", "oauth2Scope", "oauth2AccessToken", "role", "clientId",
             "repositoryId", "crawlMode", "documentClasses", "searchQuery", "rootFolderId", "includeSubfolders", "versionMode",
             "includeContentStream", "maxContentSizeBytes", "includeDescriptors", "includeAcls", "descriptorPrefix",
             "fallbackPrincipals", "emitLogicalDeletes", "modifiedSince", "modifiedSinceAttribute", "batchSize", "parallelism",
@@ -103,6 +112,12 @@ public record DoxisRepositorySettings(
                 value(c, "customerName", null),
                 value(c, "username", null),
                 value(c, "password", null),
+                value(c, "sessionTicket", null),
+                value(c, "oauth2TokenUrl", null),
+                value(c, "oauth2ClientId", null),
+                value(c, "oauth2ClientSecret", null),
+                value(c, "oauth2Scope", null),
+                value(c, "oauth2AccessToken", null),
                 value(c, "role", "admins"),
                 value(c, "clientId", "OpenCrawling-RepositoryConnector"),
                 value(c, "repositoryId", null),
@@ -136,7 +151,7 @@ public record DoxisRepositorySettings(
     public static DoxisRepositorySettings fromEnvironment(PropertyResolver environment) {
         Map<String, String> config = new HashMap<>();
         for (String key : KEYS) {
-            String property = SPRING_PREFIX + kebab(key);
+            String property = SPRING_PREFIX + springName(key);
             String value = environment.getProperty(property);
             if (value == null) {
                 List<String> items = new ArrayList<>();
@@ -157,15 +172,29 @@ public record DoxisRepositorySettings(
      */
     public List<String> validate() {
         List<String> problems = new ArrayList<>();
-        if (!"basic".equals(authType) && !"login".equals(authType)) {
-            problems.add("auth-type '" + authType + "' is not supported: Doxis 4 CSB REST authenticates technical users with "
-                    + "user name and password (POST /login); use 'basic'.");
-        }
         if (customerName == null) {
             problems.add("customer-name (the CSB tenant, e.g. DX4) must be configured.");
         }
-        if (username == null || password == null) {
-            problems.add("username and password must be configured.");
+        switch (loginMode()) {
+            case PASSWORD -> {
+                if (!"basic".equals(authType) && !"login".equals(authType) && !"password".equals(authType)) {
+                    problems.add("auth-type '" + authType + "' is not supported; use 'basic' (user name and password), "
+                            + "'ticket' (CSB session ticket) or 'oauth2' (OIDC/OAuth2 access token).");
+                } else if (username == null || password == null) {
+                    problems.add("username and password must be configured for auth-type 'basic'.");
+                }
+            }
+            case SESSION_TICKET -> {
+                if (sessionTicket == null) {
+                    problems.add("session-ticket must be configured for auth-type 'ticket'.");
+                }
+            }
+            case OIDC_ACCESS_TOKEN -> {
+                if (oauth2AccessToken == null && (oauth2TokenUrl == null || oauth2ClientId == null || oauth2ClientSecret == null)) {
+                    problems.add("auth-type 'oauth2' needs oauth2.access-token, or oauth2.token-url, oauth2.client-id and "
+                            + "oauth2.client-secret for the client-credentials grant.");
+                }
+            }
         }
         if (repositoryId == null) {
             problems.add("repository-id (the DMS repository name or UUID) must be configured.");
@@ -191,6 +220,27 @@ public record DoxisRepositorySettings(
             where.append(modifiedSinceAttribute).append(" >= '").append(modifiedSince.strip().replace("'", "''")).append('\'');
         }
         return "SELECT * FROM " + repositoryShortName + (where.isEmpty() ? "" : " WHERE " + where);
+    }
+
+    /**
+     * The login the CSB REST API is asked for: {@code basic} → {@code POST /login}, {@code ticket} →
+     * {@code POST /loginBySessionTicket}, {@code oauth2}/{@code oidc} → {@code POST /loginOIDCWithAccessToken}.
+     */
+    public org.opencrawling.doxis.client.DoxisClient.LoginMode loginMode() {
+        return switch (authType == null ? "basic" : authType) {
+            case "ticket", "session-ticket" -> org.opencrawling.doxis.client.DoxisClient.LoginMode.SESSION_TICKET;
+            case "oauth2", "oidc" -> org.opencrawling.doxis.client.DoxisClient.LoginMode.OIDC_ACCESS_TOKEN;
+            default -> org.opencrawling.doxis.client.DoxisClient.LoginMode.PASSWORD;
+        };
+    }
+
+    /** The Spring property name of a key: kebab-case, with the OAuth2 keys nested as in issue #122 ({@code oauth2.token-url}). */
+    static String springName(String key) {
+        if (key.startsWith("oauth2")) {
+            return "oauth2." + kebab(key.substring("oauth2".length(), "oauth2".length() + 1).toLowerCase(Locale.ROOT)
+                    + key.substring("oauth2".length() + 1));
+        }
+        return kebab(key);
     }
 
     static String kebab(String camel) {
@@ -234,8 +284,9 @@ public record DoxisRepositorySettings(
 
     @Override
     public String toString() {
-        // never log the password
-        return "DoxisRepositorySettings[url=" + url + ", customer=" + customerName + ", user=" + username + ", role=" + role
+        // never log passwords, session tickets, client secrets or access tokens
+        return "DoxisRepositorySettings[url=" + url + ", authType=" + authType + ", customer=" + customerName + ", user=" + username
+                + ", oauth2TokenUrl=" + oauth2TokenUrl + ", oauth2ClientId=" + oauth2ClientId + ", role=" + role
                 + ", repository=" + repositoryId + ", crawlMode=" + crawlMode + ", searchQuery=" + searchQuery + ", rootFolderId="
                 + rootFolderId + ", documentClasses=" + documentClasses + ", versionMode=" + versionMode + ", batchSize=" + batchSize
                 + ", parallelism=" + parallelism + ", includeContentStream=" + includeContentStream + ", includeDescriptors="
