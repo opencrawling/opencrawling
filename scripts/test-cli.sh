@@ -41,9 +41,9 @@ command -v mvn >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Maven is required but
 echo -e "${CYAN}[INFO] Step 1: Compiling & packaging oc-cli module...${NC}"
 mvn clean package -pl oc-cli -am
 
-CLI_JAR="oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar"
-if [ ! -f "$CLI_JAR" ]; then
-    echo -e "${RED}[ERROR] CLI JAR executable not found at $CLI_JAR${NC}"
+CLI_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v 'original' | head -n 1)
+if [ -z "$CLI_JAR" ] || [ ! -f "$CLI_JAR" ]; then
+    echo -e "${RED}[ERROR] CLI JAR executable not found in oc-cli/target/${NC}"
     exit 1
 fi
 

@@ -70,7 +70,7 @@ RUN mvn clean package -pl oc-cli -am -DskipTests
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
-COPY --from=builder /app/oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar oc-cli.jar
+COPY --from=builder /app/oc-cli/target/oc-cli-*.jar oc-cli.jar
 
 ENTRYPOINT ["java", "--enable-preview", "-jar", "/app/oc-cli.jar"]
 CMD ["--help"]
