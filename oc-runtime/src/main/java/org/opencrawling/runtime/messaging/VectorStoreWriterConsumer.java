@@ -16,6 +16,8 @@
 package org.opencrawling.runtime.messaging;
 
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -61,6 +63,14 @@ public class VectorStoreWriterConsumer {
         this.traceStore = traceStore;
     }
 
+    /**
+     * Stores one embedded chunk, or purges a document.
+     *
+     * <p>A chunk is upserted under its chunk id into the store matching its embedding dimensions. The chunk with
+     * {@code chunk_index} 0 also deletes, from that store, the rows of the same {@code documentId} whose
+     * {@code chunk_index} is at or past its {@code total_chunks}. A DELETE removes every row whose
+     * {@code documentId} metadata equals the message's document id, from all four stores.
+     */
     @KafkaListener(topics = KafkaConfig.EMBEDDED_TOPIC_NAME)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for storage: {} (Dimensions: {})", message.chunkId(), 
@@ -72,10 +82,12 @@ public class VectorStoreWriterConsumer {
         try {
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for document: {}. Purging document/chunks from pgvector store.", message.documentId());
-                vectorStore.delete(List.of(message.documentId()));
-                vectorStore384.delete(List.of(message.documentId()));
-                vectorStore768.delete(List.of(message.documentId()));
-                vectorStore1024.delete(List.of(message.documentId()));
+                // Chunks are stored under their own ids; the document id is in their metadata.
+                Filter.Expression byDocument = new FilterExpressionBuilder().eq("documentId", message.documentId()).build();
+                vectorStore.delete(byDocument);
+                vectorStore384.delete(byDocument);
+                vectorStore768.delete(byDocument);
+                vectorStore1024.delete(byDocument);
                 log.info("Successfully purged tombstone document {} from pgvector stores.", message.documentId());
                 return;
             }
@@ -104,6 +116,12 @@ public class VectorStoreWriterConsumer {
                 targetStore.add(List.of(doc));
             } finally {
                 PrecomputedEmbeddingModel.clear();
+            }
+            // A re-crawled document that got shorter keeps rows past its new length; its first chunk removes them.
+            if (message.metadata().get("chunk_index") instanceof Number index && index.intValue() == 0
+                    && message.metadata().get("total_chunks") instanceof Number total) {
+                FilterExpressionBuilder b = new FilterExpressionBuilder();
+                targetStore.delete(b.and(b.eq("documentId", message.documentId()), b.gte("chunk_index", total.intValue())).build());
             }
             long duration = System.currentTimeMillis() - startTime;
 
