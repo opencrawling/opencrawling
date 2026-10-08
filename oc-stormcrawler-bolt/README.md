@@ -27,7 +27,7 @@ graph LR
 - **OIS Compliance**: Maps crawled web pages into standard OIS `UPSERT` documents and deletion `tombstones`.
 - **Content Deduplication**: Calculates document content hashes (`SHA-256` or `MD5`) for deduplication and incremental crawl detection.
 - **Flexible Dispatching**:
-  - `REST`: POSTs OIS JSON payloads to `opencrawling.target.endpoint`. The default is `http://localhost:8080/api/v1/ingest/ois`, which `oc-runtime` does not implement yet (#141).
+  - `REST`: POSTs OIS JSON payloads to `opencrawling.target.endpoint`, which points at `oc-runtime`'s `/api/v1/ingest/ois/{jobId}`. The job gives the pages their embedding model. The runtime enables the endpoint only when `opencrawling.ingest.ois.token` is set, and the bolt sends that token through `opencrawling.http.auth.header` as `Bearer <token>`. The default endpoint, `http://localhost:8080/api/v1/ingest/ois`, has no job id and the runtime does not accept it.
   - `MEMORY`: In-memory dispatcher for embedded topologies and test suites.
 
 ## Indexer Behavior
@@ -78,7 +78,8 @@ config:
   topology.message.timeout.secs: 30
   
   # OpenCrawling Bolt Configuration
-  opencrawling.target.endpoint: "http://localhost:8080/api/v1/ingest/ois"
+  opencrawling.target.endpoint: "http://localhost:8080/api/v1/ingest/ois/1" # 1 = the oc-runtime job id
+  opencrawling.http.auth.header: "Bearer change-me" # oc-runtime's opencrawling.ingest.ois.token
   opencrawling.transport.mode: "REST" # Options: REST, MEMORY
   opencrawling.emit.deletions: true
   opencrawling.hash.algorithm: "SHA-256"
