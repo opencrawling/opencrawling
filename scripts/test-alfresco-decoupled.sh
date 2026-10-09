@@ -630,7 +630,7 @@ log_pass "MCP Server verified successfully."
 # STEP 9: Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE
 # ------------------------------------------------------------------------------
 log_step 9 "Executing OIS Document Lifecycle Tombstone DELETE action test..."
-mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesAllVectorStores
+mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores
 log_pass "OIS Tombstone DELETE action test passed."
 
 # ------------------------------------------------------------------------------
