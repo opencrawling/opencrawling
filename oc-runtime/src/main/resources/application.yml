@@ -121,6 +121,10 @@ opencrawling:
       max-message-size: 33554432
       fallback-to-rest: true
       keep-alive-time-ms: 30000
+  ingest:
+    ois:
+      # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
+      token: ${OPENCRAWLING_INGEST_OIS_TOKEN:}
 
 management:
   endpoints:

@@ -70,6 +70,17 @@ For high ingestion jobs, adjust Kafka topic partition numbers:
 
 ---
 
+## 📥 OIS Ingestion Endpoint
+
+`POST /api/v1/ingest/ois/{jobId}` takes OIS documents from producers outside the runtime, such as the StormCrawler bolt, and runs them through the job's RAG pipeline.
+
+*   **`OPENCRAWLING_INGEST_OIS_TOKEN`** (`opencrawling.ingest.ois.token`): the bearer token producers send as `Authorization: Bearer <token>`.
+    *   *Type*: `string`
+    *   *Default*: empty, which disables the endpoint
+    *   The runtime that serves the endpoint writes the text of each UPSERT to the claim-check store, so that store must be one the ingestion consumer can read: the same process, a shared volume, or Ozone.
+
+---
+
 ## 📊 AIOps & Observability Configurations
 
 OpenCrawling integrates end-to-end distributed tracing and metrics that are enabled by default. They can be disabled or fine-tuned using the following environment variables:

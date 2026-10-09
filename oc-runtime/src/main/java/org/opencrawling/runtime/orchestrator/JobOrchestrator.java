@@ -149,30 +149,9 @@ public class JobOrchestrator {
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String currentJobId = jobId != null ? jobId : "1";
         
-        String engine = "ollama";
-        java.util.Map<String, String> config = java.util.Map.of("model", defaultOllamaModel != null && !defaultOllamaModel.isBlank() ? defaultOllamaModel : "mxbai-embed-large");
-
-        if (transformationConnector != null && !transformationConnector.isBlank()) {
-            try {
-                java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
-                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
-                for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
-                    if (conn.name().equals(transformationConnector)) {
-                        engine = conn.configuration().getOrDefault("engine", "ollama");
-                        config = new java.util.HashMap<>(conn.configuration());
-                        if (defaultOllamaModel != null && !defaultOllamaModel.isBlank() && "Ollama_Embedding_Default".equals(transformationConnector)) {
-                            config.put("model", defaultOllamaModel);
-                        }
-                        break;
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to load connector configuration for {}: {}", transformationConnector, e.getMessage());
-            }
-        }
-
-        final String finalEngine = engine;
-        final java.util.Map<String, String> finalConfig = config;
+        Transformation transformation = resolveTransformation(transformationConnector);
+        final String finalEngine = transformation.engine();
+        final java.util.Map<String, String> finalConfig = transformation.config();
 
         try (var scope = StructuredTaskScope.open()) {
             
@@ -359,6 +338,66 @@ public class JobOrchestrator {
             traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + e.getMessage(), e.toString());
             return false;
         }
+    }
+
+    /**
+     * Publishes one document that an external producer sent for a job, in RAG mode. An UPSERT stores the
+     * document's content, which must not be null, in the claim-check store as {@code text/plain} and publishes
+     * a reference to it; a DELETE publishes a tombstone. Returns once Kafka has acknowledged the message.
+     *
+     * @throws Exception if the content cannot be stored or Kafka does not acknowledge the message
+     */
+    public void publishDocument(RepositoryDocument doc, String transformationConnector) throws Exception {
+        String uri = doc.uri();
+        Map<String, List<String>> metadata = doc.metadata();
+        if (doc.action() != DocumentAction.DELETE) {
+            // A fresh name per message: IngestionConsumer deletes the claim it consumed, which must not be
+            // the claim of a newer message for the same document.
+            try (InputStream in = doc.contentStream()) {
+                uri = claimCheckStore.put(UUID.randomUUID() + ".txt", in, -1, "text/plain").toString();
+            }
+            // The text extractor picks its parser from these keys; they must describe the stored text.
+            metadata = new java.util.HashMap<>(metadata);
+            metadata.keySet().removeAll(List.of("mimetype", "Content-Type", "content-type"));
+            metadata.put("mimeType", List.of("text/plain"));
+        }
+        Transformation transformation = resolveTransformation(transformationConnector);
+        IngestionMessage message = new IngestionMessage(doc.id(), uri, metadata, doc.acl(), doc.security(),
+                doc.lastModified().toString(), transformationConnector, transformation.engine(), transformation.config(),
+                doc.action(), PipelineMode.RAG);
+        kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), message).get();
+    }
+
+    /**
+     * The embedding engine and its configuration, from the named transformation connector in connectors.json.
+     * Without a match, or when connectors.json cannot be read, Ollama with the default embedding model.
+     */
+    private Transformation resolveTransformation(String transformationConnector) {
+        String engine = "ollama";
+        java.util.Map<String, String> config = java.util.Map.of("model", defaultOllamaModel != null && !defaultOllamaModel.isBlank() ? defaultOllamaModel : "mxbai-embed-large");
+
+        if (transformationConnector != null && !transformationConnector.isBlank()) {
+            try {
+                java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
+                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
+                for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
+                    if (conn.name().equals(transformationConnector)) {
+                        engine = conn.configuration().getOrDefault("engine", "ollama");
+                        config = new java.util.HashMap<>(conn.configuration());
+                        if (defaultOllamaModel != null && !defaultOllamaModel.isBlank() && "Ollama_Embedding_Default".equals(transformationConnector)) {
+                            config.put("model", defaultOllamaModel);
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load connector configuration for {}: {}", transformationConnector, e.getMessage());
+            }
+        }
+        return new Transformation(engine, config);
+    }
+
+    private record Transformation(String engine, java.util.Map<String, String> config) {
     }
 
     private String resolveSharedDir() {
