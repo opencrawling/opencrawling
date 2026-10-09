@@ -23,6 +23,7 @@ import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.runtime.api.JobController.JobDTO;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.nio.charset.StandardCharsets;
@@ -148,6 +149,26 @@ class OisIngestControllerTest {
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
         verify(jobOrchestrator).publishDocument(published.capture(), any());
         assertEquals("editors", published.getValue().acl());
+    }
+
+    @Test
+    void errorAnswersAreFixedPlainTextThatEchoesNoInput() {
+        when(jobController.getJob("<script>")).thenReturn(ResponseEntity.ok(job));
+        when(jobController.resolvePipelineMode(job)).thenReturn(PipelineMode.MIGRATION);
+        ResponseEntity<String> conflict = controller(TOKEN).ingest("<script>", BEARER, UPSERT);
+        assertEquals(409, conflict.getStatusCode().value());
+        assertEquals(MediaType.TEXT_PLAIN, conflict.getHeaders().getContentType());
+        assertFalse(conflict.getBody().contains("<script>"));
+
+        when(jobController.resolvePipelineMode(job)).thenReturn(PipelineMode.RAG);
+        for (String body : List.of("not json", "{\"id\": \"x\", \"action\": \"<b>MERGE</b>\"}")) {
+            ResponseEntity<String> bad = controller(TOKEN).ingest("7", BEARER, body);
+            assertEquals(400, bad.getStatusCode().value());
+            assertEquals(MediaType.TEXT_PLAIN, bad.getHeaders().getContentType());
+            assertFalse(bad.getBody().contains("MERGE"), bad.getBody());
+            assertFalse(bad.getBody().contains("opencrawling"), bad.getBody());
+            assertFalse(bad.getBody().contains("jackson"), bad.getBody());
+        }
     }
 
     @Test

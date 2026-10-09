@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -101,20 +102,22 @@ public class OisIngestController {
         if (job == null) {
             return ResponseEntity.notFound().build();
         }
+        // Answers carry only the fixed messages from here on: no request input and no exception text.
         if (jobController.resolvePipelineMode(job).isMigration()) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body("Job " + jobId + " runs in migration mode; OIS ingestion supports RAG jobs only");
+            return plainText(HttpStatus.CONFLICT, "the job runs in migration mode; OIS ingestion supports RAG jobs only");
         }
 
-        RepositoryDocument doc;
+        OisDocument ois;
         try {
-            if (body == null) {
-                throw new IllegalArgumentException("the request has no body");
-            }
-            doc = toRepositoryDocument(MAPPER.readValue(body, OisDocument.class));
-        } catch (JacksonException | IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            ois = body != null ? MAPPER.readValue(body, OisDocument.class) : null;
+        } catch (JacksonException e) {
+            return plainText(HttpStatus.BAD_REQUEST, "the body is not valid OIS JSON");
         }
+        String problem = problemWith(ois);
+        if (problem != null) {
+            return plainText(HttpStatus.BAD_REQUEST, problem);
+        }
+        RepositoryDocument doc = toRepositoryDocument(ois);
 
         try {
             jobOrchestrator.publishDocument(doc, job.transformationConnector());
@@ -128,26 +131,43 @@ public class OisIngestController {
         return ResponseEntity.accepted().build();
     }
 
-    private static RepositoryDocument toRepositoryDocument(OisDocument ois) {
+    private static ResponseEntity<String> plainText(HttpStatus status, String message) {
+        return ResponseEntity.status(status).contentType(MediaType.TEXT_PLAIN).body(message);
+    }
+
+    /** What makes {@code ois} unusable, or null when it can be published. */
+    private static String problemWith(OisDocument ois) {
         if (ois == null) {
-            throw new IllegalArgumentException("the body is not an OIS document");
+            return "the body is not an OIS document";
         }
         if (ois.id() == null || ois.id().isBlank()) {
-            throw new IllegalArgumentException("'id' is required");
+            return "'id' is required";
         }
-        if (ois.action() == null) {
-            throw new IllegalArgumentException("'action' is required");
+        if (!"UPSERT".equals(ois.action()) && !"DELETE".equals(ois.action())) {
+            return "'action' must be UPSERT or DELETE";
         }
+        if ("DELETE".equals(ois.action())) {
+            return null;
+        }
+        if (ois.content() == null || ois.content().text() == null) {
+            return "'content.text' is required for UPSERT";
+        }
+        if (ois.security() == null) {
+            return "'security' is required for UPSERT";
+        }
+        if (ois.security().permissions() != null && ois.security().permissions().stream()
+                .anyMatch(rule -> rule == null || rule.identity() == null || rule.access() == null)) {
+            return "each 'security.permissions' entry needs an identity and an access";
+        }
+        return null;
+    }
+
+    /** Maps a document that {@link #problemWith} accepted. */
+    private static RepositoryDocument toRepositoryDocument(OisDocument ois) {
         DocumentAction action = DocumentAction.valueOf(ois.action());
         ByteArrayInputStream content = null;
         String acl = "";
         if (action != DocumentAction.DELETE) {
-            if (ois.content() == null || ois.content().text() == null) {
-                throw new IllegalArgumentException("'content.text' is required for " + action);
-            }
-            if (ois.security() == null) {
-                throw new IllegalArgumentException("'security' is required for " + action);
-            }
             content = new ByteArrayInputStream(ois.content().text().getBytes(StandardCharsets.UTF_8));
             acl = readAcl(ois.security());
         }
@@ -169,11 +189,6 @@ public class OisIngestController {
      */
     private static String readAcl(SecurityConfig security) {
         List<PermissionRule> rules = security.permissions() != null ? security.permissions() : List.of();
-        for (PermissionRule rule : rules) {
-            if (rule == null || rule.identity() == null || rule.access() == null) {
-                throw new IllegalArgumentException("each 'security.permissions' entry needs an identity and an access");
-            }
-        }
         return rules.stream()
                 .filter(rule -> "read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()))
                 .map(PermissionRule::identity)
