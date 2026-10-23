@@ -32,7 +32,7 @@
     <name>OpenCrawling - OpenSearch 2.x Output Connector</name>
 
     <properties>
-        <opensearch.version>2.19.0</opensearch.version>
+        <opensearch.version>3.9.0</opensearch.version>
         <httpclient5.version>5.2.1</httpclient5.version>
         <testcontainers.version>1.20.1</testcontainers.version>
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
