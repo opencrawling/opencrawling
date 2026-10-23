@@ -161,7 +161,7 @@ jobs:
 
     steps:
       - name: Download CLI Executable Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: oc-cli-jar
           path: release-assets/
@@ -179,7 +179,7 @@ jobs:
     needs: [build-and-test-cli, publish-github-release-assets]
     steps:
       - name: Download CLI Executable Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: oc-cli-jar
           path: release-assets/
