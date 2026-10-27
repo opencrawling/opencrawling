@@ -25,9 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Release version for oc-cli (e.g. 1.0.0)'
+        description: 'Release version for oc-cli (e.g. 1.0.4)'
         required: false
-        default: '1.0.0'
+        default: '1.0.4'
 
 permissions: read-all
 
@@ -70,10 +70,8 @@ jobs:
             TAG_NAME=""
           fi
           if [ -n "$VER" ]; then
-            echo "Setting oc-cli release version to $VER"
-            cd oc-cli
-            mvn versions:set -DnewVersion="$VER" -DgenerateBackupPoms=false
-            cd ..
+            echo "Setting oc-cli release version banner to $VER"
+            sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${VER}/" oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
@@ -87,11 +85,21 @@ jobs:
           chmod +x scripts/test-cli.sh
           ./scripts/test-cli.sh
 
+      - name: Prepare Release Executable JAR
+        run: |
+          mkdir -p oc-cli/target/release-jar
+          BUILT_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v 'original' | head -n 1)
+          if [ -n "${{ steps.version.outputs.version }}" ]; then
+            cp "$BUILT_JAR" "oc-cli/target/release-jar/oc-cli-${{ steps.version.outputs.version }}.jar"
+          else
+            cp "$BUILT_JAR" "oc-cli/target/release-jar/"
+          fi
+
       - name: Upload CLI Executable Artifact
         uses: actions/upload-artifact@v4
         with:
           name: oc-cli-jar
-          path: oc-cli/target/oc-cli-*.jar
+          path: oc-cli/target/release-jar/oc-cli-*.jar
 
   publish-cli-docker:
     name: Build & Push CLI Docker Image (GHCR)

@@ -202,7 +202,8 @@ docker run --rm --network host ghcr.io/opencrawling/oc-cli:latest system status
 ### 🍺 Homebrew Installation (macOS / Linux)
 ```bash
 brew tap opencrawling/tap
-brew install oc
+brew trust opencrawling/tap   # Required on Homebrew 7+
+brew install opencrawling/tap/oc
 oc --version
 ```
 
