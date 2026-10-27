@@ -21,13 +21,13 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.2.0
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v4.4.0
+        uses: docker/login-action@v4.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -47,7 +47,7 @@ jobs:
 
       # Build and push Backend image (oc-runtime)
       - name: Build and push Backend image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: oc-runtime/Dockerfile
@@ -73,7 +73,7 @@ jobs:
 
       # Build and push Frontend image (oc-admin-ui)
       - name: Build and push Frontend image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7.4.0
         with:
           context: ./oc-admin-ui
           file: oc-admin-ui/Dockerfile
