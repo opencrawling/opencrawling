@@ -20,6 +20,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4.4.0
 
@@ -55,8 +60,8 @@ jobs:
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=dockerhub-backend
+          cache-to: type=gha,mode=max,scope=dockerhub-backend
 
       # Extract metadata (tags, labels) for Frontend
       - name: Extract metadata for Frontend
@@ -81,5 +86,5 @@ jobs:
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=dockerhub-frontend
+          cache-to: type=gha,mode=max,scope=dockerhub-frontend
