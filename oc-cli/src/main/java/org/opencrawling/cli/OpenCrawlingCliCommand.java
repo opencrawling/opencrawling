@@ -28,7 +28,7 @@ import java.util.concurrent.Callable;
 @Command(
     name = "oc",
     mixinStandardHelpOptions = true,
-    version = "OpenCrawling CLI v1.0.4-SNAPSHOT (Java 25)",
+    version = "OpenCrawling CLI v1.0.4 (Java 25)",
     description = "OpenCrawling CLI (oc-cli) for DevSecOps & Terminal Ingestion Management",
     subcommands = {
         JobCommand.class,

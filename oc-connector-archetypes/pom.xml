@@ -23,7 +23,7 @@
 
     <groupId>org.opencrawling.archetypes</groupId>
     <artifactId>opencrawling-connector-archetypes</artifactId>
-    <version>1.0.4-SNAPSHOT</version>
+    <version>1.0.4</version>
     <packaging>pom</packaging>
 
     <name>OpenCrawling - Connector Archetypes Parent</name>
