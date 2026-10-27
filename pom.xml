@@ -177,7 +177,7 @@
              oc-vespa-output-connector's own pom, because dependencyManagement doesn't propagate to modules
              that merely depend on it (oc-runtime, and by extension every Docker image built from it) -
              each of those needs this same pin to resolve Jetty correctly on its own classpath. -->
-        <jetty-vespa.version>12.0.36</jetty-vespa.version>
+        <jetty-vespa.version>12.1.14</jetty-vespa.version>
     </properties>
 
     <dependencyManagement>
