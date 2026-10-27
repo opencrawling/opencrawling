@@ -76,9 +76,9 @@ jobs:
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Build & Test CLI Module
+      - name: Build & Install CLI Reactor Dependencies
         run: |
-          mvn clean package -pl oc-cli -am
+          mvn clean install -pl oc-cli -am -DskipTests
 
       - name: Run CLI Integration Test Script
         run: |

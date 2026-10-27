@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Release version for archetypes (e.g. 1.0.0)'
+        description: 'Release version for archetypes (e.g. 1.0.4)'
         required: false
-        default: '1.0.0'
+        default: '1.0.4'
 
 permissions: read-all
 
