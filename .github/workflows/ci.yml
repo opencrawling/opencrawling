@@ -87,6 +87,23 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build and Test Archetypes
+      - name: Build, Generate, and Test All Connector Archetypes
         run: |
-          mvn clean test-compile -pl oc-connector-archetypes -am
+          mvn clean install -DskipTests -pl oc-core,oc-observability,oc-connector-archetypes,oc-connector-archetypes/opencrawling-archetype-repository-connector,oc-connector-archetypes/opencrawling-archetype-output-connector,oc-connector-archetypes/opencrawling-archetype-transformation-connector -am
+          ARCH_TEST_DIR=$(mktemp -d)
+          for TYPE in repository output transformation; do
+            CAP_TYPE="$(tr '[:lower:]' '[:upper:]' <<< ${TYPE:0:1})${TYPE:1}"
+            mvn archetype:generate -B \
+              -DarchetypeCatalog=local \
+              -DarchetypeGroupId=org.opencrawling.archetypes \
+              -DarchetypeArtifactId=opencrawling-archetype-${TYPE}-connector \
+              -DarchetypeVersion=1.0.4-SNAPSHOT \
+              -DgroupId=org.opencrawling.connectors \
+              -DartifactId=sample-${TYPE}-connector \
+              -Dversion=1.0.4-SNAPSHOT \
+              -Dpackage=org.opencrawling.connectors.sample \
+              -DconnectorName=Sample${CAP_TYPE}Connector \
+              -DoutputDirectory="$ARCH_TEST_DIR"
+            mvn -f "$ARCH_TEST_DIR/sample-${TYPE}-connector/pom.xml" test
+          done
+          rm -rf "$ARCH_TEST_DIR"

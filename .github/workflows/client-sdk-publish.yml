@@ -21,6 +21,7 @@ on:
     inputs:
       release_version:
         description: 'Release version for oc-java-client-sdk (e.g. 1.0.4)'
+        type: string
         required: false
         default: '1.0.4'
 

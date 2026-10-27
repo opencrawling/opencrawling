@@ -21,6 +21,7 @@ on:
     inputs:
       release_version:
         description: 'Release version for archetypes (e.g. 1.0.4)'
+        type: string
         required: false
         default: '1.0.4'
 
@@ -58,6 +59,8 @@ jobs:
             echo "Setting release version to $RELEASE_VER"
             cd oc-connector-archetypes
             mvn versions:set -DnewVersion=$RELEASE_VER -DprocessParents=true -DgenerateBackupPoms=false
+            sed -i "s/<version>1.0.4-SNAPSHOT<\/version>/<version>${RELEASE_VER}<\/version>/g" \
+              opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml
             cd ..
           fi
 

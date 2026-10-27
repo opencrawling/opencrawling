@@ -43,7 +43,8 @@ public class ${connectorName}Transformer {
             updatedMetadata,
             document.acl(),
             document.security(),
-            document.lastModified()
+            document.lastModified(),
+            document.action()
         );
 
         return Flux.just(transformedDoc);

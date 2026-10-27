@@ -64,6 +64,11 @@ public class ${connectorName} implements RepositoryConnector {
         return new ConnectorSchema(List.of());
     }
 
+    @Override
+    public boolean supportsConcurrentProcessing() {
+        return false;
+    }
+
     public boolean isConnected() {
         return connected;
     }
