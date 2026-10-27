@@ -56,10 +56,12 @@ jobs:
         run: |
           RELEASE_VER="${{ inputs.release_version }}"
           if [ -n "$RELEASE_VER" ]; then
-            echo "Setting release version to $RELEASE_VER"
+            CURRENT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            echo "Setting release version from $CURRENT_VER to $RELEASE_VER"
+            mvn versions:set -B -DnewVersion=$RELEASE_VER -DgenerateBackupPoms=false
             cd oc-connector-archetypes
-            mvn versions:set -DnewVersion=$RELEASE_VER -DprocessParents=true -DgenerateBackupPoms=false
-            sed -i "s/<version>1.0.4-SNAPSHOT<\/version>/<version>${RELEASE_VER}<\/version>/g" \
+            mvn versions:set -B -DnewVersion=$RELEASE_VER -DprocessParents=true -DgenerateBackupPoms=false
+            sed -i "s/<version>${CURRENT_VER}<\/version>/<version>${RELEASE_VER}<\/version>/g" \
               opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml
             cd ..
           fi

@@ -89,6 +89,7 @@ jobs:
 
       - name: Build, Generate, and Test All Connector Archetypes
         run: |
+          PROJECT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           mvn clean install -DskipTests -pl oc-core,oc-observability,oc-connector-archetypes,oc-connector-archetypes/opencrawling-archetype-repository-connector,oc-connector-archetypes/opencrawling-archetype-output-connector,oc-connector-archetypes/opencrawling-archetype-transformation-connector -am
           ARCH_TEST_DIR=$(mktemp -d)
           for TYPE in repository output transformation; do
@@ -97,10 +98,10 @@ jobs:
               -DarchetypeCatalog=local \
               -DarchetypeGroupId=org.opencrawling.archetypes \
               -DarchetypeArtifactId=opencrawling-archetype-${TYPE}-connector \
-              -DarchetypeVersion=1.0.4-SNAPSHOT \
+              -DarchetypeVersion="${PROJECT_VER}" \
               -DgroupId=org.opencrawling.connectors \
               -DartifactId=sample-${TYPE}-connector \
-              -Dversion=1.0.4-SNAPSHOT \
+              -Dversion="${PROJECT_VER}" \
               -Dpackage=org.opencrawling.connectors.sample \
               -DconnectorName=Sample${CAP_TYPE}Connector \
               -DoutputDirectory="$ARCH_TEST_DIR"

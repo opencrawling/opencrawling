@@ -1,0 +1,173 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Create Release Candidate (Pre-Release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version to set in Maven POMs and tag (e.g. 1.0.4 or 1.0.4-RC1)'
+        type: string
+        required: true
+        default: '1.0.4'
+      prerelease:
+        description: 'Mark the GitHub Release as a Pre-release'
+        type: boolean
+        required: false
+        default: true
+      next_snapshot_version:
+        description: 'Next development SNAPSHOT version on branch after tagging (e.g. 1.0.5-SNAPSHOT, or leave empty to skip)'
+        type: string
+        required: false
+        default: '1.0.5-SNAPSHOT'
+      trigger_publish_workflows:
+        description: 'Automatically trigger VM ZIP, CLI, and Docker publish workflows for the new tag'
+        type: boolean
+        required: false
+        default: true
+
+permissions: read-all
+
+jobs:
+  create-release-candidate:
+    name: Prepare POMs, Tag & Publish Pre-Release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Configure Git Identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set Release Version in Maven POMs, CLI & Archetypes
+        id: set-release
+        run: |
+          RELEASE_VER="${{ inputs.release_version }}"
+          RELEASE_VER="${RELEASE_VER#v}"
+          TAG_NAME="v${RELEASE_VER}"
+          CURRENT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+
+          echo "Transitioning project version from ${CURRENT_VER} -> ${RELEASE_VER} (Tag: ${TAG_NAME})"
+
+          # 1. Update parent reactor and standalone modules
+          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false
+          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DprocessParents=true -DgenerateBackupPoms=false -f oc-connector-archetypes/pom.xml
+          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false -f oc-java-client-sdk/pom.xml
+          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false -f oc-mcf-migrator/pom.xml
+
+          # 2. Update cross-module version properties & archetype resource POMs
+          sed -i "s/<oc-java-client-sdk.version>[^<]*<\/oc-java-client-sdk.version>/<oc-java-client-sdk.version>${RELEASE_VER}<\/oc-java-client-sdk.version>/g" pom.xml
+          sed -i "s/<opencrawling-sdk.version>[^<]*<\/opencrawling-sdk.version>/<opencrawling-sdk.version>${RELEASE_VER}<\/opencrawling-sdk.version>/g" oc-mcf-migrator/pom.xml
+          sed -i "s/<version>${CURRENT_VER}<\/version>/<version>${RELEASE_VER}<\/version>/g" \
+            oc-cli/pom.xml \
+            oc-runtime/pom.xml \
+            oc-connector-archetypes/opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml \
+            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
+          sed -i "s/<opencrawling.version>[^<]*<\/opencrawling.version>/<opencrawling.version>${RELEASE_VER}<\/opencrawling.version>/g" \
+            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
+          sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${RELEASE_VER}/g" \
+            oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
+
+          # 3. Validate all Maven POMs
+          mvn validate -B
+
+          echo "release_version=${RELEASE_VER}" >> $GITHUB_OUTPUT
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Commit Release Version & Push Tag
+        run: |
+          RELEASE_VER="${{ steps.set-release.outputs.release_version }}"
+          TAG_NAME="${{ steps.set-release.outputs.tag_name }}"
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): release version ${RELEASE_VER}"
+          fi
+
+          git tag -fa "${TAG_NAME}" -m "OpenCrawling ${TAG_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "${TAG_NAME}" --force
+
+      - name: Create GitHub Pre-Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ steps.set-release.outputs.tag_name }}
+          name: OpenCrawling ${{ steps.set-release.outputs.tag_name }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+
+      - name: Trigger Release Packaging & Container Workflows
+        if: inputs.trigger_publish_workflows == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_VER="${{ steps.set-release.outputs.release_version }}"
+          TAG_NAME="${{ steps.set-release.outputs.tag_name }}"
+
+          echo "Dispatching release artifact workflows for tag ${TAG_NAME}..."
+          gh workflow run dist-release-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
+          gh workflow run cli-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
+          gh workflow run docker-publish.yml --ref "${TAG_NAME}"
+          gh workflow run dockerhub-publish.yml --ref "${TAG_NAME}"
+
+      - name: Advance Branch to Next Development Snapshot
+        if: inputs.next_snapshot_version != ''
+        run: |
+          RELEASE_VER="${{ steps.set-release.outputs.release_version }}"
+          NEXT_VER="${{ inputs.next_snapshot_version }}"
+
+          echo "Advancing branch ${GITHUB_REF_NAME} to next development version: ${NEXT_VER}"
+
+          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false
+          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DprocessParents=true -DgenerateBackupPoms=false -f oc-connector-archetypes/pom.xml
+          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false -f oc-java-client-sdk/pom.xml
+          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false -f oc-mcf-migrator/pom.xml
+
+          sed -i "s/<oc-java-client-sdk.version>[^<]*<\/oc-java-client-sdk.version>/<oc-java-client-sdk.version>${NEXT_VER}<\/oc-java-client-sdk.version>/g" pom.xml
+          sed -i "s/<opencrawling-sdk.version>[^<]*<\/opencrawling-sdk.version>/<opencrawling-sdk.version>${NEXT_VER}<\/opencrawling-sdk.version>/g" oc-mcf-migrator/pom.xml
+          sed -i "s/<version>${RELEASE_VER}<\/version>/<version>${NEXT_VER}<\/version>/g" \
+            oc-cli/pom.xml \
+            oc-runtime/pom.xml \
+            oc-connector-archetypes/opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml \
+            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
+          sed -i "s/<opencrawling.version>[^<]*<\/opencrawling.version>/<opencrawling.version>${NEXT_VER}<\/opencrawling.version>/g" \
+            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
+          sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${NEXT_VER}/g" \
+            oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
+
+          mvn validate -B
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: prepare for next development iteration ${NEXT_VER}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
