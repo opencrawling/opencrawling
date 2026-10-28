@@ -67,8 +67,8 @@ jobs:
             VER="${{ inputs.release_version }}"
             TAG_NAME="v${VER}"
           else
-            VER=""
-            TAG_NAME=""
+            VER="1.0.4"
+            TAG_NAME="v1.0.4"
           fi
           if [ -n "$VER" ]; then
             echo "Setting oc-cli release version banner to $VER"

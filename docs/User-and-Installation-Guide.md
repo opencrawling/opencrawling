@@ -21,6 +21,7 @@ Welcome to the comprehensive **OpenCrawling User & Installation Guide**. This do
    - [Step-by-Step Installation on Windows Server](#44-step-by-step-installation-on-windows-server)
    - [Production `systemd` Service Setup](#45-production-systemd-service-setup)
    - [OpenCrawling CLI (`oc`) Management](#46-opencrawling-cli-oc-management)
+   - [Java Client SDK (`oc-java-client-sdk`) Integration](#47-java-client-sdk-oc-java-client-sdk-integration)
 5. [Web Administration & Control Plane (`oc-admin-ui`)](#5-web-administration--control-plane-oc-admin-ui)
    - [Telemetry Dashboard](#51-telemetry-dashboard)
    - [Job Pipeline Scheduler & AIOps Diagnostics](#52-job-pipeline-scheduler--aiops-diagnostics)
@@ -60,7 +61,8 @@ Every OpenCrawling release and release candidate publishes ready-to-run distribu
 | **`opencrawling-runtime-dist-<version>.zip`** | Core Runtime / Worker Node distribution bundle (~459 MB) | Dedicated Crawler, Tika Ingestion Consumer, Writer Consumer, or MCP server VMs |
 | **`opencrawling-embedding-service-dist-<version>.zip`** | Stateless Spring AI Embedding microservice bundle (~192 MB) | Dedicated embedding worker VMs scaling Ollama or OpenAI inference |
 | **`opencrawling-admin-ui-dist-<version>.zip`** | Pre-built React 19 Admin UI static bundle + Nginx configuration (~275 KB) | Deploying the web dashboard on Nginx, Apache HTTP Server, or cloud CDNs |
-| **`opencrawling-cli-dist-<version>.zip`** | Standalone OpenCrawling CLI executable (~91 MB) | Command-line management on admin workstations and bastion hosts |
+| **`opencrawling-cli-dist-<version>.zip`** | Standalone OpenCrawling CLI distribution bundle (~95 MB) | Command-line management with bundled `bin/oc` launcher on admin workstations and bastion hosts |
+| **`oc-cli-<version>.jar`** | Standalone executable CLI fat JAR (~104 MB) | Direct CLI execution via `java --enable-preview -jar oc-cli-<version>.jar` without extraction |
 | **`SHA256SUMS.txt` & `*.sha256`** | Cryptographic SHA-256 checksums | Integrity and supply-chain security verification |
 | **`OpenCrawling-User-and-Installation-Guide.pdf`** | Standalone PDF User & Installation Guide | Offline documentation for air-gapped systems and enterprise compliance |
 
@@ -369,11 +371,63 @@ The bundled CLI wrapper in `bin/oc` allows administrators to monitor and orchest
 # List configured ingestion jobs
 ./bin/oc job list
 
-# Trigger an immediate crawl for job ID 1
-./bin/oc crawl run --job 1
+# Inspect real-time status of job ID 1
+./bin/oc job status --id 1
+
+# Trigger an immediate crawl job
+./bin/oc job start --name "Documentation Scan" --connector FileSystem_Local --path /data/docs
 
 # Inspect audit logs
 ./bin/oc report list
+```
+
+Alternatively, if running the standalone fat JAR without extracting the ZIP distribution:
+
+```bash
+java --enable-preview -jar oc-cli-1.0.4.jar system status
+```
+
+---
+
+### 4.7 Java Client SDK (`oc-java-client-sdk`) Integration
+
+For Java developers building enterprise microservices, automated ingestion pipelines, or ETL connectors, OpenCrawling provides the official **Java Client SDK** (`oc-java-client-sdk`) built on Java 25 and native `HttpClient` with zero third-party HTTP framework dependencies.
+
+#### Maven Dependency
+
+```xml
+<dependency>
+    <groupId>org.opencrawling</groupId>
+    <artifactId>oc-java-client-sdk</artifactId>
+    <version>1.0.4</version>
+</dependency>
+```
+
+#### Programmatic Usage
+
+```java
+import org.opencrawling.sdk.OpenCrawlingClient;
+import org.opencrawling.sdk.models.SystemStatus;
+import org.opencrawling.sdk.models.JobResponse;
+import org.opencrawling.sdk.models.JobReportSummary;
+import java.util.List;
+
+try (OpenCrawlingClient client = OpenCrawlingClient.builder()
+        .baseUrl("http://localhost:8080")
+        .build()) {
+
+    // 1. Check system health
+    SystemStatus status = client.system().getStatus();
+    System.out.println("System Status: " + status.system());
+
+    // 2. List configured ingestion jobs
+    List<JobResponse> jobs = client.jobs().list();
+    jobs.forEach(job -> System.out.println("Job: " + job.name() + " [" + job.status() + "]"));
+
+    // 3. Inspect recent execution reports
+    List<JobReportSummary> reports = client.reports().list();
+    reports.forEach(r -> System.out.printf("Execution %s: %d docs processed%n", r.executionId(), r.totalDocuments()));
+}
 ```
 
 ---

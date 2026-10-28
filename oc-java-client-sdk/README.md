@@ -170,7 +170,7 @@ public class IngestionService {
 
 ### Automated GitHub Actions Workflow
 
-Deploying `oc-java-client-sdk` to Maven Central is fully automated using GitHub Actions ([.github/workflows/sdk-publish.yml](file:///.github/workflows/sdk-publish.yml)).
+Deploying `oc-java-client-sdk` to Maven Central is fully automated using GitHub Actions ([.github/workflows/client-sdk-publish.yml](file:///.github/workflows/client-sdk-publish.yml)).
 
 To trigger a release deployment:
 1. Navigate to GitHub **Actions** -> **Publish Java SDK to Maven Central**.

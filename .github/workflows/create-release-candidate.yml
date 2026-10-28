@@ -35,7 +35,7 @@ on:
         required: false
         default: '1.0.5-SNAPSHOT'
       trigger_publish_workflows:
-        description: 'Automatically trigger VM ZIP, CLI, and Docker publish workflows for the new tag'
+        description: 'Automatically trigger VM ZIP, CLI, Java Client SDK, and Docker publish workflows for the new tag'
         type: boolean
         required: false
         default: true
@@ -139,6 +139,7 @@ jobs:
           echo "Dispatching release artifact workflows for tag ${TAG_NAME}..."
           gh workflow run dist-release-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
           gh workflow run cli-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
+          gh workflow run client-sdk-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
           gh workflow run docker-publish.yml --ref "${TAG_NAME}"
           gh workflow run dockerhub-publish.yml --ref "${TAG_NAME}"
 
