@@ -115,10 +115,11 @@ flowchart LR
 ```
 
 #### Step 1: Download the Compose Manifest
-Download `docker-compose-decoupled-dockerhub.yml` from the GitHub Release assets:
+Download `docker-compose-decoupled-dockerhub.yml` directly from GitHub:
 ```bash
-curl -LO https://github.com/OpenCrawling/opencrawling/releases/latest/download/docker-compose-decoupled-dockerhub.yml
+curl -LO https://raw.githubusercontent.com/OpenCrawling/opencrawling/main/docker-compose-decoupled-dockerhub.yml
 ```
+*(Alternatively, download it from the GitHub Release assets for your specific version, e.g. `https://github.com/opencrawling/opencrawling/releases/download/<version>/docker-compose-decoupled-dockerhub.yml`)*
 
 #### Step 2: Start the Pipeline
 ```bash
@@ -156,7 +157,7 @@ Use this mode when you already run your own PostgreSQL, Kafka, Redis, or Ozone c
 
 ```bash
 # 1. Download the apps compose manifest
-curl -LO https://github.com/OpenCrawling/opencrawling/releases/latest/download/docker-compose-apps-dockerhub.yml
+curl -LO https://raw.githubusercontent.com/OpenCrawling/opencrawling/main/docker-compose-apps-dockerhub.yml
 
 # 2. Configure environment overrides if connecting to external hosts
 export SPRING_AI_VECTORSTORE_PGVECTOR_URL="jdbc:postgresql://your-db-host:5432/opencrawling"
