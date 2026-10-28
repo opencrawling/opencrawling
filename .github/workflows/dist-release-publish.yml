@@ -97,6 +97,27 @@ jobs:
           "${BUNDLE_DIR}/bin/oc" --version
           rm -rf "$VERIFY_DIR"
 
+      - name: Checkout Wiki Documentation
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki
+        continue-on-error: true
+
+      - name: Set up Python for Documentation PDF Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PDF Generation Dependencies
+        run: |
+          pip install --upgrade pip weasyprint markdown
+
+      - name: Generate User & Installation Guide PDF
+        run: |
+          chmod +x scripts/generate-pdf-guide.sh
+          ./scripts/generate-pdf-guide.sh "${{ steps.version.outputs.version }}"
+
       - name: Upload Distribution ZIP Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
@@ -105,6 +126,7 @@ jobs:
             dist/*.zip
             dist/*.sha256
             dist/SHA256SUMS.txt
+            dist/*.pdf
             docker-compose-decoupled-dockerhub.yml
             docker-compose-apps-dockerhub.yml
 
@@ -131,5 +153,6 @@ jobs:
             release-dist/*.zip
             release-dist/*.sha256
             release-dist/SHA256SUMS.txt
+            release-dist/*.pdf
             release-dist/docker-compose-decoupled-dockerhub.yml
             release-dist/docker-compose-apps-dockerhub.yml
