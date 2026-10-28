@@ -14,6 +14,30 @@
 # limitations under the License.
 #
 
+# Shared Apache Ozone settings for the single-datanode claim-check cluster (merged into each Ozone service).
+x-ozone-env: &ozone-env
+  OZONE-SITE.XML_ozone.scm.client.address: scm
+  OZONE-SITE.XML_ozone.scm.names: scm
+  OZONE-SITE.XML_ozone.om.address: om
+  # Required: without it SCM, OM and the datanode exit at startup ("ozone.metadata.dirs must be defined").
+  OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+  # Single-datanode dev cluster: relax production safe-mode rules (3 datanodes / Ratis THREE pipeline)
+  # and default to replication factor 1, otherwise SCM never leaves safe mode and writes hang.
+  OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+  OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+  OZONE-SITE.XML_ozone.server.default.replication: "1"
+  OZONE-SITE.XML_ozone.replication: "1"
+  # Default is 5m: SCM would not create write pipelines until 5 minutes after leaving safe mode.
+  OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+  # Default 120s: create the RATIS/ONE write pipeline shortly after startup.
+  OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+  # Dev sizing: defaults (5GB pre-allocated containers + 20GB reserved free space per volume)
+  # exhaust a typical Docker Desktop disk, so SCM fails with "Unable to allocate a container".
+  OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+  OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+  OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
+  OZONE_OPTS: "-Xmx256m"
+
 services:
   # --- Infrastructure Services ---
   postgres:
@@ -104,24 +128,25 @@ services:
       - opencrawling-network
 
   # --- Apache Ozone Object Storage (Claim Check Store) ---
+  # Same single-node dev configuration as oc-ozone-output-connector/docker/docker-compose-decoupled-with-ozone.yml.
   ozone-scm:
     image: apache/ozone:2.2.0
-    container_name: ozone-scm-decoupled
+    container_name: ozone-scm
     hostname: scm
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
+      ENSURE_SCM_INITIALIZED: /data/metadata/scm/current/VERSION
     command: ["ozone", "scm"]
     networks:
       - opencrawling-network
 
   ozone-om:
     image: apache/ozone:2.2.0
-    container_name: ozone-om-decoupled
+    container_name: ozone-om
     hostname: om
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
+      ENSURE_OM_INITIALIZED: /data/metadata/om/current/VERSION
     command: ["ozone", "om"]
     depends_on:
       - ozone-scm
@@ -130,10 +155,9 @@ services:
 
   ozone-datanode:
     image: apache/ozone:2.2.0
-    container_name: ozone-datanode-decoupled
+    container_name: ozone-datanode
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
     command: ["ozone", "datanode"]
     depends_on:
       - ozone-scm
@@ -143,13 +167,12 @@ services:
 
   ozone-s3g:
     image: apache/ozone:2.2.0
-    container_name: ozone-s3g-decoupled
+    container_name: ozone-s3g
     hostname: s3g
     ports:
       - "9878:9878"
     environment:
-      OZONE-SITE.XML_ozone.scm.client.address: scm
-      OZONE-SITE.XML_ozone.om.address: om
+      <<: *ozone-env
     command: ["ozone", "s3g"]
     depends_on:
       - ozone-scm
@@ -162,14 +185,26 @@ services:
     image: opencrawling/oc-crawler:latest
     container_name: oc-crawler-service
     environment:
-      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/data
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
@@ -181,19 +216,28 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
-    restart: on-failure
+    restart: "no"
 
   oc-ingestion-consumer:
     image: opencrawling/oc-ingestion-consumer:latest
     container_name: oc-ingestion-consumer-service
     environment:
-      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
@@ -206,6 +250,7 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -217,6 +262,8 @@ services:
       - "8082:8082"
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
@@ -229,6 +276,7 @@ services:
       - kafka
       - ollama
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -238,6 +286,8 @@ services:
     container_name: oc-writer-service
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
@@ -247,6 +297,7 @@ services:
     depends_on:
       - kafka
       - postgres
+      - redis
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -259,6 +310,9 @@ services:
       - "9095:9095"
       - "9096:9096"
     environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
@@ -266,17 +320,24 @@ services:
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
       - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
       - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
       - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
       - OPENCRAWLING_INGEST_OIS_TOKEN=${OPENCRAWLING_INGEST_OIS_TOKEN:-}
       - OPENCRAWLING_GRPC_PUSH_ENABLED=${OPENCRAWLING_GRPC_PUSH_ENABLED:-true}
       - OPENCRAWLING_GRPC_PUSH_PORT=${OPENCRAWLING_GRPC_PUSH_PORT:-9096}
       - OPENCRAWLING_GRPC_PUSH_TOKEN=${OPENCRAWLING_GRPC_PUSH_TOKEN:-}
-      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - opencrawling-claims:/claims  # Local claim check files, shared with oc-ingestion-consumer
       - opencrawling-reportsdata:/data/reports

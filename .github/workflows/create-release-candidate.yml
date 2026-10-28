@@ -124,6 +124,9 @@ jobs:
           name: OpenCrawling ${{ steps.set-release.outputs.tag_name }}
           prerelease: ${{ inputs.prerelease }}
           generate_release_notes: true
+          files: |
+            docker-compose-decoupled-dockerhub.yml
+            docker-compose-apps-dockerhub.yml
 
       - name: Trigger Release Packaging & Container Workflows
         if: inputs.trigger_publish_workflows == true

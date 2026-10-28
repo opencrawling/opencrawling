@@ -105,6 +105,8 @@ jobs:
             dist/*.zip
             dist/*.sha256
             dist/SHA256SUMS.txt
+            docker-compose-decoupled-dockerhub.yml
+            docker-compose-apps-dockerhub.yml
 
   publish-dist-release-assets:
     name: Attach Distribution ZIPs to GitHub Release
@@ -129,3 +131,5 @@ jobs:
             release-dist/*.zip
             release-dist/*.sha256
             release-dist/SHA256SUMS.txt
+            release-dist/docker-compose-decoupled-dockerhub.yml
+            release-dist/docker-compose-apps-dockerhub.yml

@@ -16,7 +16,7 @@
 
 services:
   opencrawling-backend:
-    image: opencrawling/opencrawling-backend:latest
+    image: opencrawling/oc-mcp-server:latest
     container_name: opencrawling-backend
     ports:
       - "8080:8080"
@@ -49,7 +49,7 @@ services:
     restart: unless-stopped
 
   opencrawling-embedding:
-    image: opencrawling/opencrawling-embedding:latest
+    image: opencrawling/oc-embedding-consumer:latest
     container_name: opencrawling-embedding
     ports:
       - "8082:8082"
@@ -67,7 +67,7 @@ services:
     restart: unless-stopped
 
   opencrawling-frontend:
-    image: opencrawling/opencrawling-frontend:latest
+    image: opencrawling/oc-admin-ui:latest
     container_name: opencrawling-frontend
     ports:
       - "3000:80"
@@ -85,4 +85,3 @@ networks:
 volumes:
   opencrawling-reportsdata:
     name: opencrawling-reportsdata
-
