@@ -52,6 +52,7 @@ cleanup() {
   rm -f /tmp/mcp-flowable-*.tmp /tmp/mcp-flowable-*.txt
   docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
   docker rm -f flowable-rest-decoupled postgres-vector-decoupled-flowable redis-stack-decoupled-flowable ollama-decoupled-flowable ollama-model-puller-decoupled-flowable kafka-decoupled-flowable oc-crawler-service-flowable oc-ingestion-consumer-service-flowable oc-embedding-consumer-service-flowable oc-writer-service-flowable oc-mcp-server-service-flowable >/dev/null 2>&1 || true
+  docker volume rm opencrawling-pgdata-flowable opencrawling-redisdata-flowable opencrawling-kafkadata-flowable opencrawling-flowabledata opencrawling-claims-flowable opencrawling-reportsdata-flowable >/dev/null 2>&1 || true
 }
 
 on_exit() {
@@ -199,6 +200,12 @@ if [ "$VECTOR_COUNT" -gt 0 ]; then
   echo -e "${GREEN}Verified: ${VECTOR_COUNT} vector chunk(s) successfully persisted in pgvector!${NC}"
 else
   echo -e "${RED}Error: No vector chunks found in pgvector within timeout.${NC}"
+  echo -e "${YELLOW}=== oc-ingestion-consumer logs ===${NC}"
+  compose logs --tail 40 oc-ingestion-consumer
+  echo -e "${YELLOW}=== oc-embedding-consumer logs ===${NC}"
+  compose logs --tail 40 oc-embedding-consumer
+  echo -e "${YELLOW}=== oc-writer-consumer logs ===${NC}"
+  compose logs --tail 40 oc-writer-consumer
   exit 1
 fi
 

@@ -76,9 +76,9 @@ trap cleanup EXIT
 log_step "1" "Building oc-cli executable JAR from source..."
 mvn clean package -pl oc-cli -DskipTests
 
-CLI_JAR="oc-cli/target/oc-cli-1.0.4-SNAPSHOT.jar"
-if [ ! -f "$CLI_JAR" ]; then
-    log_fail "CLI JAR executable not found at $CLI_JAR"
+CLI_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v '\.original$' | head -n 1 || echo "")
+if [ -z "$CLI_JAR" ] || [ ! -f "$CLI_JAR" ]; then
+    log_fail "CLI JAR executable not found under oc-cli/target/"
     exit 1
 fi
 RUN_CLI="java --enable-preview -jar $CLI_JAR"

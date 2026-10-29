@@ -47,7 +47,7 @@ services:
         aliases:
           - nimbus
     volumes:
-      - ../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.4-SNAPSHOT-topology.jar:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
+      - ${STORMCRAWLER_TOPOLOGY_JAR:-../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.5-SNAPSHOT-topology.jar}:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6627 && exec 3<&- && exec 3>&-' || exit 1"]
       interval: 5s
@@ -69,7 +69,7 @@ services:
         aliases:
           - supervisor
     volumes:
-      - ../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.4-SNAPSHOT-topology.jar:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
+      - ${STORMCRAWLER_TOPOLOGY_JAR:-../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.5-SNAPSHOT-topology.jar}:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
 
   storm-ui:
     image: storm:3.1.0

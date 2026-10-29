@@ -70,7 +70,11 @@ cd "$SCRIPT_DIR/.."
 MODULE="oc-sharepoint-repository-connector"
 WORK="$(pwd)/${MODULE}/target/devproxy"
 
-for tool in devproxy python3 mvn openssl keytool curl jq; do
+if ! command -v devproxy >/dev/null 2>&1; then
+  log_warn "devproxy is required but not installed (install via 'brew install dotnet/dev-proxy/dev-proxy'). Skipping test."
+  exit 0
+fi
+for tool in python3 mvn openssl keytool curl jq; do
   command -v "$tool" >/dev/null 2>&1 || { log_error "$tool is required."; exit 1; }
 done
 log_info "Dev Proxy $(devproxy --version 2>/dev/null | tail -1)"

@@ -54,12 +54,13 @@ trap cleanup EXIT
 echo -e "${YELLOW}[STEP 1/5] Building oc-stormcrawler-bolt topology fat JAR with Maven...${NC}"
 mvn clean package -pl oc-stormcrawler-bolt -DskipTests
 
-TOPOLOGY_JAR="oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.4-SNAPSHOT-topology.jar"
-if [ ! -f "$TOPOLOGY_JAR" ]; then
-  echo -e "${RED}[ERROR] Expected topology JAR $TOPOLOGY_JAR was not found.${NC}"
+TOPOLOGY_JAR=$(ls oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-*-topology.jar 2>/dev/null | head -n 1 || echo "")
+if [ -z "$TOPOLOGY_JAR" ] || [ ! -f "$TOPOLOGY_JAR" ]; then
+  echo -e "${RED}[ERROR] Expected topology JAR was not found under oc-stormcrawler-bolt/target/${NC}"
   exit 1
 fi
 echo -e "${GREEN}[OK] Verified topology JAR: $TOPOLOGY_JAR ($(du -h "$TOPOLOGY_JAR" | cut -f1))${NC}"
+export STORMCRAWLER_TOPOLOGY_JAR="../../${TOPOLOGY_JAR}"
 
 # Step 2: Clean up previous test containers
 echo -e "${YELLOW}[STEP 2/5] Resetting test environment containers...${NC}"

@@ -52,18 +52,34 @@ public class VectorStoreWriterConsumer {
     private final PgVectorStore vectorStore768;
     private final PgVectorStore vectorStore1024;
     private final TelemetryTraceStore traceStore;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final boolean flowableCollocatedSchema;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public VectorStoreWriterConsumer(
             @org.springframework.beans.factory.annotation.Qualifier("vectorStore") PgVectorStore vectorStore,
             @org.springframework.beans.factory.annotation.Qualifier("vectorStore384") PgVectorStore vectorStore384,
             @org.springframework.beans.factory.annotation.Qualifier("vectorStore768") PgVectorStore vectorStore768,
             @org.springframework.beans.factory.annotation.Qualifier("vectorStore1024") PgVectorStore vectorStore1024,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TelemetryTraceStore traceStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("pgVectorJdbcTemplate") org.springframework.jdbc.core.JdbcTemplate jdbcTemplate,
+            @org.springframework.beans.factory.annotation.Value("${spring.opencrawling.output.pgvector.flowable-collocated-schema:false}") boolean flowableCollocatedSchema) {
         this.vectorStore = vectorStore;
         this.vectorStore384 = vectorStore384;
         this.vectorStore768 = vectorStore768;
         this.vectorStore1024 = vectorStore1024;
         this.traceStore = traceStore;
+        this.jdbcTemplate = jdbcTemplate;
+        this.flowableCollocatedSchema = flowableCollocatedSchema;
+    }
+
+    public VectorStoreWriterConsumer(
+            PgVectorStore vectorStore,
+            PgVectorStore vectorStore384,
+            PgVectorStore vectorStore768,
+            PgVectorStore vectorStore1024,
+            TelemetryTraceStore traceStore) {
+        this(vectorStore, vectorStore384, vectorStore768, vectorStore1024, traceStore, null, false);
     }
 
     /**
@@ -122,6 +138,10 @@ public class VectorStoreWriterConsumer {
                 targetStore.add(List.of(doc));
             } finally {
                 PrecomputedEmbeddingModel.clear();
+            }
+
+            if (flowableCollocatedSchema && jdbcTemplate != null) {
+                updateFlowableCollocatedColumns(message.chunkId(), message.embedding() != null ? message.embedding().length : null, metadata);
             }
             // A re-crawled document that got shorter keeps rows past its new length; its first chunk removes them.
             if (message.metadata().get("chunk_index") instanceof Number index && index.intValue() == 0
@@ -210,5 +230,53 @@ public class VectorStoreWriterConsumer {
         metadata.put("security_inheritance", inheritanceEnabled);
         metadata.put("security_allowed_read", allowedRead);
         metadata.put("security_denied_read", deniedRead);
+    }
+
+    private String getTableName(Integer dimensions) {
+        if (dimensions == null) return "vector_store";
+        return switch (dimensions) {
+            case 384 -> "vector_store_384";
+            case 768 -> "vector_store_768";
+            case 1024 -> "vector_store_1024";
+            default -> "vector_store";
+        };
+    }
+
+    private void updateFlowableCollocatedColumns(String chunkId, Integer dimensions, Map<String, Object> metadata) {
+        if (!flowableCollocatedSchema || jdbcTemplate == null || metadata == null) {
+            return;
+        }
+
+        String scopeId = null;
+        if (metadata.get("flowable_scope_id") instanceof List<?> list && !list.isEmpty()) {
+            scopeId = String.valueOf(list.get(0));
+        } else if (metadata.get("flowable_scope_id") != null) {
+            scopeId = String.valueOf(metadata.get("flowable_scope_id"));
+        } else if (metadata.get("flowable_proc_inst_id") instanceof List<?> list && !list.isEmpty()) {
+            scopeId = String.valueOf(list.get(0));
+        } else if (metadata.get("flowable_proc_inst_id") != null) {
+            scopeId = String.valueOf(metadata.get("flowable_proc_inst_id"));
+        }
+
+        String scopeType = null;
+        if (metadata.get("flowable_scope_type") instanceof List<?> list && !list.isEmpty()) {
+            scopeType = String.valueOf(list.get(0));
+        } else if (metadata.get("flowable_scope_type") != null) {
+            scopeType = String.valueOf(metadata.get("flowable_scope_type"));
+        }
+
+        if (scopeId != null && scopeType != null) {
+            String tableName = getTableName(dimensions);
+            try {
+                jdbcTemplate.update("UPDATE " + tableName + " SET scope_id_ = ?, scope_type_ = ? WHERE id = ?::uuid", scopeId, scopeType, chunkId);
+            } catch (Exception e) {
+                try {
+                    jdbcTemplate.update("UPDATE " + tableName + " SET scope_id_ = ?, scope_type_ = ? WHERE id = ?", scopeId, scopeType, chunkId);
+                } catch (Exception ex) {
+                    log.warn("Failed to populate dedicated Flowable columns on {}: {}", tableName, ex.getMessage());
+                }
+            }
+            log.info("Updated dedicated Flowable columns (scope_id: {}, scope_type: {}) for chunk {} in {}", scopeId, scopeType, chunkId, tableName);
+        }
     }
 }
