@@ -324,6 +324,12 @@ public class JobController {
                         resolvedConnector = new org.opencrawling.mfiles.MFilesRepositoryConnector(mfilesSettings);
                         log.info("Successfully resolved dynamic M-Files repository connector for '{}' (vault '{}', {} mode)",
                                 mfilesSettings.url(), mfilesSettings.vaultGuid(), mfilesSettings.crawlMode());
+                    } else if (connConfig.className().contains("FileNetRepositoryConnector")) {
+                        org.opencrawling.filenet.FileNetProperties filenetSettings =
+                                org.opencrawling.filenet.FileNetProperties.fromConfiguration(connConfig.configuration());
+                        resolvedConnector = new org.opencrawling.filenet.FileNetRepositoryConnector(filenetSettings);
+                        log.info("Successfully resolved dynamic FileNet repository connector for '{}' (object store '{}', {} mode)",
+                                filenetSettings.url(), filenetSettings.objectStore(), filenetSettings.crawlMode());
                     } else if (connConfig.className().contains("Jdbc")) {
                         String url = connConfig.configuration().getOrDefault("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1");
                         String driverClassName = connConfig.configuration().getOrDefault("driverClassName", connConfig.configuration().getOrDefault("driver-class-name", ""));

@@ -384,6 +384,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. default, p1020=5, contract, or v101',
           description: 'Use default for the connector configuration. MFWS conditions (with =) or plain text (quick search) replace the search; a view path such as v101 crawls that view.'
         };
+      case 'org.opencrawling.filenet.FileNetRepositoryConnector':
+        return {
+          label: 'Folder Path',
+          placeholder: 'e.g. default, or /Mortgages/Commercial',
+          description: 'Use default for the connector configuration. A folder path runs a one-off (non-incremental) crawl of that folder and its subfolders.'
+        };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {
           label: 'Iceberg Table Name',

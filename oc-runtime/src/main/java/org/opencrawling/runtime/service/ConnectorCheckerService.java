@@ -40,6 +40,9 @@ import org.opencrawling.sharepoint.SharePointRepositoryConnector;
 import org.opencrawling.mfiles.MFilesClient;
 import org.opencrawling.mfiles.MFilesProperties;
 import org.opencrawling.mfiles.MFilesRepositoryConnector;
+import org.opencrawling.filenet.FileNetClient;
+import org.opencrawling.filenet.FileNetProperties;
+import org.opencrawling.filenet.FileNetRepositoryConnector;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -139,6 +142,11 @@ public class ConnectorCheckerService {
             // --- M-Files Repository Connector ---
             if (className.contains("MFilesRepositoryConnector")) {
                 return checkMFilesRepository(config);
+            }
+
+            // --- IBM FileNet P8 Repository Connector ---
+            if (className.contains("FileNetRepositoryConnector")) {
+                return checkFileNetRepository(config);
             }
 
             // --- CMIS Repository Connector ---
@@ -582,6 +590,40 @@ public class ConnectorCheckerService {
             return new ConnectionCheckResult(false, "Failed to connect to M-Files at " + settings.url() + ": " + e.getMessage() + " "
                     + MFilesRepositoryConnector.LICENCE_NOTICE, e.toString());
         }
+    }
+
+    /**
+     * Reads the Content Services GraphQL API information and the configured object store in one query: wrong credentials,
+     * a missing XSRF acceptance or an unknown object store fail here instead of on the first crawl.
+     */
+    private ConnectionCheckResult checkFileNetRepository(Map<String, String> config) {
+        FileNetProperties settings = FileNetProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "FileNet repository connector is not configured: " + String.join(" ", problems)
+                    + " " + FileNetRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        try {
+            FileNetClient client = FileNetRepositoryConnector.newClient(FileNetProperties.fromConfiguration(withNoRetries(config)));
+            JsonNode info = FileNetRepositoryConnector.connectionInfo(client, settings);
+            JsonNode store = info.path("objectStore");
+            return new ConnectionCheckResult(true, "Successfully authenticated to the FileNet Content Services GraphQL API "
+                    + info.path("_apiInfo").path("productVersion").asText("") + " at " + settings.url() + "; object store '"
+                    + store.path("symbolicName").asText(settings.objectStore()) + "' is accessible. "
+                    + FileNetRepositoryConnector.LICENCE_NOTICE, store.path("id").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to FileNet at " + settings.url() + ": " + e.getMessage()
+                    + " " + FileNetRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    private static Map<String, String> withNoRetries(Map<String, String> config) {
+        Map<String, String> c = new java.util.HashMap<>(config);
+        c.put("maxRetries", "0");
+        return c;
     }
 
     private ConnectionCheckResult checkCmis(Map<String, String> config) {

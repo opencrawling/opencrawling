@@ -22,6 +22,7 @@
 [![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
 [![M-Files](https://img.shields.io/badge/M--Files-MFWS_REST-0072CE.svg?style=flat)](https://www.m-files.com/)
 [![SharePoint](https://img.shields.io/badge/SharePoint_Online-Microsoft_Graph_v1.0-0078D4.svg?style=flat)](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint)
+[![IBM FileNet P8](https://img.shields.io/badge/IBM_FileNet_P8-Content_Services_GraphQL-0F62FE.svg?style=flat)](https://www.ibm.com/products/filenet-content-manager)
 [![Hyland OpenArch](https://img.shields.io/badge/Hyland_OpenArch-Supported-4F46E5.svg?style=flat)](docs/Hyland-OpenArch-Integration.md)
 [![Flowable](https://img.shields.io/badge/Flowable_BPMN-Supported-007ACC.svg?style=flat&logo=flowable&logoColor=white)](https://www.flowable.com/)
 [![Camunda](https://img.shields.io/badge/Camunda_BPM-Supported-E10076.svg?style=flat&logo=camunda&logoColor=white)](https://camunda.com/)
@@ -81,6 +82,7 @@ graph TD
         Doxis_Repo_Conn[Doxis 4 Repository - oc-doxis-repository-connector]
         SharePoint_Conn[SharePoint Online Repository - oc-sharepoint-repository-connector]
         MFiles_Repo_Conn[M-Files Vault - oc-mfiles-repository-connector]
+        FileNet_Repo_Conn[IBM FileNet P8 Object Store - oc-filenet-repository-connector]
         OpenArch_Repo_Conn[Hyland OpenArch Repository - oc-openarch-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
@@ -518,7 +520,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
   - **S3 Gateway Client (`s3g`)**: Standard AWS S3 SDK integration hitting Ozone's S3 Gateway endpoint for maximum cloud versatility.
-- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, **SharePoint Online (Microsoft Graph)**, **M-Files Vault (MFWS REST)**, **Hyland OpenArch**, Apache Iceberg, Flowable BPMN, Camunda, Apache StormCrawler, and **gRPC Push Ingestion Gateway**.
+- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, **SharePoint Online (Microsoft Graph)**, **M-Files Vault (MFWS REST)**, **IBM FileNet P8 (Content Services GraphQL)**, **Hyland OpenArch**, Apache Iceberg, Flowable BPMN, Camunda, Apache StormCrawler, and **gRPC Push Ingestion Gateway**.
 - **Hyland OpenArch & Parquet Vector Bridging**: Native bidirectional integration supporting paged HXQL harvesting, binary blob offloading via Java 25 Virtual Threads, Parquet vector serialization (`embedding.avsc`), Zero-Trust ACL preservation, and MCP search/fetch tools (`openarch_search`, `openarch_fetch_document`).
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
@@ -958,6 +960,42 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 In the Admin UI it is the **Microsoft SharePoint (Microsoft Graph API)** repository connector. The
 [Graph mock](oc-sharepoint-repository-connector/graph-mock/README.md) emulates a tenant for local testing. See
 [oc-sharepoint-repository-connector/README.md](oc-sharepoint-repository-connector/README.md).
+
+### Option A.8.e: IBM FileNet P8 Crawling
+
+[![IBM FileNet P8](https://img.shields.io/badge/IBM_FileNet_P8-Content_Services_GraphQL-0F62FE.svg?style=flat)](https://www.ibm.com/products/filenet-content-manager)
+
+To crawl an object store of an [IBM FileNet P8](https://www.ibm.com/products/filenet-content-manager) Content Platform
+Engine, select the FileNet repository connector and point it at the Content Services GraphQL API:
+
+> **Prerequisites:** you need a licensed IBM FileNet P8 installation with the Content Services GraphQL API deployed, and
+> an account with read access to the object store (Basic, OAuth2 / Cloud Pak IAM, a bearer token or an LTPA token).
+> OpenCrawling doesn't include IBM FileNet or any IBM licence. See the
+> [full prerequisites](oc-filenet-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=filenet \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=filenet \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_URL=https://<cpe-host>/content-services-graphql/graphql \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_OBJECT_STORE=OS1 \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_DOCUMENT_CLASSES=LoanApplicationDocument \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`FileNetRepositoryConnector` reads documents through the Content Services GraphQL API.
+- **What it crawls:** documents of the configured classes (subclasses included) matching an optional CE SQL condition
+  (`crawl-mode: query`), or below a folder (`folder`); the current, the latest released, or every version.
+- **What each document carries:** its class properties, every content element as its own OIS document, the folders it is
+  filed in, and its effective access permissions as OIS permissions, deny by default (a deny of view content alone is a
+  deny).
+- **Incremental crawls and deletes:** a `DateLastModified` watermark skips unchanged versions; deleted documents are found
+  by reconciling the current ids (no auditing needed) or from the `DeletionEvent` audit log, and become `DELETE`
+  tombstones.
+
+In the Admin UI it is the **IBM FileNet P8 (Content Platform Engine)** repository connector. See
+[oc-filenet-repository-connector/README.md](oc-filenet-repository-connector/README.md).
 
 ### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
 
