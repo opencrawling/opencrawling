@@ -22,6 +22,8 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 import java.util.*;
 
@@ -188,5 +190,89 @@ class PgVectorMcpSearchBackendTest {
         // 3. listAccessibleSources as outsider -> excluded from results
         List<Map<String, Object>> sources = backend.listAccessibleSources("outsider", List.of(), null);
         assertThat(sources).isEmpty();
+    }
+
+    @Test
+    void testGetDocumentContent_byFlowableScopeId_fallback() {
+        Document flowableDoc = new Document("5001", "Process Instance details", Map.of(
+                "uri", "flowable://historic-process-instances/5001",
+                "flowable_scope_id", List.of("5001"),
+                "flowable_scope_type", List.of("bpmn"),
+                "acl", "public"
+        ));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(flowableDoc));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("5001", "john", List.of(), null);
+        assertThat(result.id()).isEqualTo("5001");
+        assertThat(result.uri()).isEqualTo("flowable://historic-process-instances/5001");
+    }
+
+    @Test
+    void testListAccessibleSources_surfacesScopeMetadata() {
+        Document flowableDoc = new Document("5001", "Process Instance details", Map.of(
+                "uri", "flowable://historic-process-instances/5001",
+                "flowable_scope_id", List.of("5001"),
+                "flowable_scope_type", List.of("bpmn"),
+                "acl", "public"
+        ));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(flowableDoc));
+
+        List<Map<String, Object>> sources = backend.listAccessibleSources("john", List.of(), null);
+        assertThat(sources).hasSize(1);
+        assertThat(sources.get(0).get("scope_id")).isEqualTo("5001");
+        assertThat(sources.get(0).get("scope_type")).isEqualTo("bpmn");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testGetDocumentContent_withJdbcAndScopeId() {
+        JdbcTemplate mockJdbc = mock(JdbcTemplate.class);
+        PgVectorMcpSearchBackend jdbcBackend = new PgVectorMcpSearchBackend(
+                vectorStore, vectorStore, vectorStore, vectorStore,
+                mockJdbc, embeddingModel, null
+        );
+
+        when(mockJdbc.queryForObject(anyString(), eq(Integer.class), eq("vector_store"))).thenReturn(1);
+
+        McpVectorServer.DocumentDetailsResult expectedDoc = new McpVectorServer.DocumentDetailsResult(
+                "5001", "flowable://historic-process-instances/5001", "Process Instance Content",
+                Map.of("acl", "public", "flowable_scope_id", "5001"), "public"
+        );
+
+        when(mockJdbc.query(anyString(), any(RowMapper.class), any(Object[].class)))
+                .thenReturn(List.of(expectedDoc));
+
+        McpVectorServer.DocumentDetailsResult result = jdbcBackend.getDocumentContent("5001", "john", List.of(), null);
+        assertThat(result.id()).isEqualTo("5001");
+        assertThat(result.uri()).isEqualTo("flowable://historic-process-instances/5001");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testListAccessibleSources_withJdbcAndScopeColumns() {
+        JdbcTemplate mockJdbc = mock(JdbcTemplate.class);
+        PgVectorMcpSearchBackend jdbcBackend = new PgVectorMcpSearchBackend(
+                vectorStore, vectorStore, vectorStore, vectorStore,
+                mockJdbc, embeddingModel, null
+        );
+
+        when(mockJdbc.queryForObject(anyString(), eq(Integer.class), eq("vector_store"))).thenReturn(1);
+
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", "5001");
+        row.put("uri", "flowable://historic-process-instances/5001");
+        row.put("documentId", "5001");
+        row.put("scope_id", "5001");
+        row.put("scope_type", "bpmn");
+        row.put("acl", "public");
+        row.put("_meta", Map.of("acl", "public"));
+
+        when(mockJdbc.query(anyString(), any(RowMapper.class)))
+                .thenReturn(List.of(row));
+
+        List<Map<String, Object>> sources = jdbcBackend.listAccessibleSources("john", List.of(), null);
+        assertThat(sources).hasSize(1);
+        assertThat(sources.get(0).get("scope_id")).isEqualTo("5001");
+        assertThat(sources.get(0).get("scope_type")).isEqualTo("bpmn");
     }
 }

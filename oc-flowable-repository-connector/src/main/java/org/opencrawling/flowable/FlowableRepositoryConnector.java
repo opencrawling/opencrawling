@@ -71,6 +71,12 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     public static final String URI_PREFIX = "flowable://process-instances/";
 
     public static final String FIELD_INCLUDE_ACLS = "includeAcls";
+    public static final String FIELD_HISTORY_LEVEL = "historyLevel";
+    public static final String HISTORY_LEVEL_AUDIT = "audit";
+    public static final String HISTORY_LEVEL_FULL = "full";
+    public static final String HISTORY_LEVEL_NONE = "none";
+    public static final String DEFAULT_SCOPE_TYPE = "bpmn";
+
     public static final String FIELD_FLOWABLE_PROC_INST_ID = "flowable_proc_inst_id";
     public static final String FIELD_FLOWABLE_PROCESS_INSTANCE_ID = "flowable_process_instance_id";
     public static final String FIELD_FLOWABLE_SCOPE_ID = "flowable_scope_id";
@@ -91,6 +97,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     private final boolean includeVariables;
     private final String scope;
     private final boolean includeAcls;
+    private final String historyLevel;
     private final ObjectMapper objectMapper;
 
     private HttpClient httpClient;
@@ -105,7 +112,8 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
             @Value("${spring.opencrawling.connector.flowable.process-definition-key:}") String processDefinitionKey,
             @Value("${spring.opencrawling.connector.flowable.include-variables:true}") boolean includeVariables,
             @Value("${spring.opencrawling.connector.flowable.scope:all}") String scope,
-            @Value("${spring.opencrawling.connector.flowable.include-acls:true}") boolean includeAcls) {
+            @Value("${spring.opencrawling.connector.flowable.include-acls:true}") boolean includeAcls,
+            @Value("${spring.opencrawling.connector.flowable.history-level:audit}") String historyLevel) {
         this.url = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.username = username;
         this.password = password;
@@ -114,6 +122,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         this.includeVariables = includeVariables;
         this.scope = scope;
         this.includeAcls = includeAcls;
+        this.historyLevel = (historyLevel != null && !historyLevel.isBlank()) ? historyLevel : HISTORY_LEVEL_AUDIT;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -124,8 +133,28 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
             int batchSize,
             String processDefinitionKey,
             boolean includeVariables,
+            String scope,
+            boolean includeAcls) {
+        this(url, username, password, batchSize, processDefinitionKey, includeVariables, scope, includeAcls, HISTORY_LEVEL_AUDIT);
+    }
+
+    public FlowableRepositoryConnector(
+            String url,
+            String username,
+            String password,
+            int batchSize,
+            String processDefinitionKey,
+            boolean includeVariables,
             String scope) {
-        this(url, username, password, batchSize, processDefinitionKey, includeVariables, scope, true);
+        this(url, username, password, batchSize, processDefinitionKey, includeVariables, scope, true, HISTORY_LEVEL_AUDIT);
+    }
+
+    public boolean isHistoryNone() {
+        return HISTORY_LEVEL_NONE.equalsIgnoreCase(historyLevel);
+    }
+
+    public String getHistoryLevel() {
+        return historyLevel;
     }
 
     @Override
@@ -145,7 +174,9 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         String credentials = username + ":" + password;
         this.authHeader = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
 
-        String testUrl = url + "/history/historic-process-instances?size=1";
+        String testUrl = isHistoryNone()
+                ? url + "/runtime/process-instances?size=1"
+                : url + "/history/historic-process-instances?size=1";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(testUrl))
                 .header("Authorization", authHeader)
@@ -191,7 +222,7 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
                 boolean hasMore = true;
 
                 while (hasMore) {
-                    JsonNode page = fetchHistoricProcessInstances(targetDefinitionKey, start, batchSize);
+                    JsonNode page = fetchProcessInstances(targetDefinitionKey, start, batchSize);
                     JsonNode dataNode = page.path("data");
 
                     if (!dataNode.isArray() || dataNode.isEmpty()) {
@@ -237,6 +268,47 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         }
     }
 
+    private JsonNode fetchProcessInstances(String defKey, int start, int size) throws IOException, InterruptedException {
+        if (isHistoryNone()) {
+            return fetchRuntimeProcessInstances(defKey, start, size);
+        }
+        return fetchHistoricProcessInstances(defKey, start, size);
+    }
+
+    private JsonNode fetchRuntimeProcessInstances(String defKey, int start, int size) throws IOException, InterruptedException {
+        if ("completed".equalsIgnoreCase(scope)) {
+            log.warn("Scope is configured as 'completed' but historyLevel is 'none'. Returning empty page.");
+            ObjectNode empty = objectMapper.createObjectNode();
+            empty.put("total", 0);
+            empty.putArray("data");
+            return empty;
+        }
+
+        StringBuilder urlBuilder = new StringBuilder(url)
+                .append("/runtime/process-instances")
+                .append("?start=").append(start)
+                .append("&size=").append(size)
+                .append("&sort=id&order=asc");
+
+        if (defKey != null && !defKey.isBlank()) {
+            urlBuilder.append("&processDefinitionKey=").append(URLEncoder.encode(defKey, StandardCharsets.UTF_8));
+        }
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(urlBuilder.toString()))
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IOException("Failed to fetch runtime process instances. Status code: " + response.statusCode() + ", Response: " + response.body());
+        }
+
+        return objectMapper.readTree(response.body());
+    }
+
     private JsonNode fetchHistoricProcessInstances(String defKey, int start, int size) throws IOException, InterruptedException {
         StringBuilder urlBuilder = new StringBuilder(url)
                 .append("/history/historic-process-instances")
@@ -269,6 +341,38 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         return objectMapper.readTree(response.body());
     }
 
+    private JsonNode fetchVariables(String processInstanceId) throws IOException, InterruptedException {
+        if (isHistoryNone()) {
+            return fetchRuntimeVariables(processInstanceId);
+        }
+        return fetchHistoricVariables(processInstanceId);
+    }
+
+    private JsonNode fetchRuntimeVariables(String processInstanceId) throws IOException, InterruptedException {
+        String varUrl = url + "/runtime/process-instances/" + URLEncoder.encode(processInstanceId, StandardCharsets.UTF_8) + "/variables";
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(varUrl))
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Failed to fetch runtime variables for instance {}. Status: {}", processInstanceId, response.statusCode());
+            return objectMapper.createArrayNode();
+        }
+
+        JsonNode resNode = objectMapper.readTree(response.body());
+        if (resNode.isArray()) {
+            return resNode;
+        } else if (resNode.has("data") && resNode.path("data").isArray()) {
+            return resNode.path("data");
+        }
+        return objectMapper.createArrayNode();
+    }
+
     private JsonNode fetchHistoricVariables(String processInstanceId) throws IOException, InterruptedException {
         String varUrl = url + "/history/historic-variable-instances?processInstanceId=" + URLEncoder.encode(processInstanceId, StandardCharsets.UTF_8);
 
@@ -287,6 +391,32 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
 
         JsonNode resNode = objectMapper.readTree(response.body());
         return resNode.path("data");
+    }
+
+    private JsonNode fetchIdentityLinks(String processInstanceId) throws IOException, InterruptedException {
+        if (isHistoryNone()) {
+            return fetchRuntimeIdentityLinks(processInstanceId);
+        }
+        return fetchHistoricIdentityLinks(processInstanceId);
+    }
+
+    private JsonNode fetchRuntimeIdentityLinks(String processInstanceId) throws IOException, InterruptedException {
+        String linksUrl = url + "/runtime/process-instances/" + URLEncoder.encode(processInstanceId, StandardCharsets.UTF_8) + "/identitylinks";
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(linksUrl))
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Failed to fetch runtime identity links for instance {}. Status: {}", processInstanceId, response.statusCode());
+            return objectMapper.createArrayNode();
+        }
+
+        return objectMapper.readTree(response.body());
     }
 
     private JsonNode fetchHistoricIdentityLinks(String processInstanceId) throws IOException, InterruptedException {
@@ -333,7 +463,8 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         metadata.put(FIELD_FLOWABLE_PROC_INST_ID, List.of(processInstanceId));
         metadata.put(FIELD_FLOWABLE_PROCESS_INSTANCE_ID, List.of(processInstanceId));
         metadata.put(FIELD_FLOWABLE_SCOPE_ID, List.of(processInstanceId));
-        metadata.put(FIELD_FLOWABLE_SCOPE_TYPE, List.of("processInstance"));
+        metadata.put(FIELD_FLOWABLE_SCOPE_TYPE, List.of(DEFAULT_SCOPE_TYPE));
+        metadata.put(FIELD_FLOWABLE_SCOPE_TYPE + "_legacy", List.of("processInstance"));
         if (!processDefinitionId.isBlank()) metadata.put(FIELD_FLOWABLE_PROCESS_DEFINITION_ID, List.of(processDefinitionId));
         if (!processDefinitionKey.isBlank()) metadata.put(FIELD_FLOWABLE_PROCESS_DEFINITION_KEY, List.of(processDefinitionKey));
         if (!businessKey.isBlank()) metadata.put(FIELD_FLOWABLE_BUSINESS_KEY, List.of(businessKey));
@@ -351,14 +482,14 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         contentJson.put(FIELD_DURATION_IN_MILLIS, durationInMillis);
         contentJson.put(FIELD_FLOWABLE_PROC_INST_ID, processInstanceId);
         contentJson.put(FIELD_FLOWABLE_SCOPE_ID, processInstanceId);
-        contentJson.put(FIELD_FLOWABLE_SCOPE_TYPE, "processInstance");
+        contentJson.put(FIELD_FLOWABLE_SCOPE_TYPE, DEFAULT_SCOPE_TYPE);
         if (!tenantId.isBlank()) contentJson.put(FIELD_FLOWABLE_TENANT_ID, tenantId);
 
         SecurityConfig securityConfig = SecurityConfig.createPublic();
         String aclString = "public";
 
         if (includeAcls) {
-            JsonNode identityLinksNode = fetchHistoricIdentityLinks(processInstanceId);
+            JsonNode identityLinksNode = fetchIdentityLinks(processInstanceId);
             securityConfig = FlowableSecurityMapper.mapSecurity(identityLinksNode, startUserId);
 
             List<String> allowedUsers = FlowableSecurityMapper.extractAllowedUsers(identityLinksNode, startUserId);
@@ -388,10 +519,10 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
         ObjectNode variablesJson = objectMapper.createObjectNode();
 
         if (includeVariables) {
-            JsonNode variablesNode = fetchHistoricVariables(processInstanceId);
+            JsonNode variablesNode = fetchVariables(processInstanceId);
             if (variablesNode.isArray()) {
                 for (JsonNode varNode : variablesNode) {
-                    JsonNode varItem = varNode.path(FIELD_VARIABLE);
+                    JsonNode varItem = varNode.has(FIELD_VARIABLE) ? varNode.path(FIELD_VARIABLE) : varNode;
                     String name = varItem.path(FIELD_NAME).asText();
                     JsonNode valNode = varItem.path(FIELD_VALUE);
                     String valueStr = valNode.isNull() ? "" : valNode.asText();

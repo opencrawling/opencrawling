@@ -49,6 +49,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingModel embeddingModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Map<String, Boolean> scopeColumnsCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Autowired
     public PgVectorMcpSearchBackend(
@@ -101,6 +102,24 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
             case 1024 -> "vector_store_1024";
             default -> "vector_store";
         };
+    }
+
+    private boolean hasScopeColumns(String tableName) {
+        if (jdbcTemplate == null || tableName == null) {
+            return false;
+        }
+        return scopeColumnsCache.computeIfAbsent(tableName, tbl -> {
+            try {
+                Integer count = jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'scope_id_'",
+                        Integer.class, tbl
+                );
+                return count != null && count > 0;
+            } catch (Exception e) {
+                log.debug("Unable to check information_schema for scope_id_ on table {}: {}", tbl, e.getMessage());
+                return false;
+            }
+        });
     }
 
     @Override
@@ -188,8 +207,23 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
         if (jdbcTemplate != null) {
             try {
                 String tableName = getTableName(dimensions);
-                String sql = "SELECT id, content, metadata FROM " + tableName +
-                        " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ? LIMIT 10";
+                boolean hasScope = hasScopeColumns(tableName);
+                String sql;
+                Object[] args;
+                if (hasScope) {
+                    sql = "SELECT id, content, metadata, scope_id_, scope_type_ FROM " + tableName +
+                            " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
+                            " OR scope_id_ = ?" +
+                            " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
+                            " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+                    args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri, documentUri};
+                } else {
+                    sql = "SELECT id, content, metadata FROM " + tableName +
+                            " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
+                            " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
+                            " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+                    args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri};
+                }
 
                 List<McpVectorServer.DocumentDetailsResult> found = jdbcTemplate.query(
                         sql,
@@ -197,12 +231,22 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                             String id = rs.getString("id");
                             String content = rs.getString("content");
                             Map<String, Object> meta = parseMetadata(rs.getObject("metadata"));
+                            if (hasScope) {
+                                String scopeId = rs.getString("scope_id_");
+                                String scopeType = rs.getString("scope_type_");
+                                if (scopeId != null && !scopeId.isBlank()) {
+                                    meta.putIfAbsent("scope_id", scopeId);
+                                }
+                                if (scopeType != null && !scopeType.isBlank()) {
+                                    meta.putIfAbsent("scope_type", scopeType);
+                                }
+                            }
                             String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
                             String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
                             String acl = formatAcl(meta.getOrDefault("acl", "public"));
                             return new McpVectorServer.DocumentDetailsResult(id, uri, content, meta, acl);
                         },
-                        documentUri, documentUri, documentUri
+                        args
                 );
 
                 return found.stream()
@@ -221,7 +265,21 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
         FilterExpressionBuilder b = new FilterExpressionBuilder();
         var securityExpression = buildSecurityFilterExpression(b, userPrincipal, userRoles);
 
-        var finalExpression = b.and(b.eq("uri", documentUri), securityExpression).build();
+        var matchDocExpression = b.or(
+                b.eq("uri", documentUri),
+                b.or(
+                        b.eq("uri", "flowable://historic-process-instances/" + documentUri),
+                        b.or(
+                                b.eq("uri", "flowable://runtime-process-instances/" + documentUri),
+                                b.or(
+                                        b.eq("documentId", documentUri),
+                                        b.eq("flowable_scope_id", documentUri)
+                                )
+                        )
+                )
+        );
+
+        var finalExpression = b.and(matchDocExpression, securityExpression).build();
         SearchRequest searchRequest = SearchRequest.builder()
                 .query(documentUri)
                 .filterExpression(finalExpression)
@@ -296,7 +354,10 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
         if (jdbcTemplate != null) {
             try {
                 String tableName = getTableName(dimensions);
-                String sql = "SELECT id, metadata FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500";
+                boolean hasScope = hasScopeColumns(tableName);
+                String sql = hasScope
+                        ? "SELECT id, metadata, scope_id_, scope_type_ FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500"
+                        : "SELECT id, metadata FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500";
 
                 List<Map<String, Object>> rows = jdbcTemplate.query(
                         sql,
@@ -312,6 +373,33 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                             summary.put("acl", meta.getOrDefault("acl", "public"));
                             summary.put("security", meta.get("security"));
                             summary.put("lastModified", meta.getOrDefault("lastModified", ""));
+
+                            // Surface Flowable collocated scope attributes if present
+                            String scopeId = hasScope ? rs.getString("scope_id_") : null;
+                            String scopeType = hasScope ? rs.getString("scope_type_") : null;
+                            if (scopeId == null || scopeId.isBlank()) {
+                                Object s = meta.get("flowable_scope_id");
+                                if (s instanceof List<?> list && !list.isEmpty()) {
+                                    scopeId = String.valueOf(list.get(0));
+                                } else if (s != null) {
+                                    scopeId = String.valueOf(s);
+                                }
+                            }
+                            if (scopeType == null || scopeType.isBlank()) {
+                                Object s = meta.get("flowable_scope_type");
+                                if (s instanceof List<?> list && !list.isEmpty()) {
+                                    scopeType = String.valueOf(list.get(0));
+                                } else if (s != null) {
+                                    scopeType = String.valueOf(s);
+                                }
+                            }
+                            if (scopeId != null && !scopeId.isBlank()) {
+                                summary.put("scope_id", scopeId);
+                            }
+                            if (scopeType != null && !scopeType.isBlank()) {
+                                summary.put("scope_type", scopeType);
+                            }
+
                             summary.put("_meta", meta);
                             return summary;
                         }
@@ -351,6 +439,29 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                         summary.put("acl", doc.getMetadata().getOrDefault("acl", "public"));
                         summary.put("security", doc.getMetadata().get("security"));
                         summary.put("lastModified", doc.getMetadata().getOrDefault("lastModified", ""));
+
+                        Object s = doc.getMetadata().get("flowable_scope_id");
+                        String scopeId = null;
+                        if (s instanceof List<?> list && !list.isEmpty()) {
+                            scopeId = String.valueOf(list.get(0));
+                        } else if (s != null) {
+                            scopeId = String.valueOf(s);
+                        }
+                        if (scopeId != null && !scopeId.isBlank()) {
+                            summary.put("scope_id", scopeId);
+                        }
+
+                        Object st = doc.getMetadata().get("flowable_scope_type");
+                        String scopeType = null;
+                        if (st instanceof List<?> list && !list.isEmpty()) {
+                            scopeType = String.valueOf(list.get(0));
+                        } else if (st != null) {
+                            scopeType = String.valueOf(st);
+                        }
+                        if (scopeType != null && !scopeType.isBlank()) {
+                            summary.put("scope_type", scopeType);
+                        }
+
                         return summary;
                     })
                     .distinct()
