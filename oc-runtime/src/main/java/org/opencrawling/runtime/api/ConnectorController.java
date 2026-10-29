@@ -208,6 +208,7 @@ public class ConnectorController {
             Map.entry("authenticatedUsersIdentity", "#authenticated-users"),
             Map.entry("fallbackPrincipals", ""),
             Map.entry("principalFormat", "name"),
+            Map.entry("markedDocuments", "exclude"),
             Map.entry("deletionTracking", "reconcile"),
             Map.entry("incrementalEnabled", "true"),
             Map.entry("batchSize", "100"),

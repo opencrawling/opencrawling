@@ -45,4 +45,9 @@ fragment DocumentFields on Document {
     ... on AccessPermission { granteeName granteeType accessType accessMask permissionSource }
   }
   properties @include(if: $withProperties) { id type cardinality value }
+  # ActiveMarkings, asked for by name: a document with markings is left out unless marked-documents is 'index'
+  markings: properties(includes: ["ActiveMarkings"]) @include(if: $withMarkings) {
+    id
+    ... on ObjectListProperty { objectListValue { className } }
+  }
 }

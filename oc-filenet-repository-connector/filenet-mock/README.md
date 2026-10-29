@@ -79,7 +79,7 @@ token kept server-side for 15 minutes and usable once.
 - Permissions, one pattern per document (`n % 7`): a group with the view level and a user with full control;
   `#AUTHENTICATED-USERS`; a group and a user, with a deny of view content only for `mallory`; a default entry only;
   read without view content plus full control for `ceadmin`; no direct entries; an unresolved SID plus a group that a
-  marking denies.
+  marking denies. The last pattern's documents also carry an active marking (`Confidential`) in `ActiveMarkings`.
 
 ## Admin endpoints (mock-only)
 
@@ -87,10 +87,11 @@ token kept server-side for 15 minutes and usable once.
 |---|---|
 | `GET /mock/stats` | Counts: series, versions, events, content, requests per operation, downloads, auth and XSRF failures |
 | `GET /mock/documents`, `GET /mock/documents/{seriesId}` | The store as test ground truth (ids, code, folders, versions, elements, effective permissions; text for one) |
-| `POST /mock/documents` | Create a document: `{class, title, folders, text, pattern}` |
+| `POST /mock/documents` | Create a document: `{class, title, folders, text, pattern, markings}` |
 | `POST /mock/documents/{seriesId}/checkin` | A new version: `{major (default true), text}` |
 | `POST /mock/documents/{seriesId}/delete` | Delete the series, or `{currentVersionOnly: true}` the current version; records `DeletionEvent`s |
 | `POST /mock/documents/{seriesId}/permissions` | Replace the direct permissions: `{permissions: [{granteeName, granteeType, accessType, accessMask}]}` |
+| `POST /mock/documents/{seriesId}/markings` | Replace the active markings: `{markings: ["Confidential"]}`. Permissions are left as they are, as when a marking's effect does not show in them |
 | `POST /mock/documents/{seriesId}/file`, `/unfile` | File in or unfile from `{folder}` |
 | `POST /mock/faults` | Inject failures: `{op: "<root field>" or "download" or "*", status, count, retryAfter}` or `{op, graphqlError}`; `{clear: true}` |
 | `POST /mock/audit` | `{enabled}`: record `DeletionEvent`s or not |
@@ -108,7 +109,9 @@ Where IBM's material does not say, the mock assumes the following:
   `DateCreated` and `Creator`. The connector's audit query is configurable (`deletion-event-sql`).
 - **DateTime format.** Values are ISO-8601 in UTC with milliseconds (`2026-03-06T12:15:30.000Z`). The connector accepts
   any ISO-8601 offset.
-- **Saves update the version.** A permission change, filing or unfiling updates `DateLastModified` and the update
+- **Markings.** `ActiveMarkings` is an `ObjectListProperty` with one `ActiveMarking` dependent object per marking, as
+  IBM's schema types it; the mock does not model marking sets or their constraint masks.
+- **Saves update the version.** A marking or permission change, filing or unfiling updates `DateLastModified` and the update
   sequence number of the current version, as any save does in Content Engine. An inherited permission changed on a
   folder does not touch the documents below it, so only a full crawl sees it.
 - **Effective permissions.** `permissions` returns the object's own entries plus those inherited from the first folder

@@ -51,6 +51,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -214,6 +215,7 @@ public class FileNetRepositoryConnector implements RepositoryConnector {
         final AtomicLong skipped = new AtomicLong();
         final AtomicLong failed = new AtomicLong();
         final AtomicLong unchanged = new AtomicLong();
+        final AtomicBoolean unknownMarkingsLogged = new AtomicBoolean();
         /** The previous run's objects (incremental), the entries recorded by this run, and the keys handled. */
         Map<String, FileNetCrawlState.Entry> previous = Map.of();
         final Map<String, FileNetCrawlState.Entry> next = new ConcurrentHashMap<>();
@@ -351,6 +353,7 @@ public class FileNetRepositoryConnector implements RepositoryConnector {
         v.put("withFolders", settings.includeFolderPaths());
         v.put("withAcls", settings.includeAcls());
         v.put("withProperties", settings.includeCustomProperties());
+        v.put("withMarkings", settings.markedDocuments() == FileNetProperties.MarkedDocuments.EXCLUDE);
         return v;
     }
 
@@ -387,6 +390,21 @@ public class FileNetRepositoryConnector implements RepositoryConnector {
     private void handle(JsonNode doc, Crawl crawl, FluxSink<RepositoryDocument> sink) throws IOException, InterruptedException {
         String key = builder.stateKey(doc);
         crawl.handled.add(key);
+        if (settings.markedDocuments() == FileNetProperties.MarkedDocuments.EXCLUDE) {
+            FileNetSecurityMapper.Markings markings = FileNetSecurityMapper.markings(doc);
+            if (markings != FileNetSecurityMapper.Markings.NONE) {
+                if (markings == FileNetSecurityMapper.Markings.UNKNOWN && crawl.unknownMarkingsLogged.compareAndSet(false, true)) {
+                    log.warn("FileNet document {} did not report its ActiveMarkings; documents whose markings cannot be read "
+                            + "are left out (marked-documents=exclude).", doc.path("id").asText());
+                }
+                crawl.skipped.incrementAndGet();
+                FileNetCrawlState.Entry known = crawl.previous.get(key);
+                if (known != null) {
+                    tombstone(key, known, crawl, sink); // a marking applied since the last run: out of the index
+                }
+                return;
+            }
+        }
         FileNetSecurityMapper.Mapped security = securityMapper.map(doc.path("permissions"));
         String versionId = doc.path("id").asText();
         int usn = doc.path("updateSequenceNumber").asInt(-1);

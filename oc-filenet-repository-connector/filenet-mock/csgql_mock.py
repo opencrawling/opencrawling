@@ -150,6 +150,7 @@ class Series:
         self.n, self.cls, self.title, self.pattern = n, cls, title, pattern
         self.id = guid("series", n)
         self.versions, self.folders, self.direct = [], [], []
+        self.markings = []  # names of the markings applied (ActiveMarkings)
 
     @property
     def code(self):
@@ -205,6 +206,8 @@ class Store:
                  "Document": f"Policy note {n:04d}"}[cls]
         s = Series(n, cls, title, n % 7)
         s.direct = self._pattern_perms(s.pattern)
+        if s.pattern == 6:
+            s.markings = ["Confidential"]
         s.folders = {"Contract": ["/Contracts/2026" if n % 2 else "/Contracts/Archive"], "Invoice": ["/Invoices"],
                      "Document": ["/Policies"]}[cls]
         if n % 10 == 3:
@@ -633,6 +636,17 @@ def doc_prop(v, name):
     return prop_dict(name, t, card, label, doc_value(v, name))
 
 
+def markings_prop(s):
+    """ActiveMarkings, a dependent-object list: one ActiveMarking per marking applied to the document."""
+    markings = [{"__typename": "DependentObjectType", "className": "ActiveMarking",
+                 "properties": lambda info, includes=None, m=m: [prop_dict("PropertyDisplayName", "STRING", "SINGLE",
+                                                                            "Property Display Name", m)]}
+                for m in s.markings]
+    return {"__typename": "ObjectListProperty", "id": "ActiveMarkings", "alias": "ActiveMarkings",
+            "label": "Active Markings", "type": "OBJECT", "cardinality": "LIST", "value": None,
+            "objectListValue": markings}
+
+
 def includes_filter(names, includes):
     return [n for n in names if includes is None or n in includes]
 
@@ -705,7 +719,10 @@ def doc_dict(v):
         while c:
             names += list(CLASSES[c][1])
             c = CLASSES[c][0]
-        return [doc_prop(v, n) for n in includes_filter(names, includes)]
+        out = [doc_prop(v, n) for n in includes_filter(names, includes)]
+        if includes is None or "ActiveMarkings" in includes:
+            out.append(markings_prop(s))
+        return out
 
     def filed(info):
         with STORE.lock:
@@ -1064,6 +1081,8 @@ class Handler(BaseHTTPRequestHandler):
                     "versions": len(STORE.all_versions()), "events": len(STORE.events), "audit": STORE.audit,
                     "withContent": sum(1 for v in current if any(not e.location for e in v.elements)),
                     "elements": sum(len([e for e in v.elements if not e.location]) for v in current),
+                    "markedElements": sum(len([e for e in v.elements if not e.location]) for v in current
+                                          if v.series.markings),
                     "requests": STORE.stats["requests"], "downloads": STORE.stats["downloads"],
                     "authFailures": STORE.stats["authFailures"], "xsrfFailures": STORE.stats["xsrfFailures"],
                     "openTokens": len(STORE.tokens)})
@@ -1082,7 +1101,8 @@ class Handler(BaseHTTPRequestHandler):
              "releasedVersionId": next((v.id for v in reversed(s.versions) if v.status == "RELEASED"), None),
              "versions": [{"id": v.id, "major": v.major, "minor": v.minor, "status": v.status} for v in s.versions],
              "elements": [{"seq": e.seq, "type": "reference" if e.location else e.ext} for e in cur.elements],
-             "dateLastModified": iso(cur.modified), "permissions": STORE.effective_perms(s)}
+             "dateLastModified": iso(cur.modified), "permissions": STORE.effective_perms(s),
+             "markings": s.markings}
         if text:
             d["text"] = "\n".join(e.text for e in cur.elements if e.text)
         return d
@@ -1114,11 +1134,12 @@ class Handler(BaseHTTPRequestHandler):
                 cls = body.get("class", "Document")
                 s = Series(n, cls, body.get("title", f"New document {n:04d}"), int(body.get("pattern", 1)))
                 s.direct = STORE._pattern_perms(s.pattern)
+                s.markings = list(body.get("markings", ["Confidential"] if s.pattern == 6 else []))
                 s.folders = body.get("folders", ["/Policies"])
                 v = STORE._add_version(s, 1, 0, now(), "ceadmin", text_extra=body.get("text", ""))
                 STORE.series[s.id] = s
                 return self.send(200, self.describe(s))
-            m = re.match(r"^/mock/documents/(\{[^}]+\})/(checkin|delete|permissions|file|unfile)$", path)
+            m = re.match(r"^/mock/documents/(\{[^}]+\})/(checkin|delete|permissions|markings|file|unfile)$", path)
             if not m or m.group(1).upper() not in STORE.series:
                 return self.send(404, {"error": "Not Found"})
             s, action = STORE.series[m.group(1).upper()], m.group(2)
@@ -1145,6 +1166,9 @@ class Handler(BaseHTTPRequestHandler):
                 s.direct = [ace(p["granteeName"], p.get("granteeType", "USER"), p.get("accessType", "ALLOW"),
                                 int(p.get("accessMask", VIEWER)), p.get("permissionSource", "SOURCE_DIRECT"))
                             for p in body.get("permissions", [])]
+                STORE.touch(cur)
+            elif action == "markings":  # replace the applied markings; a save updates DateLastModified
+                s.markings = [str(m) for m in body.get("markings", [])]
                 STORE.touch(cur)
             elif action == "file":
                 s.folders = s.folders + [body["folder"]] if body["folder"] not in s.folders else s.folders

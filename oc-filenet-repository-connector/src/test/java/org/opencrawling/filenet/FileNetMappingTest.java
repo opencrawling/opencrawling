@@ -67,6 +67,8 @@ class FileNetMappingTest {
         assertEquals(FileNetProperties.VersionMode.CURRENT, s.versionMode());
         assertEquals(131201, s.readAccessMask());
         assertEquals(FileNetProperties.DeletionTracking.RECONCILE, s.deletionTracking());
+        assertEquals(FileNetProperties.MarkedDocuments.EXCLUDE, s.markedDocuments());
+        assertEquals(FileNetProperties.MarkedDocuments.INDEX, settings(Map.of("markedDocuments", "index")).markedDocuments());
         assertEquals("https://cpe.example.com/content-services-graphql", s.contentBase());
         assertFalse(s.toString().contains("secret"));
         assertFalse(settings(Map.of("authType", "kerberos")).validate().isEmpty());
@@ -279,5 +281,22 @@ class FileNetMappingTest {
         FileNetSecurityMapper.Mapped b = mapper.map(json("[" + ace("b", "USER", "ALLOW", 131201) + "," + ace("a", "USER", "ALLOW", 131201) + "]"));
         assertEquals(a.fingerprint(), b.fingerprint(), "order does not change the fingerprint");
         assertFalse(a.fingerprint().equals(mapper.map(json("[" + ace("a", "USER", "ALLOW", 131201) + "]")).fingerprint()));
+    }
+
+    @Test
+    void markingsAreReadFromActiveMarkingsAndUnknownIsNotNone() throws Exception {
+        String none = "{'markings':[{'id':'ActiveMarkings','objectListValue':[]}],'permissions':[" + ace("a", "USER", "ALLOW", 131201) + "]}";
+        assertEquals(FileNetSecurityMapper.Markings.NONE, FileNetSecurityMapper.markings(json(none)));
+        assertEquals(FileNetSecurityMapper.Markings.MARKED, FileNetSecurityMapper.markings(json(
+                "{'markings':[{'id':'ActiveMarkings','objectListValue':[{'className':'ActiveMarking'}]}]}")),
+                "a marking with no MARKING entry in the permissions");
+        assertEquals(FileNetSecurityMapper.Markings.MARKED, FileNetSecurityMapper.markings(json(
+                "{'markings':[{'id':'ActiveMarkings','objectListValue':[]}],'permissions':[{'granteeName':'Legal',"
+                        + "'accessType':'DENY','accessMask':131201,'permissionSource':'MARKING'}]}")));
+        assertEquals(FileNetSecurityMapper.Markings.UNKNOWN, FileNetSecurityMapper.markings(json("{'markings':[]}")),
+                "ActiveMarkings not reported");
+        assertEquals(FileNetSecurityMapper.Markings.UNKNOWN, FileNetSecurityMapper.markings(json(
+                "{'markings':[{'id':'ActiveMarkings','objectListValue':null}]}")));
+        assertEquals(FileNetSecurityMapper.Markings.UNKNOWN, FileNetSecurityMapper.markings(json("{'id':'x'}")));
     }
 }

@@ -2468,6 +2468,17 @@ export default function ConnectorForm() {
                         </select>
                       </div>
                       <div className="space-y-2">
+                        <label className="text-sm font-medium">Documents with Markings</label>
+                        <select
+                          {...register('configuration.markedDocuments')}
+                          defaultValue="exclude"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="exclude">Leave Out (Safe Default)</option>
+                          <option value="index">Index, Applying Marking Denies from Permissions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm font-medium">Fallback Principals (Comma-Separated)</label>
                         <input
                           {...register('configuration.fallbackPrincipals')}

@@ -322,6 +322,26 @@ type IdProperty implements CommonProperty {
   value: ScalarPropertyValue
 }
 
+type ObjectListProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  label: String!
+  objectListValue: [DependentObject!]
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+interface DependentObject {
+  className: String!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+type DependentObjectType implements DependentObject {
+  className: String!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
 enum AccessType {
   ALLOW
   DENY

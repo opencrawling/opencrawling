@@ -278,22 +278,26 @@ log_pass "Infrastructure is healthy."
 log_step 5 "Reading the ground truth from the CSGQL mock..."
 STATS=$(mock /mock/stats)
 DOCS=$(mock /mock/documents)
-ELEMENTS=$(echo "$STATS" | jq -r '.elements')
+# documents with active markings are left out by default (marked-documents=exclude)
+ELEMENTS=$(echo "$STATS" | jq -r '.elements - .markedElements')
 OUTSIDE='(.folders | length > 0) and (.folders | all(startswith("/Contracts") | not))'
 # a single-element document readable by the Legal group and asmith, which denies view content to mallory
 LEGAL_DOC=$(echo "$DOCS" | jq -c "[.[] | select(.pattern == 2 and (.elements | length) == 1 and .elements[0].type != \"reference\" and ${OUTSIDE})][0]")
 # a document with a second content element (an annex)
-ANNEX_DOC=$(echo "$DOCS" | jq -c '[.[] | select((.elements | length) == 2)][0]')
+ANNEX_DOC=$(echo "$DOCS" | jq -c '[.[] | select((.elements | length) == 2 and (.markings | length) == 0)][0]')
+# a document with an active marking
+MARKED_DOC=$(echo "$DOCS" | jq -c '[.[] | select((.markings | length) > 0 and (.elements | length) >= 1 and .elements[0].type != "reference")][0]')
 # a document without readers
 NOBODY_DOC=$(echo "$DOCS" | jq -c "[.[] | select(.pattern == 5 and (.elements | length) >= 1 and .elements[0].type != \"reference\" and ${OUTSIDE})][0]")
-for d in "$LEGAL_DOC" "$ANNEX_DOC" "$NOBODY_DOC"; do
+for d in "$LEGAL_DOC" "$ANNEX_DOC" "$NOBODY_DOC" "$MARKED_DOC"; do
   [ "$d" != "null" ] || { log_error "The generated object store lacks a document this test needs."; exit 1; }
 done
 LEGAL_SERIES=$(echo "$LEGAL_DOC" | jq -r '.seriesId'); LEGAL_CODE=$(echo "$LEGAL_DOC" | jq -r '.code')
 ANNEX_SERIES=$(echo "$ANNEX_DOC" | jq -r '.seriesId'); ANNEX_CODE=$(echo "$ANNEX_DOC" | jq -r '.code')
 NOBODY_SERIES=$(echo "$NOBODY_DOC" | jq -r '.seriesId'); NOBODY_CODE=$(echo "$NOBODY_DOC" | jq -r '.code')
-log_info "Object store: $(echo "$STATS" | jq -r '.series') documents, $(echo "$STATS" | jq -r '.versions') versions, ${ELEMENTS} content elements."
-log_info "Legal document ${LEGAL_CODE}, two-element document ${ANNEX_CODE}, document without readers ${NOBODY_CODE}."
+MARKED_CODE=$(echo "$MARKED_DOC" | jq -r '.code')
+log_info "Object store: $(echo "$STATS" | jq -r '.series') documents, $(echo "$STATS" | jq -r '.versions') versions, ${ELEMENTS} content elements of unmarked documents."
+log_info "Legal document ${LEGAL_CODE}, two-element document ${ANNEX_CODE}, document without readers ${NOBODY_CODE}, marked document ${MARKED_CODE}."
 log_pass "Ground truth recorded."
 
 # ------------------------------------------------------------------------------
@@ -314,6 +318,9 @@ wait_sql "Every content element is indexed" "SELECT CASE WHEN to_regclass('publi
 DISTINCT_DOCS=$(sql "SELECT count(DISTINCT metadata->>'documentId') FROM vector_store_1024 WHERE content LIKE '%FNX-%';")
 [ "$DISTINCT_DOCS" -eq "$ELEMENTS" ] || { log_error "Expected ${ELEMENTS} indexed elements, found ${DISTINCT_DOCS}."; exit 1; }
 log_success "pgvector holds exactly the ${ELEMENTS} content elements."
+MARKED_HITS=$(sql "SELECT count(*) FROM vector_store_1024 WHERE content LIKE '%${MARKED_CODE}%';")
+[ "$MARKED_HITS" -eq 0 ] || { log_error "The marked document ${MARKED_CODE} must not be indexed."; exit 1; }
+log_success "The marked document is left out."
 
 PARENT=$(sql "SELECT DISTINCT metadata->'filenet.parentId'->>0 FROM vector_store_1024 WHERE content LIKE '%${ANNEX_CODE}-A%';")
 [ "$PARENT" == "$(doc_id "$ANNEX_SERIES")" ] || { log_error "Unexpected filenet.parentId '${PARENT}'."; exit 1; }

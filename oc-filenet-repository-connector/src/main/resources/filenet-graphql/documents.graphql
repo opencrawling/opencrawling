@@ -15,7 +15,8 @@
 #
 
 query Documents($os: String!, $from: String, $where: String, $pageSize: Int,
-                $withFolders: Boolean!, $withAcls: Boolean!, $withProperties: Boolean!) {
+                $withFolders: Boolean!, $withAcls: Boolean!, $withProperties: Boolean!,
+                $withMarkings: Boolean!) {
   documents(repositoryIdentifier: $os, from: $from, where: $where, pageSize: $pageSize) {
     documents { ...DocumentFields }
     pageInfo { token }

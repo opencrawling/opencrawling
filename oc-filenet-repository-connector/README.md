@@ -42,7 +42,7 @@ filings, versions and access permissions (issue #125).
   document; an external `ContentReference` keeps its location. Content over `max-content-size-bytes` is indexed by its
   metadata only.
 - **Fail-closed security mapping** of FileNet access permissions, including partial denies, inherited, template, proxy
-  and marking entries (see Security mapping).
+  and marking entries (see Security mapping). Documents with active markings are left out by default (see Markings).
 - **Incremental crawls** from a `DateLastModified` watermark, skipping unchanged versions, with deletion tracking by
   reconciliation or the audit log.
 - **Bounded concurrency** on virtual threads (`StructuredTaskScope` + `ObservabilityTask`), retries with back-off for
@@ -80,6 +80,7 @@ Admin UI or `connectors.json` uses the camelCase key.
 | `authenticated-users-public` | `authenticatedUsersPublic` | `false` | Map `#AUTHENTICATED-USERS` to `public` instead |
 | `principal-format` | `principalFormat` | `name` | `name` (grantee names lower-cased) or `short` (`cn=Finance,…` → `finance`, `CORP\jdoe` → `jdoe`) |
 | `fallback-principals` | `fallbackPrincipals` | — | Identities granted read when no permission grants anyone; empty means nobody |
+| `marked-documents` | `markedDocuments` | `exclude` | `exclude`: documents with active markings, or whose markings cannot be read, are not indexed; `index`: index them with the `MARKING` denies of their permissions (see Markings) |
 | `deletion-tracking` | `deletionTracking` | `reconcile` | `reconcile`, `audit` or `none` (`deletion-tracking-enabled: false` is `none`) |
 | `deletion-event-sql` | `deletionEventSql` | `SELECT [Id], [SourceObjectId], [DateCreated] FROM DeletionEvent WHERE [DateCreated] > {since}` | The audit query |
 | `incremental-enabled` | `incrementalEnabled` | `true` | Keep a crawl state between runs |
@@ -150,6 +151,19 @@ connector combines its `ALLOW` and its `DENY` access masks:
 Identities are the grantee names lower-cased (`principal-format: short` reduces distinguished names and `DOMAIN\user`).
 Users are `identityType: user`, groups `group`. Content Engine ranks entries by source (a direct allow can override an
 inherited deny); the mapping treats every deny as winning, so where it differs from FileNet it only restricts access.
+
+### Markings
+
+A marking (a security label from a marking set) can take rights away from users who are otherwise allowed, through the
+marking's constraint mask. Whether Content Engine lists that restriction as `MARKING` deny entries in a document's
+`Permissions` could not be confirmed without a real system, and if it does not, indexing the document from its
+permissions alone would expose it to readers the marking excludes.
+
+So by default (`marked-documents: exclude`) the connector asks for each document's `ActiveMarkings` and leaves out every
+document that has one, has a `MARKING` permission entry, or does not report its `ActiveMarkings` at all (logged once per
+run). A document marked after it was indexed is removed on the next run; one whose markings are all removed is indexed
+again. Marked documents are therefore missing from search, never exposed. Once the behaviour has been confirmed on a
+Content Engine, `marked-documents: index` indexes them, with every `MARKING` deny entry applied as an OIS `deny`.
 
 ## Incremental Crawls and Delete Detection
 
@@ -256,7 +270,11 @@ Start with `FILENET_MAX_DOCUMENTS` on a large object store.
   - the exact `downloadUrl` format (treated as opaque);
   - the `DeletionEvent` property names (`deletion-event-sql`);
   - the integer values of individual access rights. Only IBM's composite masks (131201 for the view level, 998903 for
-    full control) come from IBM's material, so `read-access-mask` defaults to the composite.
+    full control) come from IBM's material, so `read-access-mask` defaults to the composite;
+  - how markings show in a document's permissions, so marked documents are left out by default (see Markings).
+  IBM's own Content Services MCP server (its GraphQL client and the tools that use fields the mock implements) has been
+  run against the mock: authentication, the XSRF double submit, `downloadUrl` resolution, error reporting and paging
+  agree.
 - **Source-ranked precedence.** Content Engine lets a direct allow override an inherited deny; the mapping lets every deny
   win, so it can only restrict.
 - **Incremental runs** do not see permissions inherited from a folder whose permissions changed, or documents that leave

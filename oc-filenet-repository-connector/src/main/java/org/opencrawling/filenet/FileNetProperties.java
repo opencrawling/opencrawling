@@ -63,6 +63,10 @@ import java.util.regex.Pattern;
  * @param principalFormat             {@code NAME}: grantee names as FileNet returns them, lower-cased; {@code SHORT}: the
  *                                    short name ({@code cn=Finance,ou=..} and {@code DOMAIN\jdoe} become {@code finance},
  *                                    {@code jdoe})
+ * @param markedDocuments             {@code EXCLUDE} (default): documents with active markings are not indexed, and are
+ *                                    removed from the index when a marking is applied; {@code INDEX}: index them, relying
+ *                                    on the {@code MARKING} deny entries in their permissions (unverified on a real Content
+ *                                    Engine, see the README)
  * @param deletionTracking            {@code RECONCILE}: compare the current ids with the crawl state each run (needs no
  *                                    auditing); {@code AUDIT}: read {@code DeletionEvent}s (needs deletion auditing on the
  *                                    document classes); {@code NONE}
@@ -99,6 +103,7 @@ public record FileNetProperties(
         boolean authenticatedUsersPublic,
         PrincipalFormat principalFormat,
         List<String> fallbackPrincipals,
+        MarkedDocuments markedDocuments,
         DeletionTracking deletionTracking,
         String deletionEventSql,
         boolean incrementalEnabled,
@@ -119,6 +124,8 @@ public record FileNetProperties(
 
     public enum DeletionTracking { RECONCILE, AUDIT, NONE }
 
+    public enum MarkedDocuments { EXCLUDE, INDEX }
+
     public static final String SPRING_PREFIX = "spring.opencrawling.connector.filenet.";
     public static final String DEFAULT_URL = "http://localhost:9080/content-services-graphql/graphql";
     /** FileNet's "view content" access level, as IBM's own samples use it: read, view content and read permissions. */
@@ -136,7 +143,7 @@ public record FileNetProperties(
             "documentClasses", "where", "sqlQuery", "rootFolderPath", "includeSubfolders", "versionMode",
             "includeContentStream", "maxContentSizeBytes", "includeAcls", "includeCustomProperties",
             "includeSystemProperties", "includeFolderPaths", "propertyPrefix", "readAccessMask",
-            "authenticatedUsersIdentity", "authenticatedUsersPublic", "principalFormat", "fallbackPrincipals",
+            "authenticatedUsersIdentity", "authenticatedUsersPublic", "principalFormat", "fallbackPrincipals", "markedDocuments",
             "deletionTracking", "deletionTrackingEnabled", "deletionEventSql", "incrementalEnabled", "modifiedAfter",
             "clockSkewSeconds", "batchSize", "parallelism", "timeoutSeconds", "maxRetries", "maxDocuments", "stateDirectory");
 
@@ -176,6 +183,8 @@ public record FileNetProperties(
                 bool(c, "authenticatedUsersPublic", false),
                 "short".equalsIgnoreCase(value(c, "principalFormat", "name")) ? PrincipalFormat.SHORT : PrincipalFormat.NAME,
                 list(value(c, "fallbackPrincipals", "")),
+                "index".equalsIgnoreCase(value(c, "markedDocuments", "exclude")) ? MarkedDocuments.INDEX
+                        : MarkedDocuments.EXCLUDE,
                 tracking,
                 value(c, "deletionEventSql", DEFAULT_DELETION_EVENT_SQL),
                 bool(c, "incrementalEnabled", true),
@@ -397,7 +406,8 @@ public record FileNetProperties(
                 + ", documentClasses=" + documentClasses + ", where=" + where + ", sqlQuery=" + sqlQuery
                 + ", rootFolderPath=" + rootFolderPath + ", includeSubfolders=" + includeSubfolders + ", versionMode="
                 + versionMode + ", includeContentStream=" + includeContentStream + ", includeAcls=" + includeAcls
-                + ", readAccessMask=" + readAccessMask + ", principalFormat=" + principalFormat + ", deletionTracking="
+                + ", readAccessMask=" + readAccessMask + ", principalFormat=" + principalFormat + ", markedDocuments="
+                + markedDocuments + ", deletionTracking="
                 + deletionTracking + ", incrementalEnabled=" + incrementalEnabled + ", modifiedAfter=" + modifiedAfter
                 + ", batchSize=" + batchSize + ", parallelism=" + parallelism + ", maxDocuments=" + maxDocuments + "]";
     }

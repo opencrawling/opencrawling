@@ -71,6 +71,33 @@ public class FileNetSecurityMapper {
         this.settings = settings;
     }
 
+    /** Whether a document carries markings: none, at least one, or not reported (treated as marked by the caller). */
+    public enum Markings { NONE, MARKED, UNKNOWN }
+
+    /**
+     * A document's markings, from its {@code ActiveMarkings} property (the {@code markings} alias of the document query) or
+     * a {@code MARKING} entry in its permissions. A missing or unreadable {@code ActiveMarkings} is {@code UNKNOWN}: a
+     * marking can restrict access without showing in the permissions, so a document whose markings cannot be read is not
+     * assumed to have none.
+     */
+    public static Markings markings(JsonNode doc) {
+        for (JsonNode p : doc.path("permissions")) {
+            if ("MARKING".equals(p.path("permissionSource").asText())) {
+                return Markings.MARKED;
+            }
+        }
+        for (JsonNode property : doc.path("markings")) {
+            if ("ActiveMarkings".equalsIgnoreCase(property.path("id").asText())) {
+                JsonNode list = property.path("objectListValue");
+                if (!list.isArray()) {
+                    return Markings.UNKNOWN;
+                }
+                return list.isEmpty() ? Markings.NONE : Markings.MARKED;
+            }
+        }
+        return Markings.UNKNOWN;
+    }
+
     public static Mapped publicAccess() {
         return new Mapped(SecurityConfig.createPublic(), "public", List.of(), List.of(), "public");
     }

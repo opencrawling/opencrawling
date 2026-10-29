@@ -14,7 +14,8 @@
 # limitations under the License.
 #
 
-query MoreDocuments($token: String!, $withFolders: Boolean!, $withAcls: Boolean!, $withProperties: Boolean!) {
+query MoreDocuments($token: String!, $withFolders: Boolean!, $withAcls: Boolean!, $withProperties: Boolean!,
+                    $withMarkings: Boolean!) {
   moreDocuments(token: $token) {
     documents { ...DocumentFields }
     pageInfo { token }

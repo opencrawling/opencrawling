@@ -119,6 +119,10 @@ class FileNetMockServerTest {
         return out;
     }
 
+    private static boolean unmarked(JsonNode mockDoc) {
+        return mockDoc.path("markings").isEmpty();
+    }
+
     private static List<String> rules(RepositoryDocument d, String access) {
         return d.security().permissions().stream().filter(r -> r.access().equals(access)).map(PermissionRule::identity).toList();
     }
@@ -126,7 +130,8 @@ class FileNetMockServerTest {
     @Test
     void fullCrawlReconcilesWithTheObjectStore() throws Exception {
         Result r = crawl(settings(Map.of()));
-        List<JsonNode> expected = mockDocs();
+        List<JsonNode> expected = mockDocs().stream().filter(FileNetMockServerTest::unmarked).toList();
+        assertTrue(expected.size() < mockDocs().size(), "the mock has marked documents");
         int elements = 0;
         for (JsonNode d : expected) {
             elements += Math.max(1, d.path("elements").size());
@@ -166,12 +171,17 @@ class FileNetMockServerTest {
         assertTrue(contract.metadata().containsKey("filenet_prop_contractNumber"));
         assertTrue(contract.metadata().get("filenet_prop_regions").size() >= 1);
         assertFalse(contract.metadata().containsKey("filenet_prop_dateLastModified"));
+        for (JsonNode d : mockDocs()) {
+            if (!unmarked(d)) {
+                assertFalse(r.docs().containsKey(id(d)), "a marked document is left out: " + d.path("title").asText());
+            }
+        }
         assertTrue(admin("/mock/stats", null).path("xsrfFailures").asInt() == 0);
     }
 
     @Test
     void permissionPatternsMapAsDesigned() throws Exception {
-        Result r = crawl(settings(Map.of()));
+        Result r = crawl(settings(Map.of("markedDocuments", "index")));
         Map<Integer, RepositoryDocument> byPattern = new HashMap<>();
         Map<Integer, JsonNode> mock = new HashMap<>();
         for (JsonNode d : mockDocs()) {
@@ -193,14 +203,14 @@ class FileNetMockServerTest {
         RepositoryDocument underContracts = r.upserts().stream().filter(d -> d.metadata().getOrDefault("filenet.folderPath",
                 List.of()).stream().anyMatch(p -> p.startsWith("/Contracts/"))).findFirst().orElseThrow();
         assertTrue(rules(underContracts, "read").contains("cn=finance,ou=groups,dc=example,dc=com"));
-        assertTrue(rules(crawl(settings(Map.of("principalFormat", "short"))).docs().get(underContracts.id()), "read")
+        assertTrue(rules(crawl(settings(Map.of("principalFormat", "short", "markedDocuments", "index"))).docs().get(underContracts.id()), "read")
                 .contains("finance"));
     }
 
     @Test
     void folderModeClassesAndVersionModes() throws Exception {
         List<JsonNode> mock = mockDocs();
-        Set<String> inContracts = mock.stream().filter(d -> d.path("folders").toString().contains("/Contracts/"))
+        Set<String> inContracts = mock.stream().filter(d -> unmarked(d) && d.path("folders").toString().contains("/Contracts/"))
                 .map(FileNetMockServerTest::id).collect(Collectors.toSet());
         Result folder = crawl(settings(Map.of("crawlMode", "folder", "rootFolderPath", "/Contracts")));
         assertEquals(inContracts, folder.upserts().stream().map(d -> d.id().replaceFirst("/elements/\\d+$", ""))
@@ -215,7 +225,7 @@ class FileNetMockServerTest {
         assertTrue(where.upserts().stream().allMatch(d -> d.metadata().get("filenet_prop_counterparty").getFirst()
                 .startsWith("Acme")) && !where.docs().isEmpty());
 
-        JsonNode minor = mock.stream().filter(d -> d.path("versions").size() > 1 && d.path("versions")
+        JsonNode minor = mock.stream().filter(d -> unmarked(d) && d.path("versions").size() > 1 && d.path("versions")
                 .get(d.path("versions").size() - 1).path("status").asText().equals("IN_PROCESS")).findFirst().orElseThrow();
         assertEquals(minor.path("currentVersionId").asText(),
                 crawl(settings(Map.of())).docs().get(id(minor)).metadata().get("filenet.id").getFirst());
@@ -223,7 +233,7 @@ class FileNetMockServerTest {
                 crawl(settings(Map.of("versionMode", "released"))).docs().get(id(minor)).metadata().get("filenet.id").getFirst());
         int versions = 0;
         for (JsonNode d : mock) {
-            versions += d.path("versions").size();
+            versions += unmarked(d) ? d.path("versions").size() : 0;
         }
         Result all = crawl(settings(Map.of("versionMode", "all", "includeContentStream", "false")));
         assertEquals(versions, all.upserts().stream().filter(d -> !d.id().contains("/elements/")).count());
@@ -264,6 +274,27 @@ class FileNetMockServerTest {
         assertEquals(1, r.deletes().stream().filter(d -> !d.id().contains("/elements/")).count(), r.deletes().toString());
 
         assertTrue(crawl(s).docs().isEmpty(), "settled again");
+    }
+
+    @Test
+    void markedDocumentsAreLeftOutAndRemovedWhenMarked() throws Exception {
+        FileNetProperties s = settings(Map.of("incrementalEnabled", "true"));
+        crawl(s);
+        JsonNode target = mockDocs().stream().filter(FileNetMockServerTest::unmarked).findFirst().orElseThrow();
+        // a marking whose effect is not listed in the permissions: only ActiveMarkings shows it
+        JsonNode marked = admin("/mock/documents/" + target.path("seriesId").asText() + "/markings",
+                "{\"markings\":[\"Confidential\"]}");
+        assertFalse(marked.path("permissions").toString().contains("MARKING"));
+        Result r = crawl(s);
+        assertEquals(DocumentAction.DELETE, r.docs().get(id(target)).action(), "marked since the last run: removed");
+        assertTrue(r.upserts().isEmpty(), r.upserts().toString());
+        assertTrue(crawl(s).docs().isEmpty(), "settled");
+        admin("/mock/documents/" + target.path("seriesId").asText() + "/markings", "{\"markings\":[]}");
+        assertEquals(DocumentAction.UPSERT, crawl(s).docs().get(id(target)).action(), "unmarked again: indexed again");
+
+        JsonNode alreadyMarked = mockDocs().stream().filter(d -> !unmarked(d)).findFirst().orElseThrow();
+        assertTrue(crawl(settings(Map.of("markedDocuments", "index"))).docs().containsKey(id(alreadyMarked)),
+                "marked-documents=index indexes them, with the MARKING denies");
     }
 
     @Test
