@@ -187,6 +187,35 @@ public class ConnectorController {
             Map.entry("timeoutSeconds", "30"),
             Map.entry("stateDirectory", "data/mfiles-state")
         )));
+        defaults.add(new ConnectorDTO("FileNet_Repository", "IBM FileNet P8 (Content Services GraphQL API)", "repository", "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "https://localhost:9443/content-services-graphql/graphql"),
+            Map.entry("objectStore", ""),
+            Map.entry("authType", "basic"),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "query"),
+            Map.entry("documentClasses", "Document"),
+            Map.entry("where", ""),
+            Map.entry("sqlQuery", ""),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "current"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeCustomProperties", "true"),
+            Map.entry("readAccessMask", "131201"),
+            Map.entry("authenticatedUsersIdentity", "#authenticated-users"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("principalFormat", "name"),
+            Map.entry("markedDocuments", "exclude"),
+            Map.entry("deletionTracking", "reconcile"),
+            Map.entry("incrementalEnabled", "true"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("timeoutSeconds", "30"),
+            Map.entry("stateDirectory", "data/filenet-state")
+        )));
         defaults.add(new ConnectorDTO("Grpc_Push_Connector", "gRPC Push Streaming Ingestion", "repository", "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", 100, Map.of(
             "port", "9096",
             "maxMessageSizeMb", "64",

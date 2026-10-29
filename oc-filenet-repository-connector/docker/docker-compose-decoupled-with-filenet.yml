@@ -1,0 +1,376 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- FileNet Content Services GraphQL emulator (CSGQL mock): IBM FileNet P8 has no free container image ---
+  filenet-mock:
+    build:
+      context: ../filenet-mock
+    image: opencrawling/csgql-mock:local
+    container_name: filenet-mock-decoupled-filenet
+    environment:
+      - CSGQL_PORT=8080
+      - CSGQL_USERS=p8crawler:secret
+      - CSGQL_DOCUMENT_COUNT=${CSGQL_DOCUMENT_COUNT:-40}
+      - CSGQL_QUIET=true
+    ports:
+      - "8092:8080"
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/content-services-graphql/ping', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Vector Store (PostgreSQL / pgvector) ---
+  postgres-vector:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-decoupled-filenet
+    environment:
+      POSTGRES_DB: opencrawling
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-pgdata-filenet:/var/lib/postgresql/data
+    networks:
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-filenet
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-filenet:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-decoupled-filenet
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama-model-puller:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-model-puller-decoupled-filenet
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama to become responsive..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 1
+        done
+        echo "Pulling mxbai-embed-large embedding model..."
+        ollama pull mxbai-embed-large
+        echo "Embedding model pulled successfully."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka-decoupled-filenet
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      CLUSTER_ID: '4L62EnnTQKyNxTIfHfN8QA'
+    volumes:
+      - opencrawling-kafkadata-filenet:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  # The crawler reads the CSGQL mock by default. To crawl a real FileNet server instead, set FILENET_URL,
+  # FILENET_OBJECT_STORE, FILENET_USERNAME and FILENET_PASSWORD (and optionally FILENET_AUTH_TYPE, FILENET_DOCUMENT_CLASSES,
+  # FILENET_WHERE, FILENET_CRAWL_MODE, FILENET_ROOT_FOLDER_PATH, FILENET_MAX_DOCUMENTS, FILENET_FALLBACK_PRINCIPALS,
+  # FILENET_MARKED_DOCUMENTS) in the environment.
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:${OC_IMAGE_TAG:-latest}
+    container_name: oc-crawler-service-filenet
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=filenet
+      - SPRING_OPENCRAWLING_CONNECTOR_TYPE=filenet
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_URL=${FILENET_URL:-http://filenet-mock:8080/content-services-graphql/graphql}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_OBJECT_STORE=${FILENET_OBJECT_STORE:-OS1}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_AUTH_TYPE=${FILENET_AUTH_TYPE:-basic}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_USERNAME=${FILENET_USERNAME:-p8crawler}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_PASSWORD=${FILENET_PASSWORD:-secret}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_CRAWL_MODE=${FILENET_CRAWL_MODE:-query}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_ROOT_FOLDER_PATH=${FILENET_ROOT_FOLDER_PATH:-/}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_DOCUMENT_CLASSES=${FILENET_DOCUMENT_CLASSES:-Document}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_WHERE=${FILENET_WHERE:-}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_DELETION_TRACKING=${FILENET_DELETION_TRACKING:-reconcile}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_BATCH_SIZE=${FILENET_BATCH_SIZE:-20}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_INCLUDE_ACLS=true
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_INCREMENTAL_ENABLED=${FILENET_INCREMENTAL_ENABLED:-true}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_STATE_DIRECTORY=/data/filenet-state
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_MAX_DOCUMENTS=${FILENET_MAX_DOCUMENTS:-0}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_FALLBACK_PRINCIPALS=${FILENET_FALLBACK_PRINCIPALS:-}
+      - SPRING_OPENCRAWLING_CONNECTOR_FILENET_MARKED_DOCUMENTS=${FILENET_MARKED_DOCUMENTS:-exclude}
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=default
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-claims-filenet:/data/claims
+      - opencrawling-reportsdata-filenet:/data/reports
+      - opencrawling-state-filenet:/data/filenet-state
+    depends_on:
+      kafka:
+        condition: service_started
+      filenet-mock:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-ingestion-consumer-service-filenet
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+    volumes:
+      - opencrawling-claims-filenet:/data/claims
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-embedding-consumer-service-filenet
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=true
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama-model-puller:
+        condition: service_completed_successfully
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-writer-consumer-service-filenet
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:${OC_IMAGE_TAG:-latest}
+    container_name: oc-mcp-server-service-filenet
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+      - "9095:9095"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-filenet:/data/reports
+    depends_on:
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  opencrawling-pgdata-filenet:
+    name: opencrawling-pgdata-filenet
+  opencrawling-redisdata-filenet:
+    name: opencrawling-redisdata-filenet
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-kafkadata-filenet:
+    name: opencrawling-kafkadata-filenet
+  opencrawling-claims-filenet:
+    name: opencrawling-claims-filenet
+  opencrawling-reportsdata-filenet:
+    name: opencrawling-reportsdata-filenet
+  opencrawling-state-filenet:
+    name: opencrawling-state-filenet
+

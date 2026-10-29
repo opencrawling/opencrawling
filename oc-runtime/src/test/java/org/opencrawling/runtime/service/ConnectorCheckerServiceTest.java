@@ -251,4 +251,65 @@ class ConnectorCheckerServiceTest {
             mfws.stop(0);
         }
     }
+
+    @Test
+    void testCheckFileNetConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                "org.opencrawling.filenet.FileNetRepositoryConnector", 10,
+                Map.of("url", "http://127.0.0.1:59999/content-services-graphql/graphql", "username", "p8crawler", "password", "x"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("object-store"));
+    }
+
+    @Test
+    void testCheckFileNetConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.of(
+                        "url", "http://127.0.0.1:59999/content-services-graphql/graphql", "objectStore", "OS1",
+                        "username", "p8crawler", "password", "secret"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to FileNet"));
+        assertFalse(result.message().contains("secret"));
+    }
+
+    @Test
+    void testCheckFileNetConnectorSuccess() throws Exception {
+        List<String> xsrf = new CopyOnWriteArrayList<>();
+        HttpServer csgql = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        csgql.createContext("/content-services-graphql/graphql", exchange -> {
+            String header = exchange.getRequestHeaders().getFirst("ECM-CS-XSRF-Token");
+            String cookie = exchange.getRequestHeaders().getFirst("Cookie");
+            xsrf.add(header + "|" + cookie);
+            boolean ok = header != null && ("ECM-CS-XSRF-Token=" + header).equals(cookie)
+                    && exchange.getRequestHeaders().getFirst("Authorization") != null;
+            byte[] bytes = ("{\"data\":{\"_apiInfo\":{\"productVersion\":\"5.6.0\"},"
+                    + "\"objectStore\":{\"id\":\"{A59F88D9-759E-56FF-BCBD-5289671DA1D0}\",\"symbolicName\":\"OS1\"}}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(ok ? 200 : 403, ok ? bytes.length : -1);
+            if (ok) {
+                exchange.getResponseBody().write(bytes);
+            }
+            exchange.close();
+        });
+        csgql.start();
+        try {
+            ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                    "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.of(
+                            "url", "http://127.0.0.1:" + csgql.getAddress().getPort() + "/content-services-graphql/graphql",
+                            "objectStore", "OS1", "username", "p8crawler", "password", "secret"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("object store 'OS1' is accessible"));
+            assertTrue(result.message().contains("5.6.0"));
+            assertEquals(1, xsrf.size());
+        } finally {
+            csgql.stop(0);
+        }
+    }
 }
