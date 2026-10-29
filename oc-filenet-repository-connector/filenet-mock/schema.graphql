@@ -1,0 +1,375 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# The subset of the FileNet Content Services GraphQL API that the mock serves: the read side the OpenCrawling FileNet
+# connector uses. Every type, field and argument here must exist with the same type in IBM's published schema
+# (ibm-ecm/ibm-content-platform-engine-samples, CS-GraphQL-Schema), which conformance.py checks. IBM's schema itself is
+# not part of this repository: it is distributed under IBM's own licence.
+
+scalar DateTime
+scalar ScalarPropertyValue
+
+type Query {
+  _apiInfo(repositoryIdentifier: String): ApiInfo
+  objectStore(identifier: String!): ObjectStore
+  document(identifier: String!, repositoryIdentifier: String!): Document
+  documents(from: String, options: String, orderBy: String, pageSize: Int, repositoryIdentifier: String!, where: String): DocumentSet
+  moreDocuments(token: String!): DocumentSet
+  folder(identifier: String!, repositoryIdentifier: String!): Folder
+  folders(from: String, options: String, orderBy: String, pageSize: Int, repositoryIdentifier: String!, where: String): FolderSet
+  moreFolders(token: String!): FolderSet
+  repositoryRows(pageSize: Int, repositoryIdentifier: String!, sql: String!): RepositoryRowSet
+  moreRepositoryRows(token: String!): RepositoryRowSet
+}
+
+type ApiInfo {
+  buildDate: String!
+  buildNumber: String!
+  implementationTitle: String!
+  implementationVersion: String!
+  productVersion: String!
+}
+
+type ObjectStore {
+  className: String!
+  displayName: String
+  id: ID!
+  properties(includes: [String!]): [CommonProperty!]!
+  symbolicName: String
+}
+
+type PageInfo {
+  token: String
+  totalCount: Int
+}
+
+type DocumentSet {
+  documents: [Document!]!
+  pageInfo: PageInfo!
+}
+
+type FolderSet {
+  folders: [Folder!]!
+  pageInfo: PageInfo!
+}
+
+type RepositoryRowSet {
+  pageInfo: PageInfo!
+  repositoryRows: [RepositoryRow!]!
+}
+
+type RepositoryRow {
+  properties: [CommonProperty!]!
+}
+
+interface Document {
+  accessAllowed: Int!
+  className: String!
+  contentElements: [ContentElement!]
+  contentSize: Float
+  creator: String
+  dateCreated: DateTime
+  dateLastModified: DateTime
+  foldersFiledIn: FolderSet
+  id: ID!
+  isCurrentVersion: Boolean
+  lastModifier: String
+  majorVersionNumber: Int
+  mimeType: String
+  minorVersionNumber: Int
+  name: String
+  permissions: [CmAbstractPermission!]
+  properties(includes: [String!]): [CommonProperty!]!
+  updateSequenceNumber: Int!
+  versionSeries: VersionSeries!
+  versionStatus: VersionStatus
+}
+
+type DocumentType implements Document {
+  accessAllowed: Int!
+  className: String!
+  contentElements: [ContentElement!]
+  contentSize: Float
+  creator: String
+  dateCreated: DateTime
+  dateLastModified: DateTime
+  foldersFiledIn: FolderSet
+  id: ID!
+  isCurrentVersion: Boolean
+  lastModifier: String
+  majorVersionNumber: Int
+  mimeType: String
+  minorVersionNumber: Int
+  name: String
+  permissions: [CmAbstractPermission!]
+  properties(includes: [String!]): [CommonProperty!]!
+  updateSequenceNumber: Int!
+  versionSeries: VersionSeries!
+  versionStatus: VersionStatus
+}
+
+interface VersionSeries {
+  className: String!
+  id: ID!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+type VersionSeriesType implements VersionSeries {
+  className: String!
+  id: ID!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface Folder {
+  className: String!
+  containedDocuments: DocumentSet
+  dateCreated: DateTime
+  dateLastModified: DateTime
+  id: ID!
+  inheritParentPermissions: Boolean
+  name: String
+  pathName: String
+  permissions: [CmAbstractPermission!]
+  properties(includes: [String!]): [CommonProperty!]!
+  subFolders: FolderSet
+}
+
+type FolderType implements Folder {
+  className: String!
+  containedDocuments: DocumentSet
+  dateCreated: DateTime
+  dateLastModified: DateTime
+  id: ID!
+  inheritParentPermissions: Boolean
+  name: String
+  pathName: String
+  permissions: [CmAbstractPermission!]
+  properties(includes: [String!]): [CommonProperty!]!
+  subFolders: FolderSet
+}
+
+interface ContentElement {
+  className: String!
+  contentType: String!
+  elementSequenceNumber: Int!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface ContentTransfer {
+  className: String!
+  contentSize: Float
+  contentType: String!
+  downloadUrl: String
+  elementSequenceNumber: Int!
+  properties(includes: [String!]): [CommonProperty!]!
+  retrievalName: String
+}
+
+interface ContentReference {
+  className: String!
+  contentLocation: String
+  contentType: String!
+  elementSequenceNumber: Int!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+type ContentTransferType implements ContentElement & ContentTransfer {
+  className: String!
+  contentSize: Float
+  contentType: String!
+  downloadUrl: String
+  elementSequenceNumber: Int!
+  properties(includes: [String!]): [CommonProperty!]!
+  retrievalName: String
+}
+
+type ContentReferenceType implements ContentElement & ContentReference {
+  className: String!
+  contentLocation: String
+  contentType: String!
+  elementSequenceNumber: Int!
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface CmAbstractPermission {
+  className: String!
+  inheritableDepth: InheritableDepth
+  permissionSource: PermissionSource
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface Permission {
+  className: String!
+  granteeName: String
+  granteeType: SecurityPrincipalType
+  inheritableDepth: InheritableDepth
+  permissionSource: PermissionSource
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface AccessPermission {
+  accessMask: Int
+  accessType: AccessType
+  className: String!
+  granteeName: String
+  granteeType: SecurityPrincipalType
+  inheritableDepth: InheritableDepth
+  permissionSource: PermissionSource
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+type AccessPermissionType implements AccessPermission & CmAbstractPermission & Permission {
+  accessMask: Int
+  accessType: AccessType
+  className: String!
+  granteeName: String
+  granteeType: SecurityPrincipalType
+  inheritableDepth: InheritableDepth
+  permissionSource: PermissionSource
+  properties(includes: [String!]): [CommonProperty!]!
+}
+
+interface CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type StringProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  label: String!
+  stringValue: String
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type StringListProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  label: String!
+  stringListValue: [String!]
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type IntegerProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  intValue: Int
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type FloatProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  floatValue: Float
+  id: String!
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type BooleanProperty implements CommonProperty {
+  alias: String!
+  booleanValue: Boolean
+  cardinality: Cardinality!
+  id: String!
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type DateTimeProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  dateTimeValue: DateTime
+  id: String!
+  isDateOnly: Boolean
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+type IdProperty implements CommonProperty {
+  alias: String!
+  cardinality: Cardinality!
+  id: String!
+  idValue: ID
+  label: String!
+  type: TypeID!
+  value: ScalarPropertyValue
+}
+
+enum AccessType {
+  ALLOW
+  DENY
+}
+
+enum Cardinality {
+  ENUM
+  LIST
+  SINGLE
+}
+
+enum InheritableDepth {
+  ALL_CHILDREN_NOT_OBJECT
+  IMMEDIATE_CHILDREN_NOT_OBJECT
+  OBJECT_ALL_CHILDREN
+  OBJECT_IMMEDIATE_CHILDREN
+  OBJECT_ONLY
+}
+
+enum PermissionSource {
+  MARKING
+  PROXY
+  SOURCE_DEFAULT
+  SOURCE_DIRECT
+  SOURCE_PARENT
+  SOURCE_TEMPLATE
+}
+
+enum SecurityPrincipalType {
+  GROUP
+  UNKNOWN
+  USER
+}
+
+enum TypeID {
+  BINARY
+  BOOLEAN
+  DATE
+  DOUBLE
+  GUID
+  LONG
+  OBJECT
+  STRING
+}
+
+enum VersionStatus {
+  IN_PROCESS
+  RELEASED
+  RESERVATION
+  SUPERSEDED
+}
