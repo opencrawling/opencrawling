@@ -1,0 +1,125 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Publish Wiki Reference Documentation PDF
+
+on:
+  release:
+    types: [ published, prereleased, released ]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version for reference documentation PDF (e.g. 1.0.4)'
+        type: string
+        required: false
+        default: '1.0.4'
+
+permissions: read-all
+
+jobs:
+  build-reference-doc-pdf:
+    name: Generate Reference Documentation PDF from Wiki
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Resolve Release Version & Tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VER="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VER="${TAG_NAME#v}"
+          elif [ -n "${{ inputs.release_version }}" ]; then
+            VER="${{ inputs.release_version }}"
+            TAG_NAME="v${VER}"
+          else
+            VER="1.0.4"
+            TAG_NAME="v1.0.4"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Checkout Wiki Documentation
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: opencrawling.wiki
+
+      - name: Set up Python for PDF Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PDF Generation Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install weasyprint markdown
+
+      - name: Generate Complete Reference Documentation PDF
+        run: |
+          chmod +x scripts/generate-reference-pdf.sh
+          ./scripts/generate-reference-pdf.sh "${{ steps.version.outputs.version }}" opencrawling.wiki
+
+      - name: Verify Generated PDF Documentation
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          test -f "dist/OpenCrawling-Reference-Documentation-${VER}.pdf"
+          test -f "dist/OpenCrawling-Reference-Documentation-${VER}.pdf.sha256"
+          ls -lh dist/OpenCrawling-Reference-Documentation-${VER}.*
+
+      - name: Upload Reference Documentation PDF Artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: opencrawling-reference-doc-pdf
+          path: |
+            dist/OpenCrawling-Reference-Documentation-${{ steps.version.outputs.version }}.pdf
+            dist/OpenCrawling-Reference-Documentation-${{ steps.version.outputs.version }}.pdf.sha256
+
+  publish-reference-doc-assets:
+    name: Attach Reference Documentation PDF to GitHub Release
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    runs-on: ubuntu-24.04
+    needs: build-reference-doc-pdf
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Reference Documentation PDF Artifacts
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: opencrawling-reference-doc-pdf
+          path: release-docs/
+
+      - name: Attach Reference Documentation PDF & Checksum to GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ needs.build-reference-doc-pdf.outputs.tag_name }}
+          files: |
+            release-docs/OpenCrawling-Reference-Documentation-*.pdf
+            release-docs/OpenCrawling-Reference-Documentation-*.pdf.sha256

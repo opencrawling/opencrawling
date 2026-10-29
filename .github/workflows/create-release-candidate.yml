@@ -138,6 +138,7 @@ jobs:
 
           echo "Dispatching release artifact workflows for tag ${TAG_NAME}..."
           gh workflow run dist-release-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
+          gh workflow run reference-doc-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
           gh workflow run cli-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
           gh workflow run client-sdk-publish.yml --ref "${TAG_NAME}" -f release_version="${RELEASE_VER}"
           gh workflow run docker-publish.yml --ref "${TAG_NAME}"
