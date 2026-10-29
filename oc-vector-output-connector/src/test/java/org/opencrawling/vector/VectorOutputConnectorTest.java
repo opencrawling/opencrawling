@@ -134,4 +134,38 @@ class VectorOutputConnectorTest {
         assertEquals(false, chunk.getMetadata().get("security_inheritance"));
         assertEquals(List.of("proc-1234"), chunk.getMetadata().get("flowable_proc_inst_id"));
     }
+
+    @Test
+    void testSendWithFlowableCollocatedSchemaUpdatesDedicatedColumns() {
+        org.springframework.jdbc.core.JdbcTemplate mockJdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        VectorOutputConnector collocatedConnector = new VectorOutputConnector(
+                vectorStore,
+                embeddingModel,
+                mockJdbc,
+                true
+        );
+
+        assertTrue(collocatedConnector.isFlowableCollocatedSchema());
+        assertEquals("vector_store", collocatedConnector.getVectorTableName());
+
+        byte[] content = "Content for flowable collocated schema testing.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-flowable-1");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of(
+                "flowable_scope_id", List.of("proc-scope-777"),
+                "flowable_scope_type", List.of("bpmn"),
+                "mimeType", List.of("text/plain")
+        ));
+        when(repoDoc.uri()).thenReturn("flowable://process-instances/proc-scope-777");
+        when(repoDoc.acl()).thenReturn("public");
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f, 0.3f});
+
+        collocatedConnector.send(repoDoc).block();
+
+        verify(vectorStore).add(anyList());
+        verify(mockJdbc).batchUpdate(contains("UPDATE vector_store SET scope_id_ = ?, scope_type_ = ?"), anyList());
+    }
 }

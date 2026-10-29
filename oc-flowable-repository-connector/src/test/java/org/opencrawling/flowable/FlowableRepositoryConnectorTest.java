@@ -191,7 +191,8 @@ class FlowableRepositoryConnectorTest {
         // Entity references for collocated and distributed patterns
         assertEquals(List.of("proc-1234"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_PROC_INST_ID));
         assertEquals(List.of("proc-1234"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_ID));
-        assertEquals(List.of("processInstance"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_TYPE));
+        assertEquals(List.of("bpmn"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_TYPE));
+        assertEquals(List.of("processInstance"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_TYPE + "_legacy"));
         assertEquals(List.of("finance_agent_1"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_USERS));
         assertEquals(List.of("finance_managers"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_GROUPS));
 
@@ -262,5 +263,118 @@ class FlowableRepositoryConnectorTest {
         assertNull(doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_USERS));
         assertEquals(1, doc.security().permissions().size());
         assertEquals("public", doc.security().permissions().get(0).identity());
+    }
+
+    @Test
+    void testScanWithHistoryLevelNoneUsesRuntimeEndpoints() throws Exception {
+        FlowableRepositoryConnector connectorRuntime = new FlowableRepositoryConnector(
+                "http://localhost:8080/flowable-rest/service",
+                "admin",
+                "test",
+                50,
+                "rt-process",
+                true,
+                "active",
+                true,
+                FlowableRepositoryConnector.HISTORY_LEVEL_NONE
+        );
+        connectorRuntime.setHttpClient(mockHttpClient);
+
+        assertTrue(connectorRuntime.isHistoryNone());
+        assertEquals(FlowableRepositoryConnector.HISTORY_LEVEL_NONE, connectorRuntime.getHistoryLevel());
+
+        String runtimeInstancesJson = """
+            {
+              "total": 1,
+              "start": 0,
+              "sort": "id",
+              "order": "asc",
+              "size": 1,
+              "data": [
+                {
+                  "id": "proc-rt-101",
+                  "processDefinitionId": "rt-process:1:100",
+                  "processDefinitionKey": "rt-process",
+                  "businessKey": "BK-RUNTIME-01",
+                  "startTime": "2026-10-29T09:00:00.000Z"
+                }
+              ]
+            }
+            """;
+
+        String runtimeVariablesJson = """
+            [
+              {
+                "name": "approvalStatus",
+                "type": "string",
+                "value": "PENDING",
+                "scope": "local"
+              }
+            ]
+            """;
+
+        String runtimeIdentityLinksJson = """
+            [
+              {
+                "user": "runtime_operator",
+                "group": null,
+                "type": "candidate"
+              },
+              {
+                "user": null,
+                "group": "runtime_reviewers",
+                "type": "candidate"
+              }
+            ]
+            """;
+
+        HttpResponse<String> mockRtInstances = mock(HttpResponse.class);
+        when(mockRtInstances.statusCode()).thenReturn(200);
+        when(mockRtInstances.body()).thenReturn(runtimeInstancesJson);
+
+        HttpResponse<String> mockRtVariables = mock(HttpResponse.class);
+        when(mockRtVariables.statusCode()).thenReturn(200);
+        when(mockRtVariables.body()).thenReturn(runtimeVariablesJson);
+
+        HttpResponse<String> mockRtLinks = mock(HttpResponse.class);
+        when(mockRtLinks.statusCode()).thenReturn(200);
+        when(mockRtLinks.body()).thenReturn(runtimeIdentityLinksJson);
+
+        ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        when(mockHttpClient.send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class)))
+                .thenAnswer(invocation -> {
+                    HttpRequest req = invocation.getArgument(0);
+                    String uri = req.uri().toString();
+                    if (uri.contains("/runtime/process-instances/proc-rt-101/variables")) {
+                        return mockRtVariables;
+                    }
+                    if (uri.contains("/runtime/process-instances/proc-rt-101/identitylinks")) {
+                        return mockRtLinks;
+                    }
+                    return mockRtInstances;
+                });
+
+        connectorRuntime.connect();
+        List<RepositoryDocument> docs = connectorRuntime.scan("rt-process").collectList().block();
+
+        assertNotNull(docs);
+        assertEquals(1, docs.size());
+
+        RepositoryDocument doc = docs.get(0);
+        assertEquals("proc-rt-101", doc.id());
+        assertEquals("flowable://process-instances/proc-rt-101", doc.uri());
+        assertEquals(List.of("bpmn"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_SCOPE_TYPE));
+        assertEquals(List.of("PENDING"), doc.metadata().get("flowable_var_approvalStatus"));
+        assertEquals(List.of("runtime_operator"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_USERS));
+        assertEquals(List.of("runtime_reviewers"), doc.metadata().get(FlowableRepositoryConnector.FIELD_FLOWABLE_IDENTITY_GROUPS));
+
+        // Verify all HTTP requests targeted /runtime/ and not /history/
+        List<HttpRequest> executedRequests = requestCaptor.getAllValues();
+        assertFalse(executedRequests.isEmpty());
+        for (HttpRequest req : executedRequests) {
+            String uri = req.uri().toString();
+            assertTrue(uri.contains("/runtime/"), "Expected URI to contain /runtime/: " + uri);
+            assertFalse(uri.contains("/history/"), "Expected URI not to contain /history/: " + uri);
+        }
     }
 }

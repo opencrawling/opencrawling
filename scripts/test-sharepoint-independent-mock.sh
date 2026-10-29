@@ -58,6 +58,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
@@ -69,7 +70,11 @@ MODULE="oc-sharepoint-repository-connector"
 CHECKS="${MODULE}/graph-mock/conformance"
 WORK="$(pwd)/${MODULE}/target/independent-mock"
 
-for tool in docker python3 uv mvn curl; do
+if ! command -v uv >/dev/null 2>&1; then
+  log_warn "uv is required but not installed (install via 'brew install uv' or 'pip install uv'). Skipping test."
+  exit 0
+fi
+for tool in docker python3 mvn curl; do
   command -v "$tool" >/dev/null 2>&1 || { log_error "$tool is required."; exit 1; }
 done
 for p in "$MOCK_PORT" "$PROXY_PORT"; do

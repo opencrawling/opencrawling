@@ -176,4 +176,34 @@ class VectorStoreWriterConsumerTest {
         verify(store1024).add(anyList());
         verify(store1024, never()).delete(any(Filter.Expression.class));
     }
+
+    @Test
+    void testConsumeWithFlowableCollocatedSchemaUpdatesColumns() {
+        org.springframework.jdbc.core.JdbcTemplate mockJdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        VectorStoreWriterConsumer collocatedConsumer = new VectorStoreWriterConsumer(
+                defaultStore, store384, store768, store1024, null, mockJdbc, true
+        );
+
+        DocumentEmbeddedMessage message = new DocumentEmbeddedMessage(
+                "proc-inst-123",
+                "chunk-flowable-1",
+                "Flowable process instance text",
+                Map.of(
+                        "flowable_scope_id", List.of("proc-inst-123"),
+                        "flowable_scope_type", List.of("bpmn"),
+                        "acl", "public"
+                ),
+                new float[1024]
+        );
+
+        collocatedConsumer.consume(message);
+
+        verify(store1024).add(anyList());
+        verify(mockJdbc).update(
+                eq("UPDATE vector_store_1024 SET scope_id_ = ?, scope_type_ = ? WHERE id = ?::uuid"),
+                eq("proc-inst-123"),
+                eq("bpmn"),
+                eq("chunk-flowable-1")
+        );
+    }
 }
