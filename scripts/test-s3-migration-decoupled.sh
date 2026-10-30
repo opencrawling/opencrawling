@@ -414,12 +414,12 @@ if ! compose logs oc-writer-consumer 2>/dev/null | grep -q "Successfully migrate
 fi
 echo -e "${GREEN}PASSED: Decoupled oc-writer-consumer migrated the document from Kafka.${NC}"
 
-# --- Verification Step 4: OIS Document Lifecycle Tombstone DELETE Validation (unit level) ---
+# --- Verification Step 4: OIS Document Lifecycle Tombstone DELETE & Custom Header Engine (unit suite) ---
 echo -e "${YELLOW}================================================================================${NC}"
-echo -e "${YELLOW}Step 4: Verifying OIS Document Lifecycle Tombstone DELETE Action (unit suite)...${NC}"
+echo -e "${YELLOW}Step 4: Verifying OIS Tombstones & Custom HTTP Header Template Engine...         ${NC}"
 echo -e "${YELLOW}================================================================================${NC}"
-mvn -q test -pl oc-s3-output-connector -Dtest=S3MigrationWriterConsumerTest,S3OutputConnectorTest -Dsurefire.failIfNoSpecifiedTests=false
-echo -e "${GREEN}PASSED: OIS Tombstone DELETE lifecycle verified!${NC}"
+mvn -q test -pl oc-s3-output-connector -Dtest=S3MigrationWriterConsumerTest,S3OutputConnectorTest,HeaderTemplateResolverTest -Dsurefire.failIfNoSpecifiedTests=false
+echo -e "${GREEN}PASSED: OIS Tombstone DELETE lifecycle and Header Template Resolver verified!${NC}"
 
 # --- Verification Step 5: MCP Server Reachability ---
 echo -e "${YELLOW}================================================================================${NC}"
