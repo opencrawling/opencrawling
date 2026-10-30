@@ -157,7 +157,7 @@
         <avro.version>1.12.2</avro.version>
         <hadoop.version>3.5.0</hadoop.version>
         <duckdb.version>1.5.6.0</duckdb.version>
-        <zstd-jni.version>1.5.7-23</zstd-jni.version>
+        <zstd-jni.version>1.5.7-24</zstd-jni.version>
         <springdoc.version>3.1.1</springdoc.version>
         <swagger-core.version>2.2.55</swagger-core.version>
         
