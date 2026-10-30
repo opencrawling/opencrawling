@@ -1,5 +1,9 @@
 # OpenCrawling - AWS S3 Output Connector
 
+[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
+[![Open Ingestion Standard](https://img.shields.io/badge/OIS-v1.0.0-0A84FF.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
+[![Zero-Trust Security](https://img.shields.io/badge/Security-Zero--Trust_ACLs-10B981.svg?style=flat)](https://github.com/opencrawling/opencrawling/wiki/Zero-Trust-Security-and-ACL-Management)
+
 `oc-s3-output-connector` is an OpenCrawling output connector dedicated **exclusively** to **Migration Mode** (`opencrawling.pipeline.mode=migration`).
 
 ## Overview
