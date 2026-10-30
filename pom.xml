@@ -115,6 +115,7 @@
         <module>oc-luxir-output-connector</module>
         <module>oc-seatunnel-output-connector</module>
         <module>oc-ozone-output-connector</module>
+        <module>oc-s3-output-connector</module>
         <module>oc-openarch-output-connector</module>
         <module>oc-openarch-repository-connector</module>
         <module>oc-flowable-repository-connector</module>
@@ -218,6 +219,11 @@
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>s3</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>sts</artifactId>
                 <version>${aws-sdk.version}</version>
             </dependency>
             <dependency>
