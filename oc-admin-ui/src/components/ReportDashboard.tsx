@@ -22,7 +22,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Clock,
   Sparkles,
   HardDrive,
   Database,
@@ -32,10 +31,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Terminal,
-  Code2,
-  Layers,
   ShieldCheck,
-  ExternalLink,
   X,
   Play
 } from 'lucide-react'

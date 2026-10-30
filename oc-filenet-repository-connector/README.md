@@ -282,4 +282,5 @@ Start with `FILENET_MAX_DOCUMENTS` on a large object store.
 - **One class per search.** The API takes a single class in `from` (subclasses included), so multiple classes are
   searched one after the other, and joins are not supported.
 - **Annotations, custom objects and folders themselves** are not crawled; only documents are.
-- **Wiki page.** The issue's `FileNet-Repository-Connector.md` wiki page is a follow-up.
+
+See also the wiki page: [IBM FileNet P8 Repository Connector](https://github.com/opencrawling/opencrawling/wiki/FileNet-Repository-Connector).
