@@ -27,6 +27,7 @@ import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.s3.client.S3ClientFactory;
 import org.opencrawling.s3.config.S3OutputProperties;
 import org.opencrawling.s3.model.OisMigrationDocument;
+import org.opencrawling.s3.template.HeaderTemplateResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -197,6 +198,9 @@ public class S3OutputConnector implements OutputConnector {
         String filename = resolveFilename(document);
         String mimeType = resolveMimeType(document, filename);
 
+        // Resolve custom HTTP request headers (template interpolation)
+        Map<String, String> customHeaders = HeaderTemplateResolver.resolveHeaders(properties.getCustomHeaders(), document);
+
         // 1. Stream the pristine source binary to a local spool file while computing its SHA-256 digest.
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         Path spool = Files.createTempFile("oc-s3-migration-", ".bin");
@@ -220,7 +224,7 @@ public class S3OutputConnector implements OutputConnector {
                         properties.resolveMultipartPartSizeBytes(),
                         properties.getMultipartConcurrency()
                 );
-                uploader.uploadFile(properties.getBucket(), key, spool, mimeType);
+                uploader.uploadFile(properties.getBucket(), key, spool, mimeType, customHeaders);
             } else {
                 PutObjectRequest.Builder putBuilder = PutObjectRequest.builder()
                         .bucket(properties.getBucket())
@@ -229,6 +233,9 @@ public class S3OutputConnector implements OutputConnector {
                         .contentLength(contentLength);
 
                 applyEnterpriseOptions(putBuilder);
+                if (!customHeaders.isEmpty()) {
+                    putBuilder.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
+                }
 
                 PutObjectResponse response = s3Client.putObject(putBuilder.build(), RequestBody.fromFile(spool));
                 if (response != null && response.eTag() != null) {
@@ -294,16 +301,22 @@ public class S3OutputConnector implements OutputConnector {
                 .contentType("application/json")
                 .contentLength((long) jsonPayload.getBytes(StandardCharsets.UTF_8).length);
         applyEnterpriseOptions(sidecarBuilder);
+        if (!customHeaders.isEmpty()) {
+            sidecarBuilder.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
+        }
         s3Client.putObject(sidecarBuilder.build(), RequestBody.fromString(jsonPayload, StandardCharsets.UTF_8));
 
         // 4. Record document id -> key mapping in S3 index so that later DELETE tombstones can locate the object
         String indexKey = indexKey(document.id());
+        PutObjectRequest.Builder indexBuilder = PutObjectRequest.builder()
+                .bucket(properties.getBucket())
+                .key(indexKey)
+                .contentType("text/plain");
+        if (!customHeaders.isEmpty()) {
+            indexBuilder.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
+        }
         s3Client.putObject(
-                PutObjectRequest.builder()
-                        .bucket(properties.getBucket())
-                        .key(indexKey)
-                        .contentType("text/plain")
-                        .build(),
+                indexBuilder.build(),
                 RequestBody.fromString(key, StandardCharsets.UTF_8)
         );
 
@@ -335,34 +348,53 @@ public class S3OutputConnector implements OutputConnector {
             log.debug("No key index entry found for document {}; falling back to computed key '{}'", document.id(), key);
         }
         String sidecarKey = key + properties.getSidecarSuffix();
+        Map<String, String> resolvedHeaders = HeaderTemplateResolver.resolveHeaders(properties.getCustomHeaders(), document);
 
         if ("ARCHIVE_TOMBSTONE".equalsIgnoreCase(properties.getTombstoneAction())) {
             String tombstoneKey = TOMBSTONE_PREFIX + key + properties.getSidecarSuffix();
             String lastMod = document.lastModified() != null ? document.lastModified().toString() : Instant.now().toString();
             OisMigrationDocument tombstone = OisMigrationDocument.createTombstone(document.id(), document.uri(), lastMod);
             String jsonPayload = objectMapper.writeValueAsString(tombstone);
+            PutObjectRequest.Builder tombstoneBuilder = PutObjectRequest.builder()
+                    .bucket(properties.getBucket())
+                    .key(tombstoneKey)
+                    .contentType("application/json");
+            if (!resolvedHeaders.isEmpty()) {
+                tombstoneBuilder.overrideConfiguration(c -> resolvedHeaders.forEach(c::putHeader));
+            }
             s3Client.putObject(
-                    PutObjectRequest.builder()
-                            .bucket(properties.getBucket())
-                            .key(tombstoneKey)
-                            .contentType("application/json")
-                            .build(),
+                    tombstoneBuilder.build(),
                     RequestBody.fromString(jsonPayload, StandardCharsets.UTF_8)
             );
             log.info("Created OIS DELETE tombstone in S3: {}", tombstoneKey);
         }
 
         // Delete binary, metadata sidecar and key index entry
-        s3Client.deleteObject(DeleteObjectRequest.builder().bucket(properties.getBucket()).key(key).build());
-        s3Client.deleteObject(DeleteObjectRequest.builder().bucket(properties.getBucket()).key(sidecarKey).build());
-        s3Client.deleteObject(DeleteObjectRequest.builder().bucket(properties.getBucket()).key(indexKey(document.id())).build());
+        DeleteObjectRequest.Builder binaryDelete = DeleteObjectRequest.builder().bucket(properties.getBucket()).key(key);
+        DeleteObjectRequest.Builder sidecarDelete = DeleteObjectRequest.builder().bucket(properties.getBucket()).key(sidecarKey);
+        DeleteObjectRequest.Builder indexDelete = DeleteObjectRequest.builder().bucket(properties.getBucket()).key(indexKey(document.id()));
+        if (!resolvedHeaders.isEmpty()) {
+            binaryDelete.overrideConfiguration(c -> resolvedHeaders.forEach(c::putHeader));
+            sidecarDelete.overrideConfiguration(c -> resolvedHeaders.forEach(c::putHeader));
+            indexDelete.overrideConfiguration(c -> resolvedHeaders.forEach(c::putHeader));
+        }
+
+        s3Client.deleteObject(binaryDelete.build());
+        s3Client.deleteObject(sidecarDelete.build());
+        s3Client.deleteObject(indexDelete.build());
         log.info("Processed OIS DELETE action: removed S3 keys '{}' and '{}'", key, sidecarKey);
     }
 
     private String lookupIndexedKey(String documentId) {
         try {
-            ResponseInputStream<GetObjectResponse> in = s3Client.getObject(
-                    GetObjectRequest.builder().bucket(properties.getBucket()).key(indexKey(documentId)).build());
+            GetObjectRequest.Builder getBuilder = GetObjectRequest.builder().bucket(properties.getBucket()).key(indexKey(documentId));
+            if (!properties.getCustomHeaders().isEmpty()) {
+                Map<String, String> staticHeaders = HeaderTemplateResolver.resolveHeaders(properties.getCustomHeaders(), null);
+                if (!staticHeaders.isEmpty()) {
+                    getBuilder.overrideConfiguration(c -> staticHeaders.forEach(c::putHeader));
+                }
+            }
+            ResponseInputStream<GetObjectResponse> in = s3Client.getObject(getBuilder.build());
             if (in == null) {
                 return null;
             }

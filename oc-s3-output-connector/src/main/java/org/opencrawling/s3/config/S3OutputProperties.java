@@ -15,6 +15,8 @@
  */
 package org.opencrawling.s3.config;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -66,6 +68,9 @@ public class S3OutputProperties {
     private int multipartConcurrency = 4;
     private String consumerGroup = "opencrawling-s3-migration-group";
     private int consumerConcurrency = 3;
+
+    // Custom HTTP Request Headers & Multi-Vendor Storage Extensions
+    private Map<String, String> customHeaders = new LinkedHashMap<>();
 
     public S3OutputProperties() {}
 
@@ -299,6 +304,14 @@ public class S3OutputProperties {
 
     public void setConsumerConcurrency(int consumerConcurrency) {
         this.consumerConcurrency = consumerConcurrency;
+    }
+
+    public Map<String, String> getCustomHeaders() {
+        return customHeaders;
+    }
+
+    public void setCustomHeaders(Map<String, String> customHeaders) {
+        this.customHeaders = customHeaders != null ? new LinkedHashMap<>(customHeaders) : new LinkedHashMap<>();
     }
 
     /**

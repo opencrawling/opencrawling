@@ -295,4 +295,74 @@ class S3OutputConnectorTest {
         assertEquals(ObjectLockLegalHoldStatus.ON, binaryReq.objectLockLegalHoldStatus());
         assertNotNull(binaryReq.objectLockRetainUntilDate());
     }
+
+    @Test
+    void testCustomHeadersDecorationOnPutAndSidecar() {
+        properties.getCustomHeaders().put("x-emc-namespace", "finance-namespace");
+        properties.getCustomHeaders().put("x-emc-metadata-search", "Dept=${metadata.department},Classification=${metadata.classification | Public}");
+
+        RepositoryDocument doc = new RepositoryDocument(
+                "doc-custom-hdr",
+                "file:///contracts/agreement.pdf",
+                new ByteArrayInputStream("agreement-binary".getBytes(StandardCharsets.UTF_8)),
+                new java.util.HashMap<>(Map.of(
+                        "filename", List.of("agreement.pdf"),
+                        "department", List.of("Legal")
+                )),
+                "",
+                Instant.now()
+        );
+
+        connector.send(doc).block();
+
+        ArgumentCaptor<PutObjectRequest> putCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3Client, times(3)).putObject(putCaptor.capture(), any(RequestBody.class));
+
+        List<PutObjectRequest> requests = putCaptor.getAllValues();
+        for (PutObjectRequest req : requests) {
+            assertTrue(req.overrideConfiguration().isPresent());
+            Map<String, List<String>> headers = req.overrideConfiguration().get().headers();
+            assertEquals(List.of("finance-namespace"), headers.get("x-emc-namespace"));
+            assertEquals(List.of("Dept=Legal,Classification=Public"), headers.get("x-emc-metadata-search"));
+        }
+    }
+
+    @Test
+    void testCustomHeadersDecorationOnDeleteAndIndexLookup() {
+        properties.getCustomHeaders().put("x-emc-namespace", "hr-namespace");
+
+        String targetKey = "migration/v1/hr/cv.pdf";
+        ResponseInputStream<GetObjectResponse> mockIn = new ResponseInputStream<>(
+                GetObjectResponse.builder().build(),
+                AbortableInputStream.create(new ByteArrayInputStream(targetKey.getBytes(StandardCharsets.UTF_8)))
+        );
+        when(s3Client.getObject(any(GetObjectRequest.class))).thenReturn(mockIn);
+
+        RepositoryDocument deleteDoc = new RepositoryDocument(
+                "doc-del-hdr",
+                "file:///hr/cv.pdf",
+                null,
+                Map.of(),
+                "",
+                SecurityConfig.createPublic(),
+                Instant.now(),
+                DocumentAction.DELETE
+        );
+
+        connector.send(deleteDoc).block();
+
+        // Verify index lookup had custom headers
+        ArgumentCaptor<GetObjectRequest> getCaptor = ArgumentCaptor.forClass(GetObjectRequest.class);
+        verify(s3Client).getObject(getCaptor.capture());
+        assertTrue(getCaptor.getValue().overrideConfiguration().isPresent());
+        assertEquals(List.of("hr-namespace"), getCaptor.getValue().overrideConfiguration().get().headers().get("x-emc-namespace"));
+
+        // Verify all 3 delete requests had custom headers
+        ArgumentCaptor<DeleteObjectRequest> delCaptor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client, times(3)).deleteObject(delCaptor.capture());
+        for (DeleteObjectRequest req : delCaptor.getAllValues()) {
+            assertTrue(req.overrideConfiguration().isPresent());
+            assertEquals(List.of("hr-namespace"), req.overrideConfiguration().get().headers().get("x-emc-namespace"));
+        }
+    }
 }

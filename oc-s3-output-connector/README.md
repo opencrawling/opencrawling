@@ -20,6 +20,8 @@ Unlike vector and search connectors designed for semantic search and RAG indexin
 - **Enterprise Security & Compliance**:
   - Server-Side Encryption: `SSE_S3` (AES-256) and `SSE_KMS` with custom KMS Key IDs and S3 Bucket Keys.
   - S3 Object Lock (WORM): Compliance and Governance modes, retention period, and legal holds.
+- **Custom HTTP Request Headers & Multi-Vendor Presets**: Decorates S3 operations (`PutObjectRequest`, `CreateMultipartUploadRequest`, `DeleteObjectRequest`, `GetObjectRequest`) with proprietary vendor HTTP headers (e.g. Dell EMC ECS metadata search `x-emc-metadata-search` and namespace `x-emc-namespace`, IBM Cloud Object Storage Key Protect encryption `ibm-sse-kp-*`, Hitachi HCP WORM `x-hcp-*`, NetApp StorageGRID compliance `x-ntap-sg-*`, Cloudflare R2 `cf-placement`, and standard `x-amz-meta-*`).
+- **Dynamic Template Interpolation Engine**: Supports placeholders in header templates, resolving dynamic tokens like `${metadata.<key>}`, `${metadata.<key> | fallback}`, `${document.id}`, `${document.uri}`, and `${document.action}`.
 - **High Performance & Large Binary Multipart Upload**: Uploads large objects exceeding `multipart-threshold` using parallel multipart uploads (`S3MultipartUploader`).
 - **Full OIS Lifecycle Management**: Supports `UPSERT` and `DELETE` tombstone actions (`DELETE_OBJECTS` or `ARCHIVE_TOMBSTONE`).
 - **Lakehouse Document Ledger Accumulation**: Enriches document metadata (`checksum_sha256`, `target_bucket`, `target_key`, `binary_size`) enabling automatic Parquet audit trails in the Lakehouse ledger.
@@ -65,6 +67,11 @@ spring:
         # Lifecycle:
         tombstone-action: "DELETE_OBJECTS" # Options: DELETE_OBJECTS, ARCHIVE_TOMBSTONE
         auto-create-bucket: false
+        # Custom HTTP Headers / Vendor Extensions:
+        custom-headers:
+          x-emc-namespace: "finance-tenant"
+          x-emc-metadata-search: "Department=${metadata.department},Category=${metadata.category}"
+          x-migration-source: "IBM-FileNet-P8"
         # Performance & Decoupled Consumer:
         multipart-threshold: "64MB"
         multipart-part-size: "16MB"
@@ -98,6 +105,7 @@ opencrawling:
 | `spring.opencrawling.output.s3.kms-key-id` | `""` | AWS KMS Key ARN or ID when using `SSE_KMS`. |
 | `spring.opencrawling.output.s3.object-lock-enabled` | `false` | Enable S3 Object Lock on migrated objects. |
 | `spring.opencrawling.output.s3.tombstone-action` | `DELETE_OBJECTS` | `DELETE_OBJECTS` (purge binary, sidecar, index) or `ARCHIVE_TOMBSTONE`. |
+| `spring.opencrawling.output.s3.custom-headers` | `{}` | Map of custom HTTP request header names to static values or dynamic interpolation templates. |
 | `spring.opencrawling.output.s3.multipart-threshold` | `64MB` | Size threshold at which binaries switch to multipart upload. |
 | `spring.opencrawling.output.s3.multipart-part-size` | `16MB` | Part size for multipart uploads (minimum 5MB). |
 | `spring.opencrawling.output.s3.multipart-concurrency` | `4` | Parallel threads per multipart upload. |
@@ -130,12 +138,34 @@ In decoupled production topologies:
 
 ---
 
-## Admin UI Integration
+## Admin UI Integration & Multi-Vendor Storage Presets
 
 The OpenCrawling Admin UI (`oc-admin-ui`) includes first-class support for `AWS S3 (Migration Mode only)`:
 - Automatic validation preventing S3 output configuration when RAG mode is selected.
 - Comprehensive UI form fields for S3 bucket, region, endpoint overrides, credentials strategies, KMS, Object Lock, and key strategies.
 - Visual badge indicator highlighting migration mode connectors.
+- **Custom HTTP Request Headers Editor**: Dynamic key-value table enabling operators to declare custom HTTP headers injected into S3 calls.
+- **Multi-Vendor Quick Presets Dropdown**:
+
+| Storage Vendor / Target | Preset Name | Injected Headers | Description & Purpose |
+|---|---|---|---|
+| **Dell EMC ECS** | *Metadata Search & Multi-Tenancy* | `x-emc-metadata-search`<br>`x-emc-namespace`<br>`x-emc-retention-period` | Injects real-time search indexing properties, tenant namespace routing, and object retention. |
+| **Dell EMC ECS** | *Tenant Namespace only* | `x-emc-namespace` | Routes writes and reads to an isolated tenant namespace without bucket redesign. |
+| **IBM Cloud Object Storage** | *Key Protect Customer Root Key* | `ibm-sse-kp-customer-root-key-crn`<br>`ibm-sse-kp-encryption-algorithm` | Enforces envelope encryption using IBM Key Protect customer root keys (CRN). |
+| **Hitachi Content Platform (HCP)** | *HCP Retention & Shredding* | `x-hcp-retention`<br>`x-hcp-shred` | Enforces regulatory WORM hold period and cryptographic erasure shredding on disposal. |
+| **NetApp StorageGRID** | *Compliance Retention* | `x-ntap-sg-compliance-retention` | Sets NetApp StorageGRID regulatory compliance retention timestamp. |
+| **Cloudflare R2** | *Jurisdiction Placement* | `cf-placement` | Enforces regional data sovereignty and localization hints (e.g. `eu`, `eeur`). |
+| **Standard S3 / MinIO** | *Custom User Metadata* | `x-amz-meta-source-id`<br>`x-amz-meta-department` | Attaches user-defined metadata headers using dynamic document and metadata variables. |
+
+### Header Template Placeholder Syntax
+
+The connector resolves dynamic placeholders before request execution:
+- `${metadata.<name>}`: Injects value from `document.metadata()`. Multiple values are joined with commas.
+- `${metadata.<name> | <fallback>}`: Injects value, falling back to `<fallback>` if missing or empty.
+- `${document.id}`: Unique identifier of the repository document.
+- `${document.uri}`: Source URI of the repository document.
+- `${document.action}`: Document lifecycle action (`UPSERT` or `DELETE`).
+- `${job.id}`: Identifier of the crawling job.
 
 ---
 
