@@ -186,6 +186,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-s3-output-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-openarch-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>

@@ -34,7 +34,8 @@ import {
   Network,
   Layers,
   Globe,
-  Archive
+  Archive,
+  Cloud
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -102,6 +103,9 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.toLowerCase().includes('ozone')) {
     return { icon: Archive, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
+    return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
   }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
@@ -277,6 +281,7 @@ export default function ConnectorForm() {
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
       { label: 'Apache Ozone (Migration Mode only)', value: 'org.opencrawling.ozone.OzoneOutputConnector' },
+      { label: 'AWS S3 (Migration Mode only)', value: 'org.opencrawling.s3.S3OutputConnector' },
       { label: 'Hyland OpenArch Federated Ingestion & Parquet Vector Bridge', value: 'org.opencrawling.openarch.output.OpenArchOutputConnector' },
     ],
     authority: [
@@ -4010,6 +4015,122 @@ export default function ConnectorForm() {
                             className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
                             <option value="DELETE_KEY">DELETE_KEY (purge binary + sidecar)</option>
                             <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (purge + keep OIS tombstone)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* AWS S3 Output Connector (Migration Mode only) */}
+                  {selectedClass === 'org.opencrawling.s3.S3OutputConnector' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-md px-3 py-2">
+                        This connector only runs in Migration Mode: binaries are streamed as-is to Amazon S3 with companion OIS JSON metadata sidecars. Jobs using it must select Migration Mode.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label htmlFor="s3-bucket" className="text-sm font-medium">S3 Bucket Name</label>
+                          <input id="s3-bucket" {...register('configuration.bucket', { required: true })} defaultValue="enterprise-migration-lake" placeholder="enterprise-migration-lake"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-region" className="text-sm font-medium">AWS Region</label>
+                          <input id="s3-region" {...register('configuration.region')} defaultValue="us-east-1" placeholder="us-east-1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-endpoint" className="text-sm font-medium">Endpoint Override (Optional for LocalStack / MinIO)</label>
+                          <input id="s3-endpoint" type="url" {...register('configuration.endpointOverride')} placeholder="http://localhost:4566"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-path-style" className="text-sm font-medium">Path Style Access</label>
+                          <select id="s3-path-style" {...register('configuration.pathStyleAccess')} defaultValue="false"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="false">Virtual-Hosted Style (bucket.s3.amazonaws.com)</option>
+                            <option value="true">Path Style (endpoint/bucket - MinIO / LocalStack)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-creds-strategy" className="text-sm font-medium">Credentials Strategy</label>
+                          <select id="s3-creds-strategy" {...register('configuration.credentialsStrategy')} defaultValue="DEFAULT_CHAIN"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="DEFAULT_CHAIN">DEFAULT_CHAIN (IRSA / IAM / Env / Profile)</option>
+                            <option value="STATIC">STATIC (Access & Secret Keys)</option>
+                            <option value="ASSUME_ROLE">ASSUME_ROLE (STS Cross-Account)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-access-key" className="text-sm font-medium">Access Key ID</label>
+                          <input id="s3-access-key" {...register('configuration.accessKey')} placeholder="AKIA..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-secret-key" className="text-sm font-medium">Secret Access Key</label>
+                          <input id="s3-secret-key" type="password" {...register('configuration.secretKey')} placeholder="Secret..." autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-session-token" className="text-sm font-medium">Session Token (Optional)</label>
+                          <input id="s3-session-token" type="password" {...register('configuration.sessionToken')} placeholder="Session token..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-role-arn" className="text-sm font-medium">AssumeRole ARN (for ASSUME_ROLE)</label>
+                          <input id="s3-role-arn" {...register('configuration.assumeRoleArn')} placeholder="arn:aws:iam::123456789012:role/MigrationRole"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-role-ext-id" className="text-sm font-medium">AssumeRole External ID</label>
+                          <input id="s3-role-ext-id" {...register('configuration.assumeRoleExternalId')} placeholder="Optional External ID"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-key-strategy" className="text-sm font-medium">Key Strategy</label>
+                          <select id="s3-key-strategy" {...register('configuration.keyStrategy')} defaultValue="HIERARCHICAL"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="HIERARCHICAL">HIERARCHICAL (preserve folder structure)</option>
+                            <option value="FLAT">FLAT (sanitized_id_filename)</option>
+                            <option value="DATE_PARTITIONED">DATE_PARTITIONED (YYYY/MM/dd/id_filename)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-key-prefix" className="text-sm font-medium">Key Prefix</label>
+                          <input id="s3-key-prefix" {...register('configuration.keyPrefix')} defaultValue="migration/v1/" placeholder="migration/v1/"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-storage-class" className="text-sm font-medium">Storage Class</label>
+                          <select id="s3-storage-class" {...register('configuration.storageClass')} defaultValue="INTELLIGENT_TIERING"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="INTELLIGENT_TIERING">INTELLIGENT_TIERING (Recommended)</option>
+                            <option value="STANDARD">STANDARD</option>
+                            <option value="STANDARD_IA">STANDARD_IA (Infrequent Access)</option>
+                            <option value="GLACIER_IR">GLACIER_IR (Instant Retrieval)</option>
+                            <option value="GLACIER">GLACIER (Flexible Retrieval)</option>
+                            <option value="DEEP_ARCHIVE">DEEP_ARCHIVE (Cold Storage)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-encryption" className="text-sm font-medium">Server-Side Encryption</label>
+                          <select id="s3-encryption" {...register('configuration.serverSideEncryption')} defaultValue="SSE_S3"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="SSE_S3">SSE_S3 (Amazon S3-Managed AES-256)</option>
+                            <option value="SSE_KMS">SSE_KMS (AWS Key Management Service)</option>
+                            <option value="NONE">NONE</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-kms-key-id" className="text-sm font-medium">KMS Key ID / ARN (for SSE_KMS)</label>
+                          <input id="s3-kms-key-id" {...register('configuration.kmsKeyId')} placeholder="arn:aws:kms:..."
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-tombstone-action" className="text-sm font-medium">On OIS DELETE</label>
+                          <select id="s3-tombstone-action" {...register('configuration.tombstoneAction')} defaultValue="DELETE_OBJECTS"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="DELETE_OBJECTS">DELETE_OBJECTS (purge binary + sidecar)</option>
+                            <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (keep OIS tombstone)</option>
                           </select>
                         </div>
                       </div>

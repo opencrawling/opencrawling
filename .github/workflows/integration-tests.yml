@@ -79,6 +79,8 @@ jobs:
             script: "test-ozone-migration-decoupled.sh"
             ozone_client_type: "S3G"
             claim_check_client_type: "S3"
+          - name: "AWS S3 Migration Decoupled Pipeline Test Suite"
+            script: "test-s3-migration-decoupled.sh"
           - name: "Alfresco Connector Test Suite"
             script: "test-alfresco-connector.sh"
           - name: "Alfresco Decoupled Pipeline Test Suite"
