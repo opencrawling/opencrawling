@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.springframework.http.ResponseEntity;
@@ -552,6 +553,27 @@ public class JobController {
                         s3Props.setKmsKeyId(kmsKeyId);
                         s3Props.setBucketKeyEnabled(bucketKey);
                         s3Props.setTombstoneAction(tombstoneAction);
+
+                        String customHeadersJson = outConfig.configuration().get("customHeaders");
+                        if (customHeadersJson != null && !customHeadersJson.isBlank()) {
+                            try {
+                                Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                                        customHeadersJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
+                                if (parsed != null) {
+                                    s3Props.getCustomHeaders().putAll(parsed);
+                                }
+                            } catch (Exception ex) {
+                                log.warn("Failed to parse customHeaders JSON for S3 output connector: {}", ex.getMessage());
+                            }
+                        }
+                        outConfig.configuration().forEach((k, v) -> {
+                            if (k != null && k.startsWith("customHeader.") && v != null && !v.isBlank()) {
+                                String headerName = k.substring("customHeader.".length()).trim();
+                                if (!headerName.isBlank()) {
+                                    s3Props.getCustomHeaders().put(headerName, v.trim());
+                                }
+                            }
+                        });
 
                         org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties, null);
                         s3Connector.setPipelineMode(resolvePipelineMode(activeJob));

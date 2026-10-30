@@ -131,12 +131,134 @@ const getConnectorIconInfo = (className: string) => {
   return { icon: Plug2, color: 'text-muted-foreground', bg: 'bg-muted-foreground/10', border: 'border-muted-foreground/20' }
 }
 
+interface S3HeaderPair {
+  key: string
+  value: string
+}
+
+interface S3VendorPreset {
+  id: string
+  name: string
+  description: string
+  headers: S3HeaderPair[]
+}
+
+const S3_VENDOR_PRESETS: S3VendorPreset[] = [
+  {
+    id: 'ecs-full',
+    name: 'Dell EMC ECS (Metadata Search & Multi-Tenancy)',
+    description: 'Real-time metadata search indexing, tenant namespace routing, and retention',
+    headers: [
+      { key: 'x-emc-metadata-search', value: 'Department=${metadata.department},Classification=${metadata.classification}' },
+      { key: 'x-emc-namespace', value: 'default-namespace' },
+      { key: 'x-emc-retention-period', value: '31536000' }
+    ]
+  },
+  {
+    id: 'ecs-namespace',
+    name: 'Dell EMC ECS (Tenant Namespace only)',
+    description: 'Directs object ingestion to a dedicated ECS tenant namespace',
+    headers: [
+      { key: 'x-emc-namespace', value: 'finance-tenant' }
+    ]
+  },
+  {
+    id: 'ibm-cos',
+    name: 'IBM Cloud Object Storage (Key Protect SSE)',
+    description: 'Enforces IBM Key Protect customer-root-key envelope encryption',
+    headers: [
+      { key: 'ibm-sse-kp-customer-root-key-crn', value: 'crn:v1:bluemix:public:kms:us-south:a/account-id:key-id' },
+      { key: 'ibm-sse-kp-encryption-algorithm', value: '256' }
+    ]
+  },
+  {
+    id: 'hitachi-hcp',
+    name: 'Hitachi Content Platform (HCP Retention & Shredding)',
+    description: 'Enforces HCP regulatory retention hold and cryptographic shredding',
+    headers: [
+      { key: 'x-hcp-retention', value: '0' },
+      { key: 'x-hcp-shred', value: 'true' }
+    ]
+  },
+  {
+    id: 'netapp-sg',
+    name: 'NetApp StorageGRID (Compliance Retention)',
+    description: 'Applies NetApp StorageGRID regulatory compliance retention lock',
+    headers: [
+      { key: 'x-ntap-sg-compliance-retention', value: '2030-12-31T23:59:59Z' }
+    ]
+  },
+  {
+    id: 'cloudflare-r2',
+    name: 'Cloudflare R2 (Jurisdiction Placement)',
+    description: 'Directs data localization to European Union or specific jurisdiction',
+    headers: [
+      { key: 'cf-placement', value: 'eu' }
+    ]
+  },
+  {
+    id: 'standard-s3-meta',
+    name: 'Standard S3 / MinIO (Custom User Metadata)',
+    description: 'Attaches custom x-amz-meta-* user headers with document and metadata variables',
+    headers: [
+      { key: 'x-amz-meta-source-id', value: '${document.id}' },
+      { key: 'x-amz-meta-department', value: '${metadata.department | Unknown}' }
+    ]
+  }
+]
+
 export default function ConnectorForm() {
   const [activeTab, setActiveTab] = useState<ConnectorType>('repository')
   const [connectors, setConnectors] = useState<ConnectorFormData[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null)
+
+  const [s3CustomHeaders, setS3CustomHeaders] = useState<S3HeaderPair[]>([])
+  const [selectedPreset, setSelectedPreset] = useState<string>('')
+  const [newHeaderKey, setNewHeaderKey] = useState('')
+  const [newHeaderValue, setNewHeaderValue] = useState('')
+
+  const updateS3Headers = (headers: S3HeaderPair[]) => {
+    setS3CustomHeaders(headers)
+    const map: Record<string, string> = {}
+    headers.forEach(h => {
+      if (h.key && h.key.trim()) {
+        map[h.key.trim()] = h.value || ''
+      }
+    })
+    setValue('configuration.customHeaders', JSON.stringify(map))
+  }
+
+  const handleApplyPreset = (presetId: string) => {
+    const preset = S3_VENDOR_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+    const existingMap = new Map<string, string>(s3CustomHeaders.map(h => [h.key, h.value]))
+    preset.headers.forEach(h => existingMap.set(h.key, h.value))
+    const merged = Array.from(existingMap.entries()).map(([key, value]) => ({ key, value }))
+    updateS3Headers(merged)
+    setSelectedPreset('')
+  }
+
+  const handleAddCustomHeader = () => {
+    if (!newHeaderKey.trim()) return
+    const existing = s3CustomHeaders.filter(h => h.key !== newHeaderKey.trim())
+    const updated = [...existing, { key: newHeaderKey.trim(), value: newHeaderValue }]
+    updateS3Headers(updated)
+    setNewHeaderKey('')
+    setNewHeaderValue('')
+  }
+
+  const handleRemoveCustomHeader = (keyToRemove: string) => {
+    const updated = s3CustomHeaders.filter(h => h.key !== keyToRemove)
+    updateS3Headers(updated)
+  }
+
+  const handleHeaderChange = (index: number, field: 'key' | 'value', val: string) => {
+    const updated = [...s3CustomHeaders]
+    updated[index] = { ...updated[index], [field]: val }
+    updateS3Headers(updated)
+  }
 
   const [isCheckingConnection, setIsCheckingConnection] = useState(false)
   const [checkResult, setCheckResult] = useState<{ success: boolean; message: string; details?: string } | null>(null)
@@ -187,6 +309,10 @@ export default function ConnectorForm() {
   const handleReset = () => {
     setSelectedConnector(null)
     setCheckResult(null)
+    setS3CustomHeaders([])
+    setSelectedPreset('')
+    setNewHeaderKey('')
+    setNewHeaderValue('')
     reset({ 
       name: '', 
       description: '', 
@@ -200,7 +326,34 @@ export default function ConnectorForm() {
   const handleSelectConnector = (connector: ConnectorFormData) => {
     setSelectedConnector(connector.name)
     setCheckResult(null)
+    setSelectedPreset('')
+    setNewHeaderKey('')
+    setNewHeaderValue('')
     reset(connector)
+
+    if (connector.className === 'org.opencrawling.s3.S3OutputConnector' && connector.configuration) {
+      if (connector.configuration.customHeaders) {
+        try {
+          const parsed = typeof connector.configuration.customHeaders === 'string'
+            ? JSON.parse(connector.configuration.customHeaders as string)
+            : connector.configuration.customHeaders
+          const list = Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) }))
+          setS3CustomHeaders(list)
+        } catch {
+          setS3CustomHeaders([])
+        }
+      } else {
+        const list: S3HeaderPair[] = []
+        Object.entries(connector.configuration).forEach(([k, v]) => {
+          if (k.startsWith('customHeader.')) {
+            list.push({ key: k.substring('customHeader.'.length), value: String(v) })
+          }
+        })
+        setS3CustomHeaders(list)
+      }
+    } else {
+      setS3CustomHeaders([])
+    }
   }
 
   const handleCheckConnection = async () => {
@@ -4132,6 +4285,130 @@ export default function ConnectorForm() {
                             <option value="DELETE_OBJECTS">DELETE_OBJECTS (purge binary + sidecar)</option>
                             <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (keep OIS tombstone)</option>
                           </select>
+                        </div>
+                      </div>
+
+                      {/* Hidden registered input for form submission */}
+                      <input type="hidden" {...register('configuration.customHeaders')} />
+
+                      {/* Custom HTTP Request Headers & Multi-Vendor Storage Presets */}
+                      <div className="space-y-3 pt-4 border-t border-border">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                              <Settings2 className="h-4 w-4 text-orange-400" />
+                              Custom HTTP Request Headers & Storage Presets
+                            </h4>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Configure proprietary HTTP headers for Dell EMC ECS, IBM COS, Hitachi HCP, NetApp StorageGRID, or Cloudflare R2.
+                            </p>
+                          </div>
+
+                          {/* Quick Preset Selector */}
+                          <div className="flex items-center gap-2">
+                            <select
+                              id="s3-vendor-preset-select"
+                              value={selectedPreset}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setSelectedPreset(val)
+                                if (val) {
+                                  handleApplyPreset(val)
+                                }
+                              }}
+                              className="bg-background border border-border rounded-md px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            >
+                              <option value="">-- Apply Vendor Preset --</option>
+                              {S3_VENDOR_PRESETS.map((preset) => (
+                                <option key={preset.id} value={preset.id}>
+                                  {preset.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Dynamic Key-Value Table */}
+                        <div className="space-y-2">
+                          {s3CustomHeaders.length > 0 && (
+                            <div className="border border-border rounded-md overflow-hidden bg-card/40">
+                              <table className="w-full text-xs">
+                                <thead className="bg-muted/50 border-b border-border">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-2/5">Header Name</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-1/2">Header Value / Template</th>
+                                    <th className="px-2 py-2 text-center font-medium text-muted-foreground w-[10%]">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border">
+                                  {s3CustomHeaders.map((header, idx) => (
+                                    <tr key={idx} className="hover:bg-muted/20">
+                                      <td className="p-2">
+                                        <input
+                                          type="text"
+                                          value={header.key}
+                                          onChange={(e) => handleHeaderChange(idx, 'key', e.target.value)}
+                                          placeholder="e.g. x-emc-metadata-search"
+                                          className="w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/50"
+                                        />
+                                      </td>
+                                      <td className="p-2">
+                                        <input
+                                          type="text"
+                                          value={header.value}
+                                          onChange={(e) => handleHeaderChange(idx, 'value', e.target.value)}
+                                          placeholder="e.g. Dept=${metadata.department}"
+                                          className="w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/50"
+                                        />
+                                      </td>
+                                      <td className="p-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveCustomHeader(header.key)}
+                                          className="p-1 hover:text-red-400 text-muted-foreground transition-colors"
+                                          title="Remove header"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* Add New Header Input Row */}
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                            <input
+                              type="text"
+                              value={newHeaderKey}
+                              onChange={(e) => setNewHeaderKey(e.target.value)}
+                              placeholder="New Header Name (e.g. x-emc-metadata-search)"
+                              className="flex-1 bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                            <input
+                              type="text"
+                              value={newHeaderValue}
+                              onChange={(e) => setNewHeaderValue(e.target.value)}
+                              placeholder="Header Value / Template (e.g. Department=${metadata.dept})"
+                              className="flex-1 bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddCustomHeader}
+                              disabled={!newHeaderKey.trim()}
+                              className="inline-flex items-center justify-center gap-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add Header
+                            </button>
+                          </div>
+
+                          {/* Helper text explaining dynamic placeholders */}
+                          <p className="text-[11px] text-muted-foreground pt-1">
+                            <strong>Template Variables:</strong> <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;metadata.&lt;key&gt;&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;metadata.&lt;key&gt; | fallback&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.id&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.uri&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.action&#125;</code>.
+                          </p>
                         </div>
                       </div>
                     </div>

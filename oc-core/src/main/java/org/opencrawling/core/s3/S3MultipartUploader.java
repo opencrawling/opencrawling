@@ -26,6 +26,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -108,16 +109,24 @@ public class S3MultipartUploader {
 
     /** Uploads a file: single PUT below the threshold, parallel multipart above it. */
     public void uploadFile(String bucket, String key, Path file, String contentType) throws IOException {
+        uploadFile(bucket, key, file, contentType, null);
+    }
+
+    /** Uploads a file with optional custom HTTP request headers. */
+    public void uploadFile(String bucket, String key, Path file, String contentType, Map<String, String> customHeaders) throws IOException {
         long length = Files.size(file);
         if (!isMultipart(length)) {
             PutObjectRequest.Builder put = PutObjectRequest.builder().bucket(bucket).key(key).contentLength(length);
             if (contentType != null && !contentType.isBlank()) {
                 put.contentType(contentType);
             }
+            if (customHeaders != null && !customHeaders.isEmpty()) {
+                put.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
+            }
             s3Client.putObject(put.build(), RequestBody.fromFile(file));
             return;
         }
-        uploadMultipart(bucket, key, file, length, contentType);
+        uploadMultipart(bucket, key, file, length, contentType, customHeaders);
     }
 
     /**
@@ -127,11 +136,23 @@ public class S3MultipartUploader {
      * @return the number of bytes uploaded
      */
     public long uploadStream(String bucket, String key, InputStream content, String contentType) throws IOException {
+        return uploadStream(bucket, key, content, contentType, null);
+    }
+
+    /**
+     * Uploads a stream of unknown length with optional custom HTTP request headers.
+     *
+     * @return the number of bytes uploaded
+     */
+    public long uploadStream(String bucket, String key, InputStream content, String contentType, Map<String, String> customHeaders) throws IOException {
         byte[] head = content.readNBytes(MEMORY_BUFFER_LIMIT);
         if (head.length < MEMORY_BUFFER_LIMIT) {
             PutObjectRequest.Builder put = PutObjectRequest.builder().bucket(bucket).key(key).contentLength((long) head.length);
             if (contentType != null && !contentType.isBlank()) {
                 put.contentType(contentType);
+            }
+            if (customHeaders != null && !customHeaders.isEmpty()) {
+                put.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
             }
             s3Client.putObject(put.build(), RequestBody.fromBytes(head));
             return head.length;
@@ -142,14 +163,14 @@ public class S3MultipartUploader {
                 out.write(head);
                 content.transferTo(out);
             }
-            uploadFile(bucket, key, spool, contentType);
+            uploadFile(bucket, key, spool, contentType, customHeaders);
             return Files.size(spool);
         } finally {
             Files.deleteIfExists(spool);
         }
     }
 
-    private void uploadMultipart(String bucket, String key, Path file, long length, String contentType) throws IOException {
+    private void uploadMultipart(String bucket, String key, Path file, long length, String contentType, Map<String, String> customHeaders) throws IOException {
         // Grow the part size if needed to stay within the S3 limit of 10,000 parts.
         long effectivePartSize = Math.max(partSize, (length + MAX_PARTS - 1) / MAX_PARTS);
         int partCount = (int) ((length + effectivePartSize - 1) / effectivePartSize);
@@ -157,6 +178,9 @@ public class S3MultipartUploader {
         CreateMultipartUploadRequest.Builder create = CreateMultipartUploadRequest.builder().bucket(bucket).key(key);
         if (contentType != null && !contentType.isBlank()) {
             create.contentType(contentType);
+        }
+        if (customHeaders != null && !customHeaders.isEmpty()) {
+            create.overrideConfiguration(c -> customHeaders.forEach(c::putHeader));
         }
         String uploadId = s3Client.createMultipartUpload(create.build()).uploadId();
         log.info("Multipart upload of s3://{}/{} ({} bytes, {} parts of {} bytes, {} in parallel)",
