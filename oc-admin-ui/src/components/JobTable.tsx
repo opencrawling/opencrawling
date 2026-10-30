@@ -19,7 +19,6 @@ import {
   Pause, 
   Square, 
   RefreshCcw, 
-  MoreHorizontal,
   ChevronDown,
   Search,
   Loader2,
@@ -476,18 +475,6 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       console.error(`Failed to ${action} job ${id}:`, err)
     } finally {
       setActionLoading(null)
-    }
-  }
-
-  const triggerRunAll = async () => {
-    setIsLoading(true)
-    try {
-      await Promise.all(jobs.map(j => jobApi.start(j.id)))
-      await fetchJobs(false)
-    } catch (err) {
-      console.error("Failed to run all jobs:", err)
-    } finally {
-      setIsLoading(false)
     }
   }
 
