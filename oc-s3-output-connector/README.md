@@ -150,3 +150,7 @@ Run end-to-end decoupled integration tests with MinIO:
 ```bash
 ./scripts/test-s3-migration-decoupled.sh
 ```
+
+---
+
+See also the wiki page: [AWS S3 Output Connector (Migration Mode)](https://github.com/opencrawling/opencrawling/wiki/AWS-S3-Output-Connector).
