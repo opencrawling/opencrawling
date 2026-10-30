@@ -4405,10 +4405,32 @@ export default function ConnectorForm() {
                             </button>
                           </div>
 
-                          {/* Helper text explaining dynamic placeholders */}
-                          <p className="text-[11px] text-muted-foreground pt-1">
-                            <strong>Template Variables:</strong> <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;metadata.&lt;key&gt;&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;metadata.&lt;key&gt; | fallback&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.id&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.uri&#125;</code>, <code className="bg-muted px-1 py-0.5 rounded text-[10px]">&#36;&#123;document.action&#125;</code>.
-                          </p>
+                          {/* Helper container explaining dynamic placeholders with high contrast chips */}
+                          <div className="bg-card/70 border border-border/80 rounded-md p-2.5 space-y-1.5 mt-2">
+                            <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                              <span className="text-orange-400 font-bold">Template Variables Reference:</span>
+                            </div>
+                            <p className="text-xs text-foreground/80 leading-relaxed">
+                              Values are resolved dynamically per document. Use any of the following tokens in your header values:
+                            </p>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;metadata.&lt;key&gt;&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;metadata.&lt;key&gt; | fallback&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.id&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.uri&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.action&#125;
+                              </code>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
