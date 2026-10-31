@@ -21,12 +21,17 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.metadata.Property;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,7 +70,7 @@ class PipesForkTextExtractorTest {
             assertTrue(extractor.isHealthy());
             assertEquals("PipesForkParser (Process-Isolated)", extractor.getEngineName());
 
-            String sample = "Apache Tika 4.1.0 process-isolated parsing via PipesForkParser!";
+            String sample = "Apache Tika 4.2.0 process-isolated parsing via PipesForkParser!";
             byte[] bytes = sample.getBytes(StandardCharsets.UTF_8);
 
             TextExtractionResult result = extractor.extractText(
@@ -75,6 +80,7 @@ class PipesForkTextExtractorTest {
 
             assertTrue(result.success());
             assertTrue(result.text().contains("PipesForkParser"));
+            assertEquals("4.2.0", extractor.getVersion());
         }
     }
 
@@ -231,6 +237,58 @@ class PipesForkTextExtractorTest {
         assertFalse(Files.exists(escapedMaliciousFile), "Malicious zip entry must not escape destination directory");
         assertFalse(Files.exists(extractDir.resolve("escaped.jar")), "Malicious zip entry with path traversal must be rejected");
         assertFalse(Files.exists(extractDir.resolve("App.class")), "Non-jar entry should not be extracted");
+    }
+
+    @Test
+    void testPipesForkLifecycleFailureFallback() {
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(true);
+        props.setTimeoutMs(15000);
+        props.setJvmArgs(List.of("-XX:+NonExistentJvmFlagFailsStartup"));
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
+            // When native pipesForkParser.start() fails fast due to bad JVM args, fallback kicks in
+            assertFalse(extractor.isForkActive());
+            assertFalse(extractor.isHealthy(), "Service is degraded when requested fork fails to start");
+            assertEquals("In-Process Embedded Tika", extractor.getEngineName());
+
+            // Extraction should still succeed via embedded fallback
+            String sample = "Testing graceful fallback after fork initialization failure.";
+            TextExtractionResult result = extractor.extractText(
+                    sample.getBytes(StandardCharsets.UTF_8),
+                    Map.of("mimeType", List.of("text/plain"))
+            );
+            assertTrue(result.success());
+            assertTrue(result.text().contains("Testing graceful fallback"));
+        }
+    }
+
+    @Test
+    void testUtcDateNormalizationAndMetadataExtraction() {
+        // Tika 4.2.0 parses zone-less dates as UTC (TIKA-4917)
+        Metadata md = new Metadata();
+        md.set("custom_date", "2026-10-25T14:30:00");
+        Date parsedDate = md.getDate(Property.externalDate("custom_date"));
+        assertNotNull(parsedDate);
+        Instant instant = parsedDate.toInstant();
+        assertEquals(Instant.parse("2026-10-25T14:30:00Z"), instant);
+
+        // Verify metadata extraction via extractor
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(false);
+        props.setExtractMetadata(true);
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
+            Map<String, List<String>> initialMeta = new HashMap<>();
+            initialMeta.put("mimeType", List.of("text/plain"));
+            TextExtractionResult result = extractor.extractText(
+                    "Sample text content for metadata test.".getBytes(StandardCharsets.UTF_8),
+                    initialMeta
+            );
+            assertTrue(result.success());
+            assertNotNull(result.metadata());
+            assertTrue(result.metadata().containsKey("tk:Content-Type"));
+        }
     }
 
     private byte[] createSampleZipBytes() throws IOException {

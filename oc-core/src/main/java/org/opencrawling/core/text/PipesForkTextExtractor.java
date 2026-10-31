@@ -282,17 +282,7 @@ public class PipesForkTextExtractor implements TextExtractionService {
     }
 
     private void startFork() throws Exception {
-        Metadata warmupMetadata = new Metadata();
-        warmupMetadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, "warmup.txt");
-        warmupMetadata.set(org.apache.tika.metadata.HttpHeaders.CONTENT_TYPE, "text/plain");
-
-        try (TikaInputStream tis = TikaInputStream.get("OpenCrawling Warmup".getBytes(StandardCharsets.UTF_8))) {
-            PipesForkResult result = pipesForkParser.parse(tis, warmupMetadata);
-            if (!result.isSuccess()) {
-                throw new IllegalStateException("Fork test parse failed: " + result.getStatus()
-                        + (result.getMessage() != null ? " - " + result.getMessage() : ""));
-            }
-        }
+        pipesForkParser.start();
     }
 
     @Override
@@ -510,7 +500,7 @@ public class PipesForkTextExtractor implements TextExtractionService {
     @Override
     public String getVersion() {
         String ver = Tika.class.getPackage().getImplementationVersion();
-        return (ver != null && !ver.isBlank()) ? ver : "4.1.0";
+        return (ver != null && !ver.isBlank()) ? ver : "4.2.0";
     }
 
     @Override

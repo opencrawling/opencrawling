@@ -39,7 +39,7 @@ class SystemControllerTest {
         properties = new TextExtractionProperties();
         extractionService = mock(TextExtractionService.class);
         when(extractionService.isHealthy()).thenReturn(true);
-        when(extractionService.getVersion()).thenReturn("4.1.0");
+        when(extractionService.getVersion()).thenReturn("4.2.0");
         when(extractionService.getEngineName()).thenReturn("PipesForkParser (Process-Isolated)");
 
         controller = new SystemController(null, null, properties, extractionService);
@@ -49,7 +49,7 @@ class SystemControllerTest {
     void testSystemStatusWithHealthyTika() {
         Map<String, String> status = controller.getSystemStatus();
         assertEquals("UP", status.get("tika"));
-        assertEquals("4.1.0", status.get("tikaVersion"));
+        assertEquals("4.2.0", status.get("tikaVersion"));
         assertEquals("PipesForkParser (Process-Isolated)", status.get("tikaEngine"));
     }
 
@@ -74,7 +74,7 @@ class SystemControllerTest {
                 "Ollama", "http://127.0.0.1:11434", "mxbai-embed-large", 1024,
                 "TokenTextSplitter", 800, 100, "ozone", "NATIVE",
                 "http://127.0.0.1:9878", "127.0.0.1", 9862, "s3v", "claims",
-                "4.1.0", "PipesForkParser (Process-Isolated)", true, 45000L,
+                "4.2.0", "PipesForkParser (Process-Isolated)", true, 45000L,
                 "-Xmx1g", 5000, true, true, 10000000, 4
         );
 
@@ -96,7 +96,7 @@ class SystemControllerTest {
                 "Ollama", "http://127.0.0.1:11434", "mxbai-embed-large", 1024,
                 "TokenTextSplitter", 800, 100, "ozone", "NATIVE",
                 "http://127.0.0.1:9878", "127.0.0.1", 9862, "s3v", "claims",
-                "4.1.0", "PipesForkParser (Process-Isolated)", true, 30000L,
+                "4.2.0", "PipesForkParser (Process-Isolated)", true, 30000L,
                 "-Xmx512m; rm -rf /", 10000, true, true, 20000000, 1
         );
 
@@ -111,7 +111,7 @@ class SystemControllerTest {
                 "Ollama", "http://127.0.0.1:11434", "mxbai-embed-large", 1024,
                 "TokenTextSplitter", 800, 100, "ozone", "NATIVE",
                 "http://127.0.0.1:9878", "127.0.0.1", 9862, "s3v", "claims",
-                "4.1.0", "PipesForkParser (Process-Isolated)", true, 30000L,
+                "4.2.0", "PipesForkParser (Process-Isolated)", true, 30000L,
                 "-Dcom.sun.management.jmxremote", 10000, true, true, 20000000, 1
         );
 

@@ -120,7 +120,7 @@ export default function Dashboard() {
              systemStatus.tika === 'UP' ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
            }`}>
               <FileText className="w-3.5 h-3.5" />
-              <span>Tika: {systemStatus.tika || 'UP'} ({systemStatus.tikaVersion || '4.1.0'})</span>
+              <span>Tika: {systemStatus.tika || 'UP'} ({systemStatus.tikaVersion || '4.2.0'})</span>
            </div>
         </div>
       </div>
