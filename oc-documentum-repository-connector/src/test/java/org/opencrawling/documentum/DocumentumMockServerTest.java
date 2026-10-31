@@ -665,13 +665,14 @@ class DocumentumMockServerTest {
 
     @Test
     void maxDocumentsMovesOnAcrossIncrementalRuns() throws Exception {
-        DocumentumProperties s = settings(Map.of("incrementalEnabled", "true", "includeContentStream", "false",
-                "maxDocuments", "10"));
         long inScope = mockDocs().stream().filter(m -> !excluded(m)).count();
+        int max = (int) Math.max(10, inScope / 5 + 1); // about five runs, whatever the repository's size
+        DocumentumProperties s = settings(Map.of("incrementalEnabled", "true", "includeContentStream", "false",
+                "maxDocuments", String.valueOf(max)));
         Set<String> indexed = new HashSet<>();
         for (int run = 1; run <= 10 && indexed.size() < inScope; run++) {
             Result r = crawl(s);
-            assertTrue(r.upserts().size() <= 10, "at most max-documents per run");
+            assertTrue(r.upserts().size() <= max, "at most max-documents per run");
             Set<String> fresh = r.upserts().stream().map(RepositoryDocument::id).filter(id -> !indexed.contains(id))
                     .collect(Collectors.toSet());
             assertFalse(fresh.isEmpty(), "run " + run + " indexes documents the earlier runs did not reach");
