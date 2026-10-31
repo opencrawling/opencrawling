@@ -103,6 +103,10 @@ jobs:
             script: "test-filenet-repository-connector.sh"
           - name: "FileNet Decoupled Pipeline Test Suite"
             script: "test-filenet-decoupled.sh"
+          - name: "Documentum Connector Test Suite"
+            script: "test-documentum-repository-connector.sh"
+          - name: "Documentum Decoupled Pipeline Test Suite"
+            script: "test-documentum-decoupled.sh"
           - name: "Flowable Connector Test Suite"
             script: "test-flowable-connector.sh"
           - name: "Flowable Decoupled Pipeline Test Suite"
@@ -169,6 +173,17 @@ jobs:
         run: |
           mkdir -p oc-runtime/data oc-cli/target oc-embedding-service/target
           chmod 755 oc-runtime/data oc-cli/target oc-embedding-service/target
+
+      # the DCTM REST mock's conformance check reads OpenText's published OpenAPI document, which is YAML
+      - name: Set up Python for the Documentum mock conformance check
+        if: matrix.test.script == 'test-documentum-repository-connector.sh'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML for the Documentum mock conformance check
+        if: matrix.test.script == 'test-documentum-repository-connector.sh'
+        run: pip install pyyaml
 
       - name: Execute ${{ matrix.test.name }}
         env:

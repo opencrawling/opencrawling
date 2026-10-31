@@ -389,6 +389,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. default, or /Mortgages/Commercial',
           description: 'Use default for the connector configuration. A folder path runs a one-off (non-incremental) crawl of that folder and its subfolders.'
         };
+      case 'org.opencrawling.documentum.DocumentumRepositoryConnector':
+        return {
+          label: 'Cabinet / Folder Path',
+          placeholder: 'e.g. default, or /Regulatory/Submissions',
+          description: 'Use default for the connector configuration. A cabinet or folder path runs a one-off (non-incremental) crawl of it and its subfolders.'
+        };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {
           label: 'Iceberg Table Name',

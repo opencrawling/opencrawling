@@ -112,6 +112,7 @@ public class OpenCrawlingApplication {
                     !"sharepoint".equalsIgnoreCase(repositoryConnectorType) &&
                     !"mfiles".equalsIgnoreCase(repositoryConnectorType) &&
                     !"filenet".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"documentum".equalsIgnoreCase(repositoryConnectorType) &&
                     !"openarch".equalsIgnoreCase(repositoryConnectorType) &&
                     !"jdbc".equalsIgnoreCase(repositoryConnectorType)) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");

@@ -24,6 +24,7 @@
 [![M-Files](https://img.shields.io/badge/M--Files-MFWS_REST-0072CE.svg?style=flat)](https://www.m-files.com/)
 [![SharePoint](https://img.shields.io/badge/SharePoint_Online-Microsoft_Graph_v1.0-0078D4.svg?style=flat)](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint)
 [![IBM FileNet P8](https://img.shields.io/badge/IBM_FileNet_P8-Content_Services_GraphQL-0F62FE.svg?style=flat)](https://www.ibm.com/products/filenet-content-manager)
+[![OpenText Documentum](https://img.shields.io/badge/OpenText_Documentum-REST_Services-1A2B6D.svg?style=flat)](https://www.opentext.com/products/documentum-content-management)
 [![Hyland OpenArch](https://img.shields.io/badge/Hyland_OpenArch-Supported-4F46E5.svg?style=flat)](docs/Hyland-OpenArch-Integration.md)
 [![Flowable](https://img.shields.io/badge/Flowable_BPMN-Supported-007ACC.svg?style=flat&logo=flowable&logoColor=white)](https://www.flowable.com/)
 [![Camunda](https://img.shields.io/badge/Camunda_BPM-Supported-E10076.svg?style=flat&logo=camunda&logoColor=white)](https://camunda.com/)
@@ -84,6 +85,7 @@ graph TD
         SharePoint_Conn[SharePoint Online Repository - oc-sharepoint-repository-connector]
         MFiles_Repo_Conn[M-Files Vault - oc-mfiles-repository-connector]
         FileNet_Repo_Conn[IBM FileNet P8 Object Store - oc-filenet-repository-connector]
+        Documentum_Repo_Conn[OpenText Documentum Repository - oc-documentum-repository-connector]
         OpenArch_Repo_Conn[Hyland OpenArch Repository - oc-openarch-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
@@ -521,7 +523,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
   - **S3 Gateway Client (`s3g`)**: Standard AWS S3 SDK integration hitting Ozone's S3 Gateway endpoint for maximum cloud versatility.
-- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, **SharePoint Online (Microsoft Graph)**, **M-Files Vault (MFWS REST)**, **IBM FileNet P8 (Content Services GraphQL)**, **Hyland OpenArch**, Apache Iceberg, Flowable BPMN, Camunda, Apache StormCrawler, and **gRPC Push Ingestion Gateway**.
+- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, **SharePoint Online (Microsoft Graph)**, **M-Files Vault (MFWS REST)**, **IBM FileNet P8 (Content Services GraphQL)**, **OpenText Documentum (REST Services)**, **Hyland OpenArch**, Apache Iceberg, Flowable BPMN, Camunda, Apache StormCrawler, and **gRPC Push Ingestion Gateway**.
 - **Hyland OpenArch & Parquet Vector Bridging**: Native bidirectional integration supporting paged HXQL harvesting, binary blob offloading via Java 25 Virtual Threads, Parquet vector serialization (`embedding.avsc`), Zero-Trust ACL preservation, and MCP search/fetch tools (`openarch_search`, `openarch_fetch_document`).
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
@@ -997,6 +999,42 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 
 In the Admin UI it is the **IBM FileNet P8 (Content Platform Engine)** repository connector. See
 [oc-filenet-repository-connector/README.md](oc-filenet-repository-connector/README.md).
+
+### Option A.8.f: OpenText Documentum Crawling
+
+[![OpenText Documentum](https://img.shields.io/badge/OpenText_Documentum-REST_Services-1A2B6D.svg?style=flat)](https://www.opentext.com/products/documentum-content-management)
+
+To crawl a repository of an [OpenText Documentum](https://www.opentext.com/products/documentum-content-management)
+Content Server, select the Documentum repository connector and point it at Documentum REST Services:
+
+> **Prerequisites:** you need a licensed OpenText Documentum installation with Documentum REST Services deployed, and an
+> account that can read the documents to crawl (Basic with a password or login ticket, OAuth2 / OTDS, or a bearer token).
+> OpenCrawling doesn't include OpenText Documentum or any OpenText licence. See the
+> [full prerequisites](oc-documentum-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=documentum \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=documentum \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_URL=https://<rest-host>/dctm-rest \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_REPOSITORY_NAME=<repository> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_OBJECT_TYPES=my_contract \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`DocumentumRepositoryConnector` reads documents through Documentum REST Services and DQL.
+- **What it crawls:** objects of the configured types (subtypes included) matching an optional DQL condition
+  (`crawl-mode: dql`), or below a cabinet or folder (`folder`); the CURRENT, the latest major, or every version.
+- **What each document carries:** its attributes, including the single and repeating attributes of custom types, its
+  primary content or a preferred rendition (such as PDF), its folder paths, and its permission set as OIS permissions,
+  deny by default (access restrictions become denies; documents with required groups are left out).
+- **Incremental crawls and deletes:** an `r_modify_date` watermark with keyset paging skips unchanged documents; edited
+  permission sets are detected; destroyed documents are found by reconciling the current ids (no auditing needed) or from
+  the `dm_audittrail`, and become `DELETE` tombstones.
+
+In the Admin UI it is the **OpenText Documentum (REST Services)** repository connector. See
+[oc-documentum-repository-connector/README.md](oc-documentum-repository-connector/README.md).
 
 ### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
 

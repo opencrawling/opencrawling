@@ -286,6 +286,8 @@ export default function ConnectorForm() {
   const mfilesCrawlMode = watch('configuration.crawlMode') || 'search'
   const filenetAuthType = watch('configuration.authType') || 'basic'
   const filenetCrawlMode = watch('configuration.crawlMode') || 'query'
+  const documentumAuthType = watch('configuration.authType') || 'basic'
+  const documentumCrawlMode = watch('configuration.crawlMode') || 'dql'
   const openarchCrawlMode = watch('configuration.crawlMode') || 'QUERY'
 
   const fetchConnectors = async () => {
@@ -415,6 +417,7 @@ export default function ConnectorForm() {
       { label: 'Microsoft SharePoint (Microsoft Graph API)', value: 'org.opencrawling.sharepoint.SharePointRepositoryConnector' },
       { label: 'M-Files Repository (Knowledge Work Automation)', value: 'org.opencrawling.mfiles.MFilesRepositoryConnector' },
       { label: 'IBM FileNet P8 (Content Platform Engine)', value: 'org.opencrawling.filenet.FileNetRepositoryConnector' },
+      { label: 'OpenText Documentum (REST Services)', value: 'org.opencrawling.documentum.DocumentumRepositoryConnector' },
       { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
       { label: 'gRPC Push Ingestion Connector', value: 'org.opencrawling.push.grpc.GrpcPushRepositoryConnector' },
       { label: 'Hyland OpenArch Federated Repository', value: 'org.opencrawling.openarch.repository.OpenArchRepositoryConnector' },
@@ -2736,6 +2739,346 @@ export default function ConnectorForm() {
                           {...register('configuration.stateDirectory')}
                           placeholder="data/filenet-state"
                           defaultValue="data/filenet-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OpenText Documentum Repository Connector */}
+                  {selectedClass === 'org.opencrawling.documentum.DocumentumRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a licensed OpenText Documentum Content Server.</span>{' '}
+                          OpenCrawling does not include OpenText Documentum or any OpenText licence. Documentum REST Services must be
+                          deployed, and the crawl account must be able to read the documents (a superuser, or READ on them). See the
+                          connector&apos;s README, section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Documentum REST Services URL</label>
+                        <input
+                          {...register('configuration.url', { required: true })}
+                          placeholder="https://dctm.example.com/dctm-rest"
+                          defaultValue="https://localhost:8443/dctm-rest"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Repository (Docbase) Name</label>
+                        <input
+                          {...register('configuration.repositoryName', { required: true })}
+                          placeholder="corp_repo"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">Basic (Username / Password or Login Ticket)</option>
+                          <option value="oauth2">OAuth2 Client Credentials (OTDS)</option>
+                          <option value="bearer">Bearer Access Token</option>
+                        </select>
+                      </div>
+                      {documentumAuthType === 'basic' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input
+                          {...register('configuration.username')}
+                          placeholder="dctm_crawler"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {documentumAuthType === 'oauth2' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Token URL</label>
+                        <input
+                          {...register('configuration.oauth2TokenUrl')}
+                          placeholder="https://otds.example.com/otdsws/oauth2/token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client ID</label>
+                        <input
+                          {...register('configuration.oauth2ClientId')}
+                          placeholder="opencrawling-documentum-client"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2ClientSecret')}
+                          placeholder="client secret"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2Scope')}
+                          placeholder="openid"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {documentumAuthType === 'bearer' && (
+                        <>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Access Token</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2AccessToken')}
+                          placeholder="eyJ…"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="dql"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="dql">DQL Query (Object Types)</option>
+                          <option value="folder">Cabinet / Folder (FOLDER … DESCEND)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Policy</label>
+                        <select
+                          {...register('configuration.versionMode')}
+                          defaultValue="current_only"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="current_only">CURRENT Version Only</option>
+                          <option value="latest_major">Latest Major Version (n.0)</option>
+                          <option value="all_versions">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Object Types (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.objectTypes')}
+                          placeholder="dm_document, my_contract"
+                          defaultValue="dm_document"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {documentumCrawlMode === 'folder' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Cabinet / Folder Path</label>
+                        <input
+                          {...register('configuration.rootCabinetPath')}
+                          placeholder="/Regulatory/Submissions"
+                          defaultValue="/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeSubfoldersDocumentum"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders
+                        </label>
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Additional DQL Condition (Optional)</label>
+                        <input
+                          {...register('configuration.where')}
+                          placeholder="a_status = 'Approved' AND r_creation_date > DATE('2026/01/01','yyyy/mm/dd')"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Full DQL Statement (Optional, Replaces the Types)</label>
+                        <input
+                          {...register('configuration.dqlQuery')}
+                          placeholder="SELECT r_object_id FROM my_contract WHERE ANY regions = 'EMEA'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Preferred Rendition Format (Optional)</label>
+                        <input
+                          {...register('configuration.preferRendition')}
+                          placeholder="pdf (empty = primary content)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">dm_world Identity</label>
+                        <input
+                          {...register('configuration.worldIdentity')}
+                          placeholder="dm_world"
+                          defaultValue="dm_world"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Principal Format</label>
+                        <select
+                          {...register('configuration.principalFormat')}
+                          defaultValue="name"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="name">User Names as Stored (user_name, Lower-Cased)</option>
+                          <option value="login">Login Names (user_login_name)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Documents with Required Groups</label>
+                        <select
+                          {...register('configuration.requiredGroupDocuments')}
+                          defaultValue="exclude"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="exclude">Leave Out (Safe Default)</option>
+                          <option value="fallback">Index for Fallback Principals Only</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback Principals (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="granted read when no permission is readable; empty = nobody"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Deletion Tracking</label>
+                        <select
+                          {...register('configuration.deletionTracking')}
+                          defaultValue="reconcile"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="reconcile">Reconcile Current Ids (No Auditing Needed)</option>
+                          <option value="audit">dm_audittrail Events (dm_destroy, dm_prune)</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Server Time Zone</label>
+                        <input
+                          {...register('configuration.serverTimeZone')}
+                          placeholder="auto, or e.g. Europe/Berlin"
+                          defaultValue="auto"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size (Rows per DQL Page, Max 1000)</label>
+                        <input
+                          {...register('configuration.batchSize')}
+                          placeholder="100"
+                          defaultValue="100"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallel Documents</label>
+                        <input
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue="4"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input
+                          {...register('configuration.maxContentSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue="52428800"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeContentStreamDocumentum"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeAclsDocumentum"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Permissions & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeCustomAttributesDocumentum"
+                          {...register('configuration.includeCustomAttributes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomAttributesDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Custom Type Attributes
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="incrementalEnabledDocumentum"
+                          {...register('configuration.incrementalEnabled')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalEnabledDocumentum" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Watermark, Skip Unchanged)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/documentum-state"
+                          defaultValue="data/documentum-state"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>

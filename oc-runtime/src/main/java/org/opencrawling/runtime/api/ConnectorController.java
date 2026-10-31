@@ -216,6 +216,36 @@ public class ConnectorController {
             Map.entry("timeoutSeconds", "30"),
             Map.entry("stateDirectory", "data/filenet-state")
         )));
+        defaults.add(new ConnectorDTO("Documentum_Repository", "OpenText Documentum (REST Services)", "repository", "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "https://localhost:8443/dctm-rest"),
+            Map.entry("repositoryName", ""),
+            Map.entry("authType", "basic"),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "dql"),
+            Map.entry("objectTypes", "dm_document"),
+            Map.entry("where", ""),
+            Map.entry("dqlQuery", ""),
+            Map.entry("rootCabinetPath", "/"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "current_only"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("preferRendition", ""),
+            Map.entry("includeAcls", "true"),
+            Map.entry("worldIdentity", "dm_world"),
+            Map.entry("principalFormat", "name"),
+            Map.entry("requiredGroupDocuments", "exclude"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("includeCustomAttributes", "true"),
+            Map.entry("deletionTracking", "reconcile"),
+            Map.entry("incrementalEnabled", "true"),
+            Map.entry("serverTimeZone", "auto"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("timeoutSeconds", "30"),
+            Map.entry("stateDirectory", "data/documentum-state")
+        )));
         defaults.add(new ConnectorDTO("Grpc_Push_Connector", "gRPC Push Streaming Ingestion", "repository", "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", 100, Map.of(
             "port", "9096",
             "maxMessageSizeMb", "64",
