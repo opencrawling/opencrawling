@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.springframework.http.ResponseEntity;
@@ -521,6 +522,69 @@ public class JobController {
                         ozoneConnector.setPipelineMode(resolvePipelineMode(activeJob));
                         resolvedOutputConnector = ozoneConnector;
                         log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
+                    } else if (cls.contains("S3") || (cls.contains("s3") && !cls.contains("opensearch") && !cls.contains("OpenSearch"))) {
+                        String bucket = outConfig.configuration().getOrDefault("bucket", "enterprise-migration-lake");
+                        String region = outConfig.configuration().getOrDefault("region", "us-east-1");
+                        String endpoint = outConfig.configuration().getOrDefault("endpointOverride", "");
+                        boolean pathStyle = Boolean.parseBoolean(outConfig.configuration().getOrDefault("pathStyleAccess", "false"));
+                        String credsStrategy = outConfig.configuration().getOrDefault("credentialsStrategy", "DEFAULT_CHAIN");
+                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "");
+                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "");
+                        String sessionToken = outConfig.configuration().getOrDefault("sessionToken", "");
+                        String assumeRoleArn = outConfig.configuration().getOrDefault("assumeRoleArn", "");
+                        String assumeRoleExternalId = outConfig.configuration().getOrDefault("assumeRoleExternalId", "");
+                        String keyStrategy = outConfig.configuration().getOrDefault("keyStrategy", "HIERARCHICAL");
+                        String keyPrefix = outConfig.configuration().getOrDefault("keyPrefix", "migration/v1/");
+                        String storageClass = outConfig.configuration().getOrDefault("storageClass", "INTELLIGENT_TIERING");
+                        String sse = outConfig.configuration().getOrDefault("serverSideEncryption", "SSE_S3");
+                        String kmsKeyId = outConfig.configuration().getOrDefault("kmsKeyId", "");
+                        boolean bucketKey = Boolean.parseBoolean(outConfig.configuration().getOrDefault("bucketKeyEnabled", "true"));
+                        String tombstoneAction = outConfig.configuration().getOrDefault("tombstoneAction", "DELETE_OBJECTS");
+
+                        org.opencrawling.s3.config.S3OutputProperties s3Props = new org.opencrawling.s3.config.S3OutputProperties();
+                        s3Props.setBucket(bucket);
+                        s3Props.setRegion(region);
+                        s3Props.setEndpointOverride(endpoint);
+                        s3Props.setPathStyleAccess(pathStyle);
+                        s3Props.setCredentialsStrategy(credsStrategy);
+                        s3Props.setAccessKey(accessKey);
+                        s3Props.setSecretKey(secretKey);
+                        s3Props.setSessionToken(sessionToken);
+                        s3Props.setAssumeRoleArn(assumeRoleArn);
+                        s3Props.setAssumeRoleExternalId(assumeRoleExternalId);
+                        s3Props.setKeyStrategy(keyStrategy);
+                        s3Props.setKeyPrefix(keyPrefix);
+                        s3Props.setStorageClass(storageClass);
+                        s3Props.setServerSideEncryption(sse);
+                        s3Props.setKmsKeyId(kmsKeyId);
+                        s3Props.setBucketKeyEnabled(bucketKey);
+                        s3Props.setTombstoneAction(tombstoneAction);
+
+                        String customHeadersJson = outConfig.configuration().get("customHeaders");
+                        if (customHeadersJson != null && !customHeadersJson.isBlank()) {
+                            try {
+                                Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                                        customHeadersJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
+                                if (parsed != null) {
+                                    s3Props.getCustomHeaders().putAll(parsed);
+                                }
+                            } catch (Exception ex) {
+                                log.warn("Failed to parse customHeaders JSON for S3 output connector: {}", ex.getMessage());
+                            }
+                        }
+                        outConfig.configuration().forEach((k, v) -> {
+                            if (k != null && k.startsWith("customHeader.") && v != null && !v.isBlank()) {
+                                String headerName = k.substring("customHeader.".length()).trim();
+                                if (!headerName.isBlank()) {
+                                    s3Props.getCustomHeaders().put(headerName, v.trim());
+                                }
+                            }
+                        });
+
+                        org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties, null);
+                        s3Connector.setPipelineMode(resolvePipelineMode(activeJob));
+                        resolvedOutputConnector = s3Connector;
+                        log.info("Successfully resolved dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
                     }
                 }
             } catch (Exception e) {
@@ -536,10 +600,12 @@ public class JobController {
 
             final PipelineMode mode = resolvePipelineMode(activeJob);
 
-            // Fail fast: the Apache Ozone output connector is dedicated to Migration Mode only
-            if (resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector && !mode.isMigration()) {
-                log.error("Job {} rejected: OzoneOutputConnector requires pipeline mode 'migration' but job resolved to '{}'", id, mode.externalName());
-                updateJobStatusAndStage(id, "Error", "Rejected: Ozone output requires migration mode", getActualDbDocCount());
+            // Fail fast: the Apache Ozone and AWS S3 output connectors are dedicated to Migration Mode only
+            if ((resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector
+                    || resolvedOutputConnector instanceof org.opencrawling.s3.S3OutputConnector) && !mode.isMigration()) {
+                String connectorName = resolvedOutputConnector.getClass().getSimpleName();
+                log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
+                updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
                 return ResponseEntity.status(409).build();
             }
             

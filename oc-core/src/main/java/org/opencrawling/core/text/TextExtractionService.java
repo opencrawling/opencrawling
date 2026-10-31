@@ -80,6 +80,6 @@ public interface TextExtractionService extends AutoCloseable {
      * Version of the underlying extraction library.
      */
     default String getVersion() {
-        return "4.1.0";
+        return "4.2.0";
     }
 }

@@ -115,6 +115,7 @@
         <module>oc-luxir-output-connector</module>
         <module>oc-seatunnel-output-connector</module>
         <module>oc-ozone-output-connector</module>
+        <module>oc-s3-output-connector</module>
         <module>oc-openarch-output-connector</module>
         <module>oc-openarch-repository-connector</module>
         <module>oc-flowable-repository-connector</module>
@@ -143,7 +144,7 @@
         <picocli.version>4.7.6</picocli.version>
         <jline.version>3.26.1</jline.version>
         <spring-ai.version>2.0.1</spring-ai.version>
-        <tika.version>4.1.0</tika.version>
+        <tika.version>4.2.0</tika.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-io.version>2.22.0</commons-io.version>
         <jaxb-api.version>2.3.1</jaxb-api.version>
@@ -169,7 +170,7 @@
         <maven-failsafe-plugin.version>3.6.0</maven-failsafe-plugin.version>
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         
-        <aws-sdk.version>2.30.34</aws-sdk.version>
+        <aws-sdk.version>2.57.7</aws-sdk.version>
         <docker-maven-plugin.version>0.49.0</docker-maven-plugin.version>
         <skipITs>true</skipITs>
         <gpg.skip>true</gpg.skip>
@@ -219,6 +220,11 @@
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>s3</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>sts</artifactId>
                 <version>${aws-sdk.version}</version>
             </dependency>
             <dependency>

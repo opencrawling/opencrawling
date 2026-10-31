@@ -13,7 +13,8 @@
 [![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-Supported-black.svg?style=flat&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
 [![Apache Iceberg](https://img.shields.io/badge/Apache_Iceberg-1.11.0-3a6bc8.svg?style=flat&logo=apache&logoColor=white)](https://iceberg.apache.org/)
 [![Apache Ozone](https://img.shields.io/badge/Apache_Ozone-2.2.0-FF6600.svg?style=flat&logo=apache&logoColor=white)](https://ozone.apache.org/)
-[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.1.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
+[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
+[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.2.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
 [![Apache Solr](https://img.shields.io/badge/Apache_Solr-10-D9411E.svg?style=flat&logo=apachesolr&logoColor=white)](https://solr.apache.org/)
 [![Apache ManifoldCF](https://img.shields.io/badge/Apache_ManifoldCF-Supported-D22128.svg?style=flat&logo=apache&logoColor=white)](https://manifoldcf.apache.org/)
 [![Alfresco](https://img.shields.io/badge/Alfresco_Content_Services-Supported-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)
@@ -1050,6 +1051,21 @@ This launches a SeaTunnel Zeta cluster alongside OpenCrawling's streaming pipeli
 
 ---
 
+### Option A.10: Decoupled AWS S3 Migration Deployment
+
+[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
+
+To run the complete decoupled microservice pipeline in **Migration Mode** streaming original document binaries and companion Zero-Trust OIS JSON sidecars (`.ois.json`) into Amazon S3 or S3-compatible cloud object stores (MinIO, Ceph, Cloudflare R2):
+
+1. **Start the decoupled stack with S3/MinIO**:
+   ```bash
+   docker compose -f oc-s3-output-connector/docker/docker-compose-decoupled-with-s3.yml up -d
+   ```
+
+This launches the decoupled crawler, ingestion consumer, writer consumer (`S3MigrationWriterConsumer`), and Secure MCP server with MinIO S3 and Kafka. In Migration Mode, text parsing and vector embeddings are completely bypassed, streaming pristine binaries and writing OIS JSON sidecars with custom HTTP request headers, dynamic template placeholders, and parallel multipart uploads.
+
+---
+
 #### Running the Decoupled Integration Tests
 
 We provide fully automated end-to-end integration test scripts that build, boot, test, and cleanse the entire decoupled environment:
@@ -1071,6 +1087,12 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-ozone-decoupled.sh
     ```
     This script tests the decoupled architecture using Apache Ozone 2.2.0 (SCM, OM, Datanode, S3 Gateway) as the Claim Check Object Store for large document payloads.
+
+*   **AWS S3 Migration Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-s3-migration-decoupled.sh
+    ```
+    This script tests the decoupled architecture in Migration Mode against MinIO / AWS S3, asserting bit-for-bit SHA-256 binary fidelity, companion OIS Zero-Trust JSON sidecars (`.ois.json`), RAG bypass (0 vector records in pgvector), parallel multipart uploads, custom request headers with dynamic template engine, and OIS tombstone deletions.
 
 *   **Qdrant Decoupled Pipeline**:
     ```bash

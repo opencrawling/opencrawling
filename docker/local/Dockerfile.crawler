@@ -41,6 +41,7 @@ COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
 COPY oc-doxis-client/pom.xml oc-doxis-client/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
 COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
+COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
 COPY oc-flowable-repository-connector/pom.xml oc-flowable-repository-connector/
 COPY oc-camunda-repository-connector/pom.xml oc-camunda-repository-connector/
 COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
@@ -86,6 +87,7 @@ COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
 COPY oc-doxis-client/src/ /app/oc-doxis-client/src/
 COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
 COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
+COPY oc-s3-output-connector/src/ /app/oc-s3-output-connector/src/
 COPY oc-flowable-repository-connector/src/ /app/oc-flowable-repository-connector/src/
 COPY oc-camunda-repository-connector/src/ /app/oc-camunda-repository-connector/src/
 COPY oc-aps-repository-connector/src/ /app/oc-aps-repository-connector/src/

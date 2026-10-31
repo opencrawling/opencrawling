@@ -55,9 +55,9 @@ public class TextExtractionProperties {
 
     /**
      * Restart a forked process after parsing this many files to bound slow leaks.
-     * Default: 10,000.
+     * Default: 100,000.
      */
-    private int maxFilesPerProcess = 10000;
+    private int maxFilesPerProcess = 100000;
 
     /**
      * Whether to extract embedded documents (e.g. zip/tar/attachments).
