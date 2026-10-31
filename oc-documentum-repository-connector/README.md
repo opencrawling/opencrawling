@@ -95,7 +95,7 @@ Admin UI or `connectors.json` uses the camelCase key.
 | `parallelism` | `parallelism` | `4` | Documents processed at once |
 | `timeout-seconds` | `timeoutSeconds` | `30` | HTTP timeout |
 | `max-retries` | `maxRetries` | `3` | Retries of throttled or failed requests |
-| `max-documents` | `maxDocuments` | `0` | Stop after this many documents (0 = no limit) |
+| `max-documents` | `maxDocuments` | `0` | Index at most this many changed documents per run (0 = no limit); unchanged ones do not count, so successive incremental runs work through a large repository |
 | `state-directory` | `stateDirectory` | `data/documentum-state` | Incremental crawl state |
 
 ## Example `application.yml`
@@ -304,6 +304,14 @@ Start with `DOCUMENTUM_MAX_DOCUMENTS` on a large repository.
   relies on `dm_destroy` being registered for auditing; the connector checks the account may read the audit trail,
   not the registration.
 - **Content denied to the crawl account** stays metadata-only until the document changes; use a superuser or grant READ.
+- **The repeated hour when clocks go back.** A date literal in that hour is ambiguous to DQL; if the Content Server reads
+  it as the later hour, a listing crossing it at that moment can skip documents saved in the earlier one. Once a year,
+  and only for documents saved in that hour; a full run, or `reconcile`, recovers them.
+- **Large repositories.** The crawl state (one entry per document) and the reconcile sweep (the object ids in scope) are
+  held in memory: plan heap for them, about a few hundred bytes per document.
+- **A failed or cut-short run** (a document that could not be crawled, or `max-documents`) advances nothing: the
+  watermark, the event watermark and the permission set stamps stay as they were, and every document the state knows
+  stays known, so the next run retries without losing edits or deletions.
 - **Folders, cabinets and non-sysobject types** are not crawled; only the configured document types are.
 
 See also the wiki page: [OpenText Documentum Repository Connector](https://github.com/opencrawling/opencrawling/wiki/Documentum-Repository-Connector).

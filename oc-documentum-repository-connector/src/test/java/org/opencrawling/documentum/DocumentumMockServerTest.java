@@ -660,4 +660,87 @@ class DocumentumMockServerTest {
         Exception e = assertThrows(Exception.class, () -> settings(Map.of("serverTimeZone", "CEST")));
         assertTrue(e.getMessage().contains("server-time-zone"), e.getMessage());
     }
+
+    // ------------------------------------------------------------------ runs that fail or stop early
+
+    @Test
+    void maxDocumentsMovesOnAcrossIncrementalRuns() throws Exception {
+        DocumentumProperties s = settings(Map.of("incrementalEnabled", "true", "includeContentStream", "false",
+                "maxDocuments", "10"));
+        long inScope = mockDocs().stream().filter(m -> !excluded(m)).count();
+        Set<String> indexed = new HashSet<>();
+        for (int run = 1; run <= 10 && indexed.size() < inScope; run++) {
+            Result r = crawl(s);
+            assertTrue(r.upserts().size() <= 10, "at most max-documents per run");
+            Set<String> fresh = r.upserts().stream().map(RepositoryDocument::id).filter(id -> !indexed.contains(id))
+                    .collect(Collectors.toSet());
+            assertFalse(fresh.isEmpty(), "run " + run + " indexes documents the earlier runs did not reach");
+            indexed.addAll(fresh);
+        }
+        assertEquals(inScope, indexed.size());
+        assertTrue(crawl(s).deletes().isEmpty(), "documents a run did not reach are never tombstoned");
+    }
+
+    @Test
+    void aDocumentThatFailedIsStillTombstonedWhenItIsDestroyedLater() throws Exception {
+        DocumentumProperties s = settings(Map.of("incrementalEnabled", "true", "includeContentStream", "false"));
+        crawl(s);
+        JsonNode target = mockDocs().stream().filter(m -> !excluded(m)).findFirst().orElseThrow();
+        admin("/mock/documents/" + target.path("chronicleId").asText() + "/checkin", "{\"major\":false}");
+        admin("/mock/faults", "{\"op\":\"object\",\"status\":500,\"count\":1}");
+        crawl(s); // the changed document fails
+        admin("/mock/faults", "{\"clear\":true}");
+        admin("/mock/documents/" + target.path("chronicleId").asText() + "/destroy", "{}");
+        Result r = crawl(s);
+        assertTrue(r.deletes().stream().anyMatch(d -> d.id().equals(id(target))),
+                "the failed run kept it in the state, so the deletion is noticed");
+    }
+
+    @Test
+    void aPermissionSetEditedDuringAFailedRunIsAppliedByTheNextRun() throws Exception {
+        DocumentumProperties s = settings(Map.of("incrementalEnabled", "true", "includeContentStream", "false"));
+        Result first = crawl(s);
+        List<JsonNode> publicDocs = mockDocs().stream()
+                .filter(m -> m.path("acl").path(1).asText().equals("oc_public_read")).toList();
+        assertTrue(publicDocs.size() > 1);
+        assertTrue(publicDocs.stream().allMatch(m -> isPublic(first.docs().get(id(m)))));
+        // dm_world loses READ: every document of the permission set must leave the public
+        admin("/mock/acls/dmadmin/oc_public_read", "{\"entries\":[{\"name\":\"dm_world\",\"permit\":1},"
+                + "{\"name\":\"dm_owner\",\"permit\":7}]}");
+        admin("/mock/faults", "{\"op\":\"object\",\"status\":500,\"count\":1}");
+        Result failed = crawl(s); // one of its documents fails while the others pick up the edit
+        admin("/mock/faults", "{\"clear\":true}");
+        Map<String, RepositoryDocument> latest = new HashMap<>(first.docs());
+        latest.putAll(failed.docs());
+        latest.putAll(crawl(s).docs());
+        for (JsonNode m : publicDocs) {
+            assertFalse(isPublic(latest.get(id(m))), "still public after the edit: " + id(m));
+        }
+    }
+
+    @Test
+    void documentsOfAMovedFolderGetTheirNewFolderPaths() throws Exception {
+        DocumentumProperties s = settings(Map.of("crawlMode", "folder", "rootCabinetPath", "/Corporate",
+                "incrementalEnabled", "true", "includeContentStream", "false"));
+        Result first = crawl(s);
+        List<JsonNode> in2026 = mockDocs().stream().filter(m -> !excluded(m)
+                && m.path("folders").toString().contains("/Corporate/Contracts/2026")).toList();
+        assertFalse(in2026.isEmpty());
+        admin("/mock/folders/move", "{\"folder\":\"/Corporate/Contracts/2026\",\"to\":\"/Corporate/Invoices\"}");
+        Result second = crawl(s);
+        for (JsonNode m : in2026) {
+            RepositoryDocument d = second.docs().get(id(m));
+            assertNotNull(d, "re-indexed: " + id(m));
+            assertTrue(d.metadata().get("documentum.folderPath").toString().contains("/Corporate/Invoices/2026"),
+                    String.valueOf(d.metadata().get("documentum.folderPath")));
+            assertFalse(String.valueOf(first.docs().get(id(m)).metadata().get("documentum.folderPath"))
+                    .contains("/Corporate/Invoices/2026"));
+        }
+    }
+
+    private static boolean isPublic(RepositoryDocument d) {
+        return d.security().permissions().stream().anyMatch(r -> "public".equals(r.identity()) || "*".equals(r.identity()))
+                || d.security().permissions().stream().anyMatch(r -> "dm_world".equals(r.identity())
+                && "read".equals(r.access()));
+    }
 }

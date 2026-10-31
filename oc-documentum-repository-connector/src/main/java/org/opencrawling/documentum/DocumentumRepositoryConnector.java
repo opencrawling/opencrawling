@@ -321,8 +321,14 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
         final Set<String> resolved = ConcurrentHashMap.newKeySet();
         /** False when a listing was cut short (max-documents). */
         volatile boolean complete = true;
+        /** True while folders changed since the watermark are listed again: their documents are rebuilt (paths). */
+        volatile boolean refresh;
         private int accepted;
 
+        /**
+         * A slot for one more document to fetch and index. Unchanged documents take none, so with max-documents each
+         * incremental run moves on to documents not indexed yet instead of spending the budget on the same first ones.
+         */
         synchronized boolean admit() {
             if (settings.maxDocuments() > 0 && accepted >= settings.maxDocuments()) {
                 complete = false;
@@ -381,12 +387,23 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
                         .orElse(watermark.get()), crawl, sink);
             }
         }
+        // deletion tracking re-lists documents too: a failure there must not advance anything either
+        ok = ok && crawl.failed.get() == 0 && crawl.complete;
+        if (!ok) {
+            eventWatermark = state.eventWatermark();
+        }
         // entries this run did not touch carry over; a failed run keeps the previous watermark
         Map<String, DocumentumCrawlState.Entry> objects = new LinkedHashMap<>(crawl.previous);
         objects.keySet().removeIf(k -> crawl.handled.contains(k) && !crawl.next.containsKey(k));
         objects.putAll(crawl.next);
+        // a permission set's new stamp is only kept when every document using it in scope was handled: after a failed or
+        // cut-short run, the next one must still see the permission set as edited and list its documents again
         Map<String, DocumentumCrawlState.AclStamp> stamps = new LinkedHashMap<>(state.acls());
-        stamps.putAll(crawl.aclStamps);
+        if (ok) {
+            stamps.putAll(crawl.aclStamps);
+        } else {
+            crawl.aclStamps.forEach(stamps::putIfAbsent); // newly used ones only
+        }
         Set<String> used = new HashSet<>();
         objects.values().forEach(e -> used.add(Acl.key(e.aclDomain(), e.aclName())));
         stamps.keySet().retainAll(used);
@@ -431,10 +448,15 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
             log.info("Documentum folders changed since the watermark (moved, renamed, re-secured or new): {}; their "
                     + "documents are listed again.", tops);
         }
-        for (String path : tops) {
-            for (String type : settings.types()) {
-                list(type, dql.scope(path, serverZone), null, crawl, sink);
+        crawl.refresh = true; // their folder paths changed although the documents did not
+        try {
+            for (String path : tops) {
+                for (String type : settings.types()) {
+                    list(type, dql.scope(path, serverZone), null, crawl, sink);
+                }
             }
+        } finally {
+            crawl.refresh = false;
         }
     }
 
@@ -487,15 +509,15 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
         Semaphore permits = new Semaphore(settings.parallelism());
         try (var scopeTasks = StructuredTaskScope.open()) {
             for (JsonNode row : targets) {
-                if (!crawl.admit()) {
-                    log.info("Documentum scan stopped at max-documents={}.", settings.maxDocuments());
-                    break;
+                if (!crawl.complete) {
+                    break; // max-documents reached
                 }
                 permits.acquire();
                 scopeTasks.fork(ObservabilityTask.observed(() -> {
                     try {
                         handle(row, crawl, sink);
                     } catch (InterruptedException e) {
+                        crawl.failed.incrementAndGet(); // not crawled: the run must not count as complete
                         Thread.currentThread().interrupt();
                     } catch (Exception e) {
                         crawl.failed.incrementAndGet();
@@ -580,11 +602,29 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
         }
         int vstamp = row.path("i_vstamp").asInt(-1);
         if (known != null && known.objectId().equals(objectId) && known.vstamp() == vstamp
-                && known.security().equals(security.fingerprint())) {
+                && known.security().equals(security.fingerprint()) && !crawl.refresh) {
             crawl.unchanged.incrementAndGet();
             crawl.next.put(key, known);
             return;
         }
+        if (!crawl.admit()) {
+            crawl.handled.remove(key); // not crawled in this run: what the state knows of it stays
+            log.info("Documentum scan stopped at max-documents={}.", settings.maxDocuments());
+            return;
+        }
+        try {
+            index(row, objectId, key, known, vstamp, aclDomain, aclName, security, crawl, sink);
+        } catch (IOException | RuntimeException e) {
+            if (known != null) {
+                crawl.next.put(key, known); // kept, so deletion tracking still knows the indexed document
+            }
+            throw e;
+        }
+    }
+
+    private void index(JsonNode row, String objectId, String key, DocumentumCrawlState.Entry known, int vstamp,
+                       String aclDomain, String aclName, DocumentumSecurityMapper.Mapped security, Crawl crawl,
+                       FluxSink<RepositoryDocument> sink) throws IOException, InterruptedException {
         Optional<JsonNode> object = client.object(objectId);
         if (object.isEmpty()) {
             crawl.handled.remove(key); // destroyed since it was listed: deletion tracking decides
@@ -594,7 +634,15 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
         JsonNode properties = object.get().path("properties");
         List<String> folders = settings.includeFolderPaths() ? folderPaths(properties.path("i_folder_id")) : List.of();
         DocumentumDocumentBuilder.Content content = settings.includeContentStream() ? content(objectId, properties) : null;
-        RepositoryDocument d = builder.build(properties, content, folders, security);
+        RepositoryDocument d;
+        try {
+            d = builder.build(properties, content, folders, security);
+        } catch (RuntimeException e) {
+            if (content != null) {
+                content.stream().close(); // deletes the downloaded temporary file
+            }
+            throw e;
+        }
         sink.next(d);
         crawl.documents.incrementAndGet();
         if (known != null && !known.id().equals(d.id())) {
@@ -949,6 +997,9 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
             for (String type : settings.types()) {
                 crawl.resolved.removeAll(chunk);
                 list(type, dql.scope(null, serverZone), condition, crawl, sink);
+            }
+            if (!crawl.complete) {
+                return; // max-documents cut the listing short: unlisted is not gone
             }
             for (String key : chunk) {
                 if (!crawl.next.containsKey(key) && !crawl.handled.contains(key)) {
