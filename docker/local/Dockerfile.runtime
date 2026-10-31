@@ -134,6 +134,7 @@ ENV TIKA_EXTRAS_DIR=/app/lib
 ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
 ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
 ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+ENV OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
 
 # Run the Spring Boot application enabling Java 25 preview features
 ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-Dtika.extras.dir=/app/lib", "-jar", "app.jar"]

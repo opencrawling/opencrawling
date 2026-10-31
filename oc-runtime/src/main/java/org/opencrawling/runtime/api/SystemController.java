@@ -70,12 +70,12 @@ public class SystemController {
         long timeoutMs = textExtractionProperties != null ? textExtractionProperties.getTimeoutMs() : 30000L;
         String heap = (textExtractionProperties != null && textExtractionProperties.getJvmArgs() != null && !textExtractionProperties.getJvmArgs().isEmpty())
                 ? textExtractionProperties.getJvmArgs().get(0) : "-Xmx512m";
-        int maxFiles = textExtractionProperties != null ? textExtractionProperties.getMaxFilesPerProcess() : 10000;
+        int maxFiles = textExtractionProperties != null ? textExtractionProperties.getMaxFilesPerProcess() : 100000;
         boolean extractEmbedded = textExtractionProperties != null ? textExtractionProperties.isExtractEmbedded() : true;
         int writeLimit = textExtractionProperties != null ? textExtractionProperties.getWriteLimit() : 20000000;
         int numClients = textExtractionProperties != null ? textExtractionProperties.getNumClients() : 1;
 
-        String tikaVer = textExtractionService != null ? textExtractionService.getVersion() : "4.1.0";
+        String tikaVer = textExtractionService != null ? textExtractionService.getVersion() : "4.2.0";
         String tikaEngine = textExtractionService != null ? textExtractionService.getEngineName()
                 : (forkEnabled ? "PipesForkParser (Process-Isolated)" : "In-Process Embedded Tika");
 
@@ -404,7 +404,7 @@ public class SystemController {
         String ozoneVolume,
         @Schema(description = "Target Ozone bucket name", example = "claims")
         String ozoneBucket,
-        @Schema(description = "Apache Tika text extraction version", example = "4.1.0")
+        @Schema(description = "Apache Tika text extraction version", example = "4.2.0")
         String tikaVersion,
         @Schema(description = "Active text extraction engine implementation", example = "PipesForkParser (Process-Isolated)")
         String tikaEngine,
@@ -414,7 +414,7 @@ public class SystemController {
         Long tikaTimeoutMs,
         @Schema(description = "JVM heap argument for isolated Tika processes", example = "-Xmx512m")
         String tikaJvmHeap,
-        @Schema(description = "Maximum files processed before respawning isolated Tika process", example = "10000")
+        @Schema(description = "Maximum files processed before respawning isolated Tika process", example = "100000")
         Integer tikaMaxFilesPerProcess,
         @Schema(description = "Whether to fall back to in-process embedded Tika parser if forked process fails", example = "true")
         Boolean tikaFallbackToEmbedded,
@@ -440,14 +440,14 @@ public class SystemController {
             if (ozoneOmPort <= 0) ozoneOmPort = 9862;
             if (ozoneVolume == null) ozoneVolume = "s3v";
             if (ozoneBucket == null) ozoneBucket = "claims";
-            if (tikaVersion == null) tikaVersion = "4.1.0";
+            if (tikaVersion == null) tikaVersion = "4.2.0";
             if (tikaForkEnabled == null) tikaForkEnabled = Boolean.TRUE;
             if (tikaEngine == null) {
                 tikaEngine = tikaForkEnabled ? "PipesForkParser (Process-Isolated)" : "In-Process Embedded Tika";
             }
             if (tikaTimeoutMs == null || tikaTimeoutMs <= 0) tikaTimeoutMs = 30000L;
             if (tikaJvmHeap == null || tikaJvmHeap.isBlank()) tikaJvmHeap = "-Xmx512m";
-            if (tikaMaxFilesPerProcess == null || tikaMaxFilesPerProcess <= 0) tikaMaxFilesPerProcess = 10000;
+            if (tikaMaxFilesPerProcess == null || tikaMaxFilesPerProcess <= 0) tikaMaxFilesPerProcess = 100000;
             if (tikaFallbackToEmbedded == null) tikaFallbackToEmbedded = Boolean.TRUE;
             if (tikaExtractEmbedded == null) tikaExtractEmbedded = Boolean.TRUE;
             if (tikaWriteLimit == null || tikaWriteLimit <= 0) tikaWriteLimit = 20000000;

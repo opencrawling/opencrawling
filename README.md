@@ -14,7 +14,7 @@
 [![Apache Iceberg](https://img.shields.io/badge/Apache_Iceberg-1.11.0-3a6bc8.svg?style=flat&logo=apache&logoColor=white)](https://iceberg.apache.org/)
 [![Apache Ozone](https://img.shields.io/badge/Apache_Ozone-2.2.0-FF6600.svg?style=flat&logo=apache&logoColor=white)](https://ozone.apache.org/)
 [![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
-[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.1.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
+[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.2.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
 [![Apache Solr](https://img.shields.io/badge/Apache_Solr-10-D9411E.svg?style=flat&logo=apachesolr&logoColor=white)](https://solr.apache.org/)
 [![Apache ManifoldCF](https://img.shields.io/badge/Apache_ManifoldCF-Supported-D22128.svg?style=flat&logo=apache&logoColor=white)](https://manifoldcf.apache.org/)
 [![Alfresco](https://img.shields.io/badge/Alfresco_Content_Services-Supported-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)

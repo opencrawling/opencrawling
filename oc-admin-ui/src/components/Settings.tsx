@@ -89,12 +89,12 @@ export default function Settings() {
     ozoneOmPort: 9862,
     ozoneVolume: 's3v',
     ozoneBucket: 'claims',
-    tikaVersion: '4.1.0',
+    tikaVersion: '4.2.0',
     tikaEngine: 'PipesForkParser (Process-Isolated)',
     tikaForkEnabled: true,
     tikaTimeoutMs: 30000,
     tikaJvmHeap: '-Xmx512m',
-    tikaMaxFilesPerProcess: 10000,
+    tikaMaxFilesPerProcess: 100000,
     tikaFallbackToEmbedded: true,
     tikaExtractEmbedded: true,
     tikaWriteLimit: 20000000,
@@ -254,7 +254,7 @@ export default function Settings() {
         {[
           { id: 'embedding', label: 'Embedding Engine', icon: Cpu, badge: settings.embeddingProvider || 'Ollama' },
           { id: 'chunking', label: 'Splitter & Chunker', icon: Layers, badge: settings.chunkerType || 'TokenTextSplitter' },
-          { id: 'tika', label: 'Text Extraction (Tika)', icon: FileText, badge: 'v' + (settings.tikaVersion || '4.1.0') },
+          { id: 'tika', label: 'Text Extraction (Tika)', icon: FileText, badge: 'v' + (settings.tikaVersion || '4.2.0') },
           { id: 'storage', label: 'Claim-Check Storage', icon: HardDrive, badge: (settings.claimCheckStore || 'ozone').toUpperCase() },
           { id: 'transport', label: 'Internal Transport', icon: Server, badge: transportSettings?.mode || 'AUTO' }
         ].map((tab) => {
@@ -522,7 +522,7 @@ export default function Settings() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Tika {settings.tikaVersion || '4.1.0'}
+                  Tika {settings.tikaVersion || '4.2.0'}
                 </span>
                 <span className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase ${
                   settings.tikaForkEnabled
@@ -658,7 +658,7 @@ export default function Settings() {
                   <input
                     type="number"
                     value={settings.tikaMaxFilesPerProcess}
-                    onChange={(e) => setSettings({ ...settings, tikaMaxFilesPerProcess: parseInt(e.target.value) || 10000 })}
+                    onChange={(e) => setSettings({ ...settings, tikaMaxFilesPerProcess: parseInt(e.target.value) || 100000 })}
                     className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
                     min="100"
                     step="1000"
