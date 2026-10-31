@@ -250,8 +250,9 @@ own Python REST client: see its README.
 ```
 
 Starts the mock (Python standard library only) with a server time zone of +02:00, checks it against OpenText's
-published OpenAPI document (downloaded; needs PyYAML, skipped without it or without network), runs the module tests,
-then runs them again as a server at -05:00 that silently caps every DQL page at 5 rows.
+published OpenAPI document (downloaded; needs PyYAML, which the CI workflow installs; skipped locally without it or
+without network), runs the module tests, then runs them again as a server at -05:00 that silently caps every DQL page
+at 5 rows.
 
 ### 3. Decoupled pipeline test
 

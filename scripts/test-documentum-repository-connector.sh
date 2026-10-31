@@ -27,7 +27,8 @@
 #     1. starts the mock with a non-UTC server time zone;
 #     2. checks the mock against OpenText's published OpenAPI document for the
 #        Documentum REST API (downloaded from developer.opentext.com; needs
-#        PyYAML, and is skipped when either is unavailable);
+#        PyYAML, which CI installs: a missing PyYAML fails in CI, an
+#        unreachable portal is only a warning);
 #     3. runs the module's Maven tests, including the scenario tests against
 #        the mock;
 #     4. restarts it as a server in another time zone that silently caps every
@@ -124,7 +125,7 @@ if [ "${MOCK_OK}" = true ]; then
       *) log_error "The mock deviates from the published specification (see above)."; exit 1 ;;
     esac
   else
-    log_warn "PyYAML is not installed: the conformance check against the published specification is skipped."
+    skip_or_fail "PyYAML is not installed (pip install pyyaml): the conformance check against the published specification cannot run."
   fi
 fi
 
