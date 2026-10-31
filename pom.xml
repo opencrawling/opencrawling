@@ -126,6 +126,7 @@
         <module>oc-sharepoint-repository-connector</module>
         <module>oc-mfiles-repository-connector</module>
         <module>oc-filenet-repository-connector</module>
+        <module>oc-documentum-repository-connector</module>
         <module>oc-stormcrawler-bolt</module>
         <module>oc-stormcrawler-repository-connector</module>
         <module>oc-jdbc-repository-connector</module>

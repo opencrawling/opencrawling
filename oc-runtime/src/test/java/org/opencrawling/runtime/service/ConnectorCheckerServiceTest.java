@@ -312,4 +312,64 @@ class ConnectorCheckerServiceTest {
             csgql.stop(0);
         }
     }
+
+    @Test
+    void testCheckDocumentumConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                "org.opencrawling.documentum.DocumentumRepositoryConnector", 10,
+                Map.of("url", "http://127.0.0.1:59999/dctm-rest", "username", "dctm_crawler", "password", "x"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("repository-name"));
+    }
+
+    @Test
+    void testCheckDocumentumConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.of(
+                        "url", "http://127.0.0.1:59999/dctm-rest", "repositoryName", "corp",
+                        "username", "dctm_crawler", "password", "secret"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Documentum"));
+        assertFalse(result.message().contains("secret"));
+    }
+
+    @Test
+    void testCheckDocumentumConnectorSuccess() throws Exception {
+        List<String> auth = new CopyOnWriteArrayList<>();
+        HttpServer rest = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        rest.createContext("/dctm-rest/repositories/corp", exchange -> {
+            auth.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            String query = exchange.getRequestURI().getRawQuery();
+            String body = query != null && query.contains("dql=")
+                    ? "{\"updated\":\"2026-10-31T10:00:00.000+02:00\",\"links\":[],\"entries\":[{\"content\":"
+                            + "{\"properties\":{\"r_object_id\":\"0c0277b680000105\"}}}]}"
+                    : "{\"id\":160694,\"name\":\"corp\",\"servers\":[{\"version\":\"23.4.0000.0124\"}],\"links\":[]}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/vnd.emc.documentum+json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        rest.start();
+        try {
+            ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                    "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.of(
+                            "url", "http://127.0.0.1:" + rest.getAddress().getPort() + "/dctm-rest",
+                            "repositoryName", "corp", "username", "dctm_crawler", "password", "secret"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("repository 'corp'"));
+            assertTrue(result.message().contains("23.4.0000.0124"));
+            assertTrue(result.message().contains("+02:00"));
+            assertEquals(2, auth.size());
+            assertTrue(auth.stream().allMatch(a -> a.startsWith("Basic ")));
+        } finally {
+            rest.stop(0);
+        }
+    }
 }

@@ -38,6 +38,7 @@ COPY oc-doxis-repository-connector/pom.xml oc-doxis-repository-connector/
 COPY oc-sharepoint-repository-connector/pom.xml oc-sharepoint-repository-connector/
 COPY oc-mfiles-repository-connector/pom.xml oc-mfiles-repository-connector/
 COPY oc-filenet-repository-connector/pom.xml oc-filenet-repository-connector/
+COPY oc-documentum-repository-connector/pom.xml oc-documentum-repository-connector/
 COPY oc-jdbc-repository-connector/pom.xml oc-jdbc-repository-connector/
 COPY oc-stormcrawler-bolt/pom.xml oc-stormcrawler-bolt/
 COPY oc-stormcrawler-repository-connector/pom.xml oc-stormcrawler-repository-connector/

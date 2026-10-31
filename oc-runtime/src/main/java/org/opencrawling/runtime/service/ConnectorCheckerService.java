@@ -40,6 +40,9 @@ import org.opencrawling.sharepoint.SharePointRepositoryConnector;
 import org.opencrawling.mfiles.MFilesClient;
 import org.opencrawling.mfiles.MFilesProperties;
 import org.opencrawling.mfiles.MFilesRepositoryConnector;
+import org.opencrawling.documentum.DocumentumClient;
+import org.opencrawling.documentum.DocumentumProperties;
+import org.opencrawling.documentum.DocumentumRepositoryConnector;
 import org.opencrawling.filenet.FileNetClient;
 import org.opencrawling.filenet.FileNetProperties;
 import org.opencrawling.filenet.FileNetRepositoryConnector;
@@ -147,6 +150,11 @@ public class ConnectorCheckerService {
             // --- IBM FileNet P8 Repository Connector ---
             if (className.contains("FileNetRepositoryConnector")) {
                 return checkFileNetRepository(config);
+            }
+
+            // --- OpenText Documentum Repository Connector ---
+            if (className.contains("DocumentumRepositoryConnector")) {
+                return checkDocumentumRepository(config);
             }
 
             // --- CMIS Repository Connector ---
@@ -617,6 +625,36 @@ public class ConnectorCheckerService {
             }
             return new ConnectionCheckResult(false, "Failed to connect to FileNet at " + settings.url() + ": " + e.getMessage()
                     + " " + FileNetRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    /**
+     * Reads the repository resource and runs one DQL query (in folder crawl mode, the root path's lookup): a wrong URL,
+     * wrong credentials, an unknown repository or a missing folder fail here instead of on the first crawl.
+     */
+    private ConnectionCheckResult checkDocumentumRepository(Map<String, String> config) {
+        DocumentumProperties settings = DocumentumProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "Documentum repository connector is not configured: "
+                    + String.join(" ", problems) + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        try {
+            DocumentumClient client = DocumentumRepositoryConnector.newClient(
+                    DocumentumProperties.fromConfiguration(withNoRetries(config)));
+            DocumentumRepositoryConnector.Info info = DocumentumRepositoryConnector.connectionInfo(client, settings);
+            JsonNode repository = info.repository();
+            return new ConnectionCheckResult(true, "Successfully authenticated to Documentum REST Services at " + settings.url()
+                    + "; repository '" + repository.path("name").asText(settings.repository()) + "' (Content Server "
+                    + repository.path("servers").path(0).path("version").asText("?") + ", server time zone offset "
+                    + info.serverOffset().getId() + ") is accessible. " + DocumentumRepositoryConnector.LICENCE_NOTICE,
+                    repository.path("id").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to Documentum at " + settings.url() + ": "
+                    + e.getMessage() + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, e.toString());
         }
     }
 
