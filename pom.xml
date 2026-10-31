@@ -143,7 +143,7 @@
         <oc-java-client-sdk.version>1.0.5-SNAPSHOT</oc-java-client-sdk.version>
         <picocli.version>4.7.6</picocli.version>
         <jline.version>3.26.1</jline.version>
-        <spring-ai.version>2.0.1</spring-ai.version>
+        <spring-ai.version>2.0.2</spring-ai.version>
         <tika.version>4.2.0</tika.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-io.version>2.22.0</commons-io.version>
