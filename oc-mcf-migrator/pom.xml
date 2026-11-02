@@ -49,7 +49,7 @@
 
         <jackson.version>2.21.4</jackson.version>
         <snakeyaml.version>2.3</snakeyaml.version>
-        <slf4j.version>2.0.18</slf4j.version>
+        <slf4j.version>2.0.20</slf4j.version>
         <picocli.version>4.7.7</picocli.version>
         <opencrawling-sdk.version>1.0.5-SNAPSHOT</opencrawling-sdk.version>
 
