@@ -95,6 +95,34 @@ class AlfrescoRestClientTest {
     }
 
     @Test
+    void testCheckConnection_rejectsHtml() {
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] html = "<!DOCTYPE html><html><head><title>OpenCrawling</title></head><body><div id=\"root\"></div></body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html;charset=UTF-8");
+            exchange.sendResponseHeaders(200, html.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(html);
+            }
+        });
+
+        assertThat(client.checkConnection()).isFalse();
+    }
+
+    @Test
+    void testCheckConnection_rejectsNonAlfrescoJson() {
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] response = "{\"status\":\"UP\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(response);
+            }
+        });
+
+        assertThat(client.checkConnection()).isFalse();
+    }
+
+    @Test
     void testEnsureFolderPath_createsHierarchy() throws Exception {
         // Step 1: create folder 'finance'
         server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-/children", exchange -> {

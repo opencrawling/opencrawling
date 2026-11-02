@@ -27,7 +27,7 @@ import java.util.List;
 public class AlfrescoOutputProperties {
 
     private boolean enabled = true;
-    private String url = "http://localhost:8080/alfresco";
+    private String url = "http://localhost:8081/alfresco";
     private String username = "admin";
     private String password = "admin";
     private String authType = "basic"; // basic | bearer
@@ -62,7 +62,7 @@ public class AlfrescoOutputProperties {
     }
 
     public void setUrl(String url) {
-        this.url = url != null ? url.replaceAll("/+$", "") : "http://localhost:8080/alfresco";
+        this.url = url != null ? url.replaceAll("/+$", "") : "http://localhost:8081/alfresco";
     }
 
     public String getUsername() {

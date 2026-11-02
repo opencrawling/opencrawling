@@ -687,8 +687,8 @@ export default function ConnectorForm() {
                         <label className="text-sm font-medium">Alfresco API URL</label>
                         <input 
                           {...register('configuration.url', { required: true })}
-                          placeholder="http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1"
-                          defaultValue="http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1"
+                          placeholder="http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1"
+                          defaultValue="http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
@@ -4788,8 +4788,11 @@ export default function ConnectorForm() {
                       </p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2 col-span-2">
-                          <label htmlFor="alfresco-out-url" className="text-sm font-medium">Alfresco Base URL</label>
-                          <input id="alfresco-out-url" type="url" {...register('configuration.url', { required: true })} defaultValue="http://localhost:8080/alfresco" placeholder="http://localhost:8080/alfresco"
+                          <div className="flex items-center justify-between">
+                            <label htmlFor="alfresco-out-url" className="text-sm font-medium">Alfresco Base URL</label>
+                            <span className="text-xs text-muted-foreground">Default port: 8081 (avoids port 8080 used by OpenCrawling)</span>
+                          </div>
+                          <input id="alfresco-out-url" type="url" {...register('configuration.url', { required: true })} defaultValue="http://localhost:8081/alfresco" placeholder="http://localhost:8081/alfresco"
                             className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
                         </div>
                         <div className="space-y-2">

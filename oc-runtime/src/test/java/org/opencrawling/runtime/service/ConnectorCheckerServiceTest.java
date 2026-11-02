@@ -372,4 +372,139 @@ class ConnectorCheckerServiceTest {
             rest.stop(0);
         }
     }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_rejectsHtml() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] html = "<!DOCTYPE html><html><head><title>OpenCrawling</title></head><body><div id=\"root\"></div></body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html;charset=UTF-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("endpoint returned an HTML page"));
+            assertTrue(result.message().contains("8081"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_success() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\",\"nodeType\":\"cm:folder\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco", "username", "admin", "password", "admin"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+            assertTrue(result.message().contains("-root-"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_bearerAuth() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("Bearer test-jwt-token".equals(auth)) {
+                byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\",\"nodeType\":\"cm:folder\"}}".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, json.length);
+                exchange.getResponseBody().write(json);
+            } else {
+                exchange.sendResponseHeaders(401, -1);
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco",
+                            "authType", "bearer",
+                            "bearerToken", "test-jwt-token"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoRepositoryConnector_rejectsHtml() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] html = "<!DOCTYPE html><html><body>OpenCrawling UI</body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Repo_Test", "Test Alfresco Repo", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco/api/-default-/public/alfresco/versions/1"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("endpoint returned an HTML page"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoRepositoryConnector_success() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Repo_Test", "Test Alfresco Repo", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco/api/-default-/public/alfresco/versions/1",
+                            "username", "admin", "password", "admin"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+        } finally {
+            server.stop(0);
+        }
+    }
 }

@@ -88,6 +88,8 @@ public class AlfrescoRestClient implements AutoCloseable {
 
     /**
      * Checks connection to the Alfresco repository by pinging the target parent node.
+     * Rejects HTML responses (e.g. hitting OpenCrawling UI or reverse proxy defaults)
+     * and asserts valid Alfresco node JSON structure.
      */
     public boolean checkConnection() {
         try {
@@ -96,12 +98,28 @@ public class AlfrescoRestClient implements AutoCloseable {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", authHeader)
+                    .header("Accept", "application/json")
                     .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
                     .GET()
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() >= 200 && response.statusCode() < 300;
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("Alfresco connection check failed with status {}: {}", response.statusCode(), response.body());
+                return false;
+            }
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            String body = response.body() != null ? response.body().trim() : "";
+            if (contentType.toLowerCase().contains("text/html") || body.startsWith("<!DOCTYPE") || body.toLowerCase().startsWith("<html")) {
+                log.warn("Alfresco connection check failed: received HTML page instead of Alfresco JSON. Ensure URL points to Alfresco (default port 8081) rather than OpenCrawling (port 8080).");
+                return false;
+            }
+            JsonNode root = objectMapper.readTree(body);
+            if (!root.has("entry")) {
+                log.warn("Alfresco connection check failed: response missing Alfresco 'entry' object. Body: {}", body);
+                return false;
+            }
+            return true;
         } catch (Exception e) {
             log.warn("Alfresco connection check failed: {}", e.getMessage());
             return false;

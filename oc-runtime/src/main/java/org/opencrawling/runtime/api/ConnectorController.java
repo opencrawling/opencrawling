@@ -50,7 +50,7 @@ public class ConnectorController {
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
         defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
-            "url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
+            "url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1",
             "username", "admin",
             "password", "admin",
             "batchSize", "100",
@@ -365,7 +365,7 @@ public class ConnectorController {
             "tombstoneAction", "DELETE_OBJECTS"
         )));
         defaults.add(new ConnectorDTO("Alfresco_Migration_Output", "Alfresco Content Services Migration Target (Migration Mode only)", "output", "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10, Map.ofEntries(
-            Map.entry("url", "http://localhost:8080/alfresco"),
+            Map.entry("url", "http://localhost:8081/alfresco"),
             Map.entry("username", "admin"),
             Map.entry("password", "admin"),
             Map.entry("targetParentNodeId", "-root-"),
