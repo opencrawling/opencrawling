@@ -127,7 +127,22 @@ public class AlfrescoOutputConnector implements OutputConnector {
     @Override
     public void disconnect() throws Exception {
         log.info("Disconnecting AlfrescoOutputConnector...");
+        if (properties.getAuthorityGapReportPath() != null && !properties.getAuthorityGapReportPath().isBlank()) {
+            try {
+                client.getAuthorityValidator().writeGapReport(Path.of(properties.getAuthorityGapReportPath()));
+            } catch (Exception e) {
+                log.warn("Failed to export Alfresco authority gap report on disconnect: {}", e.getMessage());
+            }
+        }
         client.close();
+    }
+
+    /**
+     * Executes Pre-Flight authority validation against the target Alfresco instance for a set of known authorities.
+     * Populates the cache and records any missing authority gaps in the audit ledger.
+     */
+    public org.opencrawling.alfresco.output.security.AlfrescoAuthorityValidator.PreFlightAuditResult runPreFlightAuthorityAudit(Collection<String> authorities) {
+        return client.getAuthorityValidator().runPreFlightAudit(authorities);
     }
 
     @Override

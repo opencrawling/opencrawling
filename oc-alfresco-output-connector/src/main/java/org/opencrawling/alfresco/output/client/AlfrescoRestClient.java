@@ -18,6 +18,8 @@ package org.opencrawling.alfresco.output.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.opencrawling.alfresco.output.config.AlfrescoOutputProperties;
+import org.opencrawling.alfresco.output.security.AlfrescoAuthorityValidator;
+import org.opencrawling.alfresco.output.security.AuthorityGapEntry;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
@@ -51,6 +53,7 @@ public class AlfrescoRestClient implements AutoCloseable {
     private final ObjectMapper objectMapper;
     private final String authHeader;
     private final Map<String, String> folderPathCache = new ConcurrentHashMap<>();
+    private final AlfrescoAuthorityValidator authorityValidator;
 
     public AlfrescoRestClient(AlfrescoOutputProperties properties, ObjectMapper objectMapper) {
         this.properties = properties != null ? properties : new AlfrescoOutputProperties();
@@ -59,6 +62,7 @@ public class AlfrescoRestClient implements AutoCloseable {
                 .connectTimeout(Duration.ofSeconds(this.properties.getTimeoutSeconds()))
                 .build();
         this.authHeader = buildAuthHeader(this.properties);
+        this.authorityValidator = new AlfrescoAuthorityValidator(this.httpClient, this.properties, this.authHeader, this.objectMapper);
     }
 
     public AlfrescoRestClient(AlfrescoOutputProperties properties, HttpClient httpClient, ObjectMapper objectMapper) {
@@ -66,6 +70,11 @@ public class AlfrescoRestClient implements AutoCloseable {
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
         this.httpClient = httpClient != null ? httpClient : HttpClient.newHttpClient();
         this.authHeader = buildAuthHeader(this.properties);
+        this.authorityValidator = new AlfrescoAuthorityValidator(this.httpClient, this.properties, this.authHeader, this.objectMapper);
+    }
+
+    public AlfrescoAuthorityValidator getAuthorityValidator() {
+        return authorityValidator;
     }
 
     private String buildAuthHeader(AlfrescoOutputProperties props) {
@@ -347,6 +356,9 @@ public class AlfrescoRestClient implements AutoCloseable {
         List<Map<String, String>> locallySet = new ArrayList<>();
         Set<String> seenAuthorities = new HashSet<>();
 
+        boolean validate = properties.isValidateAuthorities()
+                && !"DISABLED".equalsIgnoreCase(properties.getAuthorityValidationMode());
+
         if (securityConfig != null && securityConfig.permissions() != null && !securityConfig.permissions().isEmpty()) {
             for (PermissionRule rule : securityConfig.permissions()) {
                 String authorityId = formatAuthority(rule.identity());
@@ -354,7 +366,25 @@ public class AlfrescoRestClient implements AutoCloseable {
                     continue;
                 }
                 seenAuthorities.add(authorityId);
+
                 String role = resolveRole(rule.access(), defaultRole);
+                boolean exists = !validate || authorityValidator.isAuthorityPresent(authorityId);
+
+                if (!exists) {
+                    boolean isFail = "FAIL".equalsIgnoreCase(properties.getMissingAuthorityAction());
+                    String type = rule.identityType() != null ? rule.identityType() : (authorityId.startsWith("GROUP_") ? "group" : "user");
+                    String msg = "Authority '" + authorityId + "' does not exist in target Alfresco instance for node " + nodeId;
+
+                    if (isFail) {
+                        authorityValidator.recordGap(AuthorityGapEntry.failed(authorityId, type, nodeId, role, msg));
+                        throw new IllegalStateException(msg);
+                    } else {
+                        authorityValidator.recordGap(AuthorityGapEntry.skipped(authorityId, type, nodeId, role, msg));
+                        log.warn("{}. Skipping authority from permissions.", msg);
+                        continue;
+                    }
+                }
+
                 locallySet.add(Map.of(
                         "authorityId", authorityId,
                         "name", role,
@@ -369,6 +399,24 @@ public class AlfrescoRestClient implements AutoCloseable {
                     continue;
                 }
                 seenAuthorities.add(authorityId);
+
+                boolean exists = !validate || authorityValidator.isAuthorityPresent(authorityId);
+
+                if (!exists) {
+                    boolean isFail = "FAIL".equalsIgnoreCase(properties.getMissingAuthorityAction());
+                    String type = authorityId.startsWith("GROUP_") ? "group" : "user";
+                    String msg = "Authority '" + authorityId + "' does not exist in target Alfresco instance for node " + nodeId;
+
+                    if (isFail) {
+                        authorityValidator.recordGap(AuthorityGapEntry.failed(authorityId, type, nodeId, defaultRole, msg));
+                        throw new IllegalStateException(msg);
+                    } else {
+                        authorityValidator.recordGap(AuthorityGapEntry.skipped(authorityId, type, nodeId, defaultRole, msg));
+                        log.warn("{}. Skipping authority from permissions.", msg);
+                        continue;
+                    }
+                }
+
                 locallySet.add(Map.of(
                         "authorityId", authorityId,
                         "name", defaultRole != null && !defaultRole.isBlank() ? defaultRole : "Consumer",

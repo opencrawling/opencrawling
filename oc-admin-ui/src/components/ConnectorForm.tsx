@@ -4860,10 +4860,38 @@ export default function ConnectorForm() {
                             <option value="PERMANENT_DELETE">PERMANENT_DELETE (purge immediately)</option>
                           </select>
                         </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-val-mode" className="text-sm font-medium">Authority Validation Mode</label>
+                          <select id="alfresco-out-val-mode" {...register('configuration.authorityValidationMode')} defaultValue="IN_FLIGHT"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="IN_FLIGHT">IN_FLIGHT (Verify via target Alfresco REST API with cache during upload)</option>
+                            <option value="PRE_FLIGHT">PRE_FLIGHT (Pre-flight audit validation before processing)</option>
+                            <option value="BOTH">BOTH (Pre-flight audit + In-flight cached verification)</option>
+                            <option value="DISABLED">DISABLED (Skip authority check)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-missing-action" className="text-sm font-medium">Missing Authority Action</label>
+                          <select id="alfresco-out-missing-action" {...register('configuration.missingAuthorityAction')} defaultValue="SKIP"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="SKIP">SKIP (Log to gap report ledger & skip missing authority)</option>
+                            <option value="FAIL">FAIL (Strict Zero-Trust: fail document migration & record in ledger)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <label htmlFor="alfresco-out-gap-path" className="text-sm font-medium">Authority Gap Report Path</label>
+                          <input id="alfresco-out-gap-path" {...register('configuration.authorityGapReportPath')} defaultValue="reports/alfresco-authority-gap.json" placeholder="reports/alfresco-authority-gap.json"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
                         <div className="space-y-2 flex items-center gap-2 pt-4">
                           <input id="alfresco-out-sync-perm" type="checkbox" {...register('configuration.syncPermissions')} defaultChecked={true}
                             className="rounded border-border text-primary focus:ring-primary" />
                           <label htmlFor="alfresco-out-sync-perm" className="text-sm font-medium">Sync Zero-Trust Permissions & ACLs</label>
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-val-perm" type="checkbox" {...register('configuration.validateAuthorities')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-val-perm" className="text-sm font-medium">Validate Authorities on Target Instance</label>
                         </div>
                         <div className="space-y-2 flex items-center gap-2 pt-4">
                           <input id="alfresco-out-inherit-perm" type="checkbox" {...register('configuration.isInheritanceEnabled')} defaultChecked={true}

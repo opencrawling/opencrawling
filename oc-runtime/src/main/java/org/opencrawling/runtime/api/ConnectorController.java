@@ -375,6 +375,10 @@ public class ConnectorController {
             Map.entry("conflictStrategy", "OVERWRITE"),
             Map.entry("syncPermissions", "true"),
             Map.entry("defaultPermissionRole", "Consumer"),
+            Map.entry("validateAuthorities", "true"),
+            Map.entry("authorityValidationMode", "IN_FLIGHT"),
+            Map.entry("missingAuthorityAction", "SKIP"),
+            Map.entry("authorityGapReportPath", "reports/alfresco-authority-gap.json"),
             Map.entry("tombstoneAction", "MOVE_TO_TRASH")
         )));
         defaults.add(new ConnectorDTO("OpenArch_Output", "Hyland OpenArch Federated Ingestion & Parquet Vector Bridge", "output", "org.opencrawling.openarch.output.OpenArchOutputConnector", 10, Map.ofEntries(

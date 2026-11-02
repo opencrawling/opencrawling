@@ -161,6 +161,15 @@ class AlfrescoRestClientTest {
     void testUpdatePermissions() throws Exception {
         AtomicReference<String> receivedBody = new AtomicReference<>();
 
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/groups/", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+
         server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/node-123", exchange -> {
             try (InputStream is = exchange.getRequestBody()) {
                 receivedBody.set(new String(is.readAllBytes(), StandardCharsets.UTF_8));
@@ -182,6 +191,92 @@ class AlfrescoRestClientTest {
         assertThat(receivedBody.get()).contains("john");
         assertThat(receivedBody.get()).contains("GROUP_INTERNS");
         assertThat(receivedBody.get()).contains("DENIED");
+    }
+
+    @Test
+    void testAuthorityValidation_skipAndLogToGapLedger() throws Exception {
+        AtomicReference<String> receivedBody = new AtomicReference<>();
+
+        // john exists (200), but ghost-user returns 404
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/john", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/ghost-user", exchange -> {
+            exchange.sendResponseHeaders(404, 0);
+            exchange.close();
+        });
+
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/node-test-gap", exchange -> {
+            try (InputStream is = exchange.getRequestBody()) {
+                receivedBody.set(new String(is.readAllBytes(), StandardCharsets.UTF_8));
+            }
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+
+        SecurityConfig sec = new SecurityConfig(true, List.of(
+                new PermissionRule("user:john", "user", "John", "read"),
+                new PermissionRule("user:ghost-user", "user", "Ghost User", "write")
+        ));
+
+        client.updatePermissions("node-test-gap", sec, null, "Consumer", true);
+
+        // Valid user john was included, but ghost-user was skipped
+        assertThat(receivedBody.get()).contains("john");
+        assertThat(receivedBody.get()).doesNotContain("ghost-user");
+
+        // Gap ledger should record ghost-user
+        var ledger = client.getAuthorityValidator().getGapLedger();
+        assertThat(ledger).anyMatch(entry -> "ghost-user".equals(entry.authorityId()) && "SKIPPED".equals(entry.actionTaken()));
+
+        // Gap report export
+        Path reportFile = Files.createTempFile("alfresco-authority-gap-test", ".json");
+        client.getAuthorityValidator().writeGapReport(reportFile);
+        assertThat(Files.exists(reportFile)).isTrue();
+        String reportJson = Files.readString(reportFile);
+        assertThat(reportJson).contains("ghost-user");
+        assertThat(reportJson).contains("AlfrescoAuthorityGapReport");
+        Files.deleteIfExists(reportFile);
+    }
+
+    @Test
+    void testAuthorityValidation_failMode() throws Exception {
+        properties.setMissingAuthorityAction("FAIL");
+
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/non-existent", exchange -> {
+            exchange.sendResponseHeaders(404, 0);
+            exchange.close();
+        });
+
+        SecurityConfig sec = new SecurityConfig(true, List.of(
+                new PermissionRule("user:non-existent", "user", "Missing", "read")
+        ));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                client.updatePermissions("node-fail", sec, null, "Consumer", true)
+        ).isInstanceOf(IllegalStateException.class)
+         .hasMessageContaining("does not exist in target Alfresco instance");
+
+        properties.setMissingAuthorityAction("SKIP"); // Reset
+    }
+
+    @Test
+    void testPreFlightAuthorityAudit() throws Exception {
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/valid-user", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/people/invalid-user", exchange -> {
+            exchange.sendResponseHeaders(404, 0);
+            exchange.close();
+        });
+
+        var result = client.getAuthorityValidator().runPreFlightAudit(List.of("valid-user", "invalid-user", "GROUP_EVERYONE"));
+        assertThat(result.totalAuthoritiesChecked()).isEqualTo(3);
+        assertThat(result.validAuthoritiesCount()).isEqualTo(2); // valid-user and built-in GROUP_EVERYONE
+        assertThat(result.missingAuthoritiesCount()).isEqualTo(1);
+        assertThat(result.missingAuthorities()).contains("invalid-user");
     }
 
     @Test

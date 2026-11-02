@@ -42,6 +42,10 @@ public class AlfrescoOutputProperties {
     private String defaultPermissionRole = "Consumer";
     private boolean isInheritanceEnabled = true;
     private String tombstoneAction = "MOVE_TO_TRASH"; // MOVE_TO_TRASH | PERMANENT_DELETE
+    private boolean validateAuthorities = true;
+    private String authorityValidationMode = "IN_FLIGHT"; // IN_FLIGHT | PRE_FLIGHT | BOTH | DISABLED
+    private String missingAuthorityAction = "SKIP"; // SKIP | FAIL
+    private String authorityGapReportPath = "reports/alfresco-authority-gap.json";
     private int timeoutSeconds = 60;
     private int parallelism = 4;
 
@@ -173,6 +177,38 @@ public class AlfrescoOutputProperties {
 
     public void setTombstoneAction(String tombstoneAction) {
         this.tombstoneAction = tombstoneAction != null ? tombstoneAction.trim().toUpperCase() : "MOVE_TO_TRASH";
+    }
+
+    public boolean isValidateAuthorities() {
+        return validateAuthorities;
+    }
+
+    public void setValidateAuthorities(boolean validateAuthorities) {
+        this.validateAuthorities = validateAuthorities;
+    }
+
+    public String getAuthorityValidationMode() {
+        return authorityValidationMode;
+    }
+
+    public void setAuthorityValidationMode(String authorityValidationMode) {
+        this.authorityValidationMode = authorityValidationMode != null ? authorityValidationMode.trim().toUpperCase() : "IN_FLIGHT";
+    }
+
+    public String getMissingAuthorityAction() {
+        return missingAuthorityAction;
+    }
+
+    public void setMissingAuthorityAction(String missingAuthorityAction) {
+        this.missingAuthorityAction = missingAuthorityAction != null ? missingAuthorityAction.trim().toUpperCase() : "SKIP";
+    }
+
+    public String getAuthorityGapReportPath() {
+        return authorityGapReportPath;
+    }
+
+    public void setAuthorityGapReportPath(String authorityGapReportPath) {
+        this.authorityGapReportPath = authorityGapReportPath != null ? authorityGapReportPath.trim() : "";
     }
 
     public int getTimeoutSeconds() {
