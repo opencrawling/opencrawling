@@ -39,6 +39,12 @@ public class SolrStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(SolrStoreWriterConsumer.class);
 
+    private static final Set<String> WRITER_FIELDS = Set.of(
+            "uri", "acl", "lastModified", "security",
+            SolrConstants.FIELD_SECURITY_INHERITANCE,
+            SolrConstants.FIELD_SECURITY_ALLOWED_READ,
+            SolrConstants.FIELD_SECURITY_DENIED_READ);
+
     private final SolrClient solrClient;
 
     @Value("${spring.opencrawling.output.solr.collection:enterprise_kb}")
@@ -107,9 +113,10 @@ public class SolrStoreWriterConsumer {
                 doc.addField(SolrConstants.FIELD_EMBEDDINGS, vectorList);
             }
 
-            // Put other dynamic metadata properties into doc
+            // Put other dynamic metadata properties into doc. Fields set above are skipped: addField appends to an
+            // existing value, which would duplicate (or, for the immutable EffectiveAcl lists, reject) them.
             message.metadata().forEach((key, val) -> {
-                if (!"uri".equals(key) && !"acl".equals(key) && !"lastModified".equals(key) && !"security".equals(key)) {
+                if (!WRITER_FIELDS.contains(key)) {
                     doc.addField(key, val);
                 }
             });
