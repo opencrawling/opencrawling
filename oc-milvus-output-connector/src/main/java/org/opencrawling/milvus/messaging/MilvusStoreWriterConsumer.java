@@ -20,6 +20,7 @@ import com.google.gson.JsonObject;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.DeleteReq;
 import io.milvus.v2.service.vector.request.InsertReq;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.milvus.MilvusConstants;
@@ -80,44 +81,11 @@ public class MilvusStoreWriterConsumer {
                 log.info("Successfully deleted tombstone document/chunks {} from Milvus collection '{}'.", docId, collectionName);
                 return;
             }
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map) {
-                Map<?, ?> securityMap = (Map<?, ?>) securityObj;
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List) {
-                    List<?> permsList = (List<?>) permsObj;
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map) {
-                            Map<?, ?> permMap = (Map<?, ?>) permObj;
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof org.opencrawling.core.security.SecurityConfig) {
-                org.opencrawling.core.security.SecurityConfig sc = (org.opencrawling.core.security.SecurityConfig) securityObj;
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (org.opencrawling.core.security.PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             JsonObject row = new JsonObject();
             row.addProperty(MilvusConstants.FIELD_ID, message.chunkId());

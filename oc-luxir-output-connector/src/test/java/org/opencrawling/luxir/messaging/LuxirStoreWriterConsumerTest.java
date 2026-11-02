@@ -128,9 +128,11 @@ class LuxirStoreWriterConsumerTest {
                 Map.of(
                         "uri", "file:///data/luxir-test.txt",
                         "acl", "public",
-                        "security_allowed_read", List.of("public", "engineering"),
-                        "security_denied_read", List.of("contractor"),
-                        "security_inheritance", false,
+                        // The writer derives the security fields from the security object (EffectiveAcl).
+                        "security", Map.of("inheritanceEnabled", false, "permissions", List.of(
+                                Map.of("identity", "public", "identityType", "public", "access", "read"),
+                                Map.of("identity", "engineering", "identityType", "group", "access", "read"),
+                                Map.of("identity", "contractor", "identityType", "group", "access", "deny"))),
                         "custom_tags", List.of("tag1", "tag2")
                 ),
                 new float[]{0.5f},

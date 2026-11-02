@@ -19,7 +19,7 @@ import ai.vespa.feed.client.DocumentId;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.opencrawling.core.security.PermissionRule;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.security.SecurityConfig;
 import org.springframework.stereotype.Component;
 
@@ -45,7 +45,7 @@ public class VespaDocumentMapper {
     public VespaDocument toDocument(String namespace, String documentType, String chunkId, String text, String uri,
                                      String acl, String lastModified, Object security, float[] embedding,
                                      Map<String, Object> extraMetadata) {
-        AclResult aclResult = resolveAcl(security);
+        EffectiveAcl aclResult = EffectiveAcl.resolve(security, acl);
 
         ObjectNode fields = MAPPER.createObjectNode();
         fields.put(VespaFields.FIELD_CHUNK_ID, chunkId);
@@ -108,49 +108,11 @@ public class VespaDocumentMapper {
         }
     }
 
-    private static AclResult resolveAcl(Object security) {
-        List<String> allowedRead = new ArrayList<>();
-        List<String> deniedRead = new ArrayList<>();
-        boolean inheritanceEnabled = true;
-
-        if (security instanceof SecurityConfig securityConfig) {
-            inheritanceEnabled = securityConfig.inheritanceEnabled();
-            for (PermissionRule rule : securityConfig.permissions()) {
-                bucket(rule.access(), rule.identity(), allowedRead, deniedRead);
-            }
-        } else if (security instanceof Map<?, ?> securityMap) {
-            if (securityMap.get("inheritanceEnabled") != null) {
-                inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-            }
-            Object permissions = securityMap.get("permissions");
-            if (permissions instanceof List<?> permissionList) {
-                for (Object permission : permissionList) {
-                    if (permission instanceof Map<?, ?> permissionMap) {
-                        bucket(String.valueOf(permissionMap.get("access")), String.valueOf(permissionMap.get("identity")),
-                                allowedRead, deniedRead);
-                    }
-                }
-            }
-        }
-        return new AclResult(inheritanceEnabled, allowedRead, deniedRead);
-    }
-
-    private static void bucket(String access, String identity, List<String> allowedRead, List<String> deniedRead) {
-        if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-            allowedRead.add(identity);
-        } else if ("deny".equalsIgnoreCase(access)) {
-            deniedRead.add(identity);
-        }
-    }
-
     private static void putStringArray(ObjectNode fields, String field, List<String> values) {
         ArrayNode array = fields.putArray(field);
         values.forEach(array::add);
     }
 
     public record VespaDocument(DocumentId id, String json) {
-    }
-
-    private record AclResult(boolean inheritanceEnabled, List<String> allowedRead, List<String> deniedRead) {
     }
 }

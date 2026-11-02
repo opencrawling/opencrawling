@@ -15,6 +15,7 @@
  */
 package org.opencrawling.luxir;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.text.TextExtractionResult;
@@ -171,6 +172,12 @@ public class LuxirOutputConnector implements OutputConnector {
                                 .toList());
                     }
                     doc.put(LuxirConstants.FIELD_ACL, acls);
+
+                    // Zero-Trust security metadata (one normalization for every store, see EffectiveAcl)
+                    EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                    doc.put(LuxirConstants.FIELD_SECURITY_INHERITANCE, String.valueOf(effectiveAcl.inheritanceEnabled()));
+                    doc.put(LuxirConstants.FIELD_SECURITY_ALLOWED_READ, effectiveAcl.allowedRead());
+                    doc.put(LuxirConstants.FIELD_SECURITY_DENIED_READ, effectiveAcl.deniedRead());
 
                     if (document.lastModified() != null) {
                         doc.put(LuxirConstants.FIELD_LAST_MODIFIED, document.lastModified().toString());

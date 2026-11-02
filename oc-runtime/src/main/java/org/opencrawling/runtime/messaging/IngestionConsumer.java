@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.messaging;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.springframework.ai.document.Document;
@@ -24,8 +25,6 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.pipeline.PipelineMode;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
@@ -199,53 +198,14 @@ public class IngestionConsumer {
                 metadata.put("documentId", message.documentId());
                 metadata.put("uri", message.uri());
                 metadata.put("acl", message.acl());
-                metadata.put("security", message.security());
+                EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.security(), message.acl());
+                metadata.put("security", effectiveAcl.security());
                 metadata.put("lastModified", message.lastModified());
 
-                // Map standard OIS security fields for role-based and zero-trust pre-filtering
-                List<String> allowedRead = new ArrayList<>();
-                List<String> deniedRead = new ArrayList<>();
-                boolean inheritanceEnabled = false;
-
-                boolean isDefaultPublicSecurity = message.security() != null
-                        && SecurityConfig.createPublic().equals(message.security());
-                boolean hasRestrictiveAcl = message.acl() != null
-                        && !message.acl().isBlank()
-                        && !"public".equalsIgnoreCase(message.acl().trim())
-                        && !"read".equalsIgnoreCase(message.acl().trim());
-
-                if (message.security() != null) {
-                    inheritanceEnabled = message.security().inheritanceEnabled();
-                    if (message.security().permissions() != null && !(isDefaultPublicSecurity && hasRestrictiveAcl)) {
-                        for (PermissionRule rule : message.security().permissions()) {
-                            if (rule != null && rule.identity() != null && !rule.identity().isBlank()) {
-                                String id = rule.identity().trim();
-                                if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
-                                    if (!allowedRead.contains(id)) {
-                                        allowedRead.add(id);
-                                    }
-                                } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                    if (!deniedRead.contains(id)) {
-                                        deniedRead.add(id);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (message.acl() != null && !message.acl().isBlank() && !"read".equalsIgnoreCase(message.acl().trim())) {
-                    for (String token : message.acl().split(",")) {
-                        String trimmed = token.trim();
-                        if (!trimmed.isEmpty() && !allowedRead.contains(trimmed)) {
-                            allowedRead.add(trimmed);
-                        }
-                    }
-                }
-
-                metadata.put("security_inheritance", inheritanceEnabled);
-                metadata.put("security_allowed_read", allowedRead);
-                metadata.put("security_denied_read", deniedRead);
+                // Flattened security fields for role-based and zero-trust pre-filtering
+                metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
+                metadata.put("security_allowed_read", effectiveAcl.allowedRead());
+                metadata.put("security_denied_read", effectiveAcl.deniedRead());
                 
                 // Construct Spring AI Document
                 Document aiDoc = new Document(message.documentId(), text, metadata);

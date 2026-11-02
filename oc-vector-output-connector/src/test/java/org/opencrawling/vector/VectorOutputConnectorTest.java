@@ -98,6 +98,35 @@ class VectorOutputConnectorTest {
     }
 
     @Test
+    void testRestrictiveAclOverridesDefaultPublicSecurity() {
+        byte[] content = "Restricted content behind a default public placeholder.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-override");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of("mimeType", List.of("text/plain")));
+        when(repoDoc.uri()).thenReturn("file://doc-override");
+        when(repoDoc.acl()).thenReturn("alice");
+        when(repoDoc.security()).thenReturn(org.opencrawling.core.security.SecurityConfig.createPublic());
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+
+        connector.send(repoDoc).block();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore, atLeastOnce()).add(captor.capture());
+
+        Map<String, Object> metadata = captor.getValue().get(0).getMetadata();
+        // Before EffectiveAcl this indexed [public, alice], making the document readable by everyone.
+        assertEquals(List.of("alice"), metadata.get("security_allowed_read"));
+        org.opencrawling.core.security.SecurityConfig stored =
+                (org.opencrawling.core.security.SecurityConfig) metadata.get("security");
+        assertEquals(List.of("alice"), stored.permissions().stream()
+                .map(org.opencrawling.core.security.PermissionRule::identity).toList());
+    }
+
+    @Test
     void testSendWithSecurityConfigMapsAclFields() {
         byte[] content = "Content with specific ACL permissions.".getBytes();
         RepositoryDocument repoDoc = mock(RepositoryDocument.class);

@@ -16,10 +16,9 @@
 package org.opencrawling.luxir.messaging;
 
 import jakarta.annotation.PostConstruct;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.luxir.LuxirConstants;
 import org.opencrawling.luxir.client.LuxirClient;
 import org.slf4j.Logger;
@@ -108,82 +107,11 @@ public class LuxirStoreWriterConsumer {
                 return;
             }
 
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object allowedMeta = message.metadata().get("security_allowed_read");
-            if (allowedMeta == null) {
-                allowedMeta = message.metadata().get(LuxirConstants.FIELD_SECURITY_ALLOWED_READ);
-            }
-            if (allowedMeta instanceof Collection<?> col) {
-                for (Object o : col) {
-                    if (o != null && !String.valueOf(o).isBlank()) {
-                        String id = String.valueOf(o).trim();
-                        if (!allowedRead.contains(id)) allowedRead.add(id);
-                    }
-                }
-            }
-
-            Object deniedMeta = message.metadata().get("security_denied_read");
-            if (deniedMeta == null) {
-                deniedMeta = message.metadata().get(LuxirConstants.FIELD_SECURITY_DENIED_READ);
-            }
-            if (deniedMeta instanceof Collection<?> col) {
-                for (Object o : col) {
-                    if (o != null && !String.valueOf(o).isBlank()) {
-                        String id = String.valueOf(o).trim();
-                        if (!deniedRead.contains(id)) deniedRead.add(id);
-                    }
-                }
-            }
-
-            Object inhMeta = message.metadata().get("security_inheritance");
-            if (inhMeta == null) {
-                inhMeta = message.metadata().get(LuxirConstants.FIELD_SECURITY_INHERITANCE);
-            }
-            if (inhMeta != null) {
-                inheritanceEnabled = Boolean.parseBoolean(String.valueOf(inhMeta));
-            }
-
-            // Fallback to parsing security config object if not pre-mapped
-            if (allowedRead.isEmpty() && deniedRead.isEmpty()) {
-                Object securityObj = message.metadata().get("security");
-                if (securityObj instanceof Map<?, ?> securityMap) {
-                    if (securityMap.containsKey("inheritanceEnabled")) {
-                        inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                    }
-                    Object permsObj = securityMap.get("permissions");
-                    if (permsObj instanceof List<?> permsList) {
-                        for (Object permObj : permsList) {
-                            if (permObj instanceof Map<?, ?> permMap) {
-                                String identity = String.valueOf(permMap.get("identity"));
-                                String access = String.valueOf(permMap.get("access"));
-                                if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access) || "admin".equalsIgnoreCase(access)) {
-                                    if (!allowedRead.contains(identity)) allowedRead.add(identity);
-                                } else if ("deny".equalsIgnoreCase(access)) {
-                                    if (!deniedRead.contains(identity)) deniedRead.add(identity);
-                                }
-                            }
-                        }
-                    }
-                } else if (securityObj instanceof SecurityConfig sc) {
-                    inheritanceEnabled = sc.inheritanceEnabled();
-                    if (sc.permissions() != null) {
-                        for (PermissionRule rule : sc.permissions()) {
-                            if (rule != null && rule.identity() != null && !rule.identity().isBlank()) {
-                                String identity = rule.identity().trim();
-                                if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
-                                    if (!allowedRead.contains(identity)) allowedRead.add(identity);
-                                } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                    if (!deniedRead.contains(identity)) deniedRead.add(identity);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             Map<String, Object> doc = new LinkedHashMap<>();
             doc.put(LuxirConstants.FIELD_ID, message.chunkId());
@@ -218,13 +146,6 @@ public class LuxirStoreWriterConsumer {
                         .filter(s -> !s.isEmpty())
                         .toList();
                 doc.put(LuxirConstants.FIELD_ACL, aclTokens);
-                if (allowedRead.isEmpty() && deniedRead.isEmpty()) {
-                    for (String token : aclTokens) {
-                        if (!"read".equalsIgnoreCase(token) && !allowedRead.contains(token)) {
-                            allowedRead.add(token);
-                        }
-                    }
-                }
             }
 
             // Zero-Trust security metadata
