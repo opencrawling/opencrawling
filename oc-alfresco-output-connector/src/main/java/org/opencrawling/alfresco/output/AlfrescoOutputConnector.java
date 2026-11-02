@@ -15,11 +15,24 @@
  */
 package org.opencrawling.alfresco.output;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.URLConnection;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
 import org.opencrawling.alfresco.output.client.AlfrescoRestClient;
 import org.opencrawling.alfresco.output.config.AlfrescoOutputProperties;
-import org.opencrawling.alfresco.output.model.OisMigrationDocument;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
@@ -31,18 +44,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.URI;
-import java.net.URLConnection;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.DigestInputStream;
-import java.security.MessageDigest;
-import java.time.Instant;
-import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import jakarta.annotation.PostConstruct;
+import reactor.core.publisher.Mono;
 
 /**
  * Alfresco Content Services Output Connector dedicated exclusively to Migration Mode.
