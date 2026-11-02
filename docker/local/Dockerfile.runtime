@@ -56,6 +56,7 @@ COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
 COPY oc-grpc-push-connector/pom.xml oc-grpc-push-connector/
 COPY oc-openarch-output-connector/pom.xml oc-openarch-output-connector/
+COPY oc-authorization-openfga/pom.xml oc-authorization-openfga/
 COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
@@ -102,6 +103,7 @@ COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
 COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
 COPY oc-s3-output-connector/src/ /app/oc-s3-output-connector/src/
 COPY oc-openarch-output-connector/src/ /app/oc-openarch-output-connector/src/
+COPY oc-authorization-openfga/src/ /app/oc-authorization-openfga/src/
 COPY oc-openarch-repository-connector/src/ /app/oc-openarch-repository-connector/src/
 COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/

@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "user"
+    },
+    {
+      "type": "group",
+      "relations": {
+        "member": { "this": {} }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "user", "wildcard": {} },
+              { "type": "group", "relation": "member" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "document",
+      "relations": {
+        "grantee": { "this": {} },
+        "blocked": { "this": {} },
+        "can_read": {
+          "difference": {
+            "base": { "computedUserset": { "relation": "grantee" } },
+            "subtract": { "computedUserset": { "relation": "blocked" } }
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "grantee": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "user", "wildcard": {} },
+              { "type": "group", "relation": "member" }
+            ]
+          },
+          "blocked": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "user", "wildcard": {} },
+              { "type": "group", "relation": "member" }
+            ]
+          },
+          "can_read": { "directly_related_user_types": [] }
+        }
+      }
+    }
+  ]
+}

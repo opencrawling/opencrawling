@@ -1,0 +1,19 @@
+model
+  schema 1.1
+
+# A caller is checked as a user whose group memberships are passed as contextual tuples
+# (its principal and roles). Synced memberships (stored group#member tuples) work with
+# the same model, including nested groups.
+type user
+
+type group
+  relations
+    define member: [user, user:*, group#member]
+
+type document
+  relations
+    define grantee: [user, user:*, group#member]
+    define blocked: [user, user:*, group#member]
+    define can_read: grantee but not blocked
+
+# Reserved for #187 (jobs and tenants): tenant, job, connector.

@@ -16,8 +16,10 @@
 package org.opencrawling.runtime.authorization;
 
 import org.opencrawling.core.security.AuthorizationProvider;
+import org.opencrawling.core.security.RelationshipAuthorizationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -26,12 +28,15 @@ import org.springframework.context.annotation.Configuration;
 import java.util.Locale;
 
 /**
- * Selects the document authorization provider from {@code opencrawling.security.authorization.mode}.
- *
- * <p>{@code metadata} (the default) decides from the ACLs stored with each document. The relationship-based
- * modes ({@code shadow}, {@code intersection}, {@code openfga}) are supplied by the OpenFGA module, which
- * registers its own {@link AuthorizationProvider}; asking for one of them without that module stops startup
- * rather than silently running with metadata decisions.
+ * Builds the {@link DocumentAccessGate} for {@code opencrawling.security.authorization.mode}:
+ * <ul>
+ *   <li>{@code metadata} (default): the ACLs stored with each document decide.</li>
+ *   <li>{@code shadow}: metadata decides; the relationship provider is consulted and disagreements logged.</li>
+ *   <li>{@code intersection}: both must allow.</li>
+ *   <li>{@code openfga}: the relationship provider decides alone.</li>
+ * </ul>
+ * The relationship modes need a {@link RelationshipAuthorizationProvider} bean (the OpenFGA module); without
+ * one, startup stops rather than silently running with metadata decisions.
  */
 @Configuration
 public class AuthorizationConfiguration {
@@ -41,25 +46,43 @@ public class AuthorizationConfiguration {
     public static final String MODE_PROPERTY = "opencrawling.security.authorization.mode";
 
     @Bean
-    @ConditionalOnMissingBean(AuthorizationProvider.class)
-    public AuthorizationProvider metadataAuthorizationProvider(
-            @Value("${" + MODE_PROPERTY + ":metadata}") String mode) {
-        String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
-        switch (normalized) {
-            case "", MetadataAuthorizationProvider.NAME -> {
-                log.info("Document authorization mode: metadata (stored document ACLs).");
-                return new MetadataAuthorizationProvider();
-            }
-            case "shadow", "intersection", "openfga" -> throw new IllegalStateException(MODE_PROPERTY + "="
-                    + normalized + " needs the OpenFGA authorization module, which is not on the classpath.");
-            default -> throw new IllegalStateException("Unknown " + MODE_PROPERTY + " '" + mode
-                    + "'. Supported: metadata, shadow, intersection, openfga.");
-        }
+    @ConditionalOnMissingBean(DocumentAccessGate.class)
+    public DocumentAccessGate documentAccessGate(
+            @Value("${" + MODE_PROPERTY + ":metadata}") String mode,
+            ObjectProvider<RelationshipAuthorizationProvider> relationshipProvider) {
+        AuthorizationProvider provider = select(mode, relationshipProvider.getIfAvailable());
+        log.info("Document authorization mode '{}' using provider {}.", normalize(mode), provider.name());
+        return new DocumentAccessGate(provider);
     }
 
-    @Bean
-    @ConditionalOnMissingBean(DocumentAccessGate.class)
-    public DocumentAccessGate documentAccessGate(AuthorizationProvider provider) {
-        return new DocumentAccessGate(provider);
+    /**
+     * The provider for a mode.
+     *
+     * @throws IllegalStateException for an unknown mode, or a relationship mode without a relationship provider
+     */
+    public static AuthorizationProvider select(String mode, RelationshipAuthorizationProvider relationship) {
+        String normalized = normalize(mode);
+        MetadataAuthorizationProvider metadata = new MetadataAuthorizationProvider();
+        return switch (normalized) {
+            case "", MetadataAuthorizationProvider.NAME -> metadata;
+            case "shadow" -> new ShadowAuthorizationProvider(metadata, require(normalized, relationship));
+            case "intersection" -> new IntersectionAuthorizationProvider(metadata, require(normalized, relationship));
+            case "openfga" -> require(normalized, relationship);
+            default -> throw new IllegalStateException("Unknown " + MODE_PROPERTY + " '" + mode
+                    + "'. Supported: metadata, shadow, intersection, openfga.");
+        };
+    }
+
+    private static RelationshipAuthorizationProvider require(String mode, RelationshipAuthorizationProvider provider) {
+        if (provider == null) {
+            throw new IllegalStateException(MODE_PROPERTY + "=" + mode
+                    + " needs the OpenFGA authorization module (oc-authorization-openfga) and its settings "
+                    + "under opencrawling.security.authorization.openfga.*");
+        }
+        return provider;
+    }
+
+    private static String normalize(String mode) {
+        return mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
     }
 }

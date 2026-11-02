@@ -1,0 +1,81 @@
+#
+# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# OpenFGA for relationship-based document authorization (issue #45).
+#
+# Overlay it on a stack, for example:
+#   OPENFGA_PRESHARED_KEY=<long random secret> \
+#   docker compose -f docker-compose.yml -f docker-compose-openfga.yml up -d
+#
+# and point the services that serve or ingest documents at it:
+#   OPENCRAWLING_SECURITY_AUTHORIZATION_MODE=shadow          # then intersection or openfga once shadow is clean
+#   OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL=http://openfga:8080
+#   OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_TOKEN=${OPENFGA_PRESHARED_KEY}
+#   OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_AUTO_PROVISION=true   # or pin STORE_ID and MODEL_ID
+#
+# The HTTP API is published on the host at ${OPENFGA_HTTP_PORT:-8089} for administration only.
+
+services:
+  openfga-db:
+    image: postgres:17
+    container_name: openfga-db
+    environment:
+      - POSTGRES_USER=openfga
+      - POSTGRES_PASSWORD=${OPENFGA_DB_PASSWORD:-openfga_password}
+      - POSTGRES_DB=openfga
+    volumes:
+      - openfga-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  openfga-migrate:
+    image: openfga/openfga:v1.22.0
+    container_name: openfga-migrate
+    command: migrate
+    environment:
+      - OPENFGA_DATASTORE_ENGINE=postgres
+      - OPENFGA_DATASTORE_URI=postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga_password}@openfga-db:5432/openfga?sslmode=disable
+    depends_on:
+      openfga-db:
+        condition: service_healthy
+
+  openfga:
+    image: openfga/openfga:v1.22.0
+    container_name: openfga
+    command: run
+    environment:
+      - OPENFGA_DATASTORE_ENGINE=postgres
+      - OPENFGA_DATASTORE_URI=postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga_password}@openfga-db:5432/openfga?sslmode=disable
+      - OPENFGA_AUTHN_METHOD=preshared
+      - OPENFGA_AUTHN_PRESHARED_KEYS=${OPENFGA_PRESHARED_KEY:?Set OPENFGA_PRESHARED_KEY to a long random secret}
+      - OPENFGA_PLAYGROUND_ENABLED=false
+      - OPENFGA_LOG_FORMAT=json
+    ports:
+      - "${OPENFGA_HTTP_PORT:-8089}:8080"
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpc_health_probe", "-addr=openfga:8081"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  openfga-db-data:
