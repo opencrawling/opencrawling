@@ -12,6 +12,7 @@ Use the sidebar or the quick links below to navigate the documentation:
 *   **[Architecture](Architecture)**: Microservices layout, event streams, and the **Claim Check Pattern**.
 *   **[Configuration Guide](Configuration-Guide)**: Setting up repository, transformation, and output connectors.
 *   **[Model Context Protocol](Model-Context-Protocol)**: Running and query-authorizing the Secure MCP Server.
+*   **[Document Authorization](Document-Authorization)**: How retrieval is authorized, and relationship-based access control with OpenFGA.
 
 ---
 
