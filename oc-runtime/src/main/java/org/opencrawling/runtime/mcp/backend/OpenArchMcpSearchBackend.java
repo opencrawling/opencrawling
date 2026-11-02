@@ -119,7 +119,9 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
                 if (embeddingsNode.isArray()) {
                     for (JsonNode emb : embeddingsNode) {
                         String id = emb.hasNonNull("id") ? emb.get("id").asText() : "";
-                        String docId = emb.hasNonNull("docId") ? emb.get("docId").asText() : id;
+                        // Only a real document id keys relationship-based decisions; the embedding id is a display fallback.
+                        String sourceDocId = emb.hasNonNull("docId") ? emb.get("docId").asText() : null;
+                        String docId = sourceDocId != null ? sourceDocId : id;
                         String text = emb.hasNonNull("text") ? emb.get("text").asText() : "";
                         double score = emb.hasNonNull("score") ? emb.get("score").asDouble() : 1.0;
 
@@ -129,6 +131,9 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
 
                         Map<String, Object> metadata = extractMetadata(emb);
                         metadata.put("docId", docId);
+                        if (sourceDocId != null) {
+                            metadata.put("sourceDocId", sourceDocId);
+                        }
                         metadata.put("embeddingsType", embeddingsType);
                         if (emb.hasNonNull("blobref")) {
                             metadata.put("blobref", emb.get("blobref").asText());
@@ -174,7 +179,7 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
             log.error("OpenArch MCP search failed: {}", e.getMessage(), e);
         }
         return readable(userPrincipal, userRoles, candidates,
-                        result -> new ResourceRef(ResourceRef.idValue(result.metadata().get("docId")), result.metadata())).stream()
+                        result -> new ResourceRef(ResourceRef.idValue(result.metadata().get("sourceDocId")), result.metadata())).stream()
                 .limit(Math.max(maxResults, 0))
                 .toList();
     }

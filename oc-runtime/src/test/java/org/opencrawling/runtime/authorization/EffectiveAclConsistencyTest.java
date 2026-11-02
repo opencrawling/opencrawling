@@ -37,10 +37,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class EffectiveAclConsistencyTest {
 
-    private static final String[] IDENTITIES = {"alice", "bob", "finance", "hr", "public", "Public", "GROUP_EVERYONE", "user:a;group:b", ""};
+    private static final String[] IDENTITIES = {"alice", "bob", "finance", "hr", "public", "Public", "GROUP_EVERYONE", "user:a;group:b", "IŞIK", "ışık", "ſtrasse", "STRASSE", "Σ", "ς", "cn=bob,ou=users,dc=corp", ""};
     private static final String[] TYPES = {"user", "group", "public", "PUBLIC", null};
     private static final String[] ACCESS = {"read", "write", "admin", "deny", "none", "READ", null};
-    private static final String[] ROLES = {"alice", "bob", "finance", "hr", "public", "GROUP_EVERYONE"};
+    private static final String[] ROLES = {"alice", "bob", "finance", "hr", "public", "GROUP_EVERYONE", "ışık", "STRASSE", "ς", "cn=bob,ou=users,dc=corp"};
 
     @Test
     void storesWithAndWithoutTheSecurityObjectDecideTheSame() {

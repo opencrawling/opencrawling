@@ -19,7 +19,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
@@ -30,7 +29,9 @@ import java.util.regex.Pattern;
  * written and when access is checked:
  * <ul>
  *   <li>A document is {@code document:<sha256 of its id>}: fixed length, no escaping.</li>
- *   <li>An identity is lower-cased (the metadata evaluator compares case-insensitively) and every character
+ *   <li>An identity is case-folded exactly as {@link String#equalsIgnoreCase} compares (each code point
+ *       mapped to {@code toLowerCase(toUpperCase(c))}, so that for example {@code IŞIK} and {@code ışık} fold to
+ *       the same key, as the metadata evaluator treats them) and every character
  *       outside {@code [a-z0-9._~-]} is percent-encoded as UTF-8; a result longer than
  *       {@link #MAX_ENCODED_LENGTH} becomes {@code %h<sha256>}, which no encoding can produce (encoded
  *       bytes are always {@code %} plus two upper-case hex digits).</li>
@@ -62,9 +63,9 @@ public final class OpenFgaIdentifiers {
     private OpenFgaIdentifiers() {
     }
 
-    /** {@code document:<sha256(documentId)>}. */
+    /** {@code document:<sha256(documentId)>}; surrounding whitespace is ignored, as on the read side. */
     public static String documentObject(String documentId) {
-        return DOCUMENT_TYPE + ":" + sha256(documentId);
+        return DOCUMENT_TYPE + ":" + sha256(documentId.trim());
     }
 
     /** The group a raw (verbatim) identity form belongs to, e.g. {@code group:r_finance}. */
@@ -109,9 +110,9 @@ public final class OpenFgaIdentifiers {
     }
 
     static String encode(String identity) {
-        String lower = identity.toLowerCase(Locale.ROOT);
-        StringBuilder out = new StringBuilder(lower.length());
-        for (byte b : lower.getBytes(StandardCharsets.UTF_8)) {
+        String folded = fold(identity);
+        StringBuilder out = new StringBuilder(folded.length());
+        for (byte b : folded.getBytes(StandardCharsets.UTF_8)) {
             char c = (char) (b & 0xFF);
             if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '~' || c == '-') {
                 out.append(c);
@@ -120,7 +121,18 @@ public final class OpenFgaIdentifiers {
                         .append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
             }
         }
-        return out.length() > MAX_ENCODED_LENGTH ? "%h" + sha256(lower) : out.toString();
+        return out.length() > MAX_ENCODED_LENGTH ? "%h" + sha256(folded) : out.toString();
+    }
+
+    /**
+     * Case folding with the same equivalence as {@link String#equalsIgnoreCase}: two strings fold to the same
+     * value exactly when equalsIgnoreCase considers them equal. {@code String.toLowerCase} is not suitable: it is
+     * locale- and context-sensitive and can change the length (for example {@code İ}, final sigma).
+     */
+    static String fold(String value) {
+        StringBuilder out = new StringBuilder(value.length());
+        value.codePoints().forEach(cp -> out.appendCodePoint(Character.toLowerCase(Character.toUpperCase(cp))));
+        return out.toString();
     }
 
     static String sha256(String value) {

@@ -51,7 +51,9 @@ public class VespaDocumentMapper {
         fields.put(VespaFields.FIELD_CHUNK_ID, chunkId);
         fields.put(VespaFields.FIELD_TEXT, text != null ? text : "");
         fields.put(VespaFields.FIELD_URI, uri != null ? uri : "");
-        fields.put(VespaFields.FIELD_ACL, acl != null ? acl : "");
+        // An empty security_allowed_read array is not fed, and readers then fall back to the acl field, so it
+        // holds the effective readers rather than the raw acl string (which permission rules override).
+        fields.put(VespaFields.FIELD_ACL, String.join(",", aclResult.allowedRead()));
         fields.put(VespaFields.FIELD_LAST_MODIFIED, lastModified != null ? lastModified : "");
         fields.put(VespaFields.FIELD_SECURITY_INHERITANCE, aclResult.inheritanceEnabled());
         putStringArray(fields, VespaFields.FIELD_SECURITY_ALLOWED_READ, aclResult.allowedRead());

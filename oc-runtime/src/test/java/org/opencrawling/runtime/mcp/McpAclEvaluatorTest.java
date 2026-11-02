@@ -171,4 +171,20 @@ class McpAclEvaluatorTest {
 
         assertTrue(McpAclEvaluator.isAccessible("engineering, finance", List.of(), List.of(), "bob", List.of("finance")));
     }
+
+    @org.junit.jupiter.api.Test
+    void listItemsAreWholeIdentitiesEvenWithCommas() {
+        String dn = "cn=bob,ou=users,dc=corp";
+        java.util.Map<String, Object> metadata = java.util.Map.of(
+                "security_allowed_read", java.util.List.of("public"),
+                "security_denied_read", java.util.List.of(dn));
+        // The deny applies to the DN as a whole...
+        org.assertj.core.api.Assertions.assertThat(McpAclEvaluator.isAccessible(metadata, dn, java.util.List.of())).isFalse();
+        // ...and a fragment of it is not an identity.
+        org.assertj.core.api.Assertions.assertThat(McpAclEvaluator.isAccessible(java.util.Map.of(
+                "security_allowed_read", java.util.List.of(dn)), "x", java.util.List.of("dc=corp"))).isFalse();
+        // A legacy acl string is still comma-separated.
+        org.assertj.core.api.Assertions.assertThat(McpAclEvaluator.isAccessible(java.util.Map.of("acl", "hr,finance"),
+                "x", java.util.List.of("finance"))).isTrue();
+    }
 }

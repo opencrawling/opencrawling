@@ -88,7 +88,9 @@ public class SolrStoreWriterConsumer {
             doc.addField(SolrConstants.FIELD_URI, uriVal != null ? String.valueOf(uriVal) : "");
 
             Object aclVal = message.metadata().get("acl");
-            doc.addField(SolrConstants.FIELD_ACL, aclVal != null ? String.valueOf(aclVal) : "");
+            // Solr does not store an empty multi-valued field, and readers then fall back to the acl field, so it
+            // holds the effective readers rather than the raw acl string (which permission rules override).
+            doc.addField(SolrConstants.FIELD_ACL, String.join(",", allowedRead));
 
             Object lastModifiedVal = message.metadata().get("lastModified");
             doc.addField(SolrConstants.FIELD_LAST_MODIFIED, lastModifiedVal != null ? String.valueOf(lastModifiedVal) : "");

@@ -138,15 +138,8 @@ public class LuxirStoreWriterConsumer {
                 doc.put(LuxirConstants.FIELD_LAST_MODIFIED, String.valueOf(lastModifiedVal));
             }
 
-            // Legacy ACL token parsing
-            Object aclVal = message.metadata().get("acl");
-            if (aclVal != null) {
-                List<String> aclTokens = Arrays.stream(String.valueOf(aclVal).split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .toList();
-                doc.put(LuxirConstants.FIELD_ACL, aclTokens);
-            }
+            // Empty lists are not stored, and readers then fall back to acl_ss, so it holds the effective readers.
+            doc.put(LuxirConstants.FIELD_ACL, allowedRead);
 
             // Zero-Trust security metadata
             doc.put(LuxirConstants.FIELD_SECURITY_INHERITANCE, String.valueOf(inheritanceEnabled));

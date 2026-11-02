@@ -92,7 +92,7 @@ With this mapping OpenFGA reproduces the stored-ACL decisions exactly. A differe
 2. computes the tuples its current permissions call for,
 3. writes only the difference. Writes are idempotent (`on_duplicate`/`on_missing` = ignore), so replays are safe. A change of more than 100 tuples is applied in the order *add denies → add grants → remove grants → remove denies*, so the document is never more readable than either its old or its new permissions.
 
-A deleted document (tombstone) loses all its tuples, so it becomes unreadable even if a store failed to purge its chunks. A failed sync is retried with exponential backoff (6 attempts, 0.5 s doubling to 10 s), then published to `opencrawling-documents.authz-dlt`. Until it succeeds, a new document has no tuples and stays unreadable in `openfga` mode.
+A deleted document (tombstone) loses all its tuples, so it becomes unreadable even if a store failed to purge its chunks. A failed sync is retried with exponential backoff (6 attempts, 0.5 s doubling to 10 s), then recorded in `opencrawling-documents.authz-dlt` and skipped, so one bad message cannot stall the others. Until the document syncs again, it keeps its previous tuples (none for a new document, which therefore stays unreadable in `openfga` mode).
 
 ### Search results stay complete
 
@@ -181,7 +181,12 @@ Shadow mode (step 3 above) tells you when the backfill is complete. There is del
 **When OpenFGA is unavailable:**
 - in `openfga` and `intersection` modes, retrieval answers an error and returns no documents;
 - in `shadow` mode, callers are unaffected and `oc.authz.shadow.errors` increases;
-- permission syncs are retried and, if still failing, end up in `opencrawling-documents.authz-dlt`. Replay that topic once OpenFGA is healthy.
+- permission syncs are retried and, if still failing, are recorded in `opencrawling-documents.authz-dlt`. **Do not replay that topic as it is.** A later update of the same document may already have been applied, and replaying the older one would roll its permissions back. Once OpenFGA is healthy, reset the sync group to the first dead letter's original offset (record header `kafka_dlt-original-offset`) so that updates replay in order, or re-crawl the affected documents:
+
+  ```bash
+  kafka-consumer-groups.sh --bootstrap-server <kafka> --group opencrawling-authz-sync \
+    --topic opencrawling-documents:<partition> --reset-offsets --to-offset <original offset> --execute
+  ```
 
 **Limits:**
 - A caller may carry at most 49 roles in `intersection`/`openfga` mode. OpenFGA accepts 100 contextual tuples per check, and each identity needs two. A caller with more is denied. Stored memberships remove this limit.

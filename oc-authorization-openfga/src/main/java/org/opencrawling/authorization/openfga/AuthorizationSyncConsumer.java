@@ -36,7 +36,12 @@ public class AuthorizationSyncConsumer {
     private static final Logger log = LoggerFactory.getLogger(AuthorizationSyncConsumer.class);
 
     public static final String TOPIC = "opencrawling-documents";
-    /** Where messages go after the retries are exhausted; replay them once the cause is fixed. */
+    /**
+     * Where a message goes after its retries are exhausted. Do not replay these records as they are: a later
+     * update of the same document may already have been applied, and replaying the older one would roll its
+     * permissions back. Recover by resetting the sync consumer group to the first dead letter's original offset
+     * (header {@code kafka_dlt-original-offset}), so updates replay in order, or by re-crawling.
+     */
     public static final String DEAD_LETTER_TOPIC = TOPIC + ".authz-dlt";
     public static final String CONTAINER_FACTORY = "authzSyncContainerFactory";
 

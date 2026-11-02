@@ -211,11 +211,13 @@ public final class McpAclEvaluator {
 
     private static List<String> extractStringList(Object obj) {
         if (obj == null) return Collections.emptyList();
+        // Items of a list are whole identities: an identity may itself contain commas (an LDAP DN such as
+        // cn=bob,ou=users,dc=corp), so only a single legacy string is split on commas.
         if (obj instanceof Collection<?> col) {
             List<String> list = new ArrayList<>();
             for (Object item : col) {
                 if (item != null) {
-                    addSplitTokens(String.valueOf(item), list);
+                    addToken(String.valueOf(item), list);
                 }
             }
             return list;
@@ -223,7 +225,7 @@ public final class McpAclEvaluator {
             List<String> list = new ArrayList<>();
             for (String item : arr) {
                 if (item != null) {
-                    addSplitTokens(item, list);
+                    addToken(item, list);
                 }
             }
             return list;
@@ -233,6 +235,13 @@ public final class McpAclEvaluator {
             return list;
         }
         return Collections.emptyList();
+    }
+
+    private static void addToken(String raw, List<String> target) {
+        String trimmed = raw.trim();
+        if (!trimmed.isEmpty()) {
+            target.add(trimmed);
+        }
     }
 
     private static void addSplitTokens(String raw, List<String> target) {

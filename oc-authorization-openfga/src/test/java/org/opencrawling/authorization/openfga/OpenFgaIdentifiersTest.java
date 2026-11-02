@@ -72,6 +72,21 @@ class OpenFgaIdentifiersTest {
     }
 
     @Test
+    void caseFoldingMatchesEqualsIgnoreCase() {
+        String[][] pairs = {{"IŞIK", "ışık"}, {"ſtrasse", "STRASSE"}, {"Σοφία", "σοφίΑ"}, {"ς", "Σ"}, {"µ", "μ"},
+                {"K", "\u212A"}, {"İ", "i"}, {"İ", "i\u0307"}, {"Straße", "STRASSE"}, {"alice", "ALICE"}};
+        for (String[] pair : pairs) {
+            assertThat(OpenFgaIdentifiers.rawGroup(pair[0]).equals(OpenFgaIdentifiers.rawGroup(pair[1])))
+                    .as("%s vs %s", pair[0], pair[1]).isEqualTo(pair[0].equalsIgnoreCase(pair[1]));
+        }
+    }
+
+    @Test
+    void documentIdsIgnoreSurroundingWhitespace() {
+        assertThat(OpenFgaIdentifiers.documentObject(" doc-1 ")).isEqualTo(OpenFgaIdentifiers.documentObject("doc-1"));
+    }
+
+    @Test
     void anonymousCallersHaveTheirOwnUser() {
         assertThat(OpenFgaIdentifiers.userObject(null)).isEqualTo("user:anonymous");
         assertThat(OpenFgaIdentifiers.userObject(" ")).isEqualTo("user:anonymous");
