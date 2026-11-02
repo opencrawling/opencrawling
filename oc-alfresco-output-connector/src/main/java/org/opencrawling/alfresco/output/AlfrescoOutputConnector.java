@@ -274,14 +274,22 @@ public class AlfrescoOutputConnector implements OutputConnector {
     private String extractPathFromDocument(RepositoryDocument document) {
         Map<String, List<String>> meta = document.metadata();
         if (meta != null) {
-            if (meta.containsKey("path") && !meta.get("path").isEmpty()) {
-                return sanitizeFolderDir(meta.get("path").get(0));
-            }
-            if (meta.containsKey("relative_path") && !meta.get("relative_path").isEmpty()) {
-                return sanitizeFolderDir(meta.get("relative_path").get(0));
-            }
-            if (meta.containsKey("folder") && !meta.get("folder").isEmpty()) {
-                return sanitizeFolderDir(meta.get("folder").get(0));
+            for (String key : List.of("relativePath", "relative_path", "folder", "path", "cmis:path", "cmis.path")) {
+                List<String> values = meta.get(key);
+                if (values != null && !values.isEmpty() && values.get(0) != null && !values.get(0).isBlank()) {
+                    String val = values.get(0);
+                    if ("cmis:path".equalsIgnoreCase(key) || "cmis.path".equalsIgnoreCase(key)) {
+                        int lastSlash = val.lastIndexOf('/');
+                        if (lastSlash > 0) {
+                            val = val.substring(0, lastSlash);
+                        } else {
+                            val = "";
+                        }
+                    }
+                    if (!val.isBlank()) {
+                        return sanitizeFolderDir(val);
+                    }
+                }
             }
         }
 

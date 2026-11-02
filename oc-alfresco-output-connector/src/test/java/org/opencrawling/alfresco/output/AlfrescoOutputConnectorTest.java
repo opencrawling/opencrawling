@@ -131,6 +131,42 @@ class AlfrescoOutputConnectorTest {
     }
 
     @Test
+    void testSend_upsertWithRelativePathHierarchy() throws Exception {
+        when(mockClient.ensureFolderPath(anyString(), anyString())).thenReturn("subfolder-folder-id");
+        when(mockClient.uploadNode(anyString(), anyString(), anyString(), anyMap(), anyList(), any(), anyString(), anyBoolean(), anyBoolean()))
+                .thenReturn(new AlfrescoRestClient.NodeCreationResult("node-sub-101", "subfolder-spec.txt", false));
+
+        RepositoryDocument doc = new RepositoryDocument(
+                "doc-nested",
+                "s3://claims/doc-nested-claim.bin",
+                new ByteArrayInputStream("NESTED-CONTENT".getBytes(StandardCharsets.UTF_8)),
+                Map.of(
+                        "filename", List.of("subfolder-spec.txt"),
+                        "relativePath", List.of("subfolder")
+                ),
+                "public",
+                SecurityConfig.createPublic(),
+                Instant.now(),
+                DocumentAction.UPSERT
+        );
+
+        connector.send(doc).block();
+
+        verify(mockClient).ensureFolderPath(eq("-root-"), eq("MigratedContent/subfolder"));
+        verify(mockClient).uploadNode(
+                eq("subfolder-folder-id"),
+                eq("subfolder-spec.txt"),
+                eq("cm:content"),
+                anyMap(),
+                anyList(),
+                any(),
+                anyString(),
+                eq(true),
+                eq(false)
+        );
+    }
+
+    @Test
     void testSend_deleteAction() throws Exception {
         when(mockClient.ensureFolderPath(anyString(), anyString())).thenReturn("folder-id");
         when(mockClient.findChildNodeByName(anyString(), eq("old-doc.pdf"))).thenReturn("node-to-delete-123");

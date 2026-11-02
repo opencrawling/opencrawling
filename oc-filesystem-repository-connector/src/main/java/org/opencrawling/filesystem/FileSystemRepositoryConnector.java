@@ -93,7 +93,7 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
         return Flux.create(sink -> {
             try {
                 Path rootPath = Paths.get(basePath);
-                scanDirectory(rootPath, sink);
+                scanDirectory(rootPath, rootPath, sink);
                 sink.complete();
             } catch (Exception e) {
                 sink.error(e);
@@ -102,19 +102,19 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
     }
 
     @SuppressWarnings("preview")
-    private void scanDirectory(Path dir, reactor.core.publisher.FluxSink<RepositoryDocument> sink) throws InterruptedException {
+    private void scanDirectory(Path rootPath, Path dir, reactor.core.publisher.FluxSink<RepositoryDocument> sink) throws InterruptedException {
         try (var scope = StructuredTaskScope.open()) {
             
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
                 for (Path entry : stream) {
                     if (Files.isDirectory(entry)) {
                         scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
-                            scanDirectory(entry, sink);
+                            scanDirectory(rootPath, entry, sink);
                             return null;
                         }));
                     } else if (Files.isRegularFile(entry)) {
                         try {
-                            RepositoryDocument doc = createDocument(entry);
+                            RepositoryDocument doc = createDocument(rootPath, entry);
                             sink.next(doc);
                         } catch (Exception e) {
                             // Log or handle individual file errors
@@ -132,6 +132,10 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
     }
 
     private RepositoryDocument createDocument(Path file) throws IOException {
+        return createDocument(null, file);
+    }
+
+    private RepositoryDocument createDocument(Path rootPath, Path file) throws IOException {
         BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
         
         Map<String, List<String>> metadata = new HashMap<>();
@@ -141,6 +145,21 @@ public class FileSystemRepositoryConnector implements RepositoryConnector {
         metadata.put("file_path", List.of(file.toAbsolutePath().toString()));
         metadata.put("file_size", List.of(String.valueOf(attrs.size())));
         metadata.put("file_is_hidden", List.of(String.valueOf(Files.isHidden(file))));
+
+        if (rootPath != null) {
+            try {
+                Path parent = file.toAbsolutePath().getParent();
+                Path absRoot = rootPath.toAbsolutePath();
+                if (parent != null && parent.startsWith(absRoot)) {
+                    Path rel = absRoot.relativize(parent);
+                    String relStr = rel.toString().replace('\\', '/').replaceAll("^/+", "").replaceAll("/+$", "");
+                    if (!relStr.isBlank()) {
+                        metadata.put("relativePath", List.of(relStr));
+                        metadata.put("relative_path", List.of(relStr));
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
 
         List<PermissionRule> rules = new ArrayList<>();
         boolean isPublic = false;
