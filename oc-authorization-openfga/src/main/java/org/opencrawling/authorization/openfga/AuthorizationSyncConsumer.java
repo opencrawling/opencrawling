@@ -27,14 +27,18 @@ import org.springframework.kafka.annotation.KafkaListener;
  * pipeline with its own consumer group, so crawled, REST-pushed and gRPC-pushed documents are covered
  * whichever output they go to. The Kafka key is the document id, so updates to one document stay in order.
  *
- * <p>A failed sync is rethrown so the listener container retries it; until it succeeds the document has no
- * tuples, and in {@code openfga} mode it stays unreadable (fail closed).
+ * <p>A failed sync is rethrown: the listener retries it with backoff, then publishes it to
+ * {@link #DEAD_LETTER_TOPIC}. Until a sync succeeds the document keeps its previous tuples (none for a new
+ * document), so in {@code openfga} mode a new document stays unreadable (fail closed).
  */
 public class AuthorizationSyncConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(AuthorizationSyncConsumer.class);
 
     public static final String TOPIC = "opencrawling-documents";
+    /** Where messages go after the retries are exhausted; replay them once the cause is fixed. */
+    public static final String DEAD_LETTER_TOPIC = TOPIC + ".authz-dlt";
+    public static final String CONTAINER_FACTORY = "authzSyncContainerFactory";
 
     private final OpenFgaTupleWriter writer;
 
@@ -44,6 +48,7 @@ public class AuthorizationSyncConsumer {
 
     @KafkaListener(
             topics = TOPIC,
+            containerFactory = CONTAINER_FACTORY,
             groupId = "${opencrawling.security.authorization.openfga.sync-group-id:opencrawling-authz-sync}")
     public void consume(IngestionMessage message) throws Exception {
         if (message == null || message.documentId() == null || message.documentId().isBlank()) {

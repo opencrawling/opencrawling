@@ -19,11 +19,20 @@ import dev.openfga.sdk.api.client.OpenFgaClient;
 import dev.openfga.sdk.api.configuration.ApiToken;
 import dev.openfga.sdk.api.configuration.ClientConfiguration;
 import dev.openfga.sdk.api.configuration.Credentials;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.TopicPartition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 
 /**
  * Wires the OpenFGA provider, the tuple writer and the sync consumer when
@@ -65,5 +74,33 @@ public class OpenFgaAuthorizationConfiguration {
             havingValue = "true", matchIfMissing = true)
     public AuthorizationSyncConsumer authorizationSyncConsumer(OpenFgaTupleWriter writer) {
         return new AuthorizationSyncConsumer(writer);
+    }
+
+    /**
+     * The sync listener's container: retries a failed sync with exponential backoff (0.5 s doubling to 10 s,
+     * 6 attempts in all), then publishes the message to the dead-letter topic and moves on.
+     */
+    @Bean(name = AuthorizationSyncConsumer.CONTAINER_FACTORY)
+    @ConditionalOnProperty(name = "opencrawling.security.authorization.openfga.sync.enabled",
+            havingValue = "true", matchIfMissing = true)
+    public ConcurrentKafkaListenerContainerFactory<String, Object> authzSyncContainerFactory(
+            ConsumerFactory<String, Object> consumerFactory, KafkaTemplate<String, Object> kafkaTemplate) {
+        ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(5);
+        backOff.setInitialInterval(500);
+        backOff.setMultiplier(2.0);
+        backOff.setMaxInterval(10_000);
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate,
+                (record, exception) -> new TopicPartition(AuthorizationSyncConsumer.DEAD_LETTER_TOPIC, -1));
+        ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(new DefaultErrorHandler(recoverer, backOff));
+        return factory;
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "opencrawling.security.authorization.openfga.sync.enabled",
+            havingValue = "true", matchIfMissing = true)
+    public NewTopic authzSyncDeadLetterTopic() {
+        return TopicBuilder.name(AuthorizationSyncConsumer.DEAD_LETTER_TOPIC).partitions(1).replicas(1).build();
     }
 }
