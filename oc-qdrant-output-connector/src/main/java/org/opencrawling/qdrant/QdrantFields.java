@@ -21,6 +21,7 @@ public final class QdrantFields {
         // Prevent instantiation
     }
 
+    public static final String FIELD_DOCUMENT_ID = "documentId";
     public static final String FIELD_CHUNK_ID = "chunk_id";
     public static final String FIELD_TEXT = "text";
     public static final String FIELD_URI = "uri";

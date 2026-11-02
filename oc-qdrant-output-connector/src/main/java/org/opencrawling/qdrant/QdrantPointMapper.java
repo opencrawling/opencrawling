@@ -47,9 +47,31 @@ public class QdrantPointMapper {
      */
     public PointStruct toPoint(String chunkId, String text, String uri, String acl, String lastModified,
                                 Object security, float[] embedding, Map<String, Object> extraMetadata) {
+        return toPoint(null, chunkId, text, uri, acl, lastModified, security, embedding, extraMetadata);
+    }
+
+    /**
+     * @param documentId the ID of the parent document (for group deletion and payload filtering)
+     * @param security either a {@link SecurityConfig} (direct ingestion path) or the generic
+     *                  {@code Map} shape a {@code SecurityConfig} deserializes to off Kafka
+     */
+    public PointStruct toPoint(String documentId, String chunkId, String text, String uri, String acl, String lastModified,
+                                Object security, float[] embedding, Map<String, Object> extraMetadata) {
         AclResult aclResult = resolveAcl(security);
 
         Map<String, Value> payload = new HashMap<>();
+
+        String resolvedDocId = (documentId != null && !documentId.isBlank())
+                ? documentId
+                : (extraMetadata != null && extraMetadata.get(QdrantFields.FIELD_DOCUMENT_ID) != null
+                        ? String.valueOf(extraMetadata.get(QdrantFields.FIELD_DOCUMENT_ID))
+                        : (extraMetadata != null && extraMetadata.get("document_id") != null
+                                ? String.valueOf(extraMetadata.get("document_id"))
+                                : null));
+        if (resolvedDocId != null) {
+            payload.put(QdrantFields.FIELD_DOCUMENT_ID, ValueFactory.value(resolvedDocId));
+        }
+
         payload.put(QdrantFields.FIELD_CHUNK_ID, ValueFactory.value(chunkId));
         payload.put(QdrantFields.FIELD_TEXT, ValueFactory.value(text != null ? text : ""));
         payload.put(QdrantFields.FIELD_URI, ValueFactory.value(uri != null ? uri : ""));

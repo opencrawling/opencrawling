@@ -76,6 +76,27 @@ class PgVectorMcpSearchBackendTest {
     }
 
     @Test
+    void testSecureVectorSearch_missingAclShowsEmptyString() {
+        when(embeddingModel.embed("cloud architecture")).thenReturn(new float[]{0.1f, 0.2f});
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("uri", "file:///arch.txt");
+        metadata.put("security_allowed_read", List.of("engineering"));
+
+        List<Document> docs = List.of(
+                new Document("1", "Architecture Guide", metadata)
+        );
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(docs);
+
+        List<McpVectorServer.DocumentSearchResult> results = backend.secureVectorSearch(
+                "cloud architecture", "john@enterprise.com", List.of("engineering"), 5, 0.0, null
+        );
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).acl()).isEqualTo("");
+    }
+
+    @Test
     void testGetDocumentContent_success() {
         Document doc = new Document("1", "Architecture Guide", Map.of("uri", "file:///arch.txt", "acl", "public"));
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(doc));

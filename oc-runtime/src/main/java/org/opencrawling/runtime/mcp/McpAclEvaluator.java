@@ -187,13 +187,22 @@ public final class McpAclEvaluator {
         if (PUBLIC_IDENTITY.equalsIgnoreCase(trimmed)) {
             return true;
         }
-        if (userPrincipal != null && !userPrincipal.isBlank() && userPrincipal.trim().equalsIgnoreCase(trimmed)) {
-            return true;
+        String stripped = trimmed.replaceFirst("^(?i)(group|user):", "");
+        if (userPrincipal != null && !userPrincipal.isBlank()) {
+            String p = userPrincipal.trim();
+            String pStripped = p.replaceFirst("^(?i)user:", "");
+            if (p.equalsIgnoreCase(trimmed) || pStripped.equalsIgnoreCase(stripped)) {
+                return true;
+            }
         }
         if (userRoles != null) {
             for (String role : userRoles) {
-                if (role != null && role.trim().equalsIgnoreCase(trimmed)) {
-                    return true;
+                if (role != null) {
+                    String r = role.trim();
+                    String rStripped = r.replaceFirst("^(?i)group:", "");
+                    if (r.equalsIgnoreCase(trimmed) || rStripped.equalsIgnoreCase(stripped)) {
+                        return true;
+                    }
                 }
             }
         }

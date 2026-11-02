@@ -180,7 +180,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                                 uri,
                                 doc.getText(),
                                 doc.getMetadata(),
-                                formatAcl(doc.getMetadata().getOrDefault("acl", "public")),
+                                formatAcl(doc.getMetadata().getOrDefault("acl", "")),
                                 doc.getScore() != null ? doc.getScore() : 0.0
                         );
                     })
@@ -243,7 +243,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                             }
                             String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
                             String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
-                            String acl = formatAcl(meta.getOrDefault("acl", "public"));
+                            String acl = formatAcl(meta.getOrDefault("acl", ""));
                             return new McpVectorServer.DocumentDetailsResult(id, uri, content, meta, acl);
                         },
                         args
@@ -299,7 +299,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                                 uri,
                                 doc.getText(),
                                 doc.getMetadata(),
-                                formatAcl(doc.getMetadata().getOrDefault("acl", "public"))
+                                formatAcl(doc.getMetadata().getOrDefault("acl", ""))
                         );
                     })
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
@@ -336,7 +336,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
     }
 
     private String formatAcl(Object aclObj) {
-        if (aclObj == null) return "public";
+        if (aclObj == null) return "";
         if (aclObj instanceof Collection<?> col) {
             return String.join(",", col.stream().map(String::valueOf).toList());
         }
@@ -370,7 +370,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                             summary.put("id", id);
                             summary.put("uri", uri);
                             summary.put("documentId", docId != null && !docId.isBlank() ? docId : uri);
-                            summary.put("acl", meta.getOrDefault("acl", "public"));
+                            summary.put("acl", meta.getOrDefault("acl", ""));
                             summary.put("security", meta.get("security"));
                             summary.put("lastModified", meta.getOrDefault("lastModified", ""));
 
@@ -436,7 +436,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                         summary.put("id", doc.getId());
                         summary.put("uri", uri);
                         summary.put("documentId", docId != null && !docId.isBlank() ? docId : uri);
-                        summary.put("acl", doc.getMetadata().getOrDefault("acl", "public"));
+                        summary.put("acl", doc.getMetadata().getOrDefault("acl", ""));
                         summary.put("security", doc.getMetadata().get("security"));
                         summary.put("lastModified", doc.getMetadata().getOrDefault("lastModified", ""));
 

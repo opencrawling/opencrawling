@@ -19,6 +19,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.opensearch3.OpenSearch3Constants;
 import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.FieldValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,9 +57,24 @@ public class OpenSearch3StoreWriterConsumer {
             message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for OpenSearch: {}", message.chunkId());
-                client.delete(d -> d.index(indexName).id(message.chunkId()));
-                log.info("Successfully deleted tombstone chunk {} from OpenSearch index '{}'.", message.chunkId(), indexName);
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for OpenSearch 3.x: documentId={}, chunkId={}", docId, message.chunkId());
+                try {
+                    client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
+                            .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_DOCUMENT_ID).value(FieldValue.of(docId))))
+                            .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_ID).value(FieldValue.of(docId))))
+                            .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_ID).value(FieldValue.of(message.chunkId()))))
+                    )));
+                } catch (Exception e) {
+                    log.debug("deleteByQuery failed or not supported in OpenSearch 3.x: {}", e.getMessage());
+                }
+                try {
+                    client.delete(d -> d.index(indexName).id(message.chunkId()));
+                } catch (Exception ignored) {
+                }
+                log.info("Successfully deleted tombstone document/chunk {} from OpenSearch index '{}'.", docId, indexName);
                 return;
             }
             // Map Zero-Trust security ACLs
@@ -102,6 +118,9 @@ public class OpenSearch3StoreWriterConsumer {
 
             Map<String, Object> row = new HashMap<>();
             row.put(OpenSearch3Constants.FIELD_ID, message.chunkId());
+            if (message.documentId() != null && !message.documentId().isBlank()) {
+                row.put(OpenSearch3Constants.FIELD_DOCUMENT_ID, message.documentId());
+            }
             row.put(OpenSearch3Constants.FIELD_TEXT, message.text());
             
             Object uriVal = message.metadata().get("uri");

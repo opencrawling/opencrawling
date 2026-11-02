@@ -54,7 +54,8 @@ import {
   Check,
   Info,
   Globe,
-  Archive
+  Archive,
+  Cloud
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
 
@@ -65,7 +66,7 @@ type PipelineMode = 'rag' | 'migration'
 
 /** Output connectors that only support Migration Mode (as-is binary + OIS sidecar). */
 const isMigrationOnlyConnector = (className?: string) =>
-  !!className && className.toLowerCase().includes('ozone')
+  !!className && (className.toLowerCase().includes('ozone') || (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')))
 
 interface NarrativizationConfig {
   enabled: boolean
@@ -151,6 +152,12 @@ const getConnectorIconInfo = (className: string) => {
   }
   if (className.includes('LDAP')) {
     return { icon: Key, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
+  }
+  if (className.toLowerCase().includes('ozone')) {
+    return { icon: Archive, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
+    return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
   }
   return null;
 }
@@ -1026,7 +1033,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                   <div className="space-y-2">
                     <label className="text-sm font-medium flex items-center gap-1.5">
                       <Settings2 className="w-4 h-4 text-emerald-400" />
-                      Output Connector (Target Vector Store)
+                      Output Connector {formPipelineMode === 'migration' ? '(Migration Target Lake / Bucket)' : '(Target Vector Store)'}
                     </label>
                     <select 
                       value={formOutput}
