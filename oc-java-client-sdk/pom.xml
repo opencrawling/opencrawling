@@ -85,7 +85,7 @@
         <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <gpg.skip>true</gpg.skip>
-        <jackson.version>2.21.4</jackson.version>
+        <jackson.version>2.22.4</jackson.version>
         <slf4j.version>2.0.18</slf4j.version>
         <spring-boot.version>4.1.2</spring-boot.version>
     </properties>
