@@ -51,6 +51,16 @@ class EffectiveAclTest {
     }
 
     @Test
+    void aRealPublicRuleIsNotThePlaceholderEvenWhenTheAclNamesItsIdentity() {
+        // The OIS endpoint derives acl from the same rules, so acl holds the raw repository name.
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(
+                rule("GROUP_EVERYONE", "public", "read"))), "GROUP_EVERYONE");
+
+        assertThat(acl.allowedRead()).containsExactly("public");
+        assertThat(acl.isPublic()).isTrue();
+    }
+
+    @Test
     void rulesDecideAndTheLegacyAclIsIgnored() {
         EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(rule("alice", "user", "read"))),
                 "user:alice;group:finance,secured");

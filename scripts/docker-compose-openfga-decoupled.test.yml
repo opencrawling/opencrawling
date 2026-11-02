@@ -1,0 +1,81 @@
+#
+# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Test overlay for scripts/test-openfga-decoupled.sh, applied after docker-compose-decoupled.yml and
+# docker-compose-openfga.yml:
+# - tags the images it builds ${OC_IMAGE_TAG} instead of latest, so a test build never replaces images
+#   other checkouts use;
+# - publishes oc-mcp-server on ${MCP_PORT} (8080 is often taken on a development machine);
+# - attaches OpenFGA to the decoupled network and runs oc-mcp-server in openfga mode, which also runs the
+#   permission sync consumer.
+
+services:
+  oc-ingestion-consumer:
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:${OC_IMAGE_TAG:-openfga-45}
+  oc-embedding-consumer:
+    image: ghcr.io/opencrawling/oc-embedding-consumer:${OC_IMAGE_TAG:-openfga-45}
+  oc-writer-consumer:
+    image: ghcr.io/opencrawling/oc-writer-consumer:${OC_IMAGE_TAG:-openfga-45}
+  oc-crawler:
+    image: ghcr.io/opencrawling/oc-crawler:${OC_IMAGE_TAG:-openfga-45}
+  oc-admin-ui:
+    image: ghcr.io/opencrawling/oc-admin-ui:${OC_IMAGE_TAG:-openfga-45}
+  oc-mcp-server:
+    image: ghcr.io/opencrawling/oc-mcp-server:${OC_IMAGE_TAG:-openfga-45}
+    ports: !override
+      - "${MCP_PORT:-18080}:8080"
+    environment:
+      - OPENCRAWLING_SECURITY_AUTHORIZATION_MODE=${AUTHZ_MODE:-openfga}
+      - OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL=http://openfga:8080
+      - OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_TOKEN=${OPENFGA_PRESHARED_KEY}
+      - OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_AUTO_PROVISION=true
+      - OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_TIMEOUT=3s
+    depends_on:
+      - postgres
+      - redis
+      - ollama
+      - kafka
+      - openfga
+
+  openfga-db:
+    networks:
+      - opencrawling-network
+  openfga-migrate:
+    networks:
+      - opencrawling-network
+  openfga:
+    networks:
+      - opencrawling-network
+
+# The decoupled file names its network and volumes explicitly, so without this the test would share them
+# with any other decoupled stack on the machine (and write test data into it).
+networks:
+  opencrawling-network:
+    name: opencrawling-network-openfga-e2e
+
+volumes:
+  opencrawling-pgdata:
+    name: opencrawling-pgdata-openfga-e2e
+  opencrawling-redisdata:
+    name: opencrawling-redisdata-openfga-e2e
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata-openfga-e2e
+  opencrawling-kafkadata:
+    name: opencrawling-kafkadata-openfga-e2e
+  opencrawling-claims:
+    name: opencrawling-claims-openfga-e2e
+  opencrawling-reportsdata:
+    name: opencrawling-reportsdata-openfga-e2e

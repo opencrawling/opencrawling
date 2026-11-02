@@ -121,10 +121,16 @@ public record EffectiveAcl(
         return allowedRead.contains(PUBLIC) && deniedRead.isEmpty();
     }
 
+    /**
+     * The placeholder connectors send when they could not read the source permissions: only grants to an
+     * identity literally named {@code public} (as {@link SecurityConfig#createPublic()} does). A real
+     * public-typed rule such as a CMIS {@code GROUP_EVERYONE} entry is not a placeholder and is never
+     * overridden by the {@code acl} string.
+     */
     private static boolean isDefaultPublic(SecurityConfig rules) {
         return rules.permissions().stream().allMatch(rule -> rule != null
                 && rule.identity() != null
-                && PUBLIC.equals(identityOf(rule))
+                && PUBLIC.equalsIgnoreCase(rule.identity().trim())
                 && "read".equalsIgnoreCase(rule.access()));
     }
 
