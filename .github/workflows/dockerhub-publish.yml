@@ -60,8 +60,8 @@ jobs:
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha,scope=dockerhub-backend
-          cache-to: type=gha,mode=max,scope=dockerhub-backend
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=min,scope=backend
 
       # Extract metadata (tags, labels) for Frontend
       - name: Extract metadata for Frontend
@@ -86,5 +86,5 @@ jobs:
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha,scope=dockerhub-frontend
-          cache-to: type=gha,mode=max,scope=dockerhub-frontend
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=min,scope=frontend

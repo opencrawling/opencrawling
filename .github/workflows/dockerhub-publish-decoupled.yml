@@ -64,5 +64,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha,scope=dockerhub-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=dockerhub-${{ matrix.component }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.component }}
