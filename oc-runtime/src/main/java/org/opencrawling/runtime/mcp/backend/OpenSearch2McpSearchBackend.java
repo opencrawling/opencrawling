@@ -16,8 +16,7 @@
 package org.opencrawling.runtime.mcp.backend;
 
 import org.opencrawling.opensearch2.OpenSearch2Constants;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opensearch.client.opensearch.OpenSearchClient;
 import org.opensearch.client.opensearch.core.SearchResponse;
@@ -36,7 +35,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "opensearch2")
-public class OpenSearch2McpSearchBackend implements McpVectorSearchBackend {
+public class OpenSearch2McpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(OpenSearch2McpSearchBackend.class);
 
@@ -111,20 +110,19 @@ public class OpenSearch2McpSearchBackend implements McpVectorSearchBackend {
 
             List<McpVectorServer.DocumentSearchResult> results = new ArrayList<>();
             if (response != null && response.hits() != null && response.hits().hits() != null) {
-                for (Hit<Map> hit : response.hits().hits()) {
-                    Map<String, Object> source = hit.source();
-                    if (source == null) source = Collections.emptyMap();
+                List<Hit<Map>> candidates = response.hits().hits().stream()
+                        .filter(hit -> (hit.score() != null ? hit.score() : 0.0) >= minScore)
+                        .toList();
+                for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
+                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                    Map<String, Object> source = sourceOf(hit);
                     double score = hit.score() != null ? hit.score() : 0.0;
-                    if (score < minScore) continue;
-
-                    if (McpAclEvaluator.isAccessible(source, userPrincipal, userRoles)) {
-                        String id = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
-                        String uri = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
-                        String text = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_TEXT, ""));
-                        String acl = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
-                        results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, source, acl, score));
-                        if (results.size() >= limit) break;
-                    }
+                    String id = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
+                    String uri = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
+                    String text = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_TEXT, ""));
+                    String acl = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
+                    results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, source, acl, score));
+                    if (results.size() >= limit) break;
                 }
             }
             return results;
@@ -158,15 +156,17 @@ public class OpenSearch2McpSearchBackend implements McpVectorSearchBackend {
             );
 
             if (response != null && response.hits() != null && response.hits().hits() != null) {
-                for (Hit<Map> hit : response.hits().hits()) {
-                    Map<String, Object> source = hit.source();
-                    if (source != null && McpAclEvaluator.isAccessible(source, userPrincipal, userRoles)) {
-                        String id = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
-                        String uri = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
-                        String text = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_TEXT, ""));
-                        String acl = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
-                        return new McpVectorServer.DocumentDetailsResult(id, uri, text, source, acl);
-                    }
+                List<Hit<Map>> candidates = response.hits().hits().stream()
+                        .filter(hit -> hit.source() != null)
+                        .toList();
+                for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
+                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                    Map<String, Object> source = sourceOf(hit);
+                    String id = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
+                    String uri = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
+                    String text = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_TEXT, ""));
+                    String acl = String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
+                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, source, acl);
                 }
             }
             throw new NoSuchElementException("Document not found or access denied.");
@@ -197,17 +197,19 @@ public class OpenSearch2McpSearchBackend implements McpVectorSearchBackend {
 
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (response != null && response.hits() != null && response.hits().hits() != null) {
-                for (Hit<Map> hit : response.hits().hits()) {
-                    Map<String, Object> source = hit.source();
-                    if (source != null && McpAclEvaluator.isAccessible(source, userPrincipal, userRoles)) {
-                        Map<String, Object> summary = new HashMap<>();
-                        summary.put("id", source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
-                        summary.put("uri", source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
-                        summary.put("acl", source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
-                        summary.put("security", source.get("security"));
-                        summary.put("lastModified", source.getOrDefault(OpenSearch2Constants.FIELD_LAST_MODIFIED, ""));
-                        summaries.add(summary);
-                    }
+                List<Hit<Map>> candidates = response.hits().hits().stream()
+                        .filter(hit -> hit.source() != null)
+                        .toList();
+                for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
+                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                    Map<String, Object> source = sourceOf(hit);
+                    Map<String, Object> summary = new HashMap<>();
+                    summary.put("id", source.getOrDefault(OpenSearch2Constants.FIELD_ID, hit.id()));
+                    summary.put("uri", source.getOrDefault(OpenSearch2Constants.FIELD_URI, ""));
+                    summary.put("acl", source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public"));
+                    summary.put("security", source.get("security"));
+                    summary.put("lastModified", source.getOrDefault(OpenSearch2Constants.FIELD_LAST_MODIFIED, ""));
+                    summaries.add(summary);
                 }
             }
             return summaries.stream().distinct().toList();
@@ -215,5 +217,11 @@ public class OpenSearch2McpSearchBackend implements McpVectorSearchBackend {
             log.error("Failed to list accessible sources in OpenSearch 2.x: {}", e.getMessage(), e);
             throw new RuntimeException("Error listing accessible sources from OpenSearch 2.x", e);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> sourceOf(Hit<Map> hit) {
+        Map<String, Object> source = hit.source();
+        return source != null ? source : Collections.emptyMap();
     }
 }

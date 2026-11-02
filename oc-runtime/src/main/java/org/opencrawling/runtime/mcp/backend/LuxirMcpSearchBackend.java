@@ -18,8 +18,7 @@ package org.opencrawling.runtime.mcp.backend;
 import org.opencrawling.luxir.LuxirConstants;
 import org.opencrawling.luxir.client.LuxirClient;
 import org.opencrawling.luxir.config.LuxirOutputProperties;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +33,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "luxir")
-public class LuxirMcpSearchBackend implements McpVectorSearchBackend {
+public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(LuxirMcpSearchBackend.class);
 
@@ -104,21 +103,18 @@ public class LuxirMcpSearchBackend implements McpVectorSearchBackend {
 
             List<McpVectorServer.DocumentSearchResult> results = new ArrayList<>();
             if (result != null && result.docs() != null) {
-                for (Map<String, Object> doc : result.docs()) {
-                    double score = 1.0;
-                    if (doc.containsKey("_score") && doc.get("_score") instanceof Number n) {
-                        score = n.doubleValue();
-                    }
-                    if (score < minScore) continue;
-
-                    if (McpAclEvaluator.isAccessible(doc, userPrincipal, userRoles)) {
-                        String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
-                        String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
-                        String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
-                        String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
-                        results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, doc, acl, score));
-                        if (results.size() >= limit) break;
-                    }
+                List<Map<String, Object>> candidates = result.docs().stream()
+                        .filter(doc -> doc != null && scoreOf(doc) >= minScore)
+                        .toList();
+                for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
+                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                    double score = scoreOf(doc);
+                    String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
+                    String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
+                    String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
+                    String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
+                    results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, doc, acl, score));
+                    if (results.size() >= limit) break;
                 }
             }
             return results;
@@ -143,14 +139,16 @@ public class LuxirMcpSearchBackend implements McpVectorSearchBackend {
             LuxirClient.LuxirSearchResult result = luxirClient.search(properties.collection(), queryPayload);
 
             if (result != null && result.docs() != null) {
-                for (Map<String, Object> doc : result.docs()) {
-                    if (McpAclEvaluator.isAccessible(doc, userPrincipal, userRoles)) {
-                        String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
-                        String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
-                        String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
-                        String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
-                        return new McpVectorServer.DocumentDetailsResult(id, uri, text, doc, acl);
-                    }
+                List<Map<String, Object>> candidates = result.docs().stream()
+                        .filter(Objects::nonNull)
+                        .toList();
+                for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
+                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                    String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
+                    String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
+                    String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
+                    String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
+                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, doc, acl);
                 }
             }
             throw new NoSuchElementException("Document not found or access denied.");
@@ -177,16 +175,18 @@ public class LuxirMcpSearchBackend implements McpVectorSearchBackend {
 
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (result != null && result.docs() != null) {
-                for (Map<String, Object> doc : result.docs()) {
-                    if (McpAclEvaluator.isAccessible(doc, userPrincipal, userRoles)) {
-                        Map<String, Object> summary = new HashMap<>();
-                        summary.put("id", doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")));
-                        summary.put("uri", doc.getOrDefault(LuxirConstants.FIELD_URI, doc.get("uri")));
-                        summary.put("acl", doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
-                        summary.put("security", doc.get("security"));
-                        summary.put("lastModified", doc.getOrDefault(LuxirConstants.FIELD_LAST_MODIFIED, doc.get("lastModified")));
-                        summaries.add(summary);
-                    }
+                List<Map<String, Object>> candidates = result.docs().stream()
+                        .filter(Objects::nonNull)
+                        .toList();
+                for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
+                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                    Map<String, Object> summary = new HashMap<>();
+                    summary.put("id", doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")));
+                    summary.put("uri", doc.getOrDefault(LuxirConstants.FIELD_URI, doc.get("uri")));
+                    summary.put("acl", doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
+                    summary.put("security", doc.get("security"));
+                    summary.put("lastModified", doc.getOrDefault(LuxirConstants.FIELD_LAST_MODIFIED, doc.get("lastModified")));
+                    summaries.add(summary);
                 }
             }
             return summaries.stream().distinct().toList();
@@ -199,5 +199,9 @@ public class LuxirMcpSearchBackend implements McpVectorSearchBackend {
     private static String escape(String value) {
         if (value == null) return "";
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static double scoreOf(Map<String, Object> doc) {
+        return doc.get("_score") instanceof Number n ? n.doubleValue() : 1.0;
     }
 }

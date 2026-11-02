@@ -19,8 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opencrawling.vespa.VespaFields;
 import org.opencrawling.vespa.config.VespaOutputProperties;
@@ -43,7 +42,7 @@ import java.util.stream.Collectors;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "vespa")
-public class VespaMcpSearchBackend implements McpVectorSearchBackend {
+public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(VespaMcpSearchBackend.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -90,9 +89,10 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             RawSearchResult raw = executeSearch(documentType, query, rankProfile, limit, userPrincipal, userRoles);
-            return raw.hits().stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            List<RawHit> candidates = raw.hits().stream()
                     .filter(hit -> hit.relevance() >= minScore)
+                    .toList();
+            return readableHits(userPrincipal, userRoles, candidates).stream()
                     .limit(limit)
                     .map(hit -> new McpVectorServer.DocumentSearchResult(
                             hit.chunkId(),
@@ -127,8 +127,7 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
             body.put("hits", 20);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
-            return hits.stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            return readableHits(userPrincipal, userRoles, hits).stream()
                     .findFirst()
                     .map(hit -> new McpVectorServer.DocumentDetailsResult(
                             hit.chunkId(),
@@ -162,8 +161,7 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
             body.put("hits", 200);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
-            return hits.stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            return readableHits(userPrincipal, userRoles, hits).stream()
                     .map(hit -> {
                         Map<String, Object> summary = new HashMap<>();
                         summary.put("id", hit.chunkId());
@@ -236,6 +234,30 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
         body.put("ranking", rankProfile);
         body.put("hits", resultLimit);
         return parseHits(postSearch(body));
+    }
+
+    /**
+     * Keeps the hits the caller may read, in their original order.
+     */
+    public List<RawHit> readableHits(String userPrincipal, List<String> userRoles, List<RawHit> hits) {
+        return readable(userPrincipal, userRoles, hits, VespaMcpSearchBackend::toResourceRef);
+    }
+
+    /**
+     * Presents a hit's ACL fields in the metadata shape the authorization providers read: the legacy
+     * {@code acl}, plus {@code security_allowed_read}/{@code security_denied_read} when the hit carries them.
+     */
+    public static ResourceRef toResourceRef(RawHit hit) {
+        Map<String, Object> acl = new HashMap<>();
+        acl.put("acl", hit.acl());
+        if (hit.allowedRead() != null && !hit.allowedRead().isEmpty()) {
+            acl.put(VespaFields.FIELD_SECURITY_ALLOWED_READ, hit.allowedRead());
+        }
+        if (hit.deniedRead() != null && !hit.deniedRead().isEmpty()) {
+            acl.put(VespaFields.FIELD_SECURITY_DENIED_READ, hit.deniedRead());
+        }
+        Object documentId = hit.metadata() != null ? hit.metadata().get("documentId") : null;
+        return new ResourceRef(documentId != null ? String.valueOf(documentId) : hit.chunkId(), acl);
     }
 
     public RawSearchResult parseHits(JsonNode response) {

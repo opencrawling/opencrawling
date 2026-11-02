@@ -16,33 +16,48 @@
 package org.opencrawling.core.security;
 
 import java.util.List;
-import java.util.Map;
 
 /**
- * Service Provider Interface (SPI) for OpenCrawling Fine-Grained Access Control (Authorization).
- * Supports both static metadata payload matching and external ReBAC engines (e.g. OpenFGA).
+ * Decides which candidate documents a caller may read.
+ *
+ * <p>Every MCP retrieval backend hands its candidates to one gate, and the gate asks the configured provider.
+ * The call is a batch so that a remote engine (for example OpenFGA) costs one round trip per page of results,
+ * not one per document.
+ *
+ * <p>Implementations must fail closed: a candidate whose decision cannot be made is denied, and an engine that
+ * cannot be reached raises {@link AuthorizationUnavailableException} instead of falling back to another rule.
  */
 public interface AuthorizationProvider {
 
     /**
-     * Check whether a given user principal with assigned roles/groups is authorized to access a document.
-     *
-     * @param documentId Document identifier
-     * @param documentMetadata Document metadata payload map (contains static ACLs or references)
-     * @param userPrincipal User ID / Principal email
-     * @param userRoles Roles / groups assigned to user
-     * @return true if authorized, false otherwise
+     * The provider's name, as used in logs and metrics (for example {@code metadata} or {@code openfga}).
      */
-    boolean isAccessible(String documentId, Map<String, Object> documentMetadata, String userPrincipal, List<String> userRoles);
+    String name();
 
     /**
-     * Synchronize document security rules into the authorization store (e.g. OpenFGA Relationship Tuples).
+     * Decides read access for each candidate.
      *
-     * @param documentId Document identifier
-     * @param securityConfig Document security rules
-     * @throws Exception if writing relationship tuples fails
+     * @param caller     the caller the decision is made for
+     * @param candidates the candidate documents, in the order the store ranked them
+     * @return one decision per candidate, in the same order; {@code true} means the caller may read it
+     * @throws AuthorizationUnavailableException when the decision cannot be made at all
      */
-    default void writeRelationshipTuples(String documentId, SecurityConfig securityConfig) throws Exception {
-        // Default no-op for static metadata authorization
+    boolean[] canRead(Caller caller, List<ResourceRef> candidates);
+
+    /**
+     * Decides read access for a single document.
+     */
+    default boolean canRead(Caller caller, ResourceRef candidate) {
+        return canRead(caller, List.of(candidate))[0];
+    }
+
+    /**
+     * Whether a store may pre-filter candidates by their stored ACL metadata before calling this provider
+     * without hiding documents the provider would allow. True for the metadata provider; false for a provider
+     * whose decisions can grant access the stored metadata does not show (for example group membership kept
+     * in a relationship store).
+     */
+    default boolean metadataPrefilterSafe() {
+        return true;
     }
 }
