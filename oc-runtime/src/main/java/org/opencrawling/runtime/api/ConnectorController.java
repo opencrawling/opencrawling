@@ -364,6 +364,19 @@ public class ConnectorController {
             "serverSideEncryption", "SSE_S3",
             "tombstoneAction", "DELETE_OBJECTS"
         )));
+        defaults.add(new ConnectorDTO("Alfresco_Migration_Output", "Alfresco Content Services Migration Target (Migration Mode only)", "output", "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8080/alfresco"),
+            Map.entry("username", "admin"),
+            Map.entry("password", "admin"),
+            Map.entry("targetParentNodeId", "-root-"),
+            Map.entry("targetPathPrefix", "MigratedContent/v1"),
+            Map.entry("pathStrategy", "HIERARCHICAL"),
+            Map.entry("nodeType", "cm:content"),
+            Map.entry("conflictStrategy", "OVERWRITE"),
+            Map.entry("syncPermissions", "true"),
+            Map.entry("defaultPermissionRole", "Consumer"),
+            Map.entry("tombstoneAction", "MOVE_TO_TRASH")
+        )));
         defaults.add(new ConnectorDTO("OpenArch_Output", "Hyland OpenArch Federated Ingestion & Parquet Vector Bridge", "output", "org.opencrawling.openarch.output.OpenArchOutputConnector", 10, Map.ofEntries(
             Map.entry("endpointUrl", "http://localhost:8080"),
             Map.entry("repositoryId", "default"),

@@ -438,6 +438,7 @@ export default function ConnectorForm() {
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
       { label: 'Apache Ozone (Migration Mode only)', value: 'org.opencrawling.ozone.OzoneOutputConnector' },
       { label: 'AWS S3 (Migration Mode only)', value: 'org.opencrawling.s3.S3OutputConnector' },
+      { label: 'Alfresco Content Services (Migration Mode only)', value: 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' },
       { label: 'Hyland OpenArch Federated Ingestion & Parquet Vector Bridge', value: 'org.opencrawling.openarch.output.OpenArchOutputConnector' },
     ],
     authority: [
@@ -4774,6 +4775,100 @@ export default function ConnectorForm() {
                               </code>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alfresco Content Services Output Connector (Migration Mode only) */}
+                  {selectedClass === 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2">
+                        This connector only runs in Migration Mode: binaries, folder hierarchies, properties, and Zero-Trust ACLs are streamed as-is directly into Alfresco Content Services. Jobs using it must select Migration Mode.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label htmlFor="alfresco-out-url" className="text-sm font-medium">Alfresco Base URL</label>
+                          <input id="alfresco-out-url" type="url" {...register('configuration.url', { required: true })} defaultValue="http://localhost:8080/alfresco" placeholder="http://localhost:8080/alfresco"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-auth-type" className="text-sm font-medium">Authentication Type</label>
+                          <select id="alfresco-out-auth-type" {...register('configuration.authType')} defaultValue="basic"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="basic">Basic Authentication (Username/Password)</option>
+                            <option value="bearer">Bearer Token (OAuth2 / Identity Service / Keycloak)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-username" className="text-sm font-medium">Username</label>
+                          <input id="alfresco-out-username" {...register('configuration.username')} defaultValue="admin" placeholder="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-password" className="text-sm font-medium">Password</label>
+                          <input id="alfresco-out-password" type="password" {...register('configuration.password')} defaultValue="admin" placeholder="Password..." autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-bearer" className="text-sm font-medium">Bearer Token (for Bearer auth)</label>
+                          <input id="alfresco-out-bearer" type="password" {...register('configuration.bearerToken')} placeholder="eyJhbGci..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-target-parent" className="text-sm font-medium">Target Parent Node ID</label>
+                          <input id="alfresco-out-target-parent" {...register('configuration.targetParentNodeId')} defaultValue="-root-" placeholder="-root- or GUID"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-prefix" className="text-sm font-medium">Target Path Prefix</label>
+                          <input id="alfresco-out-prefix" {...register('configuration.targetPathPrefix')} defaultValue="MigratedContent/v1" placeholder="MigratedContent/v1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-strategy" className="text-sm font-medium">Folder Path Strategy</label>
+                          <select id="alfresco-out-strategy" {...register('configuration.pathStrategy')} defaultValue="HIERARCHICAL"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="HIERARCHICAL">HIERARCHICAL (recreate source folder structure as cm:folder)</option>
+                            <option value="FLAT">FLAT (upload directly to target parent)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-nodetype" className="text-sm font-medium">Node Type</label>
+                          <input id="alfresco-out-nodetype" {...register('configuration.nodeType')} defaultValue="cm:content" placeholder="cm:content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-conflict" className="text-sm font-medium">Conflict Strategy</label>
+                          <select id="alfresco-out-conflict" {...register('configuration.conflictStrategy')} defaultValue="OVERWRITE"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="OVERWRITE">OVERWRITE (update existing node content version)</option>
+                            <option value="AUTO_RENAME">AUTO_RENAME (append index if node exists)</option>
+                            <option value="FAIL">FAIL (throw error if node exists)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-default-role" className="text-sm font-medium">Default Permission Role</label>
+                          <input id="alfresco-out-default-role" {...register('configuration.defaultPermissionRole')} defaultValue="Consumer" placeholder="Consumer"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-tombstone" className="text-sm font-medium">On OIS DELETE (Tombstone)</label>
+                          <select id="alfresco-out-tombstone" {...register('configuration.tombstoneAction')} defaultValue="MOVE_TO_TRASH"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="MOVE_TO_TRASH">MOVE_TO_TRASH (move to Alfresco trashcan)</option>
+                            <option value="PERMANENT_DELETE">PERMANENT_DELETE (purge immediately)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-sync-perm" type="checkbox" {...register('configuration.syncPermissions')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-sync-perm" className="text-sm font-medium">Sync Zero-Trust Permissions & ACLs</label>
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-inherit-perm" type="checkbox" {...register('configuration.isInheritanceEnabled')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-inherit-perm" className="text-sm font-medium">Inherit Parent Permissions</label>
                         </div>
                       </div>
                     </div>
