@@ -1,2 +1,2 @@
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org); Apache License 2.0
-graphql-core==3.2.6
+graphql-core==3.2.13
