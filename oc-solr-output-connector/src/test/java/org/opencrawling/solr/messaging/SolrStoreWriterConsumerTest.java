@@ -45,6 +45,6 @@ class SolrStoreWriterConsumerTest {
 
         consumer.consume(tombstone);
 
-        verify(solrClient).deleteByQuery(eq("enterprise_kb"), eq("id:\"doc-solr-1\" OR chunk_id:\"chunk-solr-1\""), eq(1000));
+        verify(solrClient).deleteByQuery(eq("enterprise_kb"), eq("id:\"doc-solr-1\" OR documentId:\"doc-solr-1\" OR chunk_id:\"chunk-solr-1\""), eq(1000));
     }
 }

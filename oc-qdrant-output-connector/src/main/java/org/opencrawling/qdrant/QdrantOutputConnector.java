@@ -17,7 +17,9 @@ package org.opencrawling.qdrant;
 
 import com.google.common.collect.Lists;
 import io.qdrant.client.QdrantClient;
+import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Points.PointStruct;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.connector.OutputConnector;
@@ -42,6 +44,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import static io.qdrant.client.ConditionFactory.matchKeyword;
+import static io.qdrant.client.PointIdFactory.id;
 
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "qdrant")
@@ -100,6 +105,29 @@ public class QdrantOutputConnector implements OutputConnector {
     @Override
     public Mono<Void> send(RepositoryDocument document) {
         return Mono.fromRunnable(() -> {
+            if (document.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE action for document {}. Deleting from Qdrant collection '{}'.",
+                        document.id(), properties.collectionName());
+                try {
+                    Filter filter = Filter.newBuilder()
+                            .addShould(matchKeyword(QdrantFields.FIELD_DOCUMENT_ID, document.id()))
+                            .addShould(matchKeyword(QdrantFields.FIELD_CHUNK_ID, document.id()))
+                            .build();
+                    client.deleteAsync(properties.collectionName(), filter).get();
+                    try {
+                        UUID pointUuid = UUID.nameUUIDFromBytes(document.id().getBytes(StandardCharsets.UTF_8));
+                        client.deleteAsync(properties.collectionName(), List.of(id(pointUuid))).get();
+                    } catch (Exception ignored) {
+                    }
+                    log.info("Successfully deleted document {} from Qdrant collection '{}'.",
+                            document.id(), properties.collectionName());
+                } catch (Exception e) {
+                    log.error("Failed to delete document {} from Qdrant: {}", document.id(), e.getMessage(), e);
+                    throw new RuntimeException("Failed to delete document from Qdrant: " + document.id(), e);
+                }
+                return;
+            }
+
             try (InputStream is = document.contentStream()) {
                 byte[] contentBytes = is.readAllBytes();
                 if (contentBytes.length == 0) {
@@ -123,7 +151,7 @@ public class QdrantOutputConnector implements OutputConnector {
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
                     float[] embedding = computeEmbedding(chunk);
-                    points.add(mapper.toPoint(chunkId, chunk.getText(), document.uri(), document.acl(),
+                    points.add(mapper.toPoint(document.id(), chunkId, chunk.getText(), document.uri(), document.acl(),
                             document.lastModified().toString(), document.security(), embedding, metadata));
                 }
 

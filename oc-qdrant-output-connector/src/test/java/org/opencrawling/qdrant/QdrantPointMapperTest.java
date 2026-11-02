@@ -69,6 +69,17 @@ class QdrantPointMapperTest {
     }
 
     @Test
+    void mapsDocumentIdToPayload() {
+        PointStruct pointWithArg = mapper.toPoint("doc-parent-10", "doc-parent-10_chunk-0", "text", "file:///doc.txt", "public",
+                "now", null, new float[]{0.1f}, Map.of());
+        assertThat(pointWithArg.getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue()).isEqualTo("doc-parent-10");
+
+        PointStruct pointWithMeta = mapper.toPoint("doc-parent-20_chunk-0", "text", "file:///doc.txt", "public",
+                "now", null, new float[]{0.1f}, Map.of("documentId", "doc-parent-20"));
+        assertThat(pointWithMeta.getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue()).isEqualTo("doc-parent-20");
+    }
+
+    @Test
     void pointIdIsDeterministicForTheSameChunkId() {
         PointStruct first = mapper.toPoint("doc-3_chunk-0", "text", "uri", "acl", "now", null, new float[]{0.1f}, Map.of());
         PointStruct second = mapper.toPoint("doc-3_chunk-0", "different text", "other-uri", "acl2", "later", null, new float[]{0.9f}, Map.of());

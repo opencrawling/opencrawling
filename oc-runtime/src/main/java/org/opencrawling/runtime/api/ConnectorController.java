@@ -354,6 +354,16 @@ public class ConnectorController {
             "keyStrategy", "HIERARCHICAL",
             "tombstoneAction", "DELETE_KEY"
         )));
+        defaults.add(new ConnectorDTO("S3_Migration_Output", "AWS S3 Migration Target (Migration Mode only)", "output", "org.opencrawling.s3.S3OutputConnector", 10, Map.of(
+            "bucket", "enterprise-migration-lake",
+            "region", "us-east-1",
+            "credentialsStrategy", "DEFAULT_CHAIN",
+            "keyStrategy", "HIERARCHICAL",
+            "keyPrefix", "migration/v1/",
+            "storageClass", "INTELLIGENT_TIERING",
+            "serverSideEncryption", "SSE_S3",
+            "tombstoneAction", "DELETE_OBJECTS"
+        )));
         defaults.add(new ConnectorDTO("OpenArch_Output", "Hyland OpenArch Federated Ingestion & Parquet Vector Bridge", "output", "org.opencrawling.openarch.output.OpenArchOutputConnector", 10, Map.ofEntries(
             Map.entry("endpointUrl", "http://localhost:8080"),
             Map.entry("repositoryId", "default"),

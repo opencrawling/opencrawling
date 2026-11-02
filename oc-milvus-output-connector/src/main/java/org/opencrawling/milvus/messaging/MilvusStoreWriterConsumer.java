@@ -68,13 +68,16 @@ public class MilvusStoreWriterConsumer {
             message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for Milvus storage: {}", message.chunkId());
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for Milvus storage: documentId={}, chunkId={}", docId, message.chunkId());
                 DeleteReq deleteReq = DeleteReq.builder()
                     .collectionName(collectionName)
-                    .filter("id == '" + message.chunkId() + "'")
+                    .filter("id == '" + escapeFilter(docId) + "' or documentId == '" + escapeFilter(docId) + "'")
                     .build();
                 client.delete(deleteReq);
-                log.info("Successfully deleted tombstone chunk {} from Milvus collection '{}'.", message.chunkId(), collectionName);
+                log.info("Successfully deleted tombstone document/chunks {} from Milvus collection '{}'.", docId, collectionName);
                 return;
             }
             // Map Zero-Trust security ACLs
@@ -118,6 +121,9 @@ public class MilvusStoreWriterConsumer {
 
             JsonObject row = new JsonObject();
             row.addProperty(MilvusConstants.FIELD_ID, message.chunkId());
+            if (message.documentId() != null && !message.documentId().isBlank()) {
+                row.addProperty(MilvusConstants.FIELD_DOCUMENT_ID, message.documentId());
+            }
             row.addProperty(MilvusConstants.FIELD_TEXT, message.text());
 
             Object uriVal = message.metadata().get(MilvusConstants.FIELD_URI);
@@ -153,5 +159,10 @@ public class MilvusStoreWriterConsumer {
         } catch (Exception e) {
             log.error("Failed to store embedded chunk in Milvus: {}", message.chunkId(), e);
         }
+    }
+
+    private String escapeFilter(String val) {
+        if (val == null) return "";
+        return val.replace("'", "\\'");
     }
 }

@@ -18,12 +18,14 @@ package org.opencrawling.milvus.messaging;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.DeleteReq;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 class MilvusStoreWriterConsumerTest {
@@ -45,6 +47,9 @@ class MilvusStoreWriterConsumerTest {
 
         consumer.consume(tombstone);
 
-        verify(client).delete(any(DeleteReq.class));
+        ArgumentCaptor<DeleteReq> captor = ArgumentCaptor.forClass(DeleteReq.class);
+        verify(client).delete(captor.capture());
+        DeleteReq req = captor.getValue();
+        assertTrue(req.getFilter().contains("documentId == 'doc-milvus-1'"));
     }
 }

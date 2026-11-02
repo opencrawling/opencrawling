@@ -16,7 +16,11 @@
 package org.opencrawling.runtime.mcp.backend;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.opencrawling.core.security.PermissionRule;
+import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.openarch.output.client.OpenArchClient;
+import org.opencrawling.openarch.output.security.OpenArchSecurityMapper;
 import org.opencrawling.runtime.mcp.McpAclEvaluator;
 import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
 import org.opencrawling.runtime.mcp.McpVectorServer;
@@ -40,6 +44,7 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
 
     private final OpenArchClient client;
     private final EmbeddingModel embeddingModel;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${spring.opencrawling.output.openarch.repository-id:default}")
     private String repositoryId;
@@ -97,6 +102,7 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
         }
 
         List<McpVectorServer.DocumentSearchResult> results = new ArrayList<>();
+        Map<String, JsonNode> docCache = new HashMap<>();
         try {
             JsonNode searchRes = client.queryEmbedding(
                     repositoryId,
@@ -121,21 +127,56 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                             continue;
                         }
 
-                        Map<String, Object> metadata = new HashMap<>();
+                        Map<String, Object> metadata = extractMetadata(emb);
                         metadata.put("docId", docId);
                         metadata.put("embeddingsType", embeddingsType);
                         if (emb.hasNonNull("blobref")) {
                             metadata.put("blobref", emb.get("blobref").asText());
                         }
 
+                        // If embedding chunk doesn't carry security/acl/sys_acl, check parent document in OpenArch
+                        if (!metadata.containsKey("security") && !metadata.containsKey("acl")
+                                && !metadata.containsKey("sys_acl") && docId != null && !docId.isBlank()) {
+                            JsonNode docNode = docCache.computeIfAbsent(docId, dId -> {
+                                try {
+                                    return client.getDocument(repositoryId, dId);
+                                } catch (Exception e) {
+                                    log.debug("Could not retrieve document {} for OpenArch ACL check: {}", dId, e.getMessage());
+                                    return null;
+                                }
+                            });
+                            if (docNode != null) {
+                                Map<String, Object> docMeta = extractMetadata(docNode);
+                                if (docMeta.containsKey("security")) {
+                                    metadata.put("security", docMeta.get("security"));
+                                }
+                                if (docMeta.containsKey("acl")) {
+                                    metadata.put("acl", docMeta.get("acl"));
+                                }
+                                if (docMeta.containsKey("sys_acl")) {
+                                    metadata.put("sys_acl", docMeta.get("sys_acl"));
+                                }
+                            }
+                        }
+
+                        if (!McpAclEvaluator.isAccessible(metadata, userPrincipal, userRoles)) {
+                            continue;
+                        }
+
+                        String realAcl = resolveRealAcl(metadata);
+
                         results.add(new McpVectorServer.DocumentSearchResult(
                                 id,
                                 "openarch://" + repositoryId + "/" + docId,
                                 text,
                                 metadata,
-                                "openarch:acl:read",
+                                realAcl,
                                 score
                         ));
+
+                        if (results.size() >= maxResults) {
+                            break;
+                        }
                     }
                 }
             }
@@ -158,23 +199,24 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
         try {
             JsonNode docNode = client.getDocument(repositoryId, docId);
             if (docNode != null) {
+                Map<String, Object> meta = extractMetadata(docNode);
+                if (!McpAclEvaluator.isAccessible(meta, userPrincipal, userRoles)) {
+                    log.warn("Access denied for principal '{}' with roles {} to OpenArch document '{}'",
+                            userPrincipal, userRoles, documentUri);
+                    return null;
+                }
+
                 String title = docNode.hasNonNull("sys_title") ? docNode.get("sys_title").asText()
                         : (docNode.hasNonNull("sys_name") ? docNode.get("sys_name").asText() : docId);
                 String description = docNode.hasNonNull("sys_description") ? docNode.get("sys_description").asText() : "";
-
-                Map<String, Object> meta = new HashMap<>();
-                Iterator<Map.Entry<String, JsonNode>> fields = docNode.fields();
-                while (fields.hasNext()) {
-                    Map.Entry<String, JsonNode> f = fields.next();
-                    meta.put(f.getKey(), f.getValue().asText());
-                }
+                String realAcl = resolveRealAcl(meta);
 
                 return new McpVectorServer.DocumentDetailsResult(
                         docId,
                         documentUri,
                         title + "\n\n" + description,
                         meta,
-                        "openarch:acl:read"
+                        realAcl
                 );
             }
         } catch (Exception e) {
@@ -194,18 +236,109 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
             JsonNode res = client.query(repositoryId, "SELECT * FROM SysFile", 50, 0, null);
             if (res != null && res.has("documents")) {
                 for (JsonNode doc : res.get("documents")) {
+                    Map<String, Object> meta = extractMetadata(doc);
+                    if (!McpAclEvaluator.isAccessible(meta, userPrincipal, userRoles)) {
+                        continue;
+                    }
                     String id = doc.hasNonNull("id") ? doc.get("id").asText() : "";
                     String name = doc.hasNonNull("sys_name") ? doc.get("sys_name").asText() : id;
-                    sources.add(Map.of(
-                            "id", id,
-                            "name", name,
-                            "uri", "openarch://" + repositoryId + "/" + id
-                    ));
+                    String realAcl = resolveRealAcl(meta);
+                    Map<String, Object> sourceMap = new HashMap<>();
+                    sourceMap.put("id", id);
+                    sourceMap.put("name", name);
+                    sourceMap.put("uri", "openarch://" + repositoryId + "/" + id);
+                    sourceMap.put("acl", realAcl);
+                    sources.add(sourceMap);
                 }
             }
         } catch (Exception e) {
             log.warn("Failed to list accessible OpenArch sources: {}", e.getMessage());
         }
         return sources;
+    }
+
+    private Map<String, Object> extractMetadata(JsonNode node) {
+        Map<String, Object> metadata = new HashMap<>();
+        if (node == null || !node.isObject()) {
+            return metadata;
+        }
+        Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            JsonNode val = field.getValue();
+            if (val.isTextual()) {
+                metadata.put(field.getKey(), val.asText());
+            } else if (val.isNumber()) {
+                metadata.put(field.getKey(), val.numberValue());
+            } else if (val.isBoolean()) {
+                metadata.put(field.getKey(), val.asBoolean());
+            } else if (val.isArray() || val.isObject()) {
+                try {
+                    metadata.put(field.getKey(), objectMapper.convertValue(val, Object.class));
+                } catch (Exception ignored) {
+                    metadata.put(field.getKey(), val.toString());
+                }
+            }
+        }
+        resolveOpenArchSecurity(metadata);
+        return metadata;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void resolveOpenArchSecurity(Map<String, Object> metadata) {
+        if (metadata == null) return;
+
+        Object sysAclObj = metadata.get("sys_acl");
+        if (sysAclObj != null && !metadata.containsKey("security")) {
+            List<Map<String, Object>> aces = new ArrayList<>();
+            if (sysAclObj instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> m) {
+                        aces.add((Map<String, Object>) m);
+                    }
+                }
+            }
+            if (!aces.isEmpty()) {
+                SecurityConfig sc = OpenArchSecurityMapper.fromOpenArchAcl(aces, true);
+                metadata.put("security", sc);
+                List<String> allowed = sc.permissions().stream()
+                        .filter(p -> !"deny".equalsIgnoreCase(p.access()))
+                        .map(PermissionRule::identity)
+                        .toList();
+                if (!allowed.isEmpty() && !metadata.containsKey("acl")) {
+                    metadata.put("acl", String.join(",", allowed));
+                }
+            }
+        } else if (metadata.get("security") instanceof SecurityConfig sc) {
+            List<String> allowed = sc.permissions().stream()
+                    .filter(p -> !"deny".equalsIgnoreCase(p.access()))
+                    .map(PermissionRule::identity)
+                    .toList();
+            if (!allowed.isEmpty() && !metadata.containsKey("acl")) {
+                metadata.put("acl", String.join(",", allowed));
+            }
+        }
+    }
+
+    private String resolveRealAcl(Map<String, Object> metadata) {
+        if (metadata == null) {
+            return "public";
+        }
+        if (metadata.containsKey("acl") && metadata.get("acl") != null) {
+            return String.valueOf(metadata.get("acl"));
+        }
+        if (metadata.containsKey("acl_ss") && metadata.get("acl_ss") != null) {
+            return String.valueOf(metadata.get("acl_ss"));
+        }
+        if (metadata.get("security") instanceof SecurityConfig sc) {
+            List<String> allowed = sc.permissions().stream()
+                    .filter(p -> !"deny".equalsIgnoreCase(p.access()))
+                    .map(PermissionRule::identity)
+                    .toList();
+            if (!allowed.isEmpty()) {
+                return String.join(",", allowed);
+            }
+        }
+        return "public";
     }
 }

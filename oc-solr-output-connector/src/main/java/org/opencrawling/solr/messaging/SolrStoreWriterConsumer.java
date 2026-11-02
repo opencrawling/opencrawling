@@ -61,9 +61,12 @@ public class SolrStoreWriterConsumer {
                 message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for Solr storage: document {}", message.documentId());
-                solrClient.deleteByQuery(collectionName, "id:\"" + message.documentId() + "\" OR chunk_id:\"" + message.chunkId() + "\"", commitWithinMs);
-                log.info("Successfully deleted tombstone document/chunk {} from Solr collection '{}'.", message.documentId(), collectionName);
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for Solr storage: document {}", docId);
+                solrClient.deleteByQuery(collectionName, "id:\"" + docId + "\" OR documentId:\"" + docId + "\" OR chunk_id:\"" + message.chunkId() + "\"", commitWithinMs);
+                log.info("Successfully deleted tombstone document/chunk {} from Solr collection '{}'.", docId, collectionName);
                 return;
             }
             // Map Zero-Trust security ACLs
@@ -107,6 +110,10 @@ public class SolrStoreWriterConsumer {
 
             SolrInputDocument doc = new SolrInputDocument();
             doc.addField(SolrConstants.FIELD_ID, message.chunkId());
+            doc.addField("chunk_id", message.chunkId());
+            if (message.documentId() != null && !message.documentId().isBlank()) {
+                doc.addField("documentId", message.documentId());
+            }
             doc.addField(SolrConstants.FIELD_TEXT, message.text());
 
             Object uriVal = message.metadata().get("uri");
