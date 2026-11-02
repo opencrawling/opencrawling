@@ -125,7 +125,7 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
                             .filter(hit -> hit.getScore() == null || hit.getScore() >= minScore)
                             .toList();
                     for (SearchResp.SearchResult hit : readable(userPrincipal, userRoles, candidates,
-                            hit -> ResourceRef.fromMetadata(hit.getId(), entityOf(hit)))) {
+                            hit -> ResourceRef.fromMetadata(entityOf(hit)))) {
                         Map<String, Object> entity = entityOf(hit);
                         String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, hit.getId() != null ? hit.getId() : ""));
                         String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
@@ -171,7 +171,7 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(qr -> qr.getEntity() != null)
                         .toList();
                 for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
-                        qr -> ResourceRef.fromMetadata(qr.getEntity().get(MilvusConstants.FIELD_ID), qr.getEntity()))) {
+                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
                     Map<String, Object> entity = qr.getEntity();
                     String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
                     String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
@@ -213,7 +213,7 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(qr -> qr.getEntity() != null)
                         .toList();
                 for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
-                        qr -> ResourceRef.fromMetadata(qr.getEntity().get(MilvusConstants.FIELD_ID), qr.getEntity()))) {
+                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
                     Map<String, Object> entity = qr.getEntity();
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", entity.getOrDefault(MilvusConstants.FIELD_ID, ""));

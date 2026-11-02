@@ -245,7 +245,8 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
     /**
      * Presents a hit's ACL fields in the metadata shape the authorization providers read: the legacy
-     * {@code acl}, plus {@code security_allowed_read}/{@code security_denied_read} when the hit carries them.
+     * {@code acl}, plus {@code security_allowed_read}/{@code security_denied_read} when the hit carries them,
+     * keyed by the source document id.
      */
     public static ResourceRef toResourceRef(RawHit hit) {
         Map<String, Object> acl = new HashMap<>();
@@ -256,8 +257,30 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
         if (hit.deniedRead() != null && !hit.deniedRead().isEmpty()) {
             acl.put(VespaFields.FIELD_SECURITY_DENIED_READ, hit.deniedRead());
         }
-        Object documentId = hit.metadata() != null ? hit.metadata().get("documentId") : null;
-        return new ResourceRef(documentId != null ? String.valueOf(documentId) : hit.chunkId(), acl);
+        return new ResourceRef(documentIdOf(hit), acl);
+    }
+
+    /**
+     * Vespa schemas are strict, so the source document id travels inside the {@code metadata_json} field
+     * (the ingestion pipeline puts {@code documentId} into every chunk's metadata).
+     */
+    @SuppressWarnings("unchecked")
+    static String documentIdOf(RawHit hit) {
+        if (hit.metadata() == null) {
+            return null;
+        }
+        String direct = ResourceRef.idValue(hit.metadata().get("documentId"));
+        if (direct != null) {
+            return direct;
+        }
+        if (hit.metadata().get(VespaFields.FIELD_METADATA_JSON) instanceof String json && !json.isBlank()) {
+            try {
+                return ResourceRef.fromMetadata(MAPPER.readValue(json, Map.class)).documentId();
+            } catch (Exception e) {
+                log.debug("Unreadable metadata_json on Vespa hit {}: {}", hit.chunkId(), e.getMessage());
+            }
+        }
+        return null;
     }
 
     public RawSearchResult parseHits(JsonNode response) {

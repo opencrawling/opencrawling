@@ -37,6 +37,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 
@@ -117,6 +118,18 @@ class GatedMcpSearchBackendTest {
                     assertThat(gate).isNotSameAs(DocumentAccessGate.metadataDefault());
                     assertThat(context.getBean(QdrantMcpSearchBackend.class).accessGate()).isSameAs(gate);
                 });
+    }
+
+    @Test
+    void everyStoreHandsTheGateTheSourceDocumentId() {
+        assertThat(LuxirMcpSearchBackend.toResourceRef(Map.of("doc_id_s", "doc-luxir", "id", "chunk")).documentId())
+                .isEqualTo("doc-luxir");
+        VespaMcpSearchBackend.RawHit inJson = new VespaMcpSearchBackend.RawHit("chunk", "u", "t", "public",
+                List.of(), List.of(), Map.of("metadata_json", "{\"documentId\":\"doc-vespa\",\"title\":\"x\"}"), 1.0);
+        assertThat(VespaMcpSearchBackend.toResourceRef(inJson).documentId()).isEqualTo("doc-vespa");
+        VespaMcpSearchBackend.RawHit without = new VespaMcpSearchBackend.RawHit("chunk", "u", "t", "public",
+                List.of(), List.of(), Map.of("metadata_json", "not json"), 1.0);
+        assertThat(VespaMcpSearchBackend.toResourceRef(without).documentId()).isNull();
     }
 
     @Test

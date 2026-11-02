@@ -175,6 +175,8 @@ public class VectorOutputConnector implements OutputConnector {
                         metadata.put(key, cleanedList);
                     }
                 });
+                // The source document id keys relationship-based authorization (OpenFGA) on read.
+                metadata.put("documentId", document.id());
                 metadata.put("uri", document.uri());
                 metadata.put("acl", document.acl());
                 metadata.put("lastModified", document.lastModified().toString());

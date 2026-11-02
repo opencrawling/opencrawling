@@ -113,7 +113,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(doc -> scoreOf(doc) >= minScore)
                         .toList();
                 for (SolrDocument doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValue(SolrConstants.FIELD_ID), doc.getFieldValueMap()))) {
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
                     Map<String, Object> fieldMap = doc.getFieldValueMap();
                     double score = scoreOf(doc);
                     String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
@@ -150,7 +150,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
             if (docs != null) {
                 for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValue(SolrConstants.FIELD_ID), doc.getFieldValueMap()))) {
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
                     Map<String, Object> fieldMap = doc.getFieldValueMap();
                     String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
                     String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
@@ -187,7 +187,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (docs != null) {
                 for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValue(SolrConstants.FIELD_ID), doc.getFieldValueMap()))) {
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", doc.getFieldValue(SolrConstants.FIELD_ID));
                     summary.put("uri", doc.getFieldValue(SolrConstants.FIELD_URI));

@@ -218,7 +218,7 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
     }
 
     private static ResourceRef toResourceRef(Map<String, Object> payload) {
-        return ResourceRef.fromMetadata(payload.get(QdrantFields.FIELD_CHUNK_ID), payload);
+        return ResourceRef.fromMetadata(payload);
     }
 
     public static Map<String, Object> convertPayload(Map<String, JsonWithInt.Value> payloadMap) {

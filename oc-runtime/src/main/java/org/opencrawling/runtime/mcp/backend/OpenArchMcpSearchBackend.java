@@ -174,7 +174,7 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
             log.error("OpenArch MCP search failed: {}", e.getMessage(), e);
         }
         return readable(userPrincipal, userRoles, candidates,
-                        result -> ResourceRef.fromMetadata(result.metadata().get("docId"), result.metadata())).stream()
+                        result -> new ResourceRef(ResourceRef.idValue(result.metadata().get("docId")), result.metadata())).stream()
                 .limit(Math.max(maxResults, 0))
                 .toList();
     }
@@ -193,7 +193,7 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
             JsonNode docNode = client.getDocument(repositoryId, docId);
             if (docNode != null) {
                 Map<String, Object> meta = extractMetadata(docNode);
-                if (!readable(userPrincipal, userRoles, ResourceRef.fromMetadata(docId, meta))) {
+                if (!readable(userPrincipal, userRoles, new ResourceRef(docId, meta))) {
                     log.warn("Access denied for principal '{}' with roles {} to OpenArch document '{}'",
                             userPrincipal, userRoles, documentUri);
                     return null;
@@ -233,7 +233,7 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
                 List<JsonNode> candidates = new ArrayList<>();
                 res.get("documents").forEach(candidates::add);
                 for (JsonNode doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc.hasNonNull("id") ? doc.get("id").asText() : null, extractMetadata(doc)))) {
+                        doc -> new ResourceRef(doc.hasNonNull("id") ? doc.get("id").asText() : null, extractMetadata(doc)))) {
                     Map<String, Object> meta = extractMetadata(doc);
                     String id = doc.hasNonNull("id") ? doc.get("id").asText() : "";
                     String name = doc.hasNonNull("sys_name") ? doc.get("sys_name").asText() : id;

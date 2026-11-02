@@ -248,7 +248,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                 );
 
                 return readable(userPrincipal, userRoles, found,
-                                doc -> ResourceRef.fromMetadata(doc.id(), doc.metadata())).stream()
+                                doc -> ResourceRef.fromMetadata(doc.metadata())).stream()
                         .findFirst()
                         .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
             } catch (NoSuchElementException e) {
@@ -404,7 +404,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
 
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> readableRows = readable(userPrincipal, userRoles, rows,
-                        item -> ResourceRef.fromMetadata(item.get("id"), (Map<String, Object>) item.get("_meta")));
+                        item -> ResourceRef.fromMetadata((Map<String, Object>) item.get("_meta")));
                 rows.forEach(item -> item.remove("_meta"));
                 return readableRows.stream()
                         .distinct()
@@ -488,6 +488,6 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
     }
 
     private static ResourceRef toResourceRef(Document doc) {
-        return ResourceRef.fromMetadata(doc.getId(), doc.getMetadata());
+        return ResourceRef.fromMetadata(doc.getMetadata());
     }
 }

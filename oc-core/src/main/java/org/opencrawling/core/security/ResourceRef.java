@@ -15,6 +15,8 @@
  */
 package org.opencrawling.core.security;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -25,7 +27,7 @@ import java.util.Map;
  * {@code acl}). A metadata-based provider decides from it; a relationship-based provider decides from the
  * document id and may ignore it.
  *
- * @param documentId the source document id, or the best available stand-in (a chunk id or a URI)
+ * @param documentId the source document id, or {@code null} when the store did not keep it
  * @param metadata   the access-control metadata stored with the candidate, never {@code null}
  */
 public record ResourceRef(String documentId, Map<String, Object> metadata) {
@@ -34,21 +36,41 @@ public record ResourceRef(String documentId, Map<String, Object> metadata) {
         metadata = metadata == null ? Map.of() : metadata;
     }
 
+    /** Metadata keys that carry the source document id, in order of preference. */
+    public static final List<String> DOCUMENT_ID_KEYS = List.of("documentId", "document_id", "parent_document_id");
+
     /**
-     * Builds a reference from a store's metadata map, preferring its {@code documentId} or {@code document_id}
-     * field over the given fallback.
+     * Builds a reference from a store's metadata, taking the document id from {@link #DOCUMENT_ID_KEYS}.
+     *
+     * <p>There is deliberately no fallback to a chunk or point id: a relationship provider keys its decisions
+     * on the source document id, and a stand-in would only ever be denied. A candidate without one gets a
+     * {@code null} id, which relationship providers deny and the metadata provider ignores.
      */
-    public static ResourceRef fromMetadata(Object fallbackId, Map<String, Object> metadata) {
-        Object id = null;
+    public static ResourceRef fromMetadata(Map<String, Object> metadata) {
+        String id = null;
         if (metadata != null) {
-            id = metadata.get("documentId");
-            if (id == null || String.valueOf(id).isBlank()) {
-                id = metadata.get("document_id");
+            for (String key : DOCUMENT_ID_KEYS) {
+                id = idValue(metadata.get(key));
+                if (id != null) {
+                    break;
+                }
             }
         }
-        if (id == null || String.valueOf(id).isBlank()) {
-            id = fallbackId;
+        return new ResourceRef(id, metadata);
+    }
+
+    /**
+     * Reads a stored id value: a string, or the first element of a multi-valued field (Solr's schemaless
+     * mode stores unknown fields as lists). Blank values count as absent.
+     */
+    public static String idValue(Object value) {
+        if (value instanceof Collection<?> values) {
+            value = values.isEmpty() ? null : values.iterator().next();
         }
-        return new ResourceRef(id == null ? null : String.valueOf(id), metadata);
+        if (value == null) {
+            return null;
+        }
+        String id = String.valueOf(value).trim();
+        return id.isEmpty() ? null : id;
     }
 }

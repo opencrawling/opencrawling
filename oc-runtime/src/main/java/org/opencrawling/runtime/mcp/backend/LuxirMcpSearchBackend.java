@@ -107,7 +107,7 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(doc -> doc != null && scoreOf(doc) >= minScore)
                         .toList();
                 for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                        LuxirMcpSearchBackend::toResourceRef)) {
                     double score = scoreOf(doc);
                     String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
                     String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
@@ -143,7 +143,7 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(Objects::nonNull)
                         .toList();
                 for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                        LuxirMcpSearchBackend::toResourceRef)) {
                     String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
                     String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
                     String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
@@ -179,7 +179,7 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(Objects::nonNull)
                         .toList();
                 for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc == null ? null : doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")), doc))) {
+                        LuxirMcpSearchBackend::toResourceRef)) {
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", doc.getOrDefault(LuxirConstants.FIELD_ID, doc.get("id")));
                     summary.put("uri", doc.getOrDefault(LuxirConstants.FIELD_URI, doc.get("uri")));
@@ -203,5 +203,10 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static double scoreOf(Map<String, Object> doc) {
         return doc.get("_score") instanceof Number n ? n.doubleValue() : 1.0;
+    }
+
+    /** Luxir keeps the source document id in {@link LuxirConstants#FIELD_DOC_ID}. */
+    static ResourceRef toResourceRef(Map<String, Object> doc) {
+        return new ResourceRef(ResourceRef.idValue(doc.get(LuxirConstants.FIELD_DOC_ID)), doc);
     }
 }

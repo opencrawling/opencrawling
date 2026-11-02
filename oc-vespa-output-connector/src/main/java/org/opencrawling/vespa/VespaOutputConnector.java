@@ -116,6 +116,8 @@ public class VespaOutputConnector implements OutputConnector {
                 log.info("Extracted {} characters from document: {}", text.length(), document.id());
 
                 Map<String, Object> metadata = cleanedMetadata(document);
+                // Kept in metadata_json: the source document id keys relationship-based authorization on read.
+                metadata.put("documentId", document.id());
                 Document aiDoc = new Document(document.id(), text, metadata);
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
                 log.info("Split document into {} chunks for Vespa.", chunks.size());

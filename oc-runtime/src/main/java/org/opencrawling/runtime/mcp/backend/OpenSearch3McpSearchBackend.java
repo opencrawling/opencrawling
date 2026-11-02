@@ -114,7 +114,7 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
                         .filter(hit -> (hit.score() != null ? hit.score() : 0.0) >= minScore)
                         .toList();
                 for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
-                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                        hit -> ResourceRef.fromMetadata(sourceOf(hit)))) {
                     Map<String, Object> source = sourceOf(hit);
                     double score = hit.score() != null ? hit.score() : 0.0;
                     String id = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ID, hit.id()));
@@ -160,7 +160,7 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
                         .filter(hit -> hit.source() != null)
                         .toList();
                 for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
-                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                        hit -> ResourceRef.fromMetadata(sourceOf(hit)))) {
                     Map<String, Object> source = sourceOf(hit);
                     String id = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ID, hit.id()));
                     String uri = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_URI, ""));
@@ -201,7 +201,7 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
                         .filter(hit -> hit.source() != null)
                         .toList();
                 for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
-                        hit -> ResourceRef.fromMetadata(hit.id(), sourceOf(hit)))) {
+                        hit -> ResourceRef.fromMetadata(sourceOf(hit)))) {
                     Map<String, Object> source = sourceOf(hit);
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", source.getOrDefault(OpenSearch3Constants.FIELD_ID, hit.id()));

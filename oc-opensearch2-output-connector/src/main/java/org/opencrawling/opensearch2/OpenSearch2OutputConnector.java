@@ -204,6 +204,7 @@ public class OpenSearch2OutputConnector implements OutputConnector {
 
                     Map<String, Object> row = new HashMap<>();
                     row.put(OpenSearch2Constants.FIELD_ID, chunkId);
+                    row.put(OpenSearch2Constants.FIELD_DOCUMENT_ID, document.id());
                     row.put(OpenSearch2Constants.FIELD_TEXT, chunk.getText());
                     row.put(OpenSearch2Constants.FIELD_URI, document.uri());
                     row.put(OpenSearch2Constants.FIELD_ACL, document.acl());
