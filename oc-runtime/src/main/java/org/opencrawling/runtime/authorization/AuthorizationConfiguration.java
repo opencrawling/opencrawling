@@ -15,6 +15,8 @@
  */
 package org.opencrawling.runtime.authorization;
 
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.opencrawling.core.security.AuthorizationProvider;
 import org.opencrawling.core.security.RelationshipAuthorizationProvider;
 import org.slf4j.Logger;
@@ -49,10 +51,20 @@ public class AuthorizationConfiguration {
     @ConditionalOnMissingBean(DocumentAccessGate.class)
     public DocumentAccessGate documentAccessGate(
             @Value("${" + MODE_PROPERTY + ":metadata}") String mode,
-            ObjectProvider<RelationshipAuthorizationProvider> relationshipProvider) {
+            @Value("${opencrawling.security.authorization.overfetch-factor:" + DocumentAccessGate.DEFAULT_OVERFETCH_FACTOR + "}") int overfetchFactor,
+            @Value("${opencrawling.security.authorization.candidate-budget:" + DocumentAccessGate.DEFAULT_CANDIDATE_BUDGET + "}") int candidateBudget,
+            ObjectProvider<RelationshipAuthorizationProvider> relationshipProvider,
+            ObjectProvider<MeterRegistry> meterRegistry) {
         AuthorizationProvider provider = select(mode, relationshipProvider.getIfAvailable());
+        MeterRegistry registry = meterRegistry.getIfAvailable();
+        if (registry != null && provider instanceof ShadowAuthorizationProvider shadow) {
+            FunctionCounter.builder("oc.authz.shadow.mismatch", shadow, ShadowAuthorizationProvider::mismatches)
+                    .description("Decisions where the shadow provider disagreed").register(registry);
+            FunctionCounter.builder("oc.authz.shadow.errors", shadow, ShadowAuthorizationProvider::errors)
+                    .description("Shadow provider failures").register(registry);
+        }
         log.info("Document authorization mode '{}' using provider {}.", normalize(mode), provider.name());
-        return new DocumentAccessGate(provider);
+        return new DocumentAccessGate(provider, overfetchFactor, candidateBudget, registry);
     }
 
     /**

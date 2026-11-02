@@ -166,6 +166,10 @@ opencrawling:
       # shadow: metadata decides, OpenFGA is asked too and disagreements are logged.
       # intersection: both must allow. openfga: OpenFGA decides alone.
       mode: ${OPENCRAWLING_SECURITY_AUTHORIZATION_MODE:metadata}
+      # In intersection/openfga modes stores skip their stored-ACL pre-filters and fetch
+      # limit x overfetch-factor candidates (never more than candidate-budget) for the gate to check.
+      overfetch-factor: 10
+      candidate-budget: 500
       openfga:
         api-url: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL:http://localhost:8080}
         # Pin both in production; auto-provision creates/reuses the store and model (development and tests).

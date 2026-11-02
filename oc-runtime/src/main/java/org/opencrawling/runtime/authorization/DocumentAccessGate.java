@@ -19,6 +19,9 @@ import org.opencrawling.core.security.AuthorizationProvider;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
 import org.opencrawling.core.security.Caller;
 import org.opencrawling.core.security.ResourceRef;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,10 +43,71 @@ public final class DocumentAccessGate {
 
     private static final DocumentAccessGate METADATA_DEFAULT = new DocumentAccessGate(new MetadataAuthorizationProvider());
 
+    /** Default multiple of the requested results fetched when the provider may reject stored-ACL matches. */
+    public static final int DEFAULT_OVERFETCH_FACTOR = 10;
+    /** Default cap on candidates fetched for one request in those modes. */
+    public static final int DEFAULT_CANDIDATE_BUDGET = 500;
+
     private final AuthorizationProvider provider;
+    private final int overfetchFactor;
+    private final int candidateBudget;
+    private final Timer checkTimer;
+    private final Counter candidatesCounter;
+    private final Counter deniedCounter;
+    private final Counter errorCounter;
 
     public DocumentAccessGate(AuthorizationProvider provider) {
+        this(provider, DEFAULT_OVERFETCH_FACTOR, DEFAULT_CANDIDATE_BUDGET, null);
+    }
+
+    /**
+     * @param overfetchFactor how many times the requested results to fetch when the provider is not
+     *                        metadata-prefilter safe
+     * @param candidateBudget the most candidates to fetch for one request in that case
+     * @param meterRegistry   where to publish {@code oc.authz.*} metrics, or {@code null}
+     */
+    public DocumentAccessGate(AuthorizationProvider provider, int overfetchFactor, int candidateBudget,
+                              MeterRegistry meterRegistry) {
         this.provider = Objects.requireNonNull(provider, "provider");
+        this.overfetchFactor = Math.max(1, overfetchFactor);
+        this.candidateBudget = Math.max(1, candidateBudget);
+        if (meterRegistry != null) {
+            String name = provider.name();
+            this.checkTimer = Timer.builder("oc.authz.check").description("Time to decide one batch of candidates")
+                    .tag("provider", name).register(meterRegistry);
+            this.candidatesCounter = Counter.builder("oc.authz.candidates").tag("provider", name).register(meterRegistry);
+            this.deniedCounter = Counter.builder("oc.authz.denied").tag("provider", name).register(meterRegistry);
+            this.errorCounter = Counter.builder("oc.authz.errors").description("Requests denied because the provider failed")
+                    .tag("provider", name).register(meterRegistry);
+        } else {
+            this.checkTimer = null;
+            this.candidatesCounter = null;
+            this.deniedCounter = null;
+            this.errorCounter = null;
+        }
+    }
+
+    /**
+     * Whether a store may filter by the stored ACL metadata inside its own query. False when the provider can
+     * allow documents the stored metadata does not show (relationship modes), in which case the store must
+     * return unfiltered candidates and leave the decision to the gate.
+     */
+    public boolean storePrefilterAllowed() {
+        return provider.metadataPrefilterSafe();
+    }
+
+    /**
+     * How many candidates a backend should fetch for {@code limit} results.
+     *
+     * @param limit          the results the caller asked for
+     * @param metadataWindow what the backend fetches when stored metadata decides
+     */
+    public int candidateWindow(int limit, int metadataWindow) {
+        if (provider.metadataPrefilterSafe()) {
+            return metadataWindow;
+        }
+        long wanted = (long) Math.max(limit, 1) * overfetchFactor;
+        return (int) Math.max(metadataWindow, Math.min(wanted, candidateBudget));
     }
 
     /**
@@ -77,10 +141,16 @@ public final class DocumentAccessGate {
         }
         boolean[] decisions = decide(caller, refs);
         List<T> allowed = new ArrayList<>();
+        if (candidatesCounter != null) {
+            candidatesCounter.increment(candidates.size());
+        }
         for (int i = 0; i < decisions.length; i++) {
             if (decisions[i]) {
                 allowed.add(candidates.get(i));
             }
+        }
+        if (deniedCounter != null) {
+            deniedCounter.increment(candidates.size() - allowed.size());
         }
         if (log.isDebugEnabled()) {
             log.debug("Authorization ({}) kept {} of {} candidates for principal '{}'.",
@@ -100,19 +170,33 @@ public final class DocumentAccessGate {
 
     private boolean[] decide(Caller caller, List<ResourceRef> refs) {
         boolean[] decisions;
+        long start = System.nanoTime();
         try {
             decisions = provider.canRead(caller, refs);
         } catch (AuthorizationUnavailableException e) {
+            countError();
             throw e;
         } catch (RuntimeException e) {
+            countError();
             throw new AuthorizationUnavailableException(
                     "Authorization provider '" + provider.name() + "' failed; access denied.", e);
+        } finally {
+            if (checkTimer != null) {
+                checkTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
+            }
         }
         if (decisions == null || decisions.length != refs.size()) {
+            countError();
             throw new AuthorizationUnavailableException("Authorization provider '" + provider.name()
                     + "' returned " + (decisions == null ? "no" : decisions.length) + " decisions for "
                     + refs.size() + " candidates; access denied.");
         }
         return decisions;
+    }
+
+    private void countError() {
+        if (errorCounter != null) {
+            errorCounter.increment();
+        }
     }
 }

@@ -97,7 +97,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
         }
         sb.append("]");
 
-        int topK = Math.max(limit * 3, 20);
+        int topK = candidateWindow(limit, Math.max(limit * 3, 20));
         ModifiableSolrParams params = new ModifiableSolrParams();
         params.set("q", "{!knn f=" + SolrConstants.FIELD_EMBEDDINGS + " topK=" + topK + "}" + sb.toString());
         params.set("rows", topK);

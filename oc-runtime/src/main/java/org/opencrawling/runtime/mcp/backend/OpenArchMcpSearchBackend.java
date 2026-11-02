@@ -110,7 +110,7 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
                     vector,
                     query,
                     null,
-                    maxResults,
+                    candidateWindow(maxResults, maxResults),
                     0
             );
 

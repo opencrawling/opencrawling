@@ -111,7 +111,7 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
             SearchReq searchReq = SearchReq.builder()
                     .collectionName(collectionName)
                     .data(Collections.singletonList(new FloatVec(vector)))
-                    .topK(Math.max(limit * 3, 20))
+                    .topK(candidateWindow(limit, Math.max(limit * 3, 20)))
                     .outputFields(OUTPUT_FIELDS)
                     .build();
 

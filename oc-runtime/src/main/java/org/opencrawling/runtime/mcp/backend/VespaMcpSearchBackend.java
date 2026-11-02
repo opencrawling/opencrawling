@@ -122,7 +122,7 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
         try {
             ObjectNode body = MAPPER.createObjectNode();
-            body.put("yql", "select * from " + documentType + " where (" + buildDenyExclusion(userPrincipal, userRoles) + ") and "
+            body.put("yql", "select * from " + documentType + " where (" + storeDenyExclusion(userPrincipal, userRoles) + ") and "
                     + VespaFields.FIELD_URI + " contains \"" + escapeYql(documentUri) + "\"");
             body.put("hits", 20);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
@@ -157,7 +157,7 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
         try {
             ObjectNode body = MAPPER.createObjectNode();
-            body.put("yql", "select * from " + documentType + " where " + buildDenyExclusion(userPrincipal, userRoles));
+            body.put("yql", "select * from " + documentType + " where " + storeDenyExclusion(userPrincipal, userRoles));
             body.put("hits", 200);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
@@ -180,8 +180,8 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
     public RawSearchResult executeSearch(String documentType, String query, String rankProfile, int limit,
                                           String userPrincipal, List<String> roles) throws Exception {
-        int resultLimit = Math.max(limit * 3, 30);
-        String denyExclusion = buildDenyExclusion(userPrincipal, roles);
+        int resultLimit = candidateWindow(limit, Math.max(limit * 3, 30));
+        String denyExclusion = storeDenyExclusion(userPrincipal, roles);
 
         if ("default".equals(rankProfile)) {
             return bm25Search(documentType, query, denyExclusion, resultLimit, false, null);
@@ -319,6 +319,14 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
             throw new IllegalStateException("Vespa query failed: " + errors.get(0).path("message").asText(errors.toString()));
         }
         return json;
+    }
+
+    /**
+     * The deny pre-filter for Vespa queries, or {@code true} when stored ACL metadata must not filter inside the
+     * store (relationship modes decide in the access gate).
+     */
+    private String storeDenyExclusion(String userPrincipal, List<String> userGroups) {
+        return storePrefilterAllowed() ? buildDenyExclusion(userPrincipal, userGroups) : "true";
     }
 
     public String buildDenyExclusion(String userPrincipal, List<String> userGroups) {

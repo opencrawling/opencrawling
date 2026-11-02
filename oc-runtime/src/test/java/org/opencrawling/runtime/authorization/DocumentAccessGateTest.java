@@ -116,6 +116,52 @@ class DocumentAccessGateTest {
                 .hasMessageContaining("1 decisions for 2 candidates");
     }
 
+    /** A provider that, like OpenFGA, may allow documents the stored metadata does not show. */
+    private static final class Relationship implements org.opencrawling.core.security.RelationshipAuthorizationProvider {
+        @Override
+        public String name() {
+            return "rel";
+        }
+
+        @Override
+        public boolean[] canRead(Caller caller, List<ResourceRef> candidates) {
+            boolean[] decisions = new boolean[candidates.size()];
+            decisions[0] = true;
+            return decisions;
+        }
+    }
+
+    @Test
+    void metadataModeKeepsTheStoreWindowAndPrefilter() {
+        DocumentAccessGate gate = DocumentAccessGate.metadataDefault();
+        assertThat(gate.storePrefilterAllowed()).isTrue();
+        assertThat(gate.candidateWindow(5, 20)).isEqualTo(20);
+    }
+
+    @Test
+    void relationshipModesWidenTheWindowWithinTheBudgetAndSkipStorePrefilters() {
+        DocumentAccessGate gate = new DocumentAccessGate(new Relationship(), 10, 120, null);
+        assertThat(gate.storePrefilterAllowed()).isFalse();
+        assertThat(gate.candidateWindow(5, 20)).isEqualTo(50);
+        assertThat(gate.candidateWindow(50, 150)).isEqualTo(150);   // never below the store's own window
+        assertThat(gate.candidateWindow(30, 20)).isEqualTo(120);    // capped by the budget
+        assertThat(gate.candidateWindow(0, 20)).isEqualTo(20);
+    }
+
+    @Test
+    void publishesMetrics() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        DocumentAccessGate gate = new DocumentAccessGate(new Relationship(), 10, 500, registry);
+
+        gate.filter(ALICE, List.of("a", "b", "c"), id -> new ResourceRef(id, Map.of()));
+
+        assertThat(registry.get("oc.authz.candidates").tag("provider", "rel").counter().count()).isEqualTo(3);
+        assertThat(registry.get("oc.authz.denied").tag("provider", "rel").counter().count()).isEqualTo(2);
+        assertThat(registry.get("oc.authz.check").timer().count()).isEqualTo(1);
+        assertThat(registry.get("oc.authz.errors").counter().count()).isZero();
+    }
+
     @Test
     void metadataDefaultDecidesFromStoredAcls() {
         DocumentAccessGate gate = DocumentAccessGate.metadataDefault();

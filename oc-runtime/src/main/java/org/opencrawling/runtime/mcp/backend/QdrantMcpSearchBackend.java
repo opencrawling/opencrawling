@@ -99,7 +99,7 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             Points.SearchPoints searchPoints = Points.SearchPoints.newBuilder()
                     .setCollectionName(properties.collectionName())
                     .addAllVector(vectorList)
-                    .setLimit(Math.max(limit * 3, 20))
+                    .setLimit(candidateWindow(limit, Math.max(limit * 3, 20)))
                     .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
                     .build();
 

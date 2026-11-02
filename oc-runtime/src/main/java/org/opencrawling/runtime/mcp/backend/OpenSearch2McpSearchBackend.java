@@ -92,7 +92,7 @@ public class OpenSearch2McpSearchBackend extends GatedMcpSearchBackend {
         }
 
         final float[] searchVector = vector;
-        int topK = Math.max(limit * 3, 20);
+        int topK = candidateWindow(limit, Math.max(limit * 3, 20));
 
         try {
             SearchResponse<Map> response = openSearchClient.search(s -> s

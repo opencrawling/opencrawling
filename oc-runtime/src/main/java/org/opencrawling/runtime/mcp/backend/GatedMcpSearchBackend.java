@@ -55,6 +55,21 @@ public abstract class GatedMcpSearchBackend implements McpVectorSearchBackend {
     }
 
     /**
+     * How many candidates to fetch for {@code limit} results; larger when the provider may reject stored-ACL
+     * matches. {@code metadataWindow} is what the backend fetches when stored metadata decides.
+     */
+    protected int candidateWindow(int limit, int metadataWindow) {
+        return accessGate.candidateWindow(limit, metadataWindow);
+    }
+
+    /**
+     * Whether the backend may filter by stored ACL metadata inside its own query.
+     */
+    protected boolean storePrefilterAllowed() {
+        return accessGate.storePrefilterAllowed();
+    }
+
+    /**
      * Whether the caller may read a single candidate.
      */
     protected boolean readable(String userPrincipal, List<String> userRoles, ResourceRef ref) {

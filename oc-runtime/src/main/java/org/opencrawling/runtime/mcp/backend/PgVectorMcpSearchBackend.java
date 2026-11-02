@@ -139,12 +139,16 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         FilterExpressionBuilder b = new FilterExpressionBuilder();
         var securityExpression = buildSecurityFilterExpression(b, userPrincipal, userRoles);
 
-        SearchRequest searchRequest = SearchRequest.builder()
+        // Stored-ACL pre-filtering in SQL is only safe while stored metadata decides; otherwise fetch a wider,
+        // unfiltered window and let the access gate decide.
+        SearchRequest.Builder searchBuilder = SearchRequest.builder()
                 .query(query)
-                .filterExpression(securityExpression.build())
-                .topK(limit)
-                .similarityThreshold(threshold)
-                .build();
+                .topK(candidateWindow(limit, limit))
+                .similarityThreshold(threshold);
+        if (storePrefilterAllowed()) {
+            searchBuilder.filterExpression(securityExpression.build());
+        }
+        SearchRequest searchRequest = searchBuilder.build();
 
         boolean precomputedSet = false;
         try {
@@ -277,7 +281,9 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                 )
         );
 
-        var finalExpression = b.and(matchDocExpression, securityExpression).build();
+        var finalExpression = storePrefilterAllowed()
+                ? b.and(matchDocExpression, securityExpression).build()
+                : matchDocExpression.build();
         SearchRequest searchRequest = SearchRequest.builder()
                 .query(documentUri)
                 .filterExpression(finalExpression)

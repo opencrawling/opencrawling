@@ -90,7 +90,7 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
             floatList.add(f);
         }
 
-        int topK = Math.max(limit * 3, 20);
+        int topK = candidateWindow(limit, Math.max(limit * 3, 20));
         Map<String, Object> knnQuery = Map.of(
                 "field", properties.vectorField(),
                 "query", floatList,
