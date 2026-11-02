@@ -201,12 +201,15 @@ public class AlfrescoOutputConnector implements OutputConnector {
 
             // 5. Sync permissions if enabled
             if (properties.isSyncPermissions()) {
+                boolean inheritance = document.security() != null
+                        ? document.security().inheritanceEnabled()
+                        : properties.isInheritanceEnabled();
                 client.updatePermissions(
                         result.nodeId(),
                         document.security(),
                         document.acl(),
                         properties.getDefaultPermissionRole(),
-                        properties.isInheritanceEnabled()
+                        inheritance
                 );
             }
 

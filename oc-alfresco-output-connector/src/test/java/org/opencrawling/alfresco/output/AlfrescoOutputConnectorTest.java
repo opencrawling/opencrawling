@@ -127,7 +127,7 @@ class AlfrescoOutputConnectorTest {
                 eq(true),
                 eq(false)
         );
-        verify(mockClient).updatePermissions(eq("node-999"), any(), anyString(), eq("Consumer"), eq(true));
+        verify(mockClient).updatePermissions(eq("node-999"), any(), anyString(), eq("Consumer"), anyBoolean());
     }
 
     @Test

@@ -354,9 +354,10 @@ public class AlfrescoRestClient implements AutoCloseable {
                     continue;
                 }
                 seenAuthorities.add(authorityId);
+                String role = resolveRole(rule.access(), defaultRole);
                 locallySet.add(Map.of(
                         "authorityId", authorityId,
-                        "name", defaultRole != null && !defaultRole.isBlank() ? defaultRole : "Consumer",
+                        "name", role,
                         "accessStatus", "deny".equalsIgnoreCase(rule.access()) ? "DENIED" : "ALLOWED"
                 ));
             }
@@ -418,6 +419,32 @@ public class AlfrescoRestClient implements AutoCloseable {
             return raw;
         }
         return raw;
+    }
+
+    private String resolveRole(String access, String defaultRole) {
+        if (access == null || access.isBlank()) {
+            return defaultRole != null && !defaultRole.isBlank() ? defaultRole : "Consumer";
+        }
+        String lower = access.trim().toLowerCase();
+        if (lower.contains("coordinator") || lower.contains("admin")) {
+            return "Coordinator";
+        }
+        if (lower.contains("collaborator")) {
+            return "Collaborator";
+        }
+        if (lower.contains("contributor")) {
+            return "Contributor";
+        }
+        if (lower.contains("editor")) {
+            return "Editor";
+        }
+        if (lower.contains("write")) {
+            return "Collaborator";
+        }
+        if (lower.contains("read") || lower.contains("consumer")) {
+            return "Consumer";
+        }
+        return access.trim();
     }
 
     /**
