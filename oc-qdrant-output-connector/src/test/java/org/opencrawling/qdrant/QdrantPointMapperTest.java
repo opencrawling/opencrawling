@@ -69,6 +69,38 @@ class QdrantPointMapperTest {
     }
 
     @Test
+    void adminGrantsReadAndPublicTypedRulesBecomePublic() {
+        SecurityConfig security = new SecurityConfig(false, List.of(
+                new PermissionRule("site-managers", "group", "Site Managers", "admin"),
+                new PermissionRule("GROUP_EVERYONE", "public", "Everyone", "read")
+        ));
+
+        PointStruct point = mapper.toPoint("doc-3_chunk-0", "text", "file:///doc-3.txt", "secured",
+                "now", security, new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("site-managers", "public");
+    }
+
+    @Test
+    void legacyAclAloneIsIndexedAsAllowedReaders() {
+        PointStruct point = mapper.toPoint("doc-4_chunk-0", "text", "file:///doc-4.txt", "finance,read",
+                "now", null, new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("finance");
+    }
+
+    @Test
+    void restrictiveAclOverridesTheDefaultPublicPlaceholder() {
+        PointStruct point = mapper.toPoint("doc-5_chunk-0", "text", "file:///doc-5.txt", "finance",
+                "now", SecurityConfig.createPublic(), new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("finance");
+    }
+
+    @Test
     void mapsDocumentIdToPayload() {
         PointStruct pointWithArg = mapper.toPoint("doc-parent-10", "doc-parent-10_chunk-0", "text", "file:///doc.txt", "public",
                 "now", null, new float[]{0.1f}, Map.of());

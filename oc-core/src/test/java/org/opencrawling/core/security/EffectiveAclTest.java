@@ -1,0 +1,123 @@
+/*
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opencrawling.core.security;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class EffectiveAclTest {
+
+    private static PermissionRule rule(String identity, String type, String access) {
+        return new PermissionRule(identity, type, identity, access);
+    }
+
+    @Test
+    void readWriteAndAdminAllGrantRead() {
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(true, List.of(
+                rule("alice", "user", "read"), rule("editors", "group", "write"),
+                rule("admins", "group", "admin"), rule("bob", "user", "deny"),
+                rule("carol", "user", "none"))), null);
+
+        assertThat(acl.allowedRead()).containsExactly("alice", "editors", "admins");
+        assertThat(acl.deniedRead()).containsExactly("bob");
+        assertThat(acl.inheritanceEnabled()).isTrue();
+        assertThat(acl.isPublic()).isFalse();
+    }
+
+    @Test
+    void publicTypedRulesGrantPublicNotTheRepositoryName() {
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(
+                rule("GROUP_EVERYONE", "public", "read"), rule("anonymous", "PUBLIC", "read"))), null);
+
+        assertThat(acl.allowedRead()).containsExactly("public");
+        assertThat(acl.isPublic()).isTrue();
+    }
+
+    @Test
+    void aRealPublicRuleIsNotThePlaceholderEvenWhenTheAclNamesItsIdentity() {
+        // The OIS endpoint derives acl from the same rules, so acl holds the raw repository name.
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(
+                rule("GROUP_EVERYONE", "public", "read"))), "GROUP_EVERYONE");
+
+        assertThat(acl.allowedRead()).containsExactly("public");
+        assertThat(acl.isPublic()).isTrue();
+    }
+
+    @Test
+    void rulesDecideAndTheLegacyAclIsIgnored() {
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(rule("alice", "user", "read"))),
+                "user:alice;group:finance,secured");
+
+        assertThat(acl.allowedRead()).containsExactly("alice");
+        assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly("alice");
+    }
+
+    @Test
+    void restrictiveAclOverridesTheDefaultPublicPlaceholder() {
+        EffectiveAcl acl = EffectiveAcl.resolve(SecurityConfig.createPublic(), "finance, alice");
+
+        assertThat(acl.allowedRead()).containsExactly("finance", "alice");
+        assertThat(acl.isPublic()).isFalse();
+        assertThat(acl.security().permissions()).extracting(PermissionRule::identity)
+                .containsExactly("finance", "alice");
+    }
+
+    @Test
+    void defaultPublicStaysPublicWhenTheAclAddsNoIdentity() {
+        assertThat(EffectiveAcl.resolve(SecurityConfig.createPublic(), "read").isPublic()).isTrue();
+        assertThat(EffectiveAcl.resolve(SecurityConfig.createPublic(), "Public").isPublic()).isTrue();
+        assertThat(EffectiveAcl.resolve(SecurityConfig.createPublic(), null).security())
+                .isEqualTo(SecurityConfig.createPublic());
+    }
+
+    @Test
+    void legacyAclAloneGrantsItsTokensAndDropsTheReadKeyword() {
+        EffectiveAcl acl = EffectiveAcl.resolve(null, "finance, read ,PUBLIC,finance");
+
+        assertThat(acl.allowedRead()).containsExactly("finance", "public");
+        assertThat(acl.deniedRead()).isEmpty();
+        assertThat(acl.security().permissions()).hasSize(2);
+    }
+
+    @Test
+    void noRulesAndNoAclGrantsNothing() {
+        EffectiveAcl acl = EffectiveAcl.resolve(null, "  ");
+
+        assertThat(acl.allowedRead()).isEmpty();
+        assertThat(acl.security()).isNull();
+    }
+
+    @Test
+    void readsTheMapShapeASecurityConfigTakesAfterKafka() {
+        Map<String, Object> security = Map.of(
+                "inheritanceEnabled", true,
+                "permissions", List.of(
+                        Map.of("identity", "finance", "identityType", "group", "access", "admin"),
+                        Map.of("identity", "everyone", "identityType", "public", "access", "read"),
+                        Map.of("identity", "mallory", "identityType", "user", "access", "deny")));
+
+        EffectiveAcl acl = EffectiveAcl.resolve(security, List.of("ignored"));
+
+        assertThat(acl.allowedRead()).containsExactly("finance", "public");
+        assertThat(acl.deniedRead()).containsExactly("mallory");
+        assertThat(acl.inheritanceEnabled()).isTrue();
+        assertThat(acl.isPublic()).isFalse();
+    }
+}

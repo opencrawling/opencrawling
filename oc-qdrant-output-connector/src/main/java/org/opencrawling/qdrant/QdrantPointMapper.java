@@ -19,7 +19,7 @@ import io.qdrant.client.ValueFactory;
 import io.qdrant.client.grpc.JsonWithInt.ListValue;
 import io.qdrant.client.grpc.JsonWithInt.Value;
 import io.qdrant.client.grpc.Points.PointStruct;
-import org.opencrawling.core.security.PermissionRule;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.security.SecurityConfig;
 import org.springframework.stereotype.Component;
 
@@ -57,7 +57,7 @@ public class QdrantPointMapper {
      */
     public PointStruct toPoint(String documentId, String chunkId, String text, String uri, String acl, String lastModified,
                                 Object security, float[] embedding, Map<String, Object> extraMetadata) {
-        AclResult aclResult = resolveAcl(security);
+        EffectiveAcl aclResult = EffectiveAcl.resolve(security, acl);
 
         Map<String, Value> payload = new HashMap<>();
 
@@ -99,41 +99,6 @@ public class QdrantPointMapper {
                 .build();
     }
 
-    private static AclResult resolveAcl(Object security) {
-        List<String> allowedRead = new ArrayList<>();
-        List<String> deniedRead = new ArrayList<>();
-        boolean inheritanceEnabled = true;
-
-        if (security instanceof SecurityConfig securityConfig) {
-            inheritanceEnabled = securityConfig.inheritanceEnabled();
-            for (PermissionRule rule : securityConfig.permissions()) {
-                bucket(rule.access(), rule.identity(), allowedRead, deniedRead);
-            }
-        } else if (security instanceof Map<?, ?> securityMap) {
-            if (securityMap.get("inheritanceEnabled") != null) {
-                inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-            }
-            Object permissions = securityMap.get("permissions");
-            if (permissions instanceof List<?> permissionList) {
-                for (Object permission : permissionList) {
-                    if (permission instanceof Map<?, ?> permissionMap) {
-                        bucket(String.valueOf(permissionMap.get("access")), String.valueOf(permissionMap.get("identity")),
-                                allowedRead, deniedRead);
-                    }
-                }
-            }
-        }
-        return new AclResult(inheritanceEnabled, allowedRead, deniedRead);
-    }
-
-    private static void bucket(String access, String identity, List<String> allowedRead, List<String> deniedRead) {
-        if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-            allowedRead.add(identity);
-        } else if ("deny".equalsIgnoreCase(access)) {
-            deniedRead.add(identity);
-        }
-    }
-
     private static Value toValue(Object value) {
         if (value instanceof List<?> list) {
             List<String> strings = new ArrayList<>();
@@ -151,8 +116,5 @@ public class QdrantPointMapper {
             listValue.addValues(ValueFactory.value(value));
         }
         return Value.newBuilder().setListValue(listValue.build()).build();
-    }
-
-    private record AclResult(boolean inheritanceEnabled, List<String> allowedRead, List<String> deniedRead) {
     }
 }

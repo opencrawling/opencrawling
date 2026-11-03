@@ -15,6 +15,7 @@
  */
 package org.opencrawling.vector;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.springframework.ai.document.Document;
@@ -25,8 +26,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -176,44 +175,20 @@ public class VectorOutputConnector implements OutputConnector {
                         metadata.put(key, cleanedList);
                     }
                 });
+                // The source document id keys relationship-based authorization (OpenFGA) on read.
+                metadata.put("documentId", document.id());
                 metadata.put("uri", document.uri());
                 metadata.put("acl", document.acl());
                 metadata.put("lastModified", document.lastModified().toString());
 
-                // Map standard OIS security fields for role-based and zero-trust pre-filtering
-                List<String> allowedRead = new ArrayList<>();
-                List<String> deniedRead = new ArrayList<>();
-                boolean inheritanceEnabled = false;
-
-                if (document.security() != null) {
-                    metadata.put("security", document.security());
-                    inheritanceEnabled = document.security().inheritanceEnabled();
-                    if (document.security().permissions() != null) {
-                        for (PermissionRule rule : document.security().permissions()) {
-                            if (rule != null && rule.identity() != null && !rule.identity().isBlank()) {
-                                String id = rule.identity().trim();
-                                if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
-                                    if (!allowedRead.contains(id)) allowedRead.add(id);
-                                } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                    if (!deniedRead.contains(id)) deniedRead.add(id);
-                                }
-                            }
-                        }
-                    }
+                // Flattened security fields for role-based and zero-trust pre-filtering
+                EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                if (effectiveAcl.security() != null) {
+                    metadata.put("security", effectiveAcl.security());
                 }
-
-                if (document.acl() != null && !document.acl().isBlank() && !"read".equalsIgnoreCase(document.acl().trim())) {
-                    for (String token : document.acl().split(",")) {
-                        String trimmed = token.trim();
-                        if (!trimmed.isEmpty() && !allowedRead.contains(trimmed)) {
-                            allowedRead.add(trimmed);
-                        }
-                    }
-                }
-
-                metadata.put("security_inheritance", inheritanceEnabled);
-                metadata.put("security_allowed_read", allowedRead);
-                metadata.put("security_denied_read", deniedRead);
+                metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
+                metadata.put("security_allowed_read", effectiveAcl.allowedRead());
+                metadata.put("security_denied_read", effectiveAcl.deniedRead());
 
                 // Construct Spring AI Document
                 Document aiDoc = new Document(document.id(), text, metadata);

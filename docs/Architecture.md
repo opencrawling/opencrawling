@@ -24,7 +24,7 @@ docker compose scale oc-embedding-service=3
 Consumes embedded chunks and writes them directly to database outputs (such as PostgreSQL with `pgvector`, Elasticsearch, Qdrant, Milvus, OpenSearch, Vespa, or Solr). It uses a stateless model to write raw vectors directly, bypassing model inference.
 
 ### 5. Secure Model Context Protocol Server (`McpVectorServer`)
-Exposes knowledge retrieval tools to AI models and agents using the Model Context Protocol (MCP). It handles SSE-based queries, authenticates user identities, and filters search results by matching document ACL tokens.
+Exposes knowledge retrieval tools to AI models and agents using the Model Context Protocol (MCP) over Streamable HTTP. Every candidate a store returns passes through one `DocumentAccessGate` before it reaches the model; the decision comes from the ACLs stored with each document or, optionally, from OpenFGA (see [Document Authorization](Document-Authorization)).
 
 ### 6. Optional gRPC Transport Layer (`oc-grpc-api` / `InternalTransportManager`)
 Provides binary Protobuf payload streaming over HTTP/2 (default port `9095`) for high-speed inter-node communication between `oc-repository-connectors`, `oc-core`, `oc-worker`, and `oc-output-connectors`. Features dynamic mode switching (`AUTO`, `GRPC`, `REST`), defaulting to `AUTO` mode with automatic fallback to HTTP/REST, TLS/mTLS encryption, and real-time connectivity testing from the Admin Dashboard.

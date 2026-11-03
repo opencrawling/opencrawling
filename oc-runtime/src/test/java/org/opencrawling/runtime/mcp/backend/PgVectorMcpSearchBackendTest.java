@@ -296,4 +296,41 @@ class PgVectorMcpSearchBackendTest {
         assertThat(sources.get(0).get("scope_id")).isEqualTo("5001");
         assertThat(sources.get(0).get("scope_type")).isEqualTo("bpmn");
     }
+
+    @Test
+    void relationshipModesFetchAWiderUnfilteredWindow() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(Collections.emptyList());
+        backend.setAccessGate(new org.opencrawling.runtime.authorization.DocumentAccessGate(
+                new org.opencrawling.core.security.RelationshipAuthorizationProvider() {
+                    @Override
+                    public String name() {
+                        return "rel";
+                    }
+
+                    @Override
+                    public boolean[] canRead(org.opencrawling.core.security.Caller caller,
+                                             List<org.opencrawling.core.security.ResourceRef> candidates) {
+                        return new boolean[candidates.size()];
+                    }
+                }, 10, 500, null));
+
+        backend.secureVectorSearch("q", "john", List.of("engineering"), 5, 0.0, null);
+
+        org.mockito.ArgumentCaptor<SearchRequest> request = org.mockito.ArgumentCaptor.forClass(SearchRequest.class);
+        org.mockito.Mockito.verify(vectorStore).similaritySearch(request.capture());
+        assertThat(request.getValue().getTopK()).isEqualTo(50);
+        assertThat(request.getValue().getFilterExpression()).isNull();
+    }
+
+    @Test
+    void metadataModeKeepsTheStoredAclFilterInTheQuery() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(Collections.emptyList());
+
+        backend.secureVectorSearch("q", "john", List.of("engineering"), 5, 0.0, null);
+
+        org.mockito.ArgumentCaptor<SearchRequest> request = org.mockito.ArgumentCaptor.forClass(SearchRequest.class);
+        org.mockito.Mockito.verify(vectorStore).similaritySearch(request.capture());
+        assertThat(request.getValue().getTopK()).isEqualTo(5);
+        assertThat(request.getValue().getFilterExpression()).isNotNull();
+    }
 }

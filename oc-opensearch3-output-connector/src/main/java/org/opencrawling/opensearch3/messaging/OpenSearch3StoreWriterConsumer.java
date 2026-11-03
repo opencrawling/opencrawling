@@ -15,6 +15,7 @@
  */
 package org.opencrawling.opensearch3.messaging;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.opensearch3.OpenSearch3Constants;
@@ -77,44 +78,11 @@ public class OpenSearch3StoreWriterConsumer {
                 log.info("Successfully deleted tombstone document/chunk {} from OpenSearch index '{}'.", docId, indexName);
                 return;
             }
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map) {
-                Map<?, ?> securityMap = (Map<?, ?>) securityObj;
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List) {
-                    List<?> permsList = (List<?>) permsObj;
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map) {
-                            Map<?, ?> permMap = (Map<?, ?>) permObj;
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof org.opencrawling.core.security.SecurityConfig) {
-                org.opencrawling.core.security.SecurityConfig sc = (org.opencrawling.core.security.SecurityConfig) securityObj;
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (org.opencrawling.core.security.PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             Map<String, Object> row = new HashMap<>();
             row.put(OpenSearch3Constants.FIELD_ID, message.chunkId());

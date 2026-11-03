@@ -160,6 +160,28 @@ opencrawling:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
       token: ${OPENCRAWLING_INGEST_OIS_TOKEN:}
+  security:
+    authorization:
+      # metadata (default): the ACLs stored with each document decide.
+      # shadow: metadata decides, OpenFGA is asked too and disagreements are logged.
+      # intersection: both must allow. openfga: OpenFGA decides alone.
+      mode: ${OPENCRAWLING_SECURITY_AUTHORIZATION_MODE:metadata}
+      # In intersection/openfga modes stores skip their stored-ACL pre-filters and fetch
+      # limit x overfetch-factor candidates (never more than candidate-budget) for the gate to check.
+      overfetch-factor: 10
+      candidate-budget: 500
+      openfga:
+        api-url: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL:http://localhost:8080}
+        # Pin both in production; auto-provision creates/reuses the store and model (development and tests).
+        store-id: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_STORE_ID:}
+        model-id: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_MODEL_ID:}
+        auto-provision: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_AUTO_PROVISION:false}
+        api-token: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_TOKEN:}
+        timeout: 5s
+        batch-size: 50
+        sync:
+          # Mirrors document permissions into OpenFGA from the documents topic (its own consumer group).
+          enabled: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_SYNC_ENABLED:true}
 
 management:
   endpoints:

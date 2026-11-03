@@ -22,8 +22,7 @@ import io.milvus.v2.service.vector.request.data.FloatVec;
 import io.milvus.v2.service.vector.response.QueryResp;
 import io.milvus.v2.service.vector.response.SearchResp;
 import org.opencrawling.milvus.MilvusConstants;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +38,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "milvus")
-public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
+public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(MilvusMcpSearchBackend.class);
 
@@ -112,7 +111,7 @@ public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
             SearchReq searchReq = SearchReq.builder()
                     .collectionName(collectionName)
                     .data(Collections.singletonList(new FloatVec(vector)))
-                    .topK(Math.max(limit * 3, 20))
+                    .topK(candidateWindow(limit, Math.max(limit * 3, 20)))
                     .outputFields(OUTPUT_FIELDS)
                     .build();
 
@@ -122,24 +121,20 @@ public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
             if (searchResp != null && searchResp.getSearchResults() != null) {
                 for (List<SearchResp.SearchResult> subList : searchResp.getSearchResults()) {
                     if (subList == null) continue;
-                    for (SearchResp.SearchResult hit : subList) {
-                        Map<String, Object> entity = hit.getEntity();
-                        if (entity == null) {
-                            entity = Collections.emptyMap();
-                        }
-                        if (hit.getScore() != null && hit.getScore() < minScore) {
-                            continue;
-                        }
-                        if (McpAclEvaluator.isAccessible(entity, userPrincipal, userRoles)) {
-                            String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, hit.getId() != null ? hit.getId() : ""));
-                            String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
-                            String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
-                            String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
-                            double score = hit.getScore() != null ? hit.getScore().doubleValue() : 0.0;
-                            results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, entity, acl, score));
-                            if (results.size() >= limit) {
-                                break;
-                            }
+                    List<SearchResp.SearchResult> candidates = subList.stream()
+                            .filter(hit -> hit.getScore() == null || hit.getScore() >= minScore)
+                            .toList();
+                    for (SearchResp.SearchResult hit : readable(userPrincipal, userRoles, candidates,
+                            hit -> ResourceRef.fromMetadata(entityOf(hit)))) {
+                        Map<String, Object> entity = entityOf(hit);
+                        String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, hit.getId() != null ? hit.getId() : ""));
+                        String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
+                        String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
+                        String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
+                        double score = hit.getScore() != null ? hit.getScore().doubleValue() : 0.0;
+                        results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, entity, acl, score));
+                        if (results.size() >= limit) {
+                            break;
                         }
                     }
                     if (results.size() >= limit) break;
@@ -172,15 +167,17 @@ public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
             QueryResp queryResp = milvusClient.query(queryReq);
 
             if (queryResp != null && queryResp.getQueryResults() != null) {
-                for (QueryResp.QueryResult qr : queryResp.getQueryResults()) {
+                List<QueryResp.QueryResult> candidates = queryResp.getQueryResults().stream()
+                        .filter(qr -> qr.getEntity() != null)
+                        .toList();
+                for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
+                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
                     Map<String, Object> entity = qr.getEntity();
-                    if (entity != null && McpAclEvaluator.isAccessible(entity, userPrincipal, userRoles)) {
-                        String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
-                        String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
-                        String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
-                        String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
-                        return new McpVectorServer.DocumentDetailsResult(id, uri, text, entity, acl);
-                    }
+                    String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
+                    String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
+                    String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
+                    String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
+                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, entity, acl);
                 }
             }
             throw new NoSuchElementException("Document not found or access denied.");
@@ -212,17 +209,19 @@ public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
 
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (queryResp != null && queryResp.getQueryResults() != null) {
-                for (QueryResp.QueryResult qr : queryResp.getQueryResults()) {
+                List<QueryResp.QueryResult> candidates = queryResp.getQueryResults().stream()
+                        .filter(qr -> qr.getEntity() != null)
+                        .toList();
+                for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
+                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
                     Map<String, Object> entity = qr.getEntity();
-                    if (entity != null && McpAclEvaluator.isAccessible(entity, userPrincipal, userRoles)) {
-                        Map<String, Object> summary = new HashMap<>();
-                        summary.put("id", entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
-                        summary.put("uri", entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
-                        summary.put("acl", entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
-                        summary.put("security", entity.get("security"));
-                        summary.put("lastModified", entity.getOrDefault(MilvusConstants.FIELD_LAST_MODIFIED, ""));
-                        summaries.add(summary);
-                    }
+                    Map<String, Object> summary = new HashMap<>();
+                    summary.put("id", entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
+                    summary.put("uri", entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
+                    summary.put("acl", entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
+                    summary.put("security", entity.get("security"));
+                    summary.put("lastModified", entity.getOrDefault(MilvusConstants.FIELD_LAST_MODIFIED, ""));
+                    summaries.add(summary);
                 }
             }
             return summaries.stream().distinct().toList();
@@ -235,5 +234,10 @@ public class MilvusMcpSearchBackend implements McpVectorSearchBackend {
     private static String escapeFilter(String value) {
         if (value == null) return "";
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static Map<String, Object> entityOf(SearchResp.SearchResult hit) {
+        Map<String, Object> entity = hit.getEntity();
+        return entity != null ? entity : Collections.emptyMap();
     }
 }

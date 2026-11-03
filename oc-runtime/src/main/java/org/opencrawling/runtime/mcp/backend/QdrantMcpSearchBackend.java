@@ -21,8 +21,7 @@ import io.qdrant.client.grpc.JsonWithInt;
 import io.qdrant.client.grpc.Points;
 import org.opencrawling.qdrant.QdrantFields;
 import org.opencrawling.qdrant.config.QdrantOutputProperties;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +38,7 @@ import static io.qdrant.client.ConditionFactory.matchKeyword;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "qdrant")
-public class QdrantMcpSearchBackend implements McpVectorSearchBackend {
+public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(QdrantMcpSearchBackend.class);
 
@@ -100,19 +99,18 @@ public class QdrantMcpSearchBackend implements McpVectorSearchBackend {
             Points.SearchPoints searchPoints = Points.SearchPoints.newBuilder()
                     .setCollectionName(properties.collectionName())
                     .addAllVector(vectorList)
-                    .setLimit(Math.max(limit * 3, 20))
+                    .setLimit(candidateWindow(limit, Math.max(limit * 3, 20)))
                     .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
                     .build();
 
             List<Points.ScoredPoint> points = qdrantClient.searchAsync(searchPoints).get();
 
-            return points.stream()
+            List<Map.Entry<Points.ScoredPoint, Map<String, Object>>> candidates = points.stream()
                     .filter(point -> point.getScore() >= minScore)
-                    .map(point -> {
-                        Map<String, Object> payload = convertPayload(point.getPayloadMap());
-                        return new AbstractMap.SimpleEntry<>(point, payload);
-                    })
-                    .filter(entry -> McpAclEvaluator.isAccessible(entry.getValue(), userPrincipal, userRoles))
+                    .<Map.Entry<Points.ScoredPoint, Map<String, Object>>>map(point ->
+                            new AbstractMap.SimpleEntry<>(point, convertPayload(point.getPayloadMap())))
+                    .toList();
+            return readable(userPrincipal, userRoles, candidates, entry -> toResourceRef(entry.getValue())).stream()
                     .limit(limit)
                     .map(entry -> {
                         Points.ScoredPoint point = entry.getKey();
@@ -160,9 +158,10 @@ public class QdrantMcpSearchBackend implements McpVectorSearchBackend {
 
             Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(scrollPoints).get();
 
-            return scrollResp.getResultList().stream()
+            List<Map<String, Object>> candidates = scrollResp.getResultList().stream()
                     .map(point -> convertPayload(point.getPayloadMap()))
-                    .filter(payload -> McpAclEvaluator.isAccessible(payload, userPrincipal, userRoles))
+                    .toList();
+            return readable(userPrincipal, userRoles, candidates, QdrantMcpSearchBackend::toResourceRef).stream()
                     .findFirst()
                     .map(payload -> new McpVectorServer.DocumentDetailsResult(
                             String.valueOf(payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, "")),
@@ -197,9 +196,10 @@ public class QdrantMcpSearchBackend implements McpVectorSearchBackend {
 
             Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(scrollPoints).get();
 
-            return scrollResp.getResultList().stream()
+            List<Map<String, Object>> candidates = scrollResp.getResultList().stream()
                     .map(point -> convertPayload(point.getPayloadMap()))
-                    .filter(payload -> McpAclEvaluator.isAccessible(payload, userPrincipal, userRoles))
+                    .toList();
+            return readable(userPrincipal, userRoles, candidates, QdrantMcpSearchBackend::toResourceRef).stream()
                     .map(payload -> {
                         Map<String, Object> summary = new HashMap<>();
                         summary.put("id", payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, ""));
@@ -215,6 +215,10 @@ public class QdrantMcpSearchBackend implements McpVectorSearchBackend {
             log.error("Failed to list accessible sources in Qdrant: {}", e.getMessage(), e);
             throw new RuntimeException("Error listing accessible sources from Qdrant", e);
         }
+    }
+
+    private static ResourceRef toResourceRef(Map<String, Object> payload) {
+        return ResourceRef.fromMetadata(payload);
     }
 
     public static Map<String, Object> convertPayload(Map<String, JsonWithInt.Value> payloadMap) {

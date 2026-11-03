@@ -520,6 +520,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **gRPC High-Performance Binary Transport**: Protobuf-backed binary payload channel (Port 9095) with automatic HTTP/REST fallback, TLS/mTLS encryption, and live Admin UI diagnostic ping testing.
 - **OpenTelemetry & Micrometer AIOps**: Automated Root Cause Analysis (RCA) and correlated distributed span telemetry.
 - **Model Context Protocol (MCP)**: System tools exposing vector search and OTel telemetry to LLMs.
+- **OpenFGA (optional)**: Relationship-based document authorization; one access gate for every store, with `shadow` and `intersection` modes for a safe rollout.
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
@@ -1136,6 +1137,12 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-mcp-decoupled.sh
     ```
     This script tests the entire Secure MCP Server capabilities in decoupled deployment mode, validating Streamable HTTP transport handshakes (JSON-RPC 2.0 initialize, session negotiation, ping), tool discovery (`tools/list`), AIOps observability tools (`fetchJobTraces`, `getErrorLogs`, `queryThroughputMetrics`), Zero-Trust ACL evaluation (`secureVectorSearch`) with explicit deny precedence, document content retrieval (`getDocumentContent`), accessible sources cataloging (`listAccessibleSources`), multi-dimension querying, and OIS tombstone deletions.
+
+*   **OpenFGA Document Authorization Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-openfga-decoupled.sh
+    ```
+    This script runs the decoupled stack with OpenFGA (`oc-mcp-server` in `openfga` mode) and verifies that permissions ingested through the OIS endpoint are mirrored into OpenFGA, that MCP secure search returns to each caller exactly what OpenFGA allows, that a group membership written to OpenFGA grants and revokes access without re-indexing, that permission changes and tombstones move the tuples, that search fails closed while OpenFGA is down, and that the `oc.authz.*` metrics are published. See [Document Authorization](docs/Document-Authorization.md).
 
 *   **Hyland OpenArch Integration Test Suite**:
     ```bash

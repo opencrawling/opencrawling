@@ -16,8 +16,7 @@
 package org.opencrawling.runtime.mcp.backend;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 import org.slf4j.Logger;
@@ -38,7 +37,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "pgvector", matchIfMissing = true)
-public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
+public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(PgVectorMcpSearchBackend.class);
 
@@ -140,12 +139,16 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
         FilterExpressionBuilder b = new FilterExpressionBuilder();
         var securityExpression = buildSecurityFilterExpression(b, userPrincipal, userRoles);
 
-        SearchRequest searchRequest = SearchRequest.builder()
+        // Stored-ACL pre-filtering in SQL is only safe while stored metadata decides; otherwise fetch a wider,
+        // unfiltered window and let the access gate decide.
+        SearchRequest.Builder searchBuilder = SearchRequest.builder()
                 .query(query)
-                .filterExpression(securityExpression.build())
-                .topK(limit)
-                .similarityThreshold(threshold)
-                .build();
+                .topK(candidateWindow(limit, limit))
+                .similarityThreshold(threshold);
+        if (storePrefilterAllowed()) {
+            searchBuilder.filterExpression(securityExpression.build());
+        }
+        SearchRequest searchRequest = searchBuilder.build();
 
         boolean precomputedSet = false;
         try {
@@ -169,8 +172,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
             }
 
             List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
-            return docs.stream()
-                    .filter(doc -> McpAclEvaluator.isAccessible(doc.getMetadata(), userPrincipal, userRoles))
+            return readable(userPrincipal, userRoles, docs, PgVectorMcpSearchBackend::toResourceRef).stream()
                     .limit(limit)
                     .map(doc -> {
                         String docId = (String) doc.getMetadata().getOrDefault("documentId", doc.getMetadata().getOrDefault("parent_document_id", ""));
@@ -249,8 +251,8 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                         args
                 );
 
-                return found.stream()
-                        .filter(doc -> McpAclEvaluator.isAccessible(doc.metadata(), userPrincipal, userRoles))
+                return readable(userPrincipal, userRoles, found,
+                                doc -> ResourceRef.fromMetadata(doc.metadata())).stream()
                         .findFirst()
                         .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
             } catch (NoSuchElementException e) {
@@ -279,7 +281,9 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                 )
         );
 
-        var finalExpression = b.and(matchDocExpression, securityExpression).build();
+        var finalExpression = storePrefilterAllowed()
+                ? b.and(matchDocExpression, securityExpression).build()
+                : matchDocExpression.build();
         SearchRequest searchRequest = SearchRequest.builder()
                 .query(documentUri)
                 .filterExpression(finalExpression)
@@ -288,8 +292,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
-            return docs.stream()
-                    .filter(doc -> McpAclEvaluator.isAccessible(doc.getMetadata(), userPrincipal, userRoles))
+            return readable(userPrincipal, userRoles, docs, PgVectorMcpSearchBackend::toResourceRef).stream()
                     .findFirst()
                     .map(doc -> {
                         String docId = (String) doc.getMetadata().getOrDefault("documentId", doc.getMetadata().getOrDefault("parent_document_id", ""));
@@ -405,12 +408,11 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
                         }
                 );
 
-                return rows.stream()
-                        .filter(item -> {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> meta = (Map<String, Object>) item.remove("_meta");
-                            return McpAclEvaluator.isAccessible(meta, userPrincipal, userRoles);
-                        })
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> readableRows = readable(userPrincipal, userRoles, rows,
+                        item -> ResourceRef.fromMetadata((Map<String, Object>) item.get("_meta")));
+                rows.forEach(item -> item.remove("_meta"));
+                return readableRows.stream()
                         .distinct()
                         .toList();
             } catch (Exception e) {
@@ -427,8 +429,7 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
-            return docs.stream()
-                    .filter(doc -> McpAclEvaluator.isAccessible(doc.getMetadata(), userPrincipal, userRoles))
+            return readable(userPrincipal, userRoles, docs, PgVectorMcpSearchBackend::toResourceRef).stream()
                     .map(doc -> {
                         Map<String, Object> summary = new HashMap<>();
                         String docId = (String) doc.getMetadata().getOrDefault("documentId", doc.getMetadata().getOrDefault("parent_document_id", ""));
@@ -490,5 +491,9 @@ public class PgVectorMcpSearchBackend implements McpVectorSearchBackend {
             log.warn("Failed to parse metadata JSON: {}", e.getMessage());
             return new HashMap<>();
         }
+    }
+
+    private static ResourceRef toResourceRef(Document doc) {
+        return ResourceRef.fromMetadata(doc.getMetadata());
     }
 }

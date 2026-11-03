@@ -82,6 +82,19 @@ For high ingestion jobs, adjust Kafka topic partition numbers:
 
 ---
 
+## 🔐 Document Authorization
+
+Who may read a retrieved document is decided by one provider for every store, selected with:
+
+*   **`OPENCRAWLING_SECURITY_AUTHORIZATION_MODE`** (`opencrawling.security.authorization.mode`): `metadata` (default: the ACLs stored with each document), `shadow` (stored ACLs decide, OpenFGA is compared), `intersection` (both must allow) or `openfga`.
+    *   *Type*: `string`
+    *   *Default*: `metadata`
+*   **`OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL`**, **`..._API_TOKEN`**, **`..._STORE_ID`**, **`..._MODEL_ID`**, **`..._AUTO_PROVISION`**: the OpenFGA connection, used only in the OpenFGA modes.
+
+See [Document Authorization](Document-Authorization) for the full property list, the rollout path, backfill and metrics.
+
+---
+
 ## 📊 AIOps & Observability Configurations
 
 OpenCrawling integrates end-to-end distributed tracing and metrics that are enabled by default. They can be disabled or fine-tuned using the following environment variables:

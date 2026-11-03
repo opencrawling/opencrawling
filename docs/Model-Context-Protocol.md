@@ -8,17 +8,19 @@ OpenCrawling features a built-in, secure **Model Context Protocol (MCP)** server
 
 Standard vector databases lack identity-aware retrieval: any similarity query returns the nearest vectors regardless of caller permissions. In an enterprise system, this leads to context leaks (e.g. an LLM retrieving confidential payroll spreadsheets or HR files for unauthorized users).
 
-OpenCrawling solves this with **server-side Zero-Trust ACL evaluation** via `McpAclEvaluator`:
-1. **Defense-in-Depth Filtering**: Search queries are pre-filtered at the database level where supported, and authoritatively re-checked in memory for each hit before results are returned to the LLM.
+OpenCrawling solves this with **server-side Zero-Trust ACL evaluation**: every backend hands its candidates to one `DocumentAccessGate`, which asks the configured authorization provider (the stored ACLs via `McpAclEvaluator` by default, or OpenFGA; see [Document Authorization](Document-Authorization)):
+1. **Defense-in-Depth Filtering**: Search queries are pre-filtered at the database level where supported, and every hit is authoritatively re-checked by the gate before results are returned to the LLM. If the decision cannot be made, the request fails rather than returning anything.
 2. **Explicit Deny Precedence**: If a document has an explicit `deny` access rule matching the user principal or any of their groups/roles, the document is immediately excluded.
 3. **Identity Resolution**: Checks caller credentials against:
    - `userPrincipal` (exact username, email, or SID, case-insensitive)
    - `userRoles` (groups, departments, or role SIDs, case-insensitive)
-   - `public` (accessible to all authenticated callers)
+   - a leading `user:` / `group:` prefix on either side is ignored when comparing
+   - `public` (accessible to every caller)
 4. **Multi-Schema Compatibility**: Seamlessly evaluates:
    - Structured Open Ingestion Standard (OIS) security (`metadata["security"]` containing `PermissionRule` objects or JSON maps)
    - Flattened array fields (`security_allowed_read`, `security_denied_read`)
-   - Legacy ACL strings or arrays (`acl`, `acl_ss`), defaulting to `public` when unconstrained
+   - Legacy ACL strings or arrays (`acl`, `acl_ss`) when no structured fields exist
+   - A document with no ACL data at all is **denied**
 
 ---
 
@@ -39,7 +41,7 @@ The MCP server exposes three standard tools regardless of which target vector da
 
 ## 🗄️ Supported Target Vector Databases
 
-The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for all 8 vector database stores:
+The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 9 stores:
 
 | Backend Type | Property `spring.opencrawling.output.type` | Search Mechanism | Query Embedding |
 |---|---|---|---|
@@ -51,6 +53,7 @@ The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSea
 | **OpenSearch 3.x** | `opensearch3` | `OpenSearchClient` (k-NN vector query + keyword term filters) | Ollama / Spring AI `EmbeddingModel` |
 | **Apache Solr** | `solr` | `SolrClient` (`{!knn f=embeddings topK=...}` dense vector query) | Ollama / Spring AI `EmbeddingModel` |
 | **Luxir** | `luxir` | `LuxirClient` (`POST /collections/{collection}/_search` with KNN payload) | Ollama / Spring AI `EmbeddingModel` |
+| **Hyland OpenArch** | `openarch` | `OpenArchClient` embedding query (federated content), document ACLs read from OpenArch | Spring AI `EmbeddingModel` |
 
 ---
 
@@ -73,8 +76,7 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.arguments="--spring.opencra
 mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.arguments="--spring.opencrawling.output.type=opensearch3 --spring.opencrawling.output.opensearch3.uris=http://localhost:9200"
 ```
 
-The MCP Server endpoint is exposed over HTTP / SSE at:
-`http://localhost:8080/mcp/message` or `http://localhost:8080/mcp/sse`.
+The MCP server speaks **Streamable HTTP** at `http://localhost:8080/mcp` (the default, `SPRING_AI_MCP_SERVER_PROTOCOL=STREAMABLE`). Clients that only support the older HTTP+SSE transport can use `SPRING_AI_MCP_SERVER_PROTOCOL=SSE`, which serves `/sse` (event stream) and `/mcp/message` (client messages) instead.
 
 ### 2. In Decoupled Docker Compose Stacks
 Each decoupled vector database stack (`oc-*-output-connector/docker/docker-compose-decoupled-with-*.yml`) ships with an `oc-mcp-server` service container already configured with access to Ollama (`SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434`) for query-time embeddings.
@@ -120,7 +122,7 @@ This dedicated test suite automatically validates:
 
 ## 💻 Claude Desktop Configuration
 
-To connect Claude Desktop to your OpenCrawling Secure MCP Server, add the following entry to your `claude_desktop_config.json`:
+To connect Claude Desktop to your OpenCrawling Secure MCP Server, bridge its Streamable HTTP endpoint with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) by adding the following entry to your `claude_desktop_config.json`:
 
 ```json
 {
@@ -129,13 +131,18 @@ To connect Claude Desktop to your OpenCrawling Secure MCP Server, add the follow
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/client-cli",
-        "sse",
-        "http://localhost:8080/mcp/sse"
+        "mcp-remote@0.15.1",
+        "http://localhost:8080/mcp",
+        "--allow-http"
       ]
     }
   }
 }
 ```
 
-Once connected, Claude will show the tool icon with `secureVectorSearch`, `getDocumentContent`, and `listAccessibleSources`. When querying, Claude provides the user's principal identity and roles to guarantee secure context retrieval.
+`--allow-http` is only needed for a plain-HTTP server other than `localhost`; behind TLS, use the `https://` URL and drop it.
+
+Once connected, Claude will show the tool icon with `secureVectorSearch`, `getDocumentContent`, and `listAccessibleSources`. When querying, Claude passes the user's principal identity and roles as tool arguments; the server enforces the document permissions for that identity.
+
+> [!IMPORTANT]
+> The principal and roles in the tool arguments are asserted by the client, not verified by the server. Expose the MCP endpoint only to trusted clients (for example behind an authenticating gateway) until token-based caller identity (#187) is in place.

@@ -21,8 +21,7 @@ import org.apache.solr.client.solrj.util.ClientUtils;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.params.ModifiableSolrParams;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opencrawling.solr.SolrConstants;
 import org.opencrawling.solr.config.SolrOutputProperties;
@@ -39,7 +38,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "solr")
-public class SolrMcpSearchBackend implements McpVectorSearchBackend {
+public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(SolrMcpSearchBackend.class);
 
@@ -98,7 +97,7 @@ public class SolrMcpSearchBackend implements McpVectorSearchBackend {
         }
         sb.append("]");
 
-        int topK = Math.max(limit * 3, 20);
+        int topK = candidateWindow(limit, Math.max(limit * 3, 20));
         ModifiableSolrParams params = new ModifiableSolrParams();
         params.set("q", "{!knn f=" + SolrConstants.FIELD_EMBEDDINGS + " topK=" + topK + "}" + sb.toString());
         params.set("rows", topK);
@@ -110,19 +109,19 @@ public class SolrMcpSearchBackend implements McpVectorSearchBackend {
 
             List<McpVectorServer.DocumentSearchResult> results = new ArrayList<>();
             if (docs != null) {
-                for (SolrDocument doc : docs) {
+                List<SolrDocument> candidates = docs.stream()
+                        .filter(doc -> scoreOf(doc) >= minScore)
+                        .toList();
+                for (SolrDocument doc : readable(userPrincipal, userRoles, candidates,
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
                     Map<String, Object> fieldMap = doc.getFieldValueMap();
-                    double score = doc.getFieldValue("score") != null ? ((Number) doc.getFieldValue("score")).doubleValue() : 0.0;
-                    if (score < minScore) continue;
-
-                    if (McpAclEvaluator.isAccessible(fieldMap, userPrincipal, userRoles)) {
-                        String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
-                        String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
-                        String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
-                        String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
-                        results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, fieldMap, acl, score));
-                        if (results.size() >= limit) break;
-                    }
+                    double score = scoreOf(doc);
+                    String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
+                    String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
+                    String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
+                    String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
+                    results.add(new McpVectorServer.DocumentSearchResult(id, uri, text, fieldMap, acl, score));
+                    if (results.size() >= limit) break;
                 }
             }
             return results;
@@ -150,15 +149,14 @@ public class SolrMcpSearchBackend implements McpVectorSearchBackend {
             SolrDocumentList docs = response.getResults();
 
             if (docs != null) {
-                for (SolrDocument doc : docs) {
+                for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
                     Map<String, Object> fieldMap = doc.getFieldValueMap();
-                    if (McpAclEvaluator.isAccessible(fieldMap, userPrincipal, userRoles)) {
-                        String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
-                        String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
-                        String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
-                        String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
-                        return new McpVectorServer.DocumentDetailsResult(id, uri, text, fieldMap, acl);
-                    }
+                    String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
+                    String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
+                    String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
+                    String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
+                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, fieldMap, acl);
                 }
             }
             throw new NoSuchElementException("Document not found or access denied.");
@@ -188,17 +186,15 @@ public class SolrMcpSearchBackend implements McpVectorSearchBackend {
 
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (docs != null) {
-                for (SolrDocument doc : docs) {
-                    Map<String, Object> fieldMap = doc.getFieldValueMap();
-                    if (McpAclEvaluator.isAccessible(fieldMap, userPrincipal, userRoles)) {
-                        Map<String, Object> summary = new HashMap<>();
-                        summary.put("id", doc.getFieldValue(SolrConstants.FIELD_ID));
-                        summary.put("uri", doc.getFieldValue(SolrConstants.FIELD_URI));
-                        summary.put("acl", doc.getFieldValue(SolrConstants.FIELD_ACL));
-                        summary.put("security", doc.getFieldValue("security"));
-                        summary.put("lastModified", doc.getFieldValue(SolrConstants.FIELD_LAST_MODIFIED));
-                        summaries.add(summary);
-                    }
+                for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
+                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
+                    Map<String, Object> summary = new HashMap<>();
+                    summary.put("id", doc.getFieldValue(SolrConstants.FIELD_ID));
+                    summary.put("uri", doc.getFieldValue(SolrConstants.FIELD_URI));
+                    summary.put("acl", doc.getFieldValue(SolrConstants.FIELD_ACL));
+                    summary.put("security", doc.getFieldValue("security"));
+                    summary.put("lastModified", doc.getFieldValue(SolrConstants.FIELD_LAST_MODIFIED));
+                    summaries.add(summary);
                 }
             }
             return summaries.stream().distinct().toList();
@@ -206,5 +202,9 @@ public class SolrMcpSearchBackend implements McpVectorSearchBackend {
             log.error("Failed to list accessible sources in Solr: {}", e.getMessage(), e);
             throw new RuntimeException("Error listing accessible sources from Solr", e);
         }
+    }
+
+    private static double scoreOf(SolrDocument doc) {
+        return doc.getFieldValue("score") instanceof Number n ? n.doubleValue() : 0.0;
     }
 }

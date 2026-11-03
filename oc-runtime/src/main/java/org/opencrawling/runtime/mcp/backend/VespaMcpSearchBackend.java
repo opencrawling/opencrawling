@@ -19,8 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opencrawling.vespa.VespaFields;
 import org.opencrawling.vespa.config.VespaOutputProperties;
@@ -43,7 +42,7 @@ import java.util.stream.Collectors;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "vespa")
-public class VespaMcpSearchBackend implements McpVectorSearchBackend {
+public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(VespaMcpSearchBackend.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -90,9 +89,10 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             RawSearchResult raw = executeSearch(documentType, query, rankProfile, limit, userPrincipal, userRoles);
-            return raw.hits().stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            List<RawHit> candidates = raw.hits().stream()
                     .filter(hit -> hit.relevance() >= minScore)
+                    .toList();
+            return readableHits(userPrincipal, userRoles, candidates).stream()
                     .limit(limit)
                     .map(hit -> new McpVectorServer.DocumentSearchResult(
                             hit.chunkId(),
@@ -122,13 +122,12 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             ObjectNode body = MAPPER.createObjectNode();
-            body.put("yql", "select * from " + documentType + " where (" + buildDenyExclusion(userPrincipal, userRoles) + ") and "
+            body.put("yql", "select * from " + documentType + " where (" + storeDenyExclusion(userPrincipal, userRoles) + ") and "
                     + VespaFields.FIELD_URI + " contains \"" + escapeYql(documentUri) + "\"");
             body.put("hits", 20);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
-            return hits.stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            return readableHits(userPrincipal, userRoles, hits).stream()
                     .findFirst()
                     .map(hit -> new McpVectorServer.DocumentDetailsResult(
                             hit.chunkId(),
@@ -158,12 +157,11 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
 
         try {
             ObjectNode body = MAPPER.createObjectNode();
-            body.put("yql", "select * from " + documentType + " where " + buildDenyExclusion(userPrincipal, userRoles));
+            body.put("yql", "select * from " + documentType + " where " + storeDenyExclusion(userPrincipal, userRoles));
             body.put("hits", 200);
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
-            return hits.stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, userRoles))
+            return readableHits(userPrincipal, userRoles, hits).stream()
                     .map(hit -> {
                         Map<String, Object> summary = new HashMap<>();
                         summary.put("id", hit.chunkId());
@@ -182,8 +180,8 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
 
     public RawSearchResult executeSearch(String documentType, String query, String rankProfile, int limit,
                                           String userPrincipal, List<String> roles) throws Exception {
-        int resultLimit = Math.max(limit * 3, 30);
-        String denyExclusion = buildDenyExclusion(userPrincipal, roles);
+        int resultLimit = candidateWindow(limit, Math.max(limit * 3, 30));
+        String denyExclusion = storeDenyExclusion(userPrincipal, roles);
 
         if ("default".equals(rankProfile)) {
             return bm25Search(documentType, query, denyExclusion, resultLimit, false, null);
@@ -238,6 +236,53 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
         return parseHits(postSearch(body));
     }
 
+    /**
+     * Keeps the hits the caller may read, in their original order.
+     */
+    public List<RawHit> readableHits(String userPrincipal, List<String> userRoles, List<RawHit> hits) {
+        return readable(userPrincipal, userRoles, hits, VespaMcpSearchBackend::toResourceRef);
+    }
+
+    /**
+     * Presents a hit's ACL fields in the metadata shape the authorization providers read: the legacy
+     * {@code acl}, plus {@code security_allowed_read}/{@code security_denied_read} when the hit carries them,
+     * keyed by the source document id.
+     */
+    public static ResourceRef toResourceRef(RawHit hit) {
+        Map<String, Object> acl = new HashMap<>();
+        acl.put("acl", hit.acl());
+        if (hit.allowedRead() != null && !hit.allowedRead().isEmpty()) {
+            acl.put(VespaFields.FIELD_SECURITY_ALLOWED_READ, hit.allowedRead());
+        }
+        if (hit.deniedRead() != null && !hit.deniedRead().isEmpty()) {
+            acl.put(VespaFields.FIELD_SECURITY_DENIED_READ, hit.deniedRead());
+        }
+        return new ResourceRef(documentIdOf(hit), acl);
+    }
+
+    /**
+     * Vespa schemas are strict, so the source document id travels inside the {@code metadata_json} field
+     * (the ingestion pipeline puts {@code documentId} into every chunk's metadata).
+     */
+    @SuppressWarnings("unchecked")
+    static String documentIdOf(RawHit hit) {
+        if (hit.metadata() == null) {
+            return null;
+        }
+        String direct = ResourceRef.idValue(hit.metadata().get("documentId"));
+        if (direct != null) {
+            return direct;
+        }
+        if (hit.metadata().get(VespaFields.FIELD_METADATA_JSON) instanceof String json && !json.isBlank()) {
+            try {
+                return ResourceRef.fromMetadata(MAPPER.readValue(json, Map.class)).documentId();
+            } catch (Exception e) {
+                log.debug("Unreadable metadata_json on Vespa hit {}: {}", hit.chunkId(), e.getMessage());
+            }
+        }
+        return null;
+    }
+
     public RawSearchResult parseHits(JsonNode response) {
         JsonNode root = response.path("root");
         int totalCount = root.path("fields").path("totalCount").asInt(0);
@@ -274,6 +319,14 @@ public class VespaMcpSearchBackend implements McpVectorSearchBackend {
             throw new IllegalStateException("Vespa query failed: " + errors.get(0).path("message").asText(errors.toString()));
         }
         return json;
+    }
+
+    /**
+     * The deny pre-filter for Vespa queries, or {@code true} when stored ACL metadata must not filter inside the
+     * store (relationship modes decide in the access gate).
+     */
+    private String storeDenyExclusion(String userPrincipal, List<String> userGroups) {
+        return storePrefilterAllowed() ? buildDenyExclusion(userPrincipal, userGroups) : "true";
     }
 
     public String buildDenyExclusion(String userPrincipal, List<String> userGroups) {

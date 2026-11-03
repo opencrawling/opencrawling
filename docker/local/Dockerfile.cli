@@ -44,6 +44,7 @@ COPY oc-stormcrawler-bolt/pom.xml oc-stormcrawler-bolt/
 COPY oc-stormcrawler-repository-connector/pom.xml oc-stormcrawler-repository-connector/
 COPY oc-grpc-push-connector/pom.xml oc-grpc-push-connector/
 COPY oc-openarch-output-connector/pom.xml oc-openarch-output-connector/
+COPY oc-authorization-openfga/pom.xml oc-authorization-openfga/
 COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
 COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
 COPY oc-milvus-output-connector/pom.xml oc-milvus-output-connector/

@@ -248,4 +248,42 @@ public class OpenArchMcpSearchBackendTest {
         assertNotNull(financeSources);
         assertEquals(2, financeSources.size());
     }
+
+    @Test
+    public void embeddingsWithoutADocumentIdReachTheGateWithoutOne() throws Exception {
+        ObjectNode response = mapper.createObjectNode();
+        ArrayNode embeddings = mapper.createArrayNode();
+        ObjectNode withDoc = mapper.createObjectNode();
+        withDoc.put("id", "emb-1");
+        withDoc.put("docId", "doc-1");
+        withDoc.put("acl", "public");
+        embeddings.add(withDoc);
+        ObjectNode withoutDoc = mapper.createObjectNode();
+        withoutDoc.put("id", "emb-2");
+        withoutDoc.put("acl", "public");
+        embeddings.add(withoutDoc);
+        response.set("embeddings", embeddings);
+        when(mockClient.queryEmbedding(anyString(), anyString(), anyList(), anyString(), isNull(), anyInt(), anyLong()))
+                .thenReturn(response);
+        List<String> seen = new java.util.ArrayList<>();
+        backend.setAccessGate(new org.opencrawling.runtime.authorization.DocumentAccessGate(
+                new org.opencrawling.core.security.RelationshipAuthorizationProvider() {
+                    @Override
+                    public String name() {
+                        return "recording";
+                    }
+
+                    @Override
+                    public boolean[] canRead(org.opencrawling.core.security.Caller caller,
+                                             List<org.opencrawling.core.security.ResourceRef> candidates) {
+                        candidates.forEach(ref -> seen.add(String.valueOf(ref.documentId())));
+                        return new boolean[candidates.size()];
+                    }
+                }));
+
+        backend.secureVectorSearch("q", "u", List.of(), 5, 0.0, null);
+
+        // The embedding id is never used as a stand-in document id.
+        assertEquals(List.of("doc-1", "null"), seen);
+    }
 }

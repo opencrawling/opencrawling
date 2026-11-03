@@ -118,6 +118,7 @@
         <module>oc-s3-output-connector</module>
         <module>oc-alfresco-output-connector</module>
         <module>oc-openarch-output-connector</module>
+        <module>oc-authorization-openfga</module>
         <module>oc-openarch-repository-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>

@@ -78,8 +78,7 @@ public class VespaMcpVectorServer {
 
         try {
             VespaMcpSearchBackend.RawSearchResult raw = backend.executeSearch(documentType, query, effectiveRankProfile, limit, userPrincipal, roles);
-            List<VespaSearchHit> accessible = raw.hits().stream()
-                    .filter(hit -> McpAclEvaluator.isAccessible(hit.acl(), hit.allowedRead(), hit.deniedRead(), userPrincipal, roles))
+            List<VespaSearchHit> accessible = backend.readableHits(userPrincipal, roles, raw.hits()).stream()
                     .limit(limit)
                     .map(hit -> new VespaSearchHit(hit.chunkId(), hit.uri(), hit.content(), hit.acl(), hit.relevance()))
                     .toList();

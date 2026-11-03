@@ -15,6 +15,7 @@
  */
 package org.opencrawling.luxir;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.text.TextExtractionResult;
@@ -162,15 +163,13 @@ public class LuxirOutputConnector implements OutputConnector {
                     doc.put(LuxirConstants.FIELD_TEXT, chunk.getText());
                     doc.put(LuxirConstants.FIELD_URI, document.uri());
 
-                    // Multi-valued ACL tokens
-                    List<String> acls = new ArrayList<>();
-                    if (document.acl() != null && !document.acl().isBlank()) {
-                        acls.addAll(Arrays.stream(document.acl().split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .toList());
-                    }
-                    doc.put(LuxirConstants.FIELD_ACL, acls);
+                    // Zero-Trust security metadata (one normalization for every store, see EffectiveAcl)
+                    EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                    doc.put(LuxirConstants.FIELD_SECURITY_INHERITANCE, String.valueOf(effectiveAcl.inheritanceEnabled()));
+                    doc.put(LuxirConstants.FIELD_SECURITY_ALLOWED_READ, effectiveAcl.allowedRead());
+                    doc.put(LuxirConstants.FIELD_SECURITY_DENIED_READ, effectiveAcl.deniedRead());
+                    // Empty lists are not stored, and readers then fall back to acl_ss, so it holds the effective readers.
+                    doc.put(LuxirConstants.FIELD_ACL, effectiveAcl.allowedRead());
 
                     if (document.lastModified() != null) {
                         doc.put(LuxirConstants.FIELD_LAST_MODIFIED, document.lastModified().toString());

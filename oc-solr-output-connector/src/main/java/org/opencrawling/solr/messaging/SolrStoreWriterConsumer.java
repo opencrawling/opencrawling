@@ -18,6 +18,7 @@ package org.opencrawling.solr.messaging;
 import jakarta.annotation.PostConstruct;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.common.SolrInputDocument;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.solr.SolrConstants;
@@ -37,6 +38,12 @@ import java.util.*;
 public class SolrStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(SolrStoreWriterConsumer.class);
+
+    private static final Set<String> WRITER_FIELDS = Set.of(
+            "uri", "acl", "lastModified", "security",
+            SolrConstants.FIELD_SECURITY_INHERITANCE,
+            SolrConstants.FIELD_SECURITY_ALLOWED_READ,
+            SolrConstants.FIELD_SECURITY_DENIED_READ);
 
     private final SolrClient solrClient;
 
@@ -69,44 +76,11 @@ public class SolrStoreWriterConsumer {
                 log.info("Successfully deleted tombstone document/chunk {} from Solr collection '{}'.", docId, collectionName);
                 return;
             }
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map) {
-                Map<?, ?> securityMap = (Map<?, ?>) securityObj;
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List) {
-                    List<?> permsList = (List<?>) permsObj;
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map) {
-                            Map<?, ?> permMap = (Map<?, ?>) permObj;
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof org.opencrawling.core.security.SecurityConfig) {
-                org.opencrawling.core.security.SecurityConfig sc = (org.opencrawling.core.security.SecurityConfig) securityObj;
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (org.opencrawling.core.security.PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             SolrInputDocument doc = new SolrInputDocument();
             doc.addField(SolrConstants.FIELD_ID, message.chunkId());
@@ -120,7 +94,9 @@ public class SolrStoreWriterConsumer {
             doc.addField(SolrConstants.FIELD_URI, uriVal != null ? String.valueOf(uriVal) : "");
 
             Object aclVal = message.metadata().get("acl");
-            doc.addField(SolrConstants.FIELD_ACL, aclVal != null ? String.valueOf(aclVal) : "");
+            // Solr does not store an empty multi-valued field, and readers then fall back to the acl field, so it
+            // holds the effective readers rather than the raw acl string (which permission rules override).
+            doc.addField(SolrConstants.FIELD_ACL, String.join(",", allowedRead));
 
             Object lastModifiedVal = message.metadata().get("lastModified");
             doc.addField(SolrConstants.FIELD_LAST_MODIFIED, lastModifiedVal != null ? String.valueOf(lastModifiedVal) : "");
@@ -137,9 +113,10 @@ public class SolrStoreWriterConsumer {
                 doc.addField(SolrConstants.FIELD_EMBEDDINGS, vectorList);
             }
 
-            // Put other dynamic metadata properties into doc
+            // Put other dynamic metadata properties into doc. Fields set above are skipped: addField appends to an
+            // existing value, which would duplicate (or, for the immutable EffectiveAcl lists, reject) them.
             message.metadata().forEach((key, val) -> {
-                if (!"uri".equals(key) && !"acl".equals(key) && !"lastModified".equals(key) && !"security".equals(key)) {
+                if (!WRITER_FIELDS.contains(key)) {
                     doc.addField(key, val);
                 }
             });

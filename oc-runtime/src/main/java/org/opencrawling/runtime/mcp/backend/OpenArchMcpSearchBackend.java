@@ -21,8 +21,8 @@ import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.openarch.output.client.OpenArchClient;
 import org.opencrawling.openarch.output.security.OpenArchSecurityMapper;
-import org.opencrawling.runtime.mcp.McpAclEvaluator;
-import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.core.security.AuthorizationUnavailableException;
+import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +38,7 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "openarch")
-public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
+public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(OpenArchMcpSearchBackend.class);
 
@@ -101,7 +101,7 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
             }
         }
 
-        List<McpVectorServer.DocumentSearchResult> results = new ArrayList<>();
+        List<McpVectorServer.DocumentSearchResult> candidates = new ArrayList<>();
         Map<String, JsonNode> docCache = new HashMap<>();
         try {
             JsonNode searchRes = client.queryEmbedding(
@@ -110,7 +110,7 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                     vector,
                     query,
                     null,
-                    maxResults,
+                    candidateWindow(maxResults, maxResults),
                     0
             );
 
@@ -119,7 +119,9 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                 if (embeddingsNode.isArray()) {
                     for (JsonNode emb : embeddingsNode) {
                         String id = emb.hasNonNull("id") ? emb.get("id").asText() : "";
-                        String docId = emb.hasNonNull("docId") ? emb.get("docId").asText() : id;
+                        // Only a real document id keys relationship-based decisions; the embedding id is a display fallback.
+                        String sourceDocId = emb.hasNonNull("docId") ? emb.get("docId").asText() : null;
+                        String docId = sourceDocId != null ? sourceDocId : id;
                         String text = emb.hasNonNull("text") ? emb.get("text").asText() : "";
                         double score = emb.hasNonNull("score") ? emb.get("score").asDouble() : 1.0;
 
@@ -129,6 +131,9 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
 
                         Map<String, Object> metadata = extractMetadata(emb);
                         metadata.put("docId", docId);
+                        if (sourceDocId != null) {
+                            metadata.put("sourceDocId", sourceDocId);
+                        }
                         metadata.put("embeddingsType", embeddingsType);
                         if (emb.hasNonNull("blobref")) {
                             metadata.put("blobref", emb.get("blobref").asText());
@@ -159,31 +164,24 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                             }
                         }
 
-                        if (!McpAclEvaluator.isAccessible(metadata, userPrincipal, userRoles)) {
-                            continue;
-                        }
-
-                        String realAcl = resolveRealAcl(metadata);
-
-                        results.add(new McpVectorServer.DocumentSearchResult(
+                        candidates.add(new McpVectorServer.DocumentSearchResult(
                                 id,
                                 "openarch://" + repositoryId + "/" + docId,
                                 text,
                                 metadata,
-                                realAcl,
+                                resolveRealAcl(metadata),
                                 score
                         ));
-
-                        if (results.size() >= maxResults) {
-                            break;
-                        }
                     }
                 }
             }
         } catch (Exception e) {
             log.error("OpenArch MCP search failed: {}", e.getMessage(), e);
         }
-        return results;
+        return readable(userPrincipal, userRoles, candidates,
+                        result -> new ResourceRef(ResourceRef.idValue(result.metadata().get("sourceDocId")), result.metadata())).stream()
+                .limit(Math.max(maxResults, 0))
+                .toList();
     }
 
     @Override
@@ -200,7 +198,7 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
             JsonNode docNode = client.getDocument(repositoryId, docId);
             if (docNode != null) {
                 Map<String, Object> meta = extractMetadata(docNode);
-                if (!McpAclEvaluator.isAccessible(meta, userPrincipal, userRoles)) {
+                if (!readable(userPrincipal, userRoles, new ResourceRef(docId, meta))) {
                     log.warn("Access denied for principal '{}' with roles {} to OpenArch document '{}'",
                             userPrincipal, userRoles, documentUri);
                     return null;
@@ -219,6 +217,8 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                         realAcl
                 );
             }
+        } catch (AuthorizationUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to retrieve OpenArch document content for {}: {}", docId, e.getMessage(), e);
         }
@@ -235,11 +235,11 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
         try {
             JsonNode res = client.query(repositoryId, "SELECT * FROM SysFile", 50, 0, null);
             if (res != null && res.has("documents")) {
-                for (JsonNode doc : res.get("documents")) {
+                List<JsonNode> candidates = new ArrayList<>();
+                res.get("documents").forEach(candidates::add);
+                for (JsonNode doc : readable(userPrincipal, userRoles, candidates,
+                        doc -> new ResourceRef(doc.hasNonNull("id") ? doc.get("id").asText() : null, extractMetadata(doc)))) {
                     Map<String, Object> meta = extractMetadata(doc);
-                    if (!McpAclEvaluator.isAccessible(meta, userPrincipal, userRoles)) {
-                        continue;
-                    }
                     String id = doc.hasNonNull("id") ? doc.get("id").asText() : "";
                     String name = doc.hasNonNull("sys_name") ? doc.get("sys_name").asText() : id;
                     String realAcl = resolveRealAcl(meta);
@@ -251,6 +251,8 @@ public class OpenArchMcpSearchBackend implements McpVectorSearchBackend {
                     sources.add(sourceMap);
                 }
             }
+        } catch (AuthorizationUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("Failed to list accessible OpenArch sources: {}", e.getMessage());
         }

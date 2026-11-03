@@ -23,11 +23,10 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 
@@ -168,68 +167,15 @@ public class VectorStoreWriterConsumer {
     }
 
     private void ensureSecurityMetadata(Map<String, Object> metadata) {
-        if (metadata.containsKey("security_allowed_read")) {
-            return;
+        // Recomputed from the security object and the legacy acl even when the ingestion step already set the
+        // flattened fields: EffectiveAcl is idempotent, and this keeps chunks from older producers consistent.
+        EffectiveAcl effectiveAcl = EffectiveAcl.resolve(metadata.get("security"), metadata.get("acl"));
+        if (effectiveAcl.security() != null) {
+            metadata.put("security", effectiveAcl.security());
         }
-
-        List<String> allowedRead = new ArrayList<>();
-        List<String> deniedRead = new ArrayList<>();
-        boolean inheritanceEnabled = false;
-
-        Object secObj = metadata.get("security");
-        Object aclObj = metadata.get("acl");
-        String aclStr = aclObj != null ? String.valueOf(aclObj).trim() : "";
-        boolean hasRestrictiveAcl = !aclStr.isBlank() && !"public".equalsIgnoreCase(aclStr) && !"read".equalsIgnoreCase(aclStr);
-
-        if (secObj instanceof SecurityConfig sc) {
-            inheritanceEnabled = sc.inheritanceEnabled();
-            boolean isDefaultPublic = SecurityConfig.createPublic().equals(sc);
-            if (sc.permissions() != null && !(isDefaultPublic && hasRestrictiveAcl)) {
-                for (PermissionRule rule : sc.permissions()) {
-                    if (rule != null && rule.identity() != null && !rule.identity().isBlank()) {
-                        String id = rule.identity().trim();
-                        if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
-                            if (!allowedRead.contains(id)) allowedRead.add(id);
-                        } else if ("deny".equalsIgnoreCase(rule.access())) {
-                            if (!deniedRead.contains(id)) deniedRead.add(id);
-                        }
-                    }
-                }
-            }
-        } else if (secObj instanceof Map<?, ?> sm) {
-            if (sm.containsKey("inheritanceEnabled")) {
-                inheritanceEnabled = Boolean.TRUE.equals(sm.get("inheritanceEnabled"));
-            }
-            Object perms = sm.get("permissions");
-            if (perms instanceof List<?> permsList) {
-                for (Object p : permsList) {
-                    if (p instanceof Map<?, ?> pm) {
-                        String id = pm.get("identity") != null ? String.valueOf(pm.get("identity")).trim() : "";
-                        String acc = pm.get("access") != null ? String.valueOf(pm.get("access")).trim() : "";
-                        if (!id.isEmpty()) {
-                            if ("read".equalsIgnoreCase(acc) || "write".equalsIgnoreCase(acc) || "admin".equalsIgnoreCase(acc)) {
-                                if (!allowedRead.contains(id)) allowedRead.add(id);
-                            } else if ("deny".equalsIgnoreCase(acc)) {
-                                if (!deniedRead.contains(id)) deniedRead.add(id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!aclStr.isBlank() && !"read".equalsIgnoreCase(aclStr)) {
-            for (String token : aclStr.split(",")) {
-                String trimmed = token.trim();
-                if (!trimmed.isEmpty() && !allowedRead.contains(trimmed)) {
-                    allowedRead.add(trimmed);
-                }
-            }
-        }
-
-        metadata.put("security_inheritance", inheritanceEnabled);
-        metadata.put("security_allowed_read", allowedRead);
-        metadata.put("security_denied_read", deniedRead);
+        metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
+        metadata.put("security_allowed_read", effectiveAcl.allowedRead());
+        metadata.put("security_denied_read", effectiveAcl.deniedRead());
     }
 
     private String getTableName(Integer dimensions) {
