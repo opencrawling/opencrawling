@@ -26,11 +26,19 @@ import org.opencrawling.core.security.SecurityConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Maps Camunda Historic Identity Link Log entries and Start User into Open Ingestion Standard (OIS) SecurityConfig.
+ * Maps Camunda 8 User Tasks (assignee, candidate users, candidate groups)
+ * and Camunda 7 Historic Identity Links into Open Ingestion Standard (OIS) SecurityConfig.
  */
 public class CamundaSecurityMapper {
 
-    public static SecurityConfig mapSecurity(JsonNode identityLinksNode, String startUserId) {
+    /**
+     * Map security for Camunda 8 User Tasks or Camunda 7 Historic Identity Links.
+     *
+     * @param tasksOrLinksNode JsonNode representing tasks or identity links
+     * @param startUserId initiator or starter user ID
+     * @return OIS SecurityConfig
+     */
+    public static SecurityConfig mapSecurity(JsonNode tasksOrLinksNode, String startUserId) {
         List<PermissionRule> rules = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
 
@@ -42,7 +50,7 @@ public class CamundaSecurityMapper {
             }
         }
 
-        List<String> allowedUsers = extractAllowedUsers(identityLinksNode, startUserId);
+        List<String> allowedUsers = extractAllowedUsers(tasksOrLinksNode, startUserId);
         for (String user : allowedUsers) {
             String idKey = "user:" + user;
             if (seen.add(idKey)) {
@@ -50,7 +58,7 @@ public class CamundaSecurityMapper {
             }
         }
 
-        List<String> allowedGroups = extractAllowedGroups(identityLinksNode);
+        List<String> allowedGroups = extractAllowedGroups(tasksOrLinksNode);
         for (String group : allowedGroups) {
             String idKey = "group:" + group;
             if (seen.add(idKey)) {
@@ -65,17 +73,46 @@ public class CamundaSecurityMapper {
         return new SecurityConfig(false, rules);
     }
 
-    public static List<String> extractAllowedUsers(JsonNode identityLinksNode, String startUserId) {
+    /**
+     * Convenience method specifically for Camunda 8 User Tasks search response.
+     */
+    public static SecurityConfig mapCamunda8Security(JsonNode userTasksNode, String startUserId) {
+        return mapSecurity(userTasksNode, startUserId);
+    }
+
+    /**
+     * Extract allowed users from Camunda 8 user tasks or Camunda 7 identity links.
+     */
+    public static List<String> extractAllowedUsers(JsonNode tasksOrLinksNode, String startUserId) {
         Set<String> users = new LinkedHashSet<>();
         if (startUserId != null && !startUserId.isBlank()) {
             users.add(startUserId);
         }
 
-        JsonNode linksArray = resolveLinksArray(identityLinksNode);
+        JsonNode linksArray = resolveLinksArray(tasksOrLinksNode);
         if (linksArray != null && linksArray.isArray()) {
-            for (JsonNode link : linksArray) {
-                String opType = extractStringField(link, "operationType");
-                String userId = extractStringField(link, "userId", "user");
+            for (JsonNode item : linksArray) {
+                // Camunda 8 User Task: assignee
+                String assignee = extractStringField(item, "assignee");
+                if (assignee != null && !assignee.isBlank()) {
+                    users.add(assignee);
+                }
+
+                // Camunda 8 User Task: candidateUsers (array or string)
+                JsonNode candidateUsers = item.path("candidateUsers");
+                if (candidateUsers.isArray()) {
+                    for (JsonNode u : candidateUsers) {
+                        if (u.isTextual() && !u.asText().isBlank()) {
+                            users.add(u.asText().trim());
+                        }
+                    }
+                } else if (candidateUsers.isTextual() && !candidateUsers.asText().isBlank()) {
+                    users.add(candidateUsers.asText().trim());
+                }
+
+                // Camunda 7 Historic Identity Link Log: userId with operationType
+                String opType = extractStringField(item, "operationType");
+                String userId = extractStringField(item, "userId", "user");
                 if (userId != null && !userId.isBlank()) {
                     if ("delete".equalsIgnoreCase(opType)) {
                         users.remove(userId);
@@ -88,13 +125,29 @@ public class CamundaSecurityMapper {
         return new ArrayList<>(users);
     }
 
-    public static List<String> extractAllowedGroups(JsonNode identityLinksNode) {
+    /**
+     * Extract allowed groups from Camunda 8 user tasks or Camunda 7 identity links.
+     */
+    public static List<String> extractAllowedGroups(JsonNode tasksOrLinksNode) {
         Set<String> groups = new LinkedHashSet<>();
-        JsonNode linksArray = resolveLinksArray(identityLinksNode);
+        JsonNode linksArray = resolveLinksArray(tasksOrLinksNode);
         if (linksArray != null && linksArray.isArray()) {
-            for (JsonNode link : linksArray) {
-                String opType = extractStringField(link, "operationType");
-                String groupId = extractStringField(link, "groupId", "group");
+            for (JsonNode item : linksArray) {
+                // Camunda 8 User Task: candidateGroups (array or string)
+                JsonNode candidateGroups = item.path("candidateGroups");
+                if (candidateGroups.isArray()) {
+                    for (JsonNode g : candidateGroups) {
+                        if (g.isTextual() && !g.asText().isBlank()) {
+                            groups.add(g.asText().trim());
+                        }
+                    }
+                } else if (candidateGroups.isTextual() && !candidateGroups.asText().isBlank()) {
+                    groups.add(candidateGroups.asText().trim());
+                }
+
+                // Camunda 7 Historic Identity Link Log: groupId with operationType
+                String opType = extractStringField(item, "operationType");
+                String groupId = extractStringField(item, "groupId", "group");
                 if (groupId != null && !groupId.isBlank()) {
                     if ("delete".equalsIgnoreCase(opType)) {
                         groups.remove(groupId);
@@ -107,15 +160,18 @@ public class CamundaSecurityMapper {
         return new ArrayList<>(groups);
     }
 
-    private static JsonNode resolveLinksArray(JsonNode identityLinksNode) {
-        if (identityLinksNode == null || identityLinksNode.isNull() || identityLinksNode.isMissingNode()) {
+    private static JsonNode resolveLinksArray(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
             return null;
         }
-        if (identityLinksNode.isArray()) {
-            return identityLinksNode;
+        if (node.isArray()) {
+            return node;
         }
-        if (identityLinksNode.has("data") && identityLinksNode.path("data").isArray()) {
-            return identityLinksNode.path("data");
+        if (node.has("items") && node.path("items").isArray()) {
+            return node.path("items");
+        }
+        if (node.has("data") && node.path("data").isArray()) {
+            return node.path("data");
         }
         return null;
     }

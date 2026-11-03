@@ -25,7 +25,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}=== Starting OpenCrawling Decoupled Ingestion Pipeline with Camunda Platform 7 Integration Test ===${NC}"
+echo -e "${YELLOW}=== Starting OpenCrawling Decoupled Ingestion Pipeline with Camunda 8 Integration Test ===${NC}"
 
 # Get the directory where this script is located and switch to the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,17 +66,17 @@ compose up -d
 TIMEOUT=180
 ELAPSED=0
 
-echo -e "${YELLOW}Waiting for Camunda 7 REST engine to be healthy...${NC}"
-until [ "$(docker inspect -f '{{.State.Health.Status}}' camunda-7-decoupled 2>/dev/null || echo 'starting')" == "healthy" ]; do
+echo -e "${YELLOW}Waiting for Camunda 8 REST engine to be healthy...${NC}"
+until [ "$(docker inspect -f '{{.State.Health.Status}}' camunda-8-decoupled 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo -e "${RED}Timeout waiting for Camunda 7 engine.${NC}"
+    echo -e "${RED}Timeout waiting for Camunda 8 engine.${NC}"
     compose logs camunda
     exit 1
   fi
   sleep 2
   ELAPSED=$((ELAPSED + 2))
 done
-echo -e "${GREEN}Camunda 7 REST engine is healthy!${NC}"
+echo -e "${GREEN}Camunda 8 REST engine is healthy!${NC}"
 
 # Reset elapsed timer
 ELAPSED=0
@@ -120,7 +120,7 @@ fi
 echo -e "${GREEN}Ollama embedding models pulled successfully!${NC}"
 
 # Trigger Camunda repository connector scan via crawler restart
-echo -e "${YELLOW}Triggering oc-crawler-service scan against Camunda 7 REST API...${NC}"
+echo -e "${YELLOW}Triggering oc-crawler-service scan against Camunda 8 REST API...${NC}"
 compose restart oc-crawler
 
 # Wait for crawler completion
@@ -162,7 +162,7 @@ fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
 echo -e "${GREEN}================================================================================${NC}"
-echo -e "${GREEN}SUCCESS: Camunda 7 Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
+echo -e "${GREEN}SUCCESS: Camunda 8 Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}================================================================================${NC}"
 
 # Tear down the test environment

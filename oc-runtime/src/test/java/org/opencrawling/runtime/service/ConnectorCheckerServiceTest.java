@@ -63,6 +63,16 @@ class ConnectorCheckerServiceTest {
     }
 
     @Test
+    void testCheckCamunda8ConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Camunda_8_Test", "Test Camunda 8", "repository",
+                "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/v2"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Camunda"));
+    }
+
+    @Test
     void testCheckFlowableConnectorFailure() {
         ConnectorDTO connector = new ConnectorDTO("Flowable_Test", "Test Flowable", "repository",
                 "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://127.0.0.1:59999/flowable-rest/service"));

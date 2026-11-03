@@ -368,31 +368,96 @@ public class ConnectorCheckerService {
     }
 
     private ConnectionCheckResult checkCamunda(Map<String, String> config) {
-        String url = config.getOrDefault("url", "http://localhost:8080/engine-rest");
+        String url = config.getOrDefault("url", "http://localhost:8080/v2");
         String user = config.getOrDefault("username", "demo");
         String pass = config.getOrDefault("password", "demo");
+        String authType = config.getOrDefault("authType", "basic");
+        String oauthTokenUrl = config.getOrDefault("oauthTokenUrl", "");
+        String clientId = config.getOrDefault("clientId", "");
+        String clientSecret = config.getOrDefault("clientSecret", "");
+        String audience = config.getOrDefault("audience", "zeebe-api");
 
         String cleanUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-        String testEndpoint = cleanUrl + "/history/process-instance?maxResults=1";
 
         try {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(testEndpoint))
-                    .timeout(Duration.ofSeconds(5))
-                    .header("Accept", "application/json")
-                    .GET();
 
-            if (user != null && !user.isBlank()) {
+            String authHeader = null;
+            if ("oauth2".equalsIgnoreCase(authType) || (!oauthTokenUrl.isBlank() && !clientId.isBlank())) {
+                StringBuilder formBody = new StringBuilder("grant_type=client_credentials");
+                formBody.append("&client_id=").append(URLEncoder.encode(clientId, StandardCharsets.UTF_8));
+                formBody.append("&client_secret=").append(URLEncoder.encode(clientSecret, StandardCharsets.UTF_8));
+                if (!audience.isBlank()) {
+                    formBody.append("&audience=").append(URLEncoder.encode(audience, StandardCharsets.UTF_8));
+                }
+
+                HttpRequest tokenReq = HttpRequest.newBuilder()
+                        .uri(URI.create(oauthTokenUrl))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .header("Accept", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(formBody.toString()))
+                        .build();
+
+                HttpResponse<String> tokenResp = client.send(tokenReq, HttpResponse.BodyHandlers.ofString());
+                if (tokenResp.statusCode() == 200) {
+                    JsonNode tokenJson = OBJECT_MAPPER.readTree(tokenResp.body());
+                    authHeader = "Bearer " + tokenJson.path("access_token").asText();
+                } else {
+                    return new ConnectionCheckResult(false, "Camunda OAuth2 token request failed with HTTP " + tokenResp.statusCode(), tokenResp.body());
+                }
+            } else if (user != null && !user.isBlank()) {
                 String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
-                reqBuilder.header("Authorization", "Basic " + credentials);
+                authHeader = "Basic " + credentials;
             }
 
-            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                return new ConnectionCheckResult(true, "Successfully connected to Camunda 7 REST API at " + cleanUrl + ".", null);
+            if (cleanUrl.contains("/engine-rest")) {
+                // Camunda 7 legacy check
+                String testEndpoint = cleanUrl + "/history/process-instance?maxResults=1";
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(testEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .GET();
+                if (authHeader != null) reqBuilder.header("Authorization", authHeader);
+
+                HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 7 REST API at " + cleanUrl + ".", null);
+                } else {
+                    return new ConnectionCheckResult(false, "Camunda REST API returned HTTP status " + response.statusCode() + " from " + testEndpoint, response.body());
+                }
             } else {
-                return new ConnectionCheckResult(false, "Camunda REST API returned HTTP status " + response.statusCode() + " from " + testEndpoint, response.body());
+                // Camunda 8 REST API v2 check (/v2/topology)
+                String c8Base = cleanUrl.endsWith("/v2") ? cleanUrl : cleanUrl + "/v2";
+                String topologyEndpoint = c8Base + "/topology";
+                HttpRequest.Builder topologyBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(topologyEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .GET();
+                if (authHeader != null) topologyBuilder.header("Authorization", authHeader);
+                HttpResponse<String> topologyResp = client.send(topologyBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (topologyResp.statusCode() == 200 || topologyResp.statusCode() == 204) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 8 REST API at " + c8Base + ".", null);
+                }
+
+                // Fallback check against /process-instances/search
+                String testEndpoint = c8Base + "/process-instances/search";
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(testEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"page\":{\"limit\":1}}"));
+                if (authHeader != null) reqBuilder.header("Authorization", authHeader);
+
+                HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200 || response.statusCode() == 204) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 8 REST API at " + c8Base + ".", null);
+                }
+
+                return new ConnectionCheckResult(false, "Camunda 8 REST API returned HTTP status " + topologyResp.statusCode() + " from " + topologyEndpoint, topologyResp.body());
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Camunda REST engine at " + cleanUrl + ": " + e.getMessage(), e.toString());
