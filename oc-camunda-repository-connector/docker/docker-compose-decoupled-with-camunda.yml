@@ -24,13 +24,15 @@ services:
       - "26500:26500"
     environment:
       - CAMUNDA_REST_ENABLED=true
-      - ZEEBE_REST_ADDRESS=http://0.0.0.0:8080/v2
+      - CAMUNDA_REST_QUERY_ENABLED=true
+      - ZEEBE_BROKER_DATA_LOGSEGMENTSIZE=16MB
+      - ZEEBE_BROKER_DATA_DISK_ENABLEMONITORING=false
     volumes:
       - opencrawling-camundadata:/usr/local/zeebe/data
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v2/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v2/topology"]
       interval: 10s
       timeout: 10s
       retries: 10

@@ -242,8 +242,23 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
                 throw new IOException("Failed to connect to Camunda 7 REST API. Status code: " + response.statusCode() + ", Response: " + response.body());
             }
         } else {
-            // Camunda 8 REST API v2
+            // Camunda 8 REST API v2: check /topology first, fallback to /process-instances/search
             String c8Base = getCamunda8BaseUrl();
+            String topologyUrl = c8Base + "/topology";
+            HttpRequest.Builder topologyBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(topologyUrl))
+                    .header("Accept", "application/json")
+                    .GET();
+            if (auth != null) {
+                topologyBuilder.header("Authorization", auth);
+            }
+            HttpResponse<String> topologyResp = httpClient.send(topologyBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (topologyResp.statusCode() == 200 || topologyResp.statusCode() == 204) {
+                log.info("Successfully connected to Camunda 8 REST API v2 at {}", topologyUrl);
+                return;
+            }
+
+            // Fallback check via /process-instances/search
             String searchUrl = c8Base + "/process-instances/search";
             ObjectNode pingBody = objectMapper.createObjectNode();
             pingBody.putObject("page").put("limit", 1);
@@ -263,22 +278,7 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
                 return;
             }
 
-            // Fallback status check
-            String statusUrl = c8Base + "/status";
-            HttpRequest.Builder statusBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(statusUrl))
-                    .header("Accept", "application/json")
-                    .GET();
-            if (auth != null) {
-                statusBuilder.header("Authorization", auth);
-            }
-            HttpResponse<String> statusResp = httpClient.send(statusBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (statusResp.statusCode() == 200 || statusResp.statusCode() == 204) {
-                log.info("Successfully connected to Camunda 8 REST API v2 status endpoint at {}", statusUrl);
-                return;
-            }
-
-            throw new IOException("Failed to connect to Camunda 8 REST API. Status code: " + response.statusCode() + ", Response: " + response.body());
+            throw new IOException("Failed to connect to Camunda 8 REST API. Status code: " + topologyResp.statusCode() + ", Response: " + topologyResp.body());
         }
     }
 
@@ -461,6 +461,10 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
         }
 
         HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 400 && response.body() != null && response.body().contains("Failed to execute Process Instance Search Query")) {
+            log.warn("Camunda 8 search query endpoint returned 400 (secondary search store not configured on standalone broker); returning empty result set.");
+            return objectMapper.createArrayNode();
+        }
         if (response.statusCode() != 200) {
             throw new IOException("Failed to fetch Camunda 8 process instances. Status code: " + response.statusCode() + ", Response: " + response.body());
         }

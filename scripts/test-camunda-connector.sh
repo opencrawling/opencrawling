@@ -46,17 +46,19 @@ docker run -d --name "$CONTAINER_NAME" \
   -p ${CAMUNDA_PORT}:8080 \
   -p 26500:26500 \
   -e CAMUNDA_REST_ENABLED=true \
-  -e ZEEBE_REST_ADDRESS="http://0.0.0.0:8080/v2" \
+  -e CAMUNDA_REST_QUERY_ENABLED=true \
+  -e ZEEBE_BROKER_DATA_LOGSEGMENTSIZE=16MB \
+  -e ZEEBE_BROKER_DATA_DISK_ENABLEMONITORING=false \
   camunda/zeebe:8.7.0
 
-echo -e "${YELLOW}Waiting for Camunda 8 REST service at http://localhost:${CAMUNDA_PORT}/v2/status ...${NC}"
+echo -e "${YELLOW}Waiting for Camunda 8 REST service at http://localhost:${CAMUNDA_PORT}/v2/topology ...${NC}"
 
 TIMEOUT=120
 ELAPSED=0
 HEALTHY=false
 
 until [ "$HEALTHY" = true ]; do
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${CAMUNDA_PORT}/v2/status" || true)
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${CAMUNDA_PORT}/v2/topology" || true)
   if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
     HEALTHY=true
     echo -e "${GREEN}Camunda 8 REST engine is ready! (HTTP $HTTP_CODE)${NC}"
