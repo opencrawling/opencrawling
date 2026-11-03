@@ -68,6 +68,43 @@ class CamundaSecurityMapperTest {
     }
 
     @Test
+    void testMapCamunda8UserTasksSecurity() throws Exception {
+        String json = """
+            {
+              "items": [
+                {
+                  "userTaskKey": 2251799813685260,
+                  "processInstanceKey": 2251799813685257,
+                  "assignee": "clerk_1",
+                  "candidateUsers": ["auditor_a", "auditor_b"],
+                  "candidateGroups": ["underwriters", "claims-dept"],
+                  "state": "CREATED"
+                }
+              ]
+            }
+            """;
+        JsonNode tasksNode = objectMapper.readTree(json);
+        SecurityConfig config = CamundaSecurityMapper.mapCamunda8Security(tasksNode, "customer_service_starter");
+
+        assertNotNull(config);
+        assertFalse(config.inheritanceEnabled());
+        assertEquals(6, config.permissions().size());
+
+        List<String> userIds = CamundaSecurityMapper.extractAllowedUsers(tasksNode, "customer_service_starter");
+        assertEquals(List.of("customer_service_starter", "clerk_1", "auditor_a", "auditor_b"), userIds);
+
+        List<String> groupIds = CamundaSecurityMapper.extractAllowedGroups(tasksNode);
+        assertEquals(List.of("underwriters", "claims-dept"), groupIds);
+
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("customer_service_starter") && r.identityType().equals("user")));
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("clerk_1") && r.identityType().equals("user")));
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("auditor_a") && r.identityType().equals("user")));
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("auditor_b") && r.identityType().equals("user")));
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("underwriters") && r.identityType().equals("group")));
+        assertTrue(config.permissions().stream().anyMatch(r -> r.identity().equals("claims-dept") && r.identityType().equals("group")));
+    }
+
+    @Test
     void testMapSecurityWithNullLinksFallsBackToStarterOrPublic() {
         SecurityConfig configWithStarter = CamundaSecurityMapper.mapSecurity(null, "agent_1");
         assertNotNull(configWithStarter);

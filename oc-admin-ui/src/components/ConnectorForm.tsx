@@ -289,6 +289,7 @@ export default function ConnectorForm() {
   const documentumAuthType = watch('configuration.authType') || 'basic'
   const documentumCrawlMode = watch('configuration.crawlMode') || 'dql'
   const openarchCrawlMode = watch('configuration.crawlMode') || 'QUERY'
+  const camundaAuthType = watch('configuration.authType') || 'basic'
 
   const fetchConnectors = async () => {
     setIsLoading(true)
@@ -949,31 +950,93 @@ export default function ConnectorForm() {
                   {selectedClass === 'org.opencrawling.camunda.CamundaRepositoryConnector' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">Camunda REST API Base URL</label>
+                        <label className="text-sm font-medium">Camunda 8 REST API Base URL</label>
                         <input 
                           {...register('configuration.url', { required: true })}
-                          placeholder="http://localhost:8080/engine-rest"
-                          defaultValue="http://localhost:8080/engine-rest"
+                          placeholder="http://localhost:8080/v2"
+                          defaultValue="http://localhost:8080/v2"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Username</label>
-                        <input 
-                          {...register('configuration.username')}
-                          placeholder="demo"
-                          defaultValue="demo"
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select 
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
+                        >
+                          <option value="basic">Basic Authentication (Local / Self-Managed)</option>
+                          <option value="oauth2">OAuth2 / OIDC Client Credentials (Keycloak / Camunda SaaS)</option>
+                        </select>
                       </div>
+
+                      {camundaAuthType === 'basic' ? (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Username</label>
+                            <input 
+                              {...register('configuration.username')}
+                              placeholder="demo"
+                              defaultValue="demo"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Password</label>
+                            <input 
+                              type="password"
+                              {...register('configuration.password')}
+                              placeholder="demo"
+                              defaultValue="demo"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">OAuth2 Token Endpoint URL</label>
+                            <input 
+                              {...register('configuration.oauthTokenUrl')}
+                              placeholder="https://login.cloud.camunda.io/oauth/token"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Client ID</label>
+                            <input 
+                              {...register('configuration.clientId')}
+                              placeholder="Client ID"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Client Secret</label>
+                            <input 
+                              type="password"
+                              {...register('configuration.clientSecret')}
+                              placeholder="Client Secret"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">Audience</label>
+                            <input 
+                              {...register('configuration.audience')}
+                              placeholder="zeebe-api"
+                              defaultValue="zeebe-api"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        </>
+                      )}
+
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Password</label>
+                        <label className="text-sm font-medium">Tenant ID (Optional)</label>
                         <input 
-                          type="password"
-                          {...register('configuration.password')}
-                          placeholder="demo"
-                          defaultValue="demo"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          {...register('configuration.tenantId')}
+                          placeholder="e.g. <default> or tenant-1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
                       <div className="space-y-2">
@@ -986,10 +1049,10 @@ export default function ConnectorForm() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Process Definition Key (Optional)</label>
+                        <label className="text-sm font-medium">Process Definition Key / BPMN ID (Optional)</label>
                         <input 
                           {...register('configuration.processDefinitionKey')}
-                          placeholder="e.g. invoice-process"
+                          placeholder="e.g. order-process"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
@@ -1000,9 +1063,10 @@ export default function ConnectorForm() {
                           defaultValue="all"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
-                          <option value="all">All (Active & Completed)</option>
+                          <option value="all">All (Active &amp; Completed)</option>
                           <option value="completed">Completed Only</option>
                           <option value="active">Active Only</option>
+                          <option value="canceled">Canceled Only</option>
                         </select>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">
@@ -1014,7 +1078,31 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeVariablesCamunda" className="text-sm font-medium cursor-pointer">
-                          Include Historic BPMN Variables
+                          Include BPMN Variables
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeUserTasksCamunda"
+                          {...register('configuration.includeUserTasks')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeUserTasksCamunda" className="text-sm font-medium cursor-pointer">
+                          Include User Tasks
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeIncidentsCamunda"
+                          {...register('configuration.includeIncidents')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeIncidentsCamunda" className="text-sm font-medium cursor-pointer">
+                          Include Incidents
                         </label>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">
@@ -1026,15 +1114,15 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeAclsCamunda" className="text-sm font-medium cursor-pointer">
-                          Include Identity Links & Zero-Trust ACLs
+                          Include Zero-Trust ACLs (Candidate Users/Groups)
                         </label>
                       </div>
 
                       <div className="col-span-2 p-3 bg-rose-500/10 border border-rose-500/20 rounded-md text-xs text-rose-300 flex items-start gap-2">
                         <ShieldCheck className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
                         <div>
-                          <span className="font-semibold text-rose-200">Collocated Workflow Pushdown: </span>
-                          Stamps <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_process_instance_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_users</code>, and <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_groups</code>. Enables zero-lag joins against <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">ACT_HI_IDENTITYLINK</code>.
+                          <span className="font-semibold text-rose-200">Camunda 8 (Zeebe &amp; REST v2): </span>
+                          Stamps <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda8_process_instance_key</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda8_bpmn_process_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_proc_inst_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_users</code>, and <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_groups</code>.
                         </div>
                       </div>
                     </div>

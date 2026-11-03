@@ -15,25 +15,26 @@
 #
 
 services:
-  # --- Camunda Platform 7 BPMN Engine ---
+  # --- Camunda 8 Orchestration Engine (Zeebe & REST API v2) ---
   camunda:
-    image: camunda/camunda-bpm-platform:7.23.0
-    container_name: camunda-7-decoupled
+    image: camunda/zeebe:8.7.0
+    container_name: camunda-8-decoupled
     ports:
       - "8089:8080"
+      - "26500:26500"
     environment:
-      - CAMUNDA_BPM_ADMIN_USER_ID=demo
-      - CAMUNDA_BPM_ADMIN_USER_PASSWORD=demo
+      - CAMUNDA_REST_ENABLED=true
+      - ZEEBE_REST_ADDRESS=http://0.0.0.0:8080/v2
     volumes:
-      - opencrawling-camundadata:/camunda/data
+      - opencrawling-camundadata:/usr/local/zeebe/data
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/engine-rest/engine"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v2/status"]
       interval: 10s
-      timeout: 30s  # Increase from default (was likely too short)
-      retries: 10   # Increase retry attempts
-      start_period: 60s  # Add startup grace period
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:
@@ -140,7 +141,7 @@ services:
       - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=camunda
       - OPENCRAWLING_CONNECTOR_TYPE=camunda
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_ENABLED=true
-      - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_URL=http://camunda:8080/engine-rest
+      - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_URL=http://camunda:8080/v2
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_USERNAME=demo
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_PASSWORD=demo
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_SCAN_HISTORIC_PROCESS_INSTANCES=true
