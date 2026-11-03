@@ -19,6 +19,7 @@ import java.io.File;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.opencrawling.doxis.DoxisRepositoryConnector;
 import org.opencrawling.doxis.DoxisProperties;
 import org.opencrawling.doxis.client.DoxisClient;
@@ -52,6 +54,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 @Service
 public class ConnectorCheckerService {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     public ConnectionCheckResult check(ConnectorDTO connector) {
         if (connector == null || connector.className() == null) {
@@ -127,9 +131,14 @@ public class ConnectorCheckerService {
                 return checkFlowable(config);
             }
 
+            // --- Alfresco Output Connector (Migration Mode) ---
+            if (className.contains("AlfrescoOutputConnector") || (className.contains("Alfresco") && className.contains("Output"))) {
+                return checkAlfrescoOutput(config);
+            }
+
             // --- Alfresco Repository Connector ---
             if (className.contains("AlfrescoRepositoryConnector") || className.contains("Alfresco")) {
-                return checkAlfresco(config);
+                return checkAlfrescoRepository(config);
             }
 
             // --- Doxis Repository Connector ---
@@ -489,16 +498,106 @@ public class ConnectorCheckerService {
         }
     }
 
-    private ConnectionCheckResult checkAlfresco(Map<String, String> config) {
-        String url = config.getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
+    private ConnectionCheckResult checkAlfrescoOutput(Map<String, String> config) {
+        String baseUrl = config.getOrDefault("url", "http://localhost:8081/alfresco");
+        String authType = config.getOrDefault("authType", "basic");
         String user = config.getOrDefault("username", "admin");
         String pass = config.getOrDefault("password", "admin");
+        String bearerToken = config.getOrDefault("bearerToken", "");
+        String targetParentNodeId = config.getOrDefault("targetParentNodeId", "-root-");
+        if (targetParentNodeId == null || targetParentNodeId.isBlank()) {
+            targetParentNodeId = "-root-";
+        }
+
+        String cleanUrl = baseUrl.replaceAll("/+$", "");
+        String testUrl;
+        if (cleanUrl.contains("/nodes/")) {
+            testUrl = cleanUrl;
+        } else if (cleanUrl.contains("/api/-default-/public/alfresco/versions/1")) {
+            testUrl = cleanUrl + "/nodes/" + URLEncoder.encode(targetParentNodeId, StandardCharsets.UTF_8);
+        } else {
+            testUrl = cleanUrl + "/api/-default-/public/alfresco/versions/1/nodes/" + URLEncoder.encode(targetParentNodeId, StandardCharsets.UTF_8);
+        }
 
         try {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(URI.create(testUrl))
                     .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
+                    .GET();
+
+            if ("bearer".equalsIgnoreCase(authType) && !bearerToken.isBlank()) {
+                reqBuilder.header("Authorization", "Bearer " + bearerToken.trim());
+            } else if (user != null && !user.isBlank()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            String body = response.body() != null ? response.body().trim() : "";
+
+            if (contentType.toLowerCase().contains("text/html") || body.startsWith("<!DOCTYPE") || body.toLowerCase().startsWith("<html") || body.contains("<!doctype html")) {
+                return new ConnectionCheckResult(false,
+                        "Alfresco connection check failed: endpoint returned an HTML page (Content-Type: " + contentType + ") instead of Alfresco REST API JSON. "
+                        + "The requested URL appears to be pointing to OpenCrawling itself or another web application. "
+                        + "If running via Docker Compose, note that Alfresco is exposed on port 8081 (e.g. http://localhost:8081/alfresco) while OpenCrawling runs on port 8080.",
+                        body.length() > 500 ? body.substring(0, 500) + "..." : body);
+            }
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                try {
+                    JsonNode root = OBJECT_MAPPER.readTree(body);
+                    if (root.has("entry")) {
+                        JsonNode entry = root.get("entry");
+                        String nodeName = entry.path("name").asText(targetParentNodeId);
+                        String nodeId = entry.path("id").asText(targetParentNodeId);
+                        String nodeType = entry.path("nodeType").asText("cm:folder");
+                        return new ConnectionCheckResult(true,
+                                "Successfully connected to Alfresco Content Services at " + cleanUrl + ". Target parent node '" + targetParentNodeId + "' resolved (name: '" + nodeName + "', id: '" + nodeId + "', type: '" + nodeType + "').",
+                                body);
+                    } else {
+                        return new ConnectionCheckResult(false,
+                                "Alfresco connection check failed: endpoint returned HTTP " + response.statusCode() + " but response is missing the Alfresco 'entry' JSON object.",
+                                body);
+                    }
+                } catch (Exception parseEx) {
+                    return new ConnectionCheckResult(false,
+                            "Alfresco connection check failed: endpoint returned non-JSON payload (HTTP " + response.statusCode() + "): " + parseEx.getMessage(),
+                            body);
+                }
+            } else {
+                return new ConnectionCheckResult(false,
+                        "Alfresco Content Services returned HTTP status " + response.statusCode() + " from " + testUrl,
+                        body);
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Content Services at " + cleanUrl + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkAlfrescoRepository(Map<String, String> config) {
+        String rawUrl = config.getOrDefault("url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1");
+        String user = config.getOrDefault("username", "admin");
+        String pass = config.getOrDefault("password", "admin");
+
+        String cleanUrl = rawUrl.replaceAll("/+$", "");
+        String testUrl;
+        if (cleanUrl.contains("/nodes/")) {
+            testUrl = cleanUrl;
+        } else if (cleanUrl.contains("/api/-default-/public/alfresco/versions/1")) {
+            testUrl = cleanUrl + "/nodes/-root-";
+        } else {
+            testUrl = cleanUrl + "/api/-default-/public/alfresco/versions/1/nodes/-root-";
+        }
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(testUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
                     .GET();
 
             if (user != null && !user.isBlank()) {
@@ -507,13 +606,44 @@ public class ConnectorCheckerService {
             }
 
             HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 200 && response.statusCode() < 400) {
-                return new ConnectionCheckResult(true, "Successfully connected to Alfresco Repository at " + url + ".", null);
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            String body = response.body() != null ? response.body().trim() : "";
+
+            if (contentType.toLowerCase().contains("text/html") || body.startsWith("<!DOCTYPE") || body.toLowerCase().startsWith("<html") || body.contains("<!doctype html")) {
+                return new ConnectionCheckResult(false,
+                        "Alfresco connection check failed: endpoint returned an HTML page (Content-Type: " + contentType + ") instead of Alfresco REST API JSON. "
+                        + "The requested URL appears to be pointing to OpenCrawling itself or another web application. "
+                        + "If running via Docker Compose, note that Alfresco is exposed on port 8081 (e.g. http://localhost:8081/alfresco) while OpenCrawling runs on port 8080.",
+                        body.length() > 500 ? body.substring(0, 500) + "..." : body);
+            }
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                try {
+                    JsonNode root = OBJECT_MAPPER.readTree(body);
+                    if (root.has("entry")) {
+                        JsonNode entry = root.get("entry");
+                        String nodeName = entry.path("name").asText("-root-");
+                        String nodeId = entry.path("id").asText("-root-");
+                        return new ConnectionCheckResult(true,
+                                "Successfully connected to Alfresco Repository at " + cleanUrl + " (root node: '" + nodeName + "', id: '" + nodeId + "').",
+                                body);
+                    } else {
+                        return new ConnectionCheckResult(false,
+                                "Alfresco connection check failed: endpoint returned HTTP " + response.statusCode() + " but response is missing the Alfresco 'entry' JSON object.",
+                                body);
+                    }
+                } catch (Exception parseEx) {
+                    return new ConnectionCheckResult(false,
+                            "Alfresco connection check failed: endpoint returned non-JSON payload (HTTP " + response.statusCode() + "): " + parseEx.getMessage(),
+                            body);
+                }
             } else {
-                return new ConnectionCheckResult(false, "Alfresco Repository returned HTTP status " + response.statusCode() + " from " + url, response.body());
+                return new ConnectionCheckResult(false,
+                        "Alfresco Repository returned HTTP status " + response.statusCode() + " from " + testUrl,
+                        body);
             }
         } catch (Exception e) {
-            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + url + ": " + e.getMessage(), e.toString());
+            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + cleanUrl + ": " + e.getMessage(), e.toString());
         }
     }
 

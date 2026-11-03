@@ -50,7 +50,7 @@ public class ConnectorController {
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
         defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
-            "url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
+            "url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1",
             "username", "admin",
             "password", "admin",
             "batchSize", "100",
@@ -363,6 +363,23 @@ public class ConnectorController {
             "storageClass", "INTELLIGENT_TIERING",
             "serverSideEncryption", "SSE_S3",
             "tombstoneAction", "DELETE_OBJECTS"
+        )));
+        defaults.add(new ConnectorDTO("Alfresco_Migration_Output", "Alfresco Content Services Migration Target (Migration Mode only)", "output", "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8081/alfresco"),
+            Map.entry("username", "admin"),
+            Map.entry("password", "admin"),
+            Map.entry("targetParentNodeId", "-root-"),
+            Map.entry("targetPathPrefix", "MigratedContent/v1"),
+            Map.entry("pathStrategy", "HIERARCHICAL"),
+            Map.entry("nodeType", "cm:content"),
+            Map.entry("conflictStrategy", "OVERWRITE"),
+            Map.entry("syncPermissions", "true"),
+            Map.entry("defaultPermissionRole", "Consumer"),
+            Map.entry("validateAuthorities", "true"),
+            Map.entry("authorityValidationMode", "IN_FLIGHT"),
+            Map.entry("missingAuthorityAction", "SKIP"),
+            Map.entry("authorityGapReportPath", "reports/alfresco-authority-gap.json"),
+            Map.entry("tombstoneAction", "MOVE_TO_TRASH")
         )));
         defaults.add(new ConnectorDTO("OpenArch_Output", "Hyland OpenArch Federated Ingestion & Parquet Vector Bridge", "output", "org.opencrawling.openarch.output.OpenArchOutputConnector", 10, Map.ofEntries(
             Map.entry("endpointUrl", "http://localhost:8080"),

@@ -705,6 +705,8 @@ def parse_sidebar_and_discover_chapters(wiki_dir: str):
                 "Doxis-Repository-Connector",
                 "M-Files-Repository-Connector",
                 "SharePoint-Online-Repository-Connector",
+                "FileNet-Repository-Connector",
+                "Documentum-Repository-Connector",
                 "Hyland-OpenArch-Integration",
                 "JDBC-Repository-Connector",
                 "Apache-StormCrawler-Repository-Connector",
@@ -713,6 +715,8 @@ def parse_sidebar_and_discover_chapters(wiki_dir: str):
                 "Luxir-Output-Connector",
                 "Apache-SeaTunnel-Output-Connector",
                 "Apache-Ozone-Output-Connector",
+                "AWS-S3-Output-Connector",
+                "Alfresco-Content-Services-Output-Connector",
             ]
         },
         {

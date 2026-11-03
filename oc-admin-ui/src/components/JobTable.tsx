@@ -66,7 +66,11 @@ type PipelineMode = 'rag' | 'migration'
 
 /** Output connectors that only support Migration Mode (as-is binary + OIS sidecar). */
 const isMigrationOnlyConnector = (className?: string) =>
-  !!className && (className.toLowerCase().includes('ozone') || (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')))
+  !!className && (
+    className.toLowerCase().includes('ozone') ||
+    (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) ||
+    (className.toLowerCase().includes('alfresco') && className.toLowerCase().includes('output'))
+  )
 
 interface NarrativizationConfig {
   enabled: boolean

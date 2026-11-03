@@ -85,6 +85,8 @@ jobs:
             script: "test-alfresco-connector.sh"
           - name: "Alfresco Decoupled Pipeline Test Suite"
             script: "test-alfresco-decoupled.sh"
+          - name: "Alfresco Migration Decoupled Pipeline Test Suite"
+            script: "test-alfresco-migration-decoupled.sh"
           - name: "Alfresco Process Services Connector Test Suite"
             script: "test-aps-connector.sh"
           - name: "Alfresco Process Services Decoupled Pipeline Test Suite"
@@ -161,7 +163,14 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
-          cache: 'maven'
+
+      - name: Restore Maven cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository
+          key: setup-java-${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            setup-java-${{ runner.os }}-maven-
 
       - name: Build internal snapshot dependencies
         run: mvn clean install -DskipTests -DskipITs
