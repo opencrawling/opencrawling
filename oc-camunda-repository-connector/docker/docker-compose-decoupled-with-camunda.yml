@@ -32,11 +32,11 @@ services:
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v2/topology"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /v2/topology HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"200\" <&3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:

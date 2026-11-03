@@ -162,7 +162,7 @@ fi
 echo -e "${GREEN}MCP Server is reachable (HTTP $HTTP_STATUS)${NC}"
 
 echo -e "${GREEN}================================================================================${NC}"
-echo -e "${GREEN}SUCCESS: Camunda 7 Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
+echo -e "${GREEN}SUCCESS: Camunda 8 Decoupled Multi-Service Pipeline Integration Test Passed!${NC}"
 echo -e "${GREEN}================================================================================${NC}"
 
 # Tear down the test environment
