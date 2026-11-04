@@ -158,7 +158,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
 ### MCP server
 
 `McpVectorServer` uses Spring AI MCP with the `STREAMABLE_HTTP` transport on the runtime port and exposes three `@McpTool` methods:
-- **`secureVectorSearch`** runs a similarity search pre-filtered on `security_allowed_read` and `acl` metadata fields, then authoritatively re-checks each hit against `SecurityConfig` via `McpAclEvaluator`.
+- **`secureVectorSearch`** runs a similarity search pre-filtered on the `security_read_keys`, `security_allowed_read` and `acl` metadata fields (pgvector), then authoritatively re-checks each hit against `SecurityConfig` via `McpAclEvaluator`.
 - **`getDocumentContent`** returns a document's chunks by URI, behind the same ACL guard.
 - **`listAccessibleSources`** lists the indexed URIs that a principal and its groups can see.
 
