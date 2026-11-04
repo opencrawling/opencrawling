@@ -16,6 +16,7 @@
 package org.opencrawling.vector;
 
 import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.security.ReadKeys;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.springframework.ai.document.Document;
@@ -189,6 +190,7 @@ public class VectorOutputConnector implements OutputConnector {
                 metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
                 metadata.put("security_allowed_read", effectiveAcl.allowedRead());
                 metadata.put("security_denied_read", effectiveAcl.deniedRead());
+                metadata.put(ReadKeys.FIELD, ReadKeys.forAllowed(effectiveAcl.allowedRead()));
 
                 // Construct Spring AI Document
                 Document aiDoc = new Document(document.id(), text, metadata);

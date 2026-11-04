@@ -193,6 +193,11 @@ public final class McpAclEvaluator {
     public static boolean matchesIdentity(String identity, String userPrincipal, Collection<String> userRoles) {
         if (identity == null) return false;
         String trimmed = identity.trim();
+        if (trimmed.isEmpty()) {
+            // A blank identity names no one (EffectiveAcl and OpenFGA drop it too), even for a caller whose
+            // principal is only a prefix such as "user:".
+            return false;
+        }
         if (PUBLIC_IDENTITY.equalsIgnoreCase(trimmed)) {
             return true;
         }

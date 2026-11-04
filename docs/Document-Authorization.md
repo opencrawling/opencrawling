@@ -46,7 +46,9 @@ Connectors describe a document's permissions as a `SecurityConfig` (a list of ru
 | `finance` (no prefix) | a principal or a role named `finance` |
 | `public` | everyone |
 
-A user is therefore never granted, or denied, as a group of the same name (#224). Connectors that write identities without a prefix keep the behaviour they had.
+A user is therefore never granted, or denied, as a group of the same name (#224). Connectors that write identities without a prefix keep the behaviour they had. A blank identity matches no caller.
+
+**pgvector read keys.** pgvector pre-filters candidates in SQL by exact match, which cannot express the rule above. Its writers therefore also store `security_read_keys`: `user:Alice` as `u:alice`, `group:Finance` as `g:finance`, a bare `Finance` as both `u:finance` and `g:finance`, and `public` as `public`. The search asks for `public`, `u:<principal>` and `g:<role>` for each role, with the same case folding and prefix handling, so the pre-filter keeps exactly the documents the rule grants. Chunks written before these keys existed are still matched on their raw identities, including the caller's `user:`/`group:` forms; a grant that differs from the caller only in case (`Finance` against the role `finance`) is found after the document is re-indexed.
 
 > [!NOTE]
 > Today the caller's principal and roles are **asserted by the MCP client** in the tool arguments. They are not verified by the server. Verified identities (OAuth2/OIDC) are the subject of issue #187; the gate's `Caller` already carries an `authenticated` flag for it.

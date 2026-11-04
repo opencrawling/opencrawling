@@ -96,6 +96,8 @@ class VectorStoreWriterConsumerTest {
         List<Document> saved = captor.getValue();
         assertEquals(1, saved.size());
         assertEquals(List.of("mfiles:user:12", "mfiles:group:5"), saved.get(0).getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("u:mfiles:user:12", "g:mfiles:user:12", "u:mfiles:group:5", "g:mfiles:group:5"),
+                saved.get(0).getMetadata().get("security_read_keys"));
     }
 
     @Test
@@ -118,6 +120,7 @@ class VectorStoreWriterConsumerTest {
         List<Document> saved = captor.getValue();
         assertEquals(1, saved.size());
         assertEquals(List.of(), saved.get(0).getMetadata().get("security_allowed_read"));
+        assertEquals(List.of(), saved.get(0).getMetadata().get("security_read_keys"));
     }
 
     @Test
