@@ -272,7 +272,7 @@ When building narrativization for tabular or structured entities:
 
 #### Step 8: Platform Runtime Registration
 - In `oc-runtime/pom.xml`, add the new connector dependency.
-- In [`JobController.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/api/JobController.java), resolve the connector by type string.
+- In `ConnectorFactory.java` (`oc-runtime/src/main/java/org/opencrawling/runtime/connector/`), add a `RepositoryKind` (matched on the class name) and a builder that reads the saved configuration. Jobs started through the job API are built there; an unknown repository class stops the job rather than falling back to the file system.
 - In [`ConnectorController.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/api/ConnectorController.java), register the connector class for UI auto-discovery.
 - In [`ConnectorCheckerService.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/service/ConnectorCheckerService.java), implement health-check probing.
 

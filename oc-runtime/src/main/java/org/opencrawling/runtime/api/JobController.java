@@ -32,7 +32,8 @@ import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
-import org.opencrawling.filesystem.FileSystemRepositoryConnector;
+import org.opencrawling.runtime.connector.ConnectorFactory;
+import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -51,8 +52,7 @@ public class JobController {
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private final List<JobDTO> jobs;
     private final JobOrchestrator jobOrchestrator;
-    private final FileSystemRepositoryConnector fileSystemRepositoryConnector;
-    private final OutputConnector outputConnector;
+    private final ConnectorFactory connectorFactory;
     private final JdbcTemplate jdbcTemplate;
 
     @Autowired(required = false)
@@ -64,12 +64,10 @@ public class JobController {
     @Autowired
     public JobController(
             JobOrchestrator jobOrchestrator,
-            FileSystemRepositoryConnector fileSystemRepositoryConnector,
-            OutputConnector outputConnector,
+            ConnectorFactory connectorFactory,
             JdbcTemplate jdbcTemplate) {
         this.jobOrchestrator = jobOrchestrator;
-        this.fileSystemRepositoryConnector = fileSystemRepositoryConnector;
-        this.outputConnector = outputConnector;
+        this.connectorFactory = connectorFactory;
         this.jdbcTemplate = jdbcTemplate;
         
         // Initial defaults
@@ -195,410 +193,29 @@ public class JobController {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
         } else {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
-            RepositoryConnector resolvedConnector = null;
-            OutputConnector resolvedOutputConnector = null;
-            try {
-                List<ConnectorController.ConnectorDTO> connectors = 
-                    PersistenceHelper.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
-                
-                // 1. Repository Connector Resolution
-                ConnectorController.ConnectorDTO connConfig = connectors.stream()
-                    .filter(c -> c.name().equalsIgnoreCase(activeJob.repositoryConnector()))
-                    .findFirst()
-                    .orElse(null);
-                    
-                if (connConfig != null) {
-                    if (connConfig.className().contains("Alfresco")) {
-                        String url = connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
-                        String username = connConfig.configuration().getOrDefault("username", "admin");
-                        String password = connConfig.configuration().getOrDefault("password", "admin");
-                        int batchSize = 100;
-                        try {
-                            batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
-                        } catch (Exception ignored) {}
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
-                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
-                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
-                        String siteId = connConfig.configuration().getOrDefault("siteId", "");
-                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
-                        String excludedFoldersStr = connConfig.configuration().getOrDefault("excludedFolders", "Data Dictionary");
-                        java.util.Set<String> excludedFolders = java.util.Arrays.stream(excludedFoldersStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        String searchQuery = connConfig.configuration().getOrDefault("searchQuery", "TYPE:'cm:content'");
-                        String queryLanguage = connConfig.configuration().getOrDefault("queryLanguage", "afts");
-                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
-                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
-                        long maxContentSizeBytes = 52428800L;
-                        try {
-                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
-                        } catch (Exception ignored) {}
-                        String mimeTypeFilterStr = connConfig.configuration().getOrDefault("mimeTypeFilter", "");
-                        java.util.Set<String> mimeTypeFilter = java.util.Arrays.stream(mimeTypeFilterStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-
-                        resolvedConnector = new org.opencrawling.alfresco.AlfrescoRepositoryConnector(
-                                url, username, password, batchSize,
-                                org.opencrawling.alfresco.AlfrescoCrawlMode.fromString(crawlModeStr),
-                                rootFolderPath, rootFolderId, siteId,
-                                includeSubfolders, excludedFolders,
-                                searchQuery, queryLanguage,
-                                includeAcls, includeContentStream,
-                                maxContentSizeBytes, mimeTypeFilter,
-                                timeoutSeconds
-                        );
-                    } else if (connConfig.className().contains("Iceberg")) {
-                        String catalogType = connConfig.configuration().getOrDefault("catalogType", "in-memory");
-                        String catalogUri = connConfig.configuration().getOrDefault("catalogUri", "");
-                        String warehouse = connConfig.configuration().getOrDefault("warehouse", "tmp/iceberg-warehouse");
-                        String idColumn = connConfig.configuration().getOrDefault("idColumn", "");
-                        resolvedConnector = new org.opencrawling.iceberg.IcebergRepositoryConnector(catalogType, catalogUri, warehouse, idColumn);
-                    } else if (connConfig.className().contains("Cmis") || connConfig.className().contains("cmis")) {
-                        String endpointUrl = connConfig.configuration().getOrDefault("endpointUrl",
-                                connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"));
-                        String repositoryId = connConfig.configuration().getOrDefault("repositoryId", "");
-                        String username = connConfig.configuration().getOrDefault("username", "admin");
-                        String password = connConfig.configuration().getOrDefault("password", "admin");
-                        String bindingTypeStr = connConfig.configuration().getOrDefault("bindingType", "browser");
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
-                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
-                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
-                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
-                        String excludedFolderPathsStr = connConfig.configuration().getOrDefault("excludedFolderPaths", "");
-                        java.util.Set<String> excluded = java.util.Arrays.stream(excludedFolderPathsStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        String cmisQuery = connConfig.configuration().getOrDefault("cmisQuery", "SELECT * FROM cmis:document");
-                        String versionsModeStr = connConfig.configuration().getOrDefault("versionsMode", "latest_major");
-                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
-                        long maxContentSizeBytes = 52428800L;
-                        try {
-                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
-                        } catch (Exception ignored) {}
-                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
-                        boolean includeSecondaryTypes = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSecondaryTypes", "true"));
-                        boolean changeLogEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("changeLogEnabled", "false"));
-                        String changeLogToken = connConfig.configuration().getOrDefault("changeLogToken", "");
-                        int batchSize = 100;
-                        try {
-                            batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
-                        } catch (Exception ignored) {}
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-
-                        resolvedConnector = new org.opencrawling.cmis.CmisRepositoryConnector(
-                                endpointUrl, repositoryId, username, password,
-                                org.opencrawling.cmis.CmisBindingType.fromString(bindingTypeStr),
-                                org.opencrawling.cmis.CmisCrawlMode.fromString(crawlModeStr),
-                                rootFolderPath, rootFolderId, includeSubfolders, excluded,
-                                cmisQuery, org.opencrawling.cmis.CmisVersionsMode.fromString(versionsModeStr),
-                                includeContentStream, maxContentSizeBytes, includeAcls, includeSecondaryTypes,
-                                changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
-                        );
-                        log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
-                    } else if (connConfig.className().contains("DoxisRepositoryConnector")) {
-                        org.opencrawling.doxis.DoxisProperties doxisSettings =
-                                org.opencrawling.doxis.DoxisProperties.fromConfiguration(connConfig.configuration());
-                        resolvedConnector = new org.opencrawling.doxis.DoxisRepositoryConnector(doxisSettings);
-                        log.info("Successfully resolved dynamic Doxis repository connector for '{}' (repository '{}', {} mode)",
-                                doxisSettings.url(), doxisSettings.repositoryId(), doxisSettings.crawlMode());
-                    } else if (connConfig.className().contains("SharePointRepositoryConnector")) {
-                        org.opencrawling.sharepoint.SharePointProperties sharePointSettings =
-                                org.opencrawling.sharepoint.SharePointProperties.fromConfiguration(connConfig.configuration());
-                        resolvedConnector = new org.opencrawling.sharepoint.SharePointRepositoryConnector(sharePointSettings);
-                        log.info("Successfully resolved dynamic SharePoint repository connector for '{}' ({} mode)",
-                                sharePointSettings.siteUrl() != null ? sharePointSettings.siteUrl() : sharePointSettings.siteId(),
-                                sharePointSettings.crawlMode());
-                    } else if (connConfig.className().contains("MFilesRepositoryConnector")) {
-                        org.opencrawling.mfiles.MFilesProperties mfilesSettings =
-                                org.opencrawling.mfiles.MFilesProperties.fromConfiguration(connConfig.configuration());
-                        resolvedConnector = new org.opencrawling.mfiles.MFilesRepositoryConnector(mfilesSettings);
-                        log.info("Successfully resolved dynamic M-Files repository connector for '{}' (vault '{}', {} mode)",
-                                mfilesSettings.url(), mfilesSettings.vaultGuid(), mfilesSettings.crawlMode());
-                    } else if (connConfig.className().contains("FileNetRepositoryConnector")) {
-                        org.opencrawling.filenet.FileNetProperties filenetSettings =
-                                org.opencrawling.filenet.FileNetProperties.fromConfiguration(connConfig.configuration());
-                        resolvedConnector = new org.opencrawling.filenet.FileNetRepositoryConnector(filenetSettings);
-                        log.info("Successfully resolved dynamic FileNet repository connector for '{}' (object store '{}', {} mode)",
-                                filenetSettings.url(), filenetSettings.objectStore(), filenetSettings.crawlMode());
-                    } else if (connConfig.className().contains("DocumentumRepositoryConnector")) {
-                        org.opencrawling.documentum.DocumentumProperties documentumSettings =
-                                org.opencrawling.documentum.DocumentumProperties.fromConfiguration(connConfig.configuration());
-                        resolvedConnector = new org.opencrawling.documentum.DocumentumRepositoryConnector(documentumSettings);
-                        log.info("Successfully resolved dynamic Documentum repository connector for '{}' (repository '{}', {} mode)",
-                                documentumSettings.url(), documentumSettings.repository(), documentumSettings.crawlMode());
-                    } else if (connConfig.className().contains("Jdbc")) {
-                        String url = connConfig.configuration().getOrDefault("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1");
-                        String driverClassName = connConfig.configuration().getOrDefault("driverClassName", connConfig.configuration().getOrDefault("driver-class-name", ""));
-                        String username = connConfig.configuration().getOrDefault("username", "");
-                        String password = connConfig.configuration().getOrDefault("password", "");
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", connConfig.configuration().getOrDefault("mode", "table"));
-                        String tableName = connConfig.configuration().getOrDefault("tableName", connConfig.configuration().getOrDefault("table-name", ""));
-                        String schemaName = connConfig.configuration().getOrDefault("schemaName", connConfig.configuration().getOrDefault("schema-name", ""));
-                        String pkCols = connConfig.configuration().getOrDefault("primaryKeyColumns", connConfig.configuration().getOrDefault("primaryKeyColumn", "id"));
-                        java.util.Set<String> primaryKeyColumns = java.util.Arrays.stream(pkCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String titleColumn = connConfig.configuration().getOrDefault("titleColumn", "title");
-                        String exclCols = connConfig.configuration().getOrDefault("excludedColumns", "");
-                        java.util.Set<String> excludedColumns = java.util.Arrays.stream(exclCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String querySql = connConfig.configuration().getOrDefault("querySql", connConfig.configuration().getOrDefault("sql", ""));
-                        String blobColumnName = connConfig.configuration().getOrDefault("blobColumnName", "");
-                        String fileNameColumn = connConfig.configuration().getOrDefault("fileNameColumn", "");
-                        String mimeTypeColumn = connConfig.configuration().getOrDefault("mimeTypeColumn", "");
-                        boolean incrementalEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("incrementalEnabled", "false"));
-                        String hwmColumn = connConfig.configuration().getOrDefault("hwmColumn", "updated_at");
-                        String hwmType = connConfig.configuration().getOrDefault("hwmType", "timestamp");
-                        boolean softDeleteEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("softDeleteEnabled", "false"));
-                        String softDeleteColumn = connConfig.configuration().getOrDefault("softDeleteColumn", "is_deleted");
-                        String softDeleteValue = connConfig.configuration().getOrDefault("softDeleteValue", "true");
-                        boolean securityEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("securityEnabled", "false"));
-                        String userCols = connConfig.configuration().getOrDefault("userColumns", "");
-                        java.util.Set<String> userColumns = java.util.Arrays.stream(userCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String groupCols = connConfig.configuration().getOrDefault("groupColumns", "");
-                        java.util.Set<String> groupColumns = java.util.Arrays.stream(groupCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String tenantColumn = connConfig.configuration().getOrDefault("tenantColumn", "");
-                        String defaultPermission = connConfig.configuration().getOrDefault("defaultPermission", "read");
-                        int fetchSize = 1000;
-                        try { fetchSize = Integer.parseInt(connConfig.configuration().getOrDefault("fetchSize", "1000")); } catch (Exception ignored) {}
-                        int batchSize = 100;
-                        try { batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100")); } catch (Exception ignored) {}
-                        int maxPoolSize = 10;
-                        try { maxPoolSize = Integer.parseInt(connConfig.configuration().getOrDefault("maxPoolSize", "10")); } catch (Exception ignored) {}
-                        int minIdle = 2;
-                        try { minIdle = Integer.parseInt(connConfig.configuration().getOrDefault("minIdle", "2")); } catch (Exception ignored) {}
-                        long connectionTimeoutMs = 30000L;
-                        try { connectionTimeoutMs = Long.parseLong(connConfig.configuration().getOrDefault("connectionTimeoutMs", "30000")); } catch (Exception ignored) {}
-
-                        String narrativizationTemplate = connConfig.configuration().getOrDefault("narrativizationTemplate", "");
-
-                        org.opencrawling.jdbc.JdbcRepositoryConnector jdbcConn = new org.opencrawling.jdbc.JdbcRepositoryConnector(
-                                url, driverClassName, username, password,
-                                org.opencrawling.jdbc.JdbcCrawlMode.fromString(crawlModeStr),
-                                tableName, schemaName, primaryKeyColumns, titleColumn, excludedColumns,
-                                querySql, blobColumnName, fileNameColumn, mimeTypeColumn,
-                                incrementalEnabled, hwmColumn, hwmType,
-                                softDeleteEnabled, softDeleteColumn, softDeleteValue,
-                                securityEnabled, userColumns, groupColumns, tenantColumn, defaultPermission,
-                                fetchSize, batchSize, maxPoolSize, minIdle, connectionTimeoutMs
-                        );
-                        if (!narrativizationTemplate.isBlank()) {
-                            jdbcConn.setNarrativizationTemplate(narrativizationTemplate);
-                        }
-                        resolvedConnector = jdbcConn;
-                    } else if (connConfig.className().contains("GrpcPush") || connConfig.className().contains("grpcPush")) {
-                        resolvedConnector = new org.opencrawling.push.grpc.GrpcPushRepositoryConnector();
-                        log.info("Successfully resolved dynamic gRPC Push repository connector for '{}'", connConfig.name());
-                    } else {
-                        resolvedConnector = fileSystemRepositoryConnector;
-                    }
-                }
-
-                // 2. Output Connector Resolution
-                ConnectorController.ConnectorDTO outConfig = connectors.stream()
-                    .filter(c -> c.name().equalsIgnoreCase(activeJob.outputConnector()) || (c.type() != null && c.type().equalsIgnoreCase("output") && c.name().equalsIgnoreCase(activeJob.outputConnector())))
-                    .findFirst()
-                    .orElse(null);
-
-                if (outConfig != null) {
-                    String cls = outConfig.className();
-                    if (cls.contains("Qdrant")) {
-                        String host = outConfig.configuration().getOrDefault("qdrantHost", "localhost");
-                        int grpcPort = 6334;
-                        try {
-                            grpcPort = Integer.parseInt(outConfig.configuration().getOrDefault("qdrantPort", "6334"));
-                        } catch (Exception ignored) {}
-                        boolean useTls = Boolean.parseBoolean(outConfig.configuration().getOrDefault("useTls", "false"));
-                        String apiKey = outConfig.configuration().getOrDefault("qdrantApiKey", "");
-                        String collectionName = outConfig.configuration().getOrDefault("qdrantCollection", "enterprise_kb");
-                        int dimensions = 1024;
-                        try {
-                            dimensions = Integer.parseInt(outConfig.configuration().getOrDefault("qdrantDimensions", "1024"));
-                        } catch (Exception ignored) {}
-
-                        io.qdrant.client.QdrantGrpcClient.Builder grpcBuilder = io.qdrant.client.QdrantGrpcClient.newBuilder(host, grpcPort, useTls);
-                        if (apiKey != null && !apiKey.isBlank()) {
-                            grpcBuilder.withApiKey(apiKey);
-                        }
-                        io.qdrant.client.QdrantClient qdrantClient = new io.qdrant.client.QdrantClient(grpcBuilder.build());
-
-                        org.opencrawling.qdrant.config.QdrantOutputProperties props = new org.opencrawling.qdrant.config.QdrantOutputProperties(
-                            host, grpcPort, apiKey, collectionName, dimensions,
-                            org.opencrawling.qdrant.config.QdrantOutputProperties.Distance.COSINE,
-                            org.opencrawling.qdrant.config.QdrantOutputProperties.Quantization.NONE,
-                            useTls, 500
-                        );
-                        org.opencrawling.qdrant.config.QdrantCollectionInitializer initializer = new org.opencrawling.qdrant.config.QdrantCollectionInitializer(qdrantClient, props);
-                        initializer.initializeCollection();
-
-                        org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
-                        resolvedOutputConnector = new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper, null);
-                        log.info("Successfully resolved dynamic Qdrant output connector for collection '{}'", collectionName);
-                    } else if (cls.contains("Vespa")) {
-                        String endpoint = outConfig.configuration().getOrDefault("vespaEndpoint", "http://localhost:8080");
-                        String namespace = outConfig.configuration().getOrDefault("vespaNamespace", "opencrawling");
-                        String documentType = outConfig.configuration().getOrDefault("vespaDocumentType", "opencrawling_chunk");
-                        int dimensions = 1024;
-                        try {
-                            dimensions = Integer.parseInt(outConfig.configuration().getOrDefault("vespaDimensions", "1024"));
-                        } catch (Exception ignored) {}
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(outConfig.configuration().getOrDefault("vespaTimeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-                        boolean tlsEnabled = Boolean.parseBoolean(outConfig.configuration().getOrDefault("vespaTlsEnabled", "false"));
-                        String tlsCertificate = outConfig.configuration().getOrDefault("vespaTlsCertificate", "");
-                        String tlsPrivateKey = outConfig.configuration().getOrDefault("vespaTlsPrivateKey", "");
-                        String tlsCaCertificates = outConfig.configuration().getOrDefault("vespaTlsCaCertificates", "");
-
-                        ai.vespa.feed.client.FeedClientBuilder feedClientBuilder = ai.vespa.feed.client.FeedClientBuilder.create(java.net.URI.create(endpoint));
-                        if (tlsEnabled && !tlsCertificate.isBlank() && !tlsPrivateKey.isBlank()) {
-                            feedClientBuilder.setCertificate(java.nio.file.Path.of(tlsCertificate), java.nio.file.Path.of(tlsPrivateKey));
-                            if (!tlsCaCertificates.isBlank()) {
-                                feedClientBuilder.setCaCertificatesFile(java.nio.file.Path.of(tlsCaCertificates));
-                            }
-                        }
-                        ai.vespa.feed.client.FeedClient feedClient = feedClientBuilder.build();
-
-                        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = new org.opencrawling.vespa.config.VespaOutputProperties(
-                                endpoint, namespace, documentType, dimensions, timeoutSeconds, tlsEnabled,
-                                tlsCertificate.isBlank() ? null : tlsCertificate,
-                                tlsPrivateKey.isBlank() ? null : tlsPrivateKey,
-                                tlsCaCertificates.isBlank() ? null : tlsCaCertificates
-                        );
-
-                        org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
-                        resolvedOutputConnector = new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper, null);
-                        log.info("Successfully resolved dynamic Vespa output connector at endpoint '{}'", endpoint);
-                    } else if (cls.contains("SeaTunnel") || cls.contains("seatunnel")) {
-                        String restUrl = outConfig.configuration().getOrDefault("seatunnelRestUrl", "http://localhost:8080");
-                        String jobName = outConfig.configuration().getOrDefault("seatunnelJobName", "opencrawling_ingestion_pipeline");
-                        String kafkaBootstrap = outConfig.configuration().getOrDefault("seatunnelKafkaBootstrapServers", "localhost:9092");
-                        String targetSinks = outConfig.configuration().getOrDefault("seatunnelTargetSinks", "console");
-                        org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
-                                restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
-                                "opencrawling-embedded", "opencrawling-seatunnel-group",
-                                targetSinks, 1024, true, 30
-                        );
-                        org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
-                        resolvedOutputConnector = new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
-                        log.info("Successfully resolved dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
-                    } else if (cls.contains("Ozone") || cls.contains("ozone")) {
-                        String volume = outConfig.configuration().getOrDefault("volume", "opencrawling");
-                        String bucket = outConfig.configuration().getOrDefault("bucket", "migration");
-                        String clientType = outConfig.configuration().getOrDefault("clientType", "NATIVE");
-                        String omHost = outConfig.configuration().getOrDefault("omHost", "localhost");
-                        int omPort = 9862;
-                        try { omPort = Integer.parseInt(outConfig.configuration().getOrDefault("omPort", "9862")); } catch (Exception ignored) {}
-                        String s3Endpoint = outConfig.configuration().getOrDefault("s3Endpoint", "http://localhost:9878");
-                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "any");
-                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "any");
-
-                        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
-                        ozoneProps.setVolume(volume);
-                        ozoneProps.setBucket(bucket);
-                        ozoneProps.setClientType(clientType);
-                        ozoneProps.setOmHost(omHost);
-                        ozoneProps.setOmPort(omPort);
-                        ozoneProps.setS3Endpoint(s3Endpoint);
-                        ozoneProps.setAccessKey(accessKey);
-                        ozoneProps.setSecretKey(secretKey);
-                        ozoneProps.setKeyStrategy(outConfig.configuration().getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
-                        ozoneProps.setTombstoneAction(outConfig.configuration().getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
-
-                        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties, null);
-                        ozoneConnector.setPipelineMode(resolvePipelineMode(activeJob));
-                        resolvedOutputConnector = ozoneConnector;
-                        log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
-                    } else if (cls.contains("S3") || (cls.contains("s3") && !cls.contains("opensearch") && !cls.contains("OpenSearch"))) {
-                        String bucket = outConfig.configuration().getOrDefault("bucket", "enterprise-migration-lake");
-                        String region = outConfig.configuration().getOrDefault("region", "us-east-1");
-                        String endpoint = outConfig.configuration().getOrDefault("endpointOverride", "");
-                        boolean pathStyle = Boolean.parseBoolean(outConfig.configuration().getOrDefault("pathStyleAccess", "false"));
-                        String credsStrategy = outConfig.configuration().getOrDefault("credentialsStrategy", "DEFAULT_CHAIN");
-                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "");
-                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "");
-                        String sessionToken = outConfig.configuration().getOrDefault("sessionToken", "");
-                        String assumeRoleArn = outConfig.configuration().getOrDefault("assumeRoleArn", "");
-                        String assumeRoleExternalId = outConfig.configuration().getOrDefault("assumeRoleExternalId", "");
-                        String keyStrategy = outConfig.configuration().getOrDefault("keyStrategy", "HIERARCHICAL");
-                        String keyPrefix = outConfig.configuration().getOrDefault("keyPrefix", "migration/v1/");
-                        String storageClass = outConfig.configuration().getOrDefault("storageClass", "INTELLIGENT_TIERING");
-                        String sse = outConfig.configuration().getOrDefault("serverSideEncryption", "SSE_S3");
-                        String kmsKeyId = outConfig.configuration().getOrDefault("kmsKeyId", "");
-                        boolean bucketKey = Boolean.parseBoolean(outConfig.configuration().getOrDefault("bucketKeyEnabled", "true"));
-                        String tombstoneAction = outConfig.configuration().getOrDefault("tombstoneAction", "DELETE_OBJECTS");
-
-                        org.opencrawling.s3.config.S3OutputProperties s3Props = new org.opencrawling.s3.config.S3OutputProperties();
-                        s3Props.setBucket(bucket);
-                        s3Props.setRegion(region);
-                        s3Props.setEndpointOverride(endpoint);
-                        s3Props.setPathStyleAccess(pathStyle);
-                        s3Props.setCredentialsStrategy(credsStrategy);
-                        s3Props.setAccessKey(accessKey);
-                        s3Props.setSecretKey(secretKey);
-                        s3Props.setSessionToken(sessionToken);
-                        s3Props.setAssumeRoleArn(assumeRoleArn);
-                        s3Props.setAssumeRoleExternalId(assumeRoleExternalId);
-                        s3Props.setKeyStrategy(keyStrategy);
-                        s3Props.setKeyPrefix(keyPrefix);
-                        s3Props.setStorageClass(storageClass);
-                        s3Props.setServerSideEncryption(sse);
-                        s3Props.setKmsKeyId(kmsKeyId);
-                        s3Props.setBucketKeyEnabled(bucketKey);
-                        s3Props.setTombstoneAction(tombstoneAction);
-
-                        String customHeadersJson = outConfig.configuration().get("customHeaders");
-                        if (customHeadersJson != null && !customHeadersJson.isBlank()) {
-                            try {
-                                Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
-                                        customHeadersJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
-                                if (parsed != null) {
-                                    s3Props.getCustomHeaders().putAll(parsed);
-                                }
-                            } catch (Exception ex) {
-                                log.warn("Failed to parse customHeaders JSON for S3 output connector: {}", ex.getMessage());
-                            }
-                        }
-                        outConfig.configuration().forEach((k, v) -> {
-                            if (k != null && k.startsWith("customHeader.") && v != null && !v.isBlank()) {
-                                String headerName = k.substring("customHeader.".length()).trim();
-                                if (!headerName.isBlank()) {
-                                    s3Props.getCustomHeaders().put(headerName, v.trim());
-                                }
-                            }
-                        });
-
-                        org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties, null);
-                        s3Connector.setPipelineMode(resolvePipelineMode(activeJob));
-                        resolvedOutputConnector = s3Connector;
-                        log.info("Successfully resolved dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Failed to resolve dynamic connectors for job {}: {}", id, e.getMessage(), e);
-            }
-            
-            if (resolvedConnector == null) {
-                resolvedConnector = fileSystemRepositoryConnector; // Fallback
-            }
-            if (resolvedOutputConnector == null) {
-                resolvedOutputConnector = this.outputConnector; // Fallback
-            }
-
             final PipelineMode mode = resolvePipelineMode(activeJob);
+            RepositoryConnector resolvedConnector;
+            OutputConnector resolvedOutputConnector;
+            try {
+                List<ConnectorController.ConnectorDTO> connectors =
+                    PersistenceHelper.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
+
+                ConnectorController.ConnectorDTO connConfig = connectors.stream()
+                    .filter(c -> c.name() != null && c.name().equalsIgnoreCase(activeJob.repositoryConnector()))
+                    .findFirst()
+                    .orElse(null);
+                ConnectorController.ConnectorDTO outConfig = connectors.stream()
+                    .filter(c -> c.name() != null && c.name().equalsIgnoreCase(activeJob.outputConnector()))
+                    .findFirst()
+                    .orElse(null);
+
+                resolvedConnector = connectorFactory.repository(connConfig);
+                resolvedOutputConnector = connectorFactory.output(outConfig, mode);
+            } catch (ConnectorResolutionException e) {
+                log.error("Job {} rejected: {}", id, e.getMessage(), e);
+                updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
 
             // Fail fast: the Apache Ozone and AWS S3 output connectors are dedicated to Migration Mode only
             if ((resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector
