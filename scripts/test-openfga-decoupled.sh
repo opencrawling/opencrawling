@@ -204,22 +204,23 @@ pass "documents indexed and their permissions mirrored to OpenFGA"
 
 # ==============================================================================
 step 3 "OpenFGA tuples and MCP search decisions"
-has_tuple "$DOC_FINANCE" "grantee group:s_finance#member" || fail "finance grant tuple missing"
-has_tuple "$DOC_FINANCE" "blocked group:s_mallory#member" || fail "mallory block tuple missing"
-has_tuple "$DOC_ALICE" "grantee group:s_alice#member" || fail "admin grant must give read"
+has_tuple "$DOC_FINANCE" "grantee group:g_finance#member" || fail "finance grant tuple missing"
+has_tuple "$DOC_FINANCE" "blocked group:u_mallory#member" || fail "mallory block tuple missing"
+has_tuple "$DOC_ALICE" "grantee group:u_alice#member" || fail "admin grant must give read"
 has_tuple "$DOC_PUBLIC" "grantee user:*" || fail "GROUP_EVERYONE must become public"
 wait_until "MCP session" 60 mcp_init
 expect_found "carol" "finance" "$DOC_FINANCE $DOC_PUBLIC"
 expect_found "carol" "GROUP:FINANCE" "$DOC_FINANCE $DOC_PUBLIC"
 expect_found "mallory" "finance" "$DOC_PUBLIC"
 expect_found "alice" "" "$DOC_ALICE $DOC_PUBLIC"
+expect_found "finance" "" "$DOC_PUBLIC"   # a user named like the group gets nothing from group:Finance (#224)
 expect_found "user:Alice" "" "$DOC_ALICE $DOC_PUBLIC"
 expect_found "dave" "" "$DOC_PUBLIC"
 pass "each caller finds exactly what OpenFGA allows"
 
 # ==============================================================================
 step 4 "A membership change in OpenFGA takes effect without re-indexing"
-MEMBERSHIP='{"user":"user:p_dave","relation":"member","object":"group:s_finance"}'
+MEMBERSHIP='{"user":"user:p_dave","relation":"member","object":"group:g_finance"}'
 fga POST "/stores/${STORE}/write" "{\"writes\":{\"tuple_keys\":[${MEMBERSHIP}]}}" >/dev/null
 wait_until "dave finds the finance report" 60 finds "dave" "" "$DOC_FINANCE"
 fga POST "/stores/${STORE}/write" "{\"deletes\":{\"tuple_keys\":[${MEMBERSHIP}]}}" >/dev/null
@@ -231,9 +232,9 @@ step 5 "Changed permissions move the tuples"
 ingest "$DOC_FINANCE" "Quarterly finance report with revenue figures. ${RUN}" \
   '[{"identity":"hr","identityType":"group","access":"read"}]'
 finance_moved_to_hr() {
-  has_tuple "$DOC_FINANCE" "grantee group:s_hr#member" \
-    && lacks_tuple "$DOC_FINANCE" "grantee group:s_finance#member" \
-    && lacks_tuple "$DOC_FINANCE" "blocked group:s_mallory#member"
+  has_tuple "$DOC_FINANCE" "grantee group:g_hr#member" \
+    && lacks_tuple "$DOC_FINANCE" "grantee group:g_finance#member" \
+    && lacks_tuple "$DOC_FINANCE" "blocked group:u_mallory#member"
 }
 wait_until "finance grant replaced by hr" "$TIMEOUT" finance_moved_to_hr
 wait_until "finance members lose the report" 60 misses "carol" "finance" "$DOC_FINANCE"

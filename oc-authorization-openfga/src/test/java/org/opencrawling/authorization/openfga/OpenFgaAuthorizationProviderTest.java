@@ -38,12 +38,12 @@ class OpenFgaAuthorizationProviderTest {
     private final OpenFgaProperties properties = new OpenFgaProperties(null, "s", "m", null, false, null, null, null, null);
 
     @Test
-    void callerMembershipsCoverPrincipalAndRolesInBothForms() {
+    void callerMembershipsAreThePrincipalsUserGroupAndEachRolesGroupGroup() {
         List<ClientTupleKey> tuples = OpenFgaAuthorizationProvider.contextualTuples("user:p_alice",
                 Caller.asserted("user:Alice", List.of("group:Finance", "finance")));
 
         assertThat(tuples).extracting(ClientTupleKey::getObject).containsExactly(
-                "group:r_user%3Aalice", "group:s_alice", "group:r_group%3Afinance", "group:s_finance", "group:r_finance");
+                "group:u_alice", "group:g_finance");
         assertThat(tuples).allSatisfy(t -> {
             assertThat(t.getUser()).isEqualTo("user:p_alice");
             assertThat(t.getRelation()).isEqualTo("member");
@@ -53,9 +53,12 @@ class OpenFgaAuthorizationProviderTest {
     @Test
     void tooManyGroupsFailClosed() {
         List<String> roles = new ArrayList<>();
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < 99; i++) {
             roles.add("role-" + i);
         }
+        // One tuple per identity: the principal plus 99 roles is exactly the limit.
+        assertThat(OpenFgaAuthorizationProvider.contextualTuples("user:x", Caller.asserted("x", roles))).hasSize(100);
+        roles.add("role-99");
         assertThatThrownBy(() -> OpenFgaAuthorizationProvider.contextualTuples("user:x", Caller.asserted("x", roles)))
                 .isInstanceOf(AuthorizationUnavailableException.class);
     }

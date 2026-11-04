@@ -52,7 +52,7 @@ class OpenFgaDifferentialIT {
 
     private static final String[] IDENTITIES = {
             "alice", "Alice", "bob", "finance", "FINANCE", "group:finance", "GROUP:Finance", "user:alice",
-            "User:Bob", "group:user:alice", "user:group:finance", "public", "Public", "GROUP_EVERYONE",
+            "User:Bob", "group:user:alice", "user:group:finance", "user:finance", "group:alice", "GROUP:bob", "public", "Public", "GROUP_EVERYONE",
             "DOMAIN\\Jane Doe", "jane doe", "zoë", "a#b@c", "100%", "secured", "user:a;group:b", "IŞIK", "ışık", "ſtrasse", "STRASSE", "Σ", "ς", "cn=bob,ou=users,dc=corp", ""};
     private static final String[] TYPES = {"user", "group", "public", null};
     private static final String[] ACCESS = {"read", "write", "admin", "deny", "none", null};

@@ -134,10 +134,10 @@ public final class OpenFgaAuthorizationProvider implements RelationshipAuthoriza
     static List<ClientTupleKey> contextualTuples(String user, Caller caller) {
         Set<String> groups = new LinkedHashSet<>();
         if (caller.principal() != null && !caller.principal().isBlank()) {
-            groups.addAll(List.of(OpenFgaIdentifiers.principalGroups(caller.principal())));
+            groups.add(OpenFgaIdentifiers.principalGroup(caller.principal()));
         }
         for (String role : caller.groups()) {
-            groups.addAll(List.of(OpenFgaIdentifiers.roleGroups(role)));
+            groups.add(OpenFgaIdentifiers.roleGroup(role));
         }
         if (groups.size() > MAX_CONTEXTUAL_TUPLES) {
             throw new AuthorizationUnavailableException("The caller has " + groups.size()
