@@ -35,10 +35,12 @@ import java.util.regex.Pattern;
  *       outside {@code [a-z0-9._~-]} is percent-encoded as UTF-8; a result longer than
  *       {@link #MAX_ENCODED_LENGTH} becomes {@code %h<sha256>}, which no encoding can produce (encoded
  *       bytes are always {@code %} plus two upper-case hex digits).</li>
- *   <li>The metadata evaluator lets an ACL entry match either verbatim or with a leading {@code user:} /
- *       {@code group:} removed. Each identity is therefore stored as two groups: {@code r_<raw>} and
- *       {@code s_<stripped>}, and a caller is a member of the matching two groups for its principal and each
- *       role, so that a match in either form grants, exactly as before.</li>
+ *   <li>The metadata evaluator compares names without a leading {@code user:} (principal) or {@code group:}
+ *       (role), and an ACL entry's own prefix decides what it can match: {@code user:x} only the principal,
+ *       {@code group:x} only a role, a bare {@code x} either. An entry is therefore written to {@code u_<name>}
+ *       (user entries), {@code g_<name>} (group entries) or both (bare entries); the caller's principal is a
+ *       member of {@code u_<name>} and each role of {@code g_<name>}. A user never matches a group of the same
+ *       name.</li>
  * </ul>
  */
 public final class OpenFgaIdentifiers {
@@ -56,9 +58,8 @@ public final class OpenFgaIdentifiers {
     /** Longest encoded identity kept verbatim; longer ones are hashed. */
     public static final int MAX_ENCODED_LENGTH = 200;
 
-    private static final Pattern GRANT_PREFIX = Pattern.compile("^(?i)(group|user):");
-    private static final Pattern PRINCIPAL_PREFIX = Pattern.compile("^(?i)user:");
-    private static final Pattern ROLE_PREFIX = Pattern.compile("^(?i)group:");
+    private static final Pattern USER_PREFIX = Pattern.compile("^(?i)user:");
+    private static final Pattern GROUP_PREFIX = Pattern.compile("^(?i)group:");
 
     private OpenFgaIdentifiers() {
     }
@@ -68,32 +69,39 @@ public final class OpenFgaIdentifiers {
         return DOCUMENT_TYPE + ":" + sha256(documentId.trim());
     }
 
-    /** The group a raw (verbatim) identity form belongs to, e.g. {@code group:r_finance}. */
-    public static String rawGroup(String identity) {
-        return GROUP_TYPE + ":r_" + encode(identity.trim());
+    /** The group holding users named {@code name}, e.g. {@code group:u_alice}. */
+    public static String userNameGroup(String name) {
+        return GROUP_TYPE + ":u_" + encode(name);
     }
 
-    /** The group a prefix-stripped identity form belongs to, e.g. {@code group:s_finance}. */
-    public static String strippedGroup(String strippedIdentity) {
-        return GROUP_TYPE + ":s_" + encode(strippedIdentity);
+    /** The group holding members of the group {@code name}, e.g. {@code group:g_finance}. */
+    public static String groupNameGroup(String name) {
+        return GROUP_TYPE + ":g_" + encode(name);
     }
 
-    /** The groups an ACL entry is written to: its raw form and its form without a user:/group: prefix. */
+    /**
+     * The groups an ACL entry is written to: {@code user:x} to the user group of {@code x}, {@code group:x} to
+     * the group group of {@code x}, and an entry without a prefix to both.
+     */
     public static String[] aclEntryGroups(String identity) {
         String trimmed = identity.trim();
-        return new String[] {rawGroup(trimmed), strippedGroup(GRANT_PREFIX.matcher(trimmed).replaceFirst(""))};
+        if (USER_PREFIX.matcher(trimmed).lookingAt()) {
+            return new String[] {userNameGroup(trimmed.substring(trimmed.indexOf(':') + 1))};
+        }
+        if (GROUP_PREFIX.matcher(trimmed).lookingAt()) {
+            return new String[] {groupNameGroup(trimmed.substring(trimmed.indexOf(':') + 1))};
+        }
+        return new String[] {userNameGroup(trimmed), groupNameGroup(trimmed)};
     }
 
-    /** The groups a caller's principal is a member of (its raw form and its form without user:). */
-    public static String[] principalGroups(String principal) {
-        String trimmed = principal.trim();
-        return new String[] {rawGroup(trimmed), strippedGroup(PRINCIPAL_PREFIX.matcher(trimmed).replaceFirst(""))};
+    /** The group a caller's principal is a member of: the user group of its name without {@code user:}. */
+    public static String principalGroup(String principal) {
+        return userNameGroup(USER_PREFIX.matcher(principal.trim()).replaceFirst(""));
     }
 
-    /** The groups a caller's role is a member of (its raw form and its form without group:). */
-    public static String[] roleGroups(String role) {
-        String trimmed = role.trim();
-        return new String[] {rawGroup(trimmed), strippedGroup(ROLE_PREFIX.matcher(trimmed).replaceFirst(""))};
+    /** The group a caller's role is a member of: the group group of its name without {@code group:}. */
+    public static String roleGroup(String role) {
+        return groupNameGroup(GROUP_PREFIX.matcher(role.trim()).replaceFirst(""));
     }
 
     /** The user a caller is checked as. Only a handle for its contextual memberships. */

@@ -54,7 +54,7 @@ public class AuthorizationSyncConsumer {
     @KafkaListener(
             topics = TOPIC,
             containerFactory = CONTAINER_FACTORY,
-            groupId = "${opencrawling.security.authorization.openfga.sync-group-id:opencrawling-authz-sync}")
+            groupId = "${opencrawling.security.authorization.openfga.sync-group-id:opencrawling-authz-sync-v2}")
     public void consume(IngestionMessage message) throws Exception {
         if (message == null || message.documentId() == null || message.documentId().isBlank()) {
             log.warn("Skipping authorization sync for a message without a document id.");

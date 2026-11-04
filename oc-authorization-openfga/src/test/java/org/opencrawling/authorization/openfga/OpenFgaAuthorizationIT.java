@@ -90,9 +90,10 @@ class OpenFgaAuthorizationIT {
     void grantsRolesPrefixesPublicAndDenials() throws Exception {
         writer.sync("it-grants", rules(grant("group:Finance"), grant("user:carol"), deny("mallory")));
 
-        assertThat(canRead("it-grants", "alice", "finance")).isTrue();      // role matches the stripped grant
-        assertThat(canRead("it-grants", "alice", "GROUP:FINANCE")).isTrue(); // role matches the raw grant
-        assertThat(canRead("it-grants", "carol")).isTrue();                  // principal matches stripped user:carol
+        assertThat(canRead("it-grants", "alice", "finance")).isTrue();      // role matches group:Finance
+        assertThat(canRead("it-grants", "alice", "GROUP:FINANCE")).isTrue(); // with its own group: prefix
+        assertThat(canRead("it-grants", "carol")).isTrue();                  // principal matches user:carol
+        assertThat(canRead("it-grants", "user:Carol")).isTrue();
         assertThat(canRead("it-grants", "bob", "hr")).isFalse();
         assertThat(canRead("it-grants", null, "finance")).isTrue();          // anonymous caller with a role
         assertThat(canRead("it-grants", "mallory", "finance")).isFalse();    // deny wins
@@ -101,6 +102,22 @@ class OpenFgaAuthorizationIT {
         assertThat(canRead("it-public", null)).isTrue();
         assertThat(canRead("it-public", "anyone")).isTrue();
         assertThat(canRead("it-public", "mallory")).isFalse();
+    }
+
+    @Test
+    void aUserNeverMatchesAGroupOfTheSameName() throws Exception {
+        writer.sync("it-kinds", rules(grant("group:finance"), grant("user:carol"), grant("shared")));
+        assertThat(canRead("it-kinds", "finance")).isFalse();           // a user named like the group
+        assertThat(canRead("it-kinds", "user:finance")).isFalse();
+        assertThat(canRead("it-kinds", "bob", "carol")).isFalse();       // a role named like the user
+        assertThat(canRead("it-kinds", "shared")).isTrue();              // no prefix: a user ...
+        assertThat(canRead("it-kinds", "bob", "shared")).isTrue();       // ... or a group
+
+        writer.sync("it-kind-denies", rules(grant("public"), deny("user:alice"), deny("group:contractors")));
+        assertThat(canRead("it-kind-denies", "alice")).isFalse();
+        assertThat(canRead("it-kind-denies", "bob", "alice")).isTrue();  // a role alice is not the user alice
+        assertThat(canRead("it-kind-denies", "bob", "contractors")).isFalse();
+        assertThat(canRead("it-kind-denies", "contractors")).isTrue();   // a user contractors is not the group
     }
 
     @Test
