@@ -45,6 +45,7 @@ import java.net.URI;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.List;
 import java.util.Map;
@@ -137,6 +138,18 @@ public class JobOrchestrator {
     @SuppressWarnings("preview")
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, narrativization,
+                pipelineMode, executionId, () -> false);
+    }
+
+    /**
+     * Runs a job until it completes or {@code stopRequested} becomes true. A stop is noticed before each document
+     * and, when the caller also interrupts the running thread, while waiting on the crawl. The run then ends with
+     * {@code false} and its ledger execution is closed as stopped.
+     */
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested) {
         
         PipelineMode resolvedMode = pipelineMode != null ? pipelineMode :
             (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.fromString(defaultPipelineMode));
@@ -155,12 +168,14 @@ public class JobOrchestrator {
                 narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
         }
 
-        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId);
+        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId,
+                stopRequested != null ? stopRequested : () -> false);
     }
 
     @SuppressWarnings("preview")
     private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
-            String transformationConnector, String jobId, String jobName, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode, String executionId) {
+            String transformationConnector, String jobId, String jobName, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested) {
         log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
@@ -182,6 +197,10 @@ public class JobOrchestrator {
             
             StructuredTaskScope.Subtask<List<ScanResult>> scanTask = scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
                 Function<RepositoryDocument, ScanResult> processDocument = initialDoc -> {
+                        // Outside the try below, which turns every exception into a per-document failure.
+                        if (stopRequested.getAsBoolean()) {
+                            throw new JobStoppedException(currentJobId);
+                        }
                         long docStartTime = System.currentTimeMillis();
                         try {
                             RepositoryDocument doc = initialDoc;
@@ -430,21 +449,55 @@ public class JobOrchestrator {
 
             log.info("Job scanning phase completed in {} ms. Documents published to Kafka.", duration);
             return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return stopped(currentJobId, currentExecutionId);
         } catch (StructuredTaskScope.FailedException e) {
+            if (stopRequested.getAsBoolean() || hasCause(e, JobStoppedException.class)) {
+                return stopped(currentJobId, currentExecutionId);
+            }
             if (ledgerAccumulator != null) {
-                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", e.getMessage()));
+                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", describe(e)));
             }
             log.error("Job execution failed due to subtask failure: ", e.getCause());
-            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + e.getCause().getMessage(), e.toString());
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + describe(e.getCause()), e.toString());
             return false;
         } catch (Exception e) {
+            if (stopRequested.getAsBoolean()) {
+                return stopped(currentJobId, currentExecutionId);
+            }
             if (ledgerAccumulator != null) {
-                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", e.getMessage()));
+                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", describe(e)));
             }
             log.error("Job execution failed: ", e);
-            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + e.getMessage(), e.toString());
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + describe(e), e.toString());
             return false;
         }
+    }
+
+    private boolean stopped(String jobId, String executionId) {
+        log.info("Job {} stopped [Exec ID: {}].", jobId, executionId);
+        if (ledgerAccumulator != null) {
+            ledgerAccumulator.completeExecution(executionId, false, Map.of("error", "stopped"));
+        }
+        return false;
+    }
+
+    /** A message for logs and the ledger; {@code Map.of} rejects the null message many exceptions carry. */
+    private static String describe(Throwable e) {
+        if (e == null) {
+            return "unknown error";
+        }
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    }
+
+    private static boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (type.isInstance(t)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

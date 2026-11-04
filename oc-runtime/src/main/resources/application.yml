@@ -156,6 +156,9 @@ opencrawling:
         client-auth: ${OPENCRAWLING_GRPC_PUSH_TLS_CLIENT_AUTH:NONE}
       reflection:
         enabled: true
+  jobs:
+    # Job runs at the same time in this runtime (job API); further starts get 429. 0 = no cap.
+    max-concurrent-runs: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS:0}
   ingest:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty

@@ -71,6 +71,22 @@ For high ingestion jobs, adjust Kafka topic partition numbers:
 
 ---
 
+## 🏃 Job Runs
+
+Jobs started through the job API (`POST /api/jobs/{id}/start`, the admin UI, the CLI and the SDK) run in the runtime that received the request:
+
+*   **One run per job:** starting a job that is already running returns `409`.
+*   **`OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS`** (`opencrawling.jobs.max-concurrent-runs`): how many jobs may run at the same time; a start beyond it returns `429`.
+    *   *Type*: `int`
+    *   *Default*: `0` (no cap)
+*   **Stop:** `POST /api/jobs/{id}/stop` ends the crawl, at the latest before its next document, and the job shows `Finished` with stage `Stopped`. It returns `202` while the run winds down; a job with no run here (for example a `Running` status left over from a restart) is simply marked `Finished`.
+*   **Runs in progress:** `GET /api/jobs/runs`, and `GET /api/jobs/{id}/run` for one job (`404` when it is not running).
+*   **Outcome:** a run that fails shows `Error`; before, a failed run was also shown as `Finished`.
+
+Runs are kept in memory: they are not shared between runtime instances and do not survive a restart.
+
+---
+
 ## 📥 OIS Ingestion Endpoint
 
 `POST /api/v1/ingest/ois/{jobId}` takes OIS documents from producers outside the runtime, such as the StormCrawler bolt, and runs them through the job's RAG pipeline.

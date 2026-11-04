@@ -55,7 +55,7 @@ class JobControllerConnectorResolutionTest {
     void setUp() {
         orchestrator = mock(JobOrchestrator.class);
         factory = mock(ConnectorFactory.class);
-        controller = new JobController(orchestrator, factory, mock(JdbcTemplate.class));
+        controller = new JobController(orchestrator, factory, new org.opencrawling.runtime.orchestrator.JobRunRegistry(0), mock(JdbcTemplate.class));
         String name = "resolution-test-" + UUID.randomUUID();
         controller.saveJob(new JobController.JobDTO("new", name, "No_Such_Connector", "No_Such_Output", "", "/tmp",
                 null, null, 0, null, null, null, "rag"));
@@ -90,7 +90,7 @@ class JobControllerConnectorResolutionTest {
         assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(200);
 
         verify(orchestrator, timeout(5000)).runJob(eq(repository), eq(output), eq("/tmp"), any(), eq(jobId),
-                anyString(), any(), eq(PipelineMode.RAG), anyString());
+                anyString(), any(), eq(PipelineMode.RAG), anyString(), any());
         // The job names connectors that are not saved: the factory is asked with no configuration, as before.
         verify(factory).repository(isNull());
         verify(factory).output(isNull(), eq(PipelineMode.RAG));
