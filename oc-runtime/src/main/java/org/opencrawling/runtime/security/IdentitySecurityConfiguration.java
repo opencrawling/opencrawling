@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,8 +54,12 @@ import java.util.Set;
  *       resource-server chain matches only those paths, so a bearer token meant for another endpoint (the OIS
  *       ingest token) is never parsed as a JWT.</li>
  * </ul>
+ *
+ * <p>Only servlet web applications get this configuration. The decoupled crawler and consumer containers run without
+ * a web server, serve no MCP endpoint, and have no {@code HttpSecurity} to build chains with.
  */
 @Configuration
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(IdentityProperties.class)
 public class IdentitySecurityConfiguration {
 
