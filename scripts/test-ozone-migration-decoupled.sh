@@ -667,8 +667,8 @@ if [ "$LOAD_DOCS" -gt 0 ]; then
 
   # Every generated document must be in the target (binary + sidecar)
   LOAD_KEYS=$(docker exec target-ozone-om ozone sh key list -l 1000000 /s3v/migration-target 2>/dev/null || echo "[]")
-  LOAD_BINARIES=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("/load/doc-[0-9]+\\.bin$"))] | length')
-  LOAD_SIDECARS=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("/load/doc-[0-9]+\\.bin\\.ois\\.json$"))] | length')
+  LOAD_BINARIES=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("(^|/)load/doc-[0-9]+\\.bin$"))] | length')
+  LOAD_SIDECARS=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("(^|/)load/doc-[0-9]+\\.bin\\.ois\\.json$"))] | length')
   if [ "$LOAD_BINARIES" -ne "$LOAD_DOCS" ] || [ "$LOAD_SIDECARS" -ne "$LOAD_DOCS" ]; then
     echo -e "${RED}FAIL: target has ${LOAD_BINARIES} binaries / ${LOAD_SIDECARS} sidecars, expected ${LOAD_DOCS} each${NC}"; exit 1
   fi
