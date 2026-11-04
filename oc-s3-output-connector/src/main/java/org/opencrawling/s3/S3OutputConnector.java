@@ -251,10 +251,7 @@ public class S3OutputConnector implements OutputConnector {
         // 2. Build companion OIS JSON metadata sidecar
         String lastMod = document.lastModified() != null ? document.lastModified().toString() : Instant.now().toString();
         String sourceUri = document.uri() != null ? document.uri() : "";
-        String originalPath = firstMetadataValue(document, "path", "relativePath", "file_path", "cmis:path");
-        if (originalPath == null) {
-            originalPath = sourceUri;
-        }
+        String originalPath = resolveOriginalPath(document, sourceUri);
 
         OisMigrationDocument.SourceRef sourceRef = new OisMigrationDocument.SourceRef(
                 defaultIfNull(firstMetadataValue(document, "source_type", "sourceType"), "repository"),
@@ -436,7 +433,7 @@ public class S3OutputConnector implements OutputConnector {
         }
 
         // Default: HIERARCHICAL strategy preserving the source directory structure when known
-        String sourcePath = firstMetadataValue(document, "relativePath", "file_path", "path");
+        String sourcePath = firstMetadataValue(document, "relativePath", "relative_path", "file_path", "path");
         if (sourcePath == null && document.uri() != null && document.uri().startsWith("file:")) {
             try {
                 sourcePath = URI.create(document.uri()).getPath();
@@ -445,7 +442,31 @@ public class S3OutputConnector implements OutputConnector {
             }
         }
         String hierarchical = sanitizePath(sourcePath);
-        return hierarchical != null ? prefix + hierarchical : prefix + sanitizeSegment(document.id()) + "_" + sanitizeSegment(filename);
+        if (hierarchical != null) {
+            String explicitFilename = sanitizePath(firstMetadataValue(document, "filename", "fileName", "file_name", "name", "cmis:name"));
+            if (explicitFilename != null
+                    && !hierarchical.equals(explicitFilename)
+                    && !hierarchical.endsWith("/" + explicitFilename)) {
+                hierarchical = hierarchical + "/" + explicitFilename;
+            }
+            return prefix + hierarchical;
+        }
+        return prefix + sanitizeSegment(document.id()) + "_" + sanitizeSegment(filename);
+    }
+
+    private String resolveOriginalPath(RepositoryDocument document, String fallbackUri) {
+        String originalPath = firstMetadataValue(document, "path", "relativePath", "relative_path", "file_path", "cmis:path");
+        if (originalPath == null) {
+            return fallbackUri;
+        }
+        String explicitFilename = firstMetadataValue(document, "filename", "fileName", "file_name", "name", "cmis:name");
+        if (explicitFilename != null
+                && !originalPath.equals(explicitFilename)
+                && !originalPath.endsWith("/" + explicitFilename)
+                && !originalPath.endsWith("\\" + explicitFilename)) {
+            return originalPath.replaceAll("/+$", "") + "/" + explicitFilename;
+        }
+        return originalPath;
     }
 
     private void applyEnterpriseOptions(PutObjectRequest.Builder builder) {

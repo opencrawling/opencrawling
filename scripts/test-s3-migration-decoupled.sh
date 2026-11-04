@@ -489,7 +489,7 @@ if [ "$LARGE_FILE_MB" -gt 0 ]; then
     sleep 2; ELAPSED=$((ELAPSED + 2))
   done
   WRITER_LOGS=$(docker logs --since "$LARGE_SINCE" oc-writer-service-s3 2>&1)
-  if ! echo "$WRITER_LOGS" | grep -q "Uploading large binary .* to S3 via S3MultipartUploader"; then
+  if ! echo "$WRITER_LOGS" | grep -q "Uploading large binary .* to S3 via S3MultipartUploader: key='.*${LARGE_NAME}'"; then
     echo -e "${RED}FAIL: S3 writer did not use S3MultipartUploader for ${LARGE_NAME}${NC}"; exit 1
   fi
   echo -e "${GREEN}PASSED: S3 writer uploaded the large binary with S3MultipartUploader.${NC}"

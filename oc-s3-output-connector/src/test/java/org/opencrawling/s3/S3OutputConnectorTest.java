@@ -264,6 +264,39 @@ class S3OutputConnectorTest {
     }
 
     @Test
+    void testHierarchicalKeyAppendsFilenameWhenRelativePathIsDirectory() throws Exception {
+        properties.setKeyPrefix("");
+        properties.setKeyStrategy("HIERARCHICAL");
+
+        byte[] raw = "large-s3-payload".getBytes(StandardCharsets.UTF_8);
+        RepositoryDocument doc = new RepositoryDocument(
+                "/crawl/large/large-16mb.bin",
+                "s3://claims/large-16mb.bin",
+                new ByteArrayInputStream(raw),
+                new java.util.HashMap<>(Map.of(
+                        "file_name", List.of("large-16mb.bin"),
+                        "file_path", List.of("/crawl/large/large-16mb.bin"),
+                        "relativePath", List.of("large"),
+                        "relative_path", List.of("large")
+                )),
+                "",
+                SecurityConfig.createPublic(),
+                Instant.now(),
+                DocumentAction.UPSERT
+        );
+
+        assertEquals("large/large-16mb.bin", connector.resolveKey(doc));
+
+        connector.send(doc).block();
+
+        ArgumentCaptor<PutObjectRequest> putCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3Client, times(3)).putObject(putCaptor.capture(), any(RequestBody.class));
+        assertEquals("large/large-16mb.bin", putCaptor.getAllValues().get(0).key());
+        assertEquals("large/large-16mb.bin.ois.json", putCaptor.getAllValues().get(1).key());
+        assertEquals("large/large-16mb.bin", doc.metadata().get("target_key").get(0));
+    }
+
+    @Test
     void testEnterpriseKmsAndObjectLockOptions() {
         properties.setServerSideEncryption("SSE_KMS");
         properties.setKmsKeyId("arn:aws:kms:us-east-1:123456789012:key/my-key-id");
