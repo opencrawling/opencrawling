@@ -30,9 +30,11 @@ The MCP server exposes three standard tools regardless of which target vector da
 
 | MCP Tool | Description | Parameters |
 |---|---|---|
-| `secureVectorSearch` | Performs semantic or hybrid vector similarity search across indexed chunks, applying caller identity checks. | `query` (string, required)<br>`userPrincipal` (string, required)<br>`userRoles` (string, comma-separated)<br>`maxResults` (int, default: 5)<br>`minScore` (double, default: 0.0)<br>`dimensions` (int, optional: 384, 768, 1024) |
-| `getDocumentContent` | Retrieves full text content and metadata for a specific document chunk by URI. | `documentUri` (string, required)<br>`userPrincipal` (string, required)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
-| `listAccessibleSources` | Lists distinct documents and metadata accessible to the caller currently stored in the index. | `userPrincipal` (string, required)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
+| `secureVectorSearch` | Performs semantic or hybrid vector similarity search across indexed chunks, applying caller identity checks. | `query` (string, required)<br>`userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`maxResults` (int, default: 5)<br>`minScore` (double, default: 0.0)<br>`dimensions` (int, optional: 384, 768, 1024) |
+| `getDocumentContent` | Retrieves full text content and metadata for a specific document chunk by URI. | `documentUri` (string, required)<br>`userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
+| `listAccessibleSources` | Lists distinct documents and metadata accessible to the caller currently stored in the index. | `userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
+
+`userPrincipal` and `userRoles` are the caller's identity only in the default `none` identity mode. In `jwt` mode they are ignored and the identity comes from the request's bearer token (see [Caller identity](#-caller-identity) below).
 
 > [!NOTE]
 > For backward compatibility with existing Vespa deployments, `VespaMcpVectorServer` tool names (`vespaSecureVectorSearch`, `vespaGetDocumentContent`, `vespaListAccessibleSources`) remain active when `spring.opencrawling.output.type=vespa`.
@@ -142,7 +144,67 @@ To connect Claude Desktop to your OpenCrawling Secure MCP Server, bridge its Str
 
 `--allow-http` is only needed for a plain-HTTP server other than `localhost`; behind TLS, use the `https://` URL and drop it.
 
-Once connected, Claude will show the tool icon with `secureVectorSearch`, `getDocumentContent`, and `listAccessibleSources`. When querying, Claude passes the user's principal identity and roles as tool arguments; the server enforces the document permissions for that identity.
+Once connected, Claude will show the tool icon with `secureVectorSearch`, `getDocumentContent`, and `listAccessibleSources`. In the default `none` identity mode, Claude passes the user's principal identity and roles as tool arguments and the server enforces the document permissions for that identity.
 
 > [!IMPORTANT]
-> The principal and roles in the tool arguments are asserted by the client, not verified by the server. Expose the MCP endpoint only to trusted clients (for example behind an authenticating gateway) until token-based caller identity (#187) is in place.
+> In `none` mode the principal and roles in the tool arguments are asserted by the client, not verified by the server. Either expose the MCP endpoint only to trusted clients (for example behind an authenticating gateway), or switch to `jwt` mode.
+
+When the server runs in `jwt` mode, give `mcp-remote` a bearer token for the user. The whole header value goes in an environment variable, with no space after the colon, because some clients (Claude Desktop on Windows, Cursor) split arguments on spaces:
+
+```json
+{
+  "mcpServers": {
+    "opencrawling-secure-knowledge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@0.15.1",
+        "https://opencrawling.example.com/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": { "AUTH_HEADER": "Bearer <access token>" }
+    }
+  }
+}
+```
+
+Access tokens expire, so this suits testing; an agent or gateway that obtains tokens itself is the production setup.
+
+---
+
+## 🪪 Caller identity
+
+`opencrawling.security.identity.mode` decides who an MCP tool call is made for:
+
+| Mode | MCP endpoint | Identity used by the tools |
+|---|---|---|
+| `none` (default) | open | the `userPrincipal` / `userRoles` arguments, as sent by the client |
+| `jwt` | needs a valid bearer token (`401` otherwise) | the token's claims; the arguments are ignored |
+
+In `jwt` mode the runtime is an OAuth2 resource server. It validates each token's signature, expiry and (when configured) audience against your identity provider (Keycloak, Microsoft Entra ID, Okta, or any OpenID Connect provider):
+
+```yaml
+opencrawling:
+  security:
+    identity:
+      mode: jwt
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://idp.example.com/realms/corp   # or jwk-set-uri
+          audiences: opencrawling                           # recommended: reject tokens issued for other apps
+```
+
+How the token maps to the caller (all configurable under `opencrawling.security.identity.jwt`):
+
+- **Principal:** the first non-blank claim of `principal-claims` (default `preferred_username`, then `sub`).
+- **Groups:** the values of every claim in `group-claims` (default `realm_access.roles` and `groups`). A dotted name is a nested claim. Group values only ever become groups and the principal only ever the principal, so a `user:x` grant cannot be reached through a role named `x` (see [Document Authorization](Document-Authorization)).
+- **Tenant:** `tenant-claim`, empty by default.
+- **Delegation:** a token-exchange (RFC 8693) token keeps the user as the principal; its `act.sub` is recorded as the acting agent.
+
+If Keycloak's group mapper sends full group paths (`/finance`), either turn off "Full group path" or write the ACL grants with the full path.
+
+The rest of the runtime is unchanged: the REST API and the admin UI stay open unless `opencrawling.security.identity.protect-api=true`, which requires a token on `/api/**` too. The OIS ingest endpoint keeps its own token either way. The admin UI cannot send tokens yet, so leave `protect-api` off where the UI is used.

@@ -82,6 +82,23 @@ For high ingestion jobs, adjust Kafka topic partition numbers:
 
 ---
 
+## 🪪 Caller Identity
+
+Who an MCP tool call is made for:
+
+*   **`OPENCRAWLING_SECURITY_IDENTITY_MODE`** (`opencrawling.security.identity.mode`): `none` (the identity in the tool arguments `userPrincipal`/`userRoles`, unverified) or `jwt` (the MCP endpoints need a valid bearer token, and its identity is used).
+    *   *Type*: `string`
+    *   *Default*: `none`
+*   **`SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI`** (or **`..._JWKSETURI`**) and **`SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_AUDIENCES`**: the token issuer and the accepted audiences, required and recommended respectively in `jwt` mode.
+*   **`OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API`** (`opencrawling.security.identity.protect-api`): in `jwt` mode, also require a token on `/api/**` (OIS ingest keeps its own token). The admin UI cannot send tokens yet.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_SECURITY_IDENTITY_JWT_PRINCIPAL_CLAIMS`**, **`..._GROUP_CLAIMS`**, **`..._TENANT_CLAIM`**: which claims give the principal (default `preferred_username,sub`, first non-blank wins), the groups (default `realm_access.roles,groups`) and the tenant (default none).
+
+See [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-identity) for an example and the claim rules.
+
+---
+
 ## 🔐 Document Authorization
 
 Who may read a retrieved document is decided by one provider for every store, selected with:

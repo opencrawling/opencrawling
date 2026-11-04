@@ -15,7 +15,9 @@
  */
 package org.opencrawling.runtime.mcp;
 
+import org.opencrawling.core.security.Caller;
 import org.opencrawling.runtime.mcp.backend.PgVectorMcpSearchBackend;
+import org.opencrawling.runtime.security.CallerResolver;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -39,7 +41,11 @@ public class McpVectorServer {
 
     private static final Logger log = LoggerFactory.getLogger(McpVectorServer.class);
 
+    /** Identity rule text shared by the tool parameter descriptions. */
+    static final String IDENTITY_NOTE = " Ignored when the server verifies callers by bearer token: the token's identity is used instead.";
+
     private final McpVectorSearchBackend backend;
+    private CallerResolver callerResolver = CallerResolver.asserted();
 
     @Autowired
     public McpVectorServer(@Autowired(required = false) McpVectorSearchBackend backend) {
@@ -86,11 +92,21 @@ public class McpVectorServer {
         return backend;
     }
 
+    /**
+     * How tool calls get their caller; without a resolver (tests, programmatic use) the asserted arguments are used.
+     */
+    @Autowired(required = false)
+    public void setCallerResolver(CallerResolver callerResolver) {
+        if (callerResolver != null) {
+            this.callerResolver = callerResolver;
+        }
+    }
+
     @McpTool(description = "Perform a secure similarity search on vectorized enterprise knowledge documents. Results are filtered on the server side using the caller's identity (principal/groups) and security Access Control Lists (ACLs) associated with each document, ensuring the LLM never receives unauthorized content.")
     public List<DocumentSearchResult> secureVectorSearch(
             @McpToolParam(description = "The natural language query or keywords to search for", required = true) String query,
-            @McpToolParam(description = "The user principal identity or email of the caller to enforce ACL check", required = true) String userPrincipal,
-            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to (e.g. 'finance,engineering')", required = false) String userRoles,
+            @McpToolParam(description = "The user principal identity or email of the caller to enforce ACL check." + IDENTITY_NOTE, required = false) String userPrincipal,
+            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to (e.g. 'finance,engineering')." + IDENTITY_NOTE, required = false) String userRoles,
             @McpToolParam(description = "Maximum number of search results to return", required = false) Integer maxResults,
             @McpToolParam(description = "Minimum similarity threshold score (0.0 to 1.0)", required = false) Double minScore,
             @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
@@ -100,42 +116,42 @@ public class McpVectorServer {
         }
         int limit = (maxResults != null && maxResults > 0) ? maxResults : 5;
         double threshold = (minScore != null) ? minScore : 0.0;
-        List<String> rolesList = McpAclEvaluator.parseRoles(userRoles);
-        return backend.secureVectorSearch(query, userPrincipal, rolesList, limit, threshold, dimensions);
+        Caller caller = callerResolver.resolve(userPrincipal, userRoles);
+        return backend.secureVectorSearch(query, caller.principal(), caller.groups(), limit, threshold, dimensions);
     }
 
     @McpTool(description = "Retrieve the full text content and metadata of a specific document by its URI or ID, enforcing security checks to ensure the caller has access permissions.")
     public DocumentDetailsResult getDocumentContent(
             @McpToolParam(description = "The URI of the document to retrieve (e.g. file:///path/to/doc.txt)", required = true) String documentUri,
-            @McpToolParam(description = "The user principal identity of the caller", required = true) String userPrincipal,
-            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to", required = false) String userRoles,
+            @McpToolParam(description = "The user principal identity of the caller." + IDENTITY_NOTE, required = false) String userPrincipal,
+            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to." + IDENTITY_NOTE, required = false) String userRoles,
             @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
     ) {
         if (backend == null) {
             throw new IllegalStateException("Document retrieval is unavailable: no vector database backend is configured for the active output type.");
         }
-        List<String> rolesList = McpAclEvaluator.parseRoles(userRoles);
-        return backend.getDocumentContent(documentUri, userPrincipal, rolesList, dimensions);
+        Caller caller = callerResolver.resolve(userPrincipal, userRoles);
+        return backend.getDocumentContent(documentUri, caller.principal(), caller.groups(), dimensions);
     }
 
     @McpTool(description = "List all documents currently indexed in the vector store that are accessible to the caller, showing their URIs, creation metadata, and access rules.")
     public List<Map<String, Object>> listAccessibleSources(
-            @McpToolParam(description = "The user principal identity of the caller", required = true) String userPrincipal,
-            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to", required = false) String userRoles,
+            @McpToolParam(description = "The user principal identity of the caller." + IDENTITY_NOTE, required = false) String userPrincipal,
+            @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to." + IDENTITY_NOTE, required = false) String userRoles,
             @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
     ) {
+        Caller caller = callerResolver.resolve(userPrincipal, userRoles);
         if (backend == null) {
             return Collections.emptyList();
         }
-        List<String> rolesList = McpAclEvaluator.parseRoles(userRoles);
-        return backend.listAccessibleSources(userPrincipal, rolesList, dimensions);
+        return backend.listAccessibleSources(caller.principal(), caller.groups(), dimensions);
     }
 
     @McpTool(description = "Search Hyland OpenArch federated enterprise content layer using semantic vector search and Zero-Trust permissions.")
     public List<DocumentSearchResult> openarch_search(
             @McpToolParam(description = "Natural language or keyword query", required = true) String query,
-            @McpToolParam(description = "The caller user identity", required = true) String userPrincipal,
-            @McpToolParam(description = "Comma-separated caller roles or groups", required = false) String userRoles,
+            @McpToolParam(description = "The caller user identity." + IDENTITY_NOTE, required = false) String userPrincipal,
+            @McpToolParam(description = "Comma-separated caller roles or groups." + IDENTITY_NOTE, required = false) String userRoles,
             @McpToolParam(description = "Maximum matching results", required = false) Integer maxResults,
             @McpToolParam(description = "Minimum score threshold", required = false) Double minScore
     ) {
@@ -145,8 +161,8 @@ public class McpVectorServer {
     @McpTool(description = "Fetch full document context and metadata from Hyland OpenArch federated repository.")
     public DocumentDetailsResult openarch_fetch_document(
             @McpToolParam(description = "The document ID or URI in OpenArch", required = true) String documentId,
-            @McpToolParam(description = "The caller user identity", required = true) String userPrincipal,
-            @McpToolParam(description = "Comma-separated caller roles or groups", required = false) String userRoles
+            @McpToolParam(description = "The caller user identity." + IDENTITY_NOTE, required = false) String userPrincipal,
+            @McpToolParam(description = "Comma-separated caller roles or groups." + IDENTITY_NOTE, required = false) String userRoles
     ) {
         String uri = documentId.startsWith("openarch://") ? documentId : "openarch://default/" + documentId;
         return getDocumentContent(uri, userPrincipal, userRoles, null);
