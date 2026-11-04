@@ -549,6 +549,58 @@ Ensure you have the following installed on your machine:
 
 ---
 
+### Quick Start with `run.sh` / `run.bat`
+
+For the fastest local developer experience on **macOS / Linux** (`./run.sh`) and **Windows CMD** (`run.bat`), use the root developer CLI convenience wrappers. They encapsulate BuildKit `~/.m2` cache mounts, containerized Maven builds (`oc-maven-builder`), Docker Compose stack lifecycles, testing, and Admin UI commands:
+
+```bash
+# macOS / Linux
+./run.sh help              # View all available commands
+./run.sh build             # Compile all modules via oc-maven-builder using host ~/.m2 cache
+./run.sh decoupled:up      # Build & start the decoupled stack with BuildKit ~/.m2 cache mounts
+./run.sh apps:up           # Build & start the monolith apps stack (backend, embedding, UI)
+./run.sh status            # Inspect running containers and port bindings
+./run.sh logs oc-crawler   # Stream container logs
+./run.sh ui:dev            # Start the React Admin UI Vite dev server on :5173
+./run.sh down              # Stop all active local stacks
+```
+
+```bat
+REM Windows Command Prompt (CMD)
+run.bat help
+run.bat build
+run.bat decoupled:up
+run.bat apps:up
+run.bat status
+run.bat down
+```
+
+| Category | Command (`./run.sh` or `run.bat`) | Description |
+|---|---|---|
+| **Build & Maven** | `build` / `mvn:build` | Compile all modules via containerized `oc-maven-builder` (`-DskipTests`) |
+| | `build:offline` | Fast offline build via `oc-maven-builder` (`-o -DskipTests`) |
+| | `build:host` / `build:native` | Build using host JDK 25 & Maven (`mvn clean package -DskipTests`) |
+| | `build:clean` | Full clean build with unit tests via `oc-maven-builder` |
+| | `mvn <args...>` | Run custom arbitrary Maven goals inside `oc-maven-builder` |
+| **Docker Stacks** | `decoupled:up` / `decoupled:local` | Start standalone decoupled stack with local BuildKit cache mounts |
+| | `decoupled:override` | Start decoupled stack via `docker-compose-decoupled.local.yml` overlay |
+| | `decoupled:down` | Stop decoupled local stack |
+| | `apps:up` / `apps:local` | Start standalone apps stack (backend, embedding, UI) with local Dockerfiles |
+| | `apps:override` | Start apps stack via `docker-compose-apps.local.yml` overlay |
+| | `apps:down` | Stop apps local stack |
+| | `infra:up` / `infra:down` | Start or stop core infrastructure only (PostgreSQL/pgvector, Redis, Ollama, Kafka) |
+| | `down` / `stop` | Stop all active local OpenCrawling stacks |
+| **Productivity** | `status` / `ps` | Show status and port bindings of running local containers |
+| | `logs [service...]` | Follow container logs (optionally filtered by service) |
+| | `test:unit [args...]` | Run unit tests via `oc-maven-builder` |
+| | `test:it [filter...]` | Run integration tests with local BuildKit cache overlay |
+| | `test:local-dev` | Run dedicated local Docker build acceleration test suite |
+| | `ui:dev` / `ui:build` | Start Vite dev server (`:5173`) or build React Admin UI bundle |
+| | `license:format` / `format` | Apply Apache 2.0 license headers across project files |
+| | `clean [--prune]` | Clean Maven `target/` folders (and optionally prune Docker build cache) |
+
+---
+
 ### Step-by-Step Setup
 
 #### 1. Start Infrastructure (Docker)
