@@ -80,6 +80,14 @@ public class ConnectorController {
             "includeVariables", "true",
             "includeTasks", "true"
         )));
+        defaults.add(new ConnectorDTO("Web_Crawler", "HTTP(S) Web Crawler", "repository", "org.opencrawling.web.WebRepositoryConnector", 10, Map.of(
+            "userAgent", "OpenCrawlingBot/1.0 (+https://opencrawling.github.io)",
+            "maxDepth", "3",
+            "delayMs", "1000",
+            "maxPages", "1000",
+            "stayOnDomain", "true",
+            "respectRobots", "true"
+        )));
         defaults.add(new ConnectorDTO("StormCrawler_Web_Engine", "Apache StormCrawler Engine", "repository", "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(
             "nimbusHost", "localhost",
             "nimbusPort", "6627",
@@ -422,19 +430,19 @@ public class ConnectorController {
         try {
             java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });
             java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });
             java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });

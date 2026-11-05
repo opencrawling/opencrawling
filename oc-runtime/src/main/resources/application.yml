@@ -164,6 +164,20 @@ opencrawling:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
       token: ${OPENCRAWLING_INGEST_OIS_TOKEN:}
   security:
+    identity:
+      # none (default): MCP tools use the identity asserted in their userPrincipal/userRoles arguments.
+      # jwt: the MCP endpoints need a valid bearer token and tools use the token's identity, ignoring those
+      # arguments. Point spring.security.oauth2.resourceserver.jwt.issuer-uri (or jwk-set-uri) at the identity
+      # provider and set spring.security.oauth2.resourceserver.jwt.audiences.
+      mode: ${OPENCRAWLING_SECURITY_IDENTITY_MODE:none}
+      # jwt mode only: also require a token on /api/** (except OIS ingest, which has its own token).
+      protect-api: ${OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API:false}
+      jwt:
+        # The first non-blank claim is the caller's user identity.
+        principal-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_PRINCIPAL_CLAIMS:preferred_username,sub}
+        # Values of all these claims are the caller's groups/roles; dots name nested claims.
+        group-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_GROUP_CLAIMS:realm_access.roles,groups}
+        tenant-claim: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_TENANT_CLAIM:}
     authorization:
       # metadata (default): the ACLs stored with each document decide.
       # shadow: metadata decides, OpenFGA is asked too and disagreements are logged.
