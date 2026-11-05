@@ -30,6 +30,14 @@
     { "name": "mig_sidecar_written", "type": ["null", "boolean"], "default": null },
     { "name": "mig_callback_http_status", "type": ["null", "int"], "default": null },
     { "name": "mig_safe_pruned", "type": ["null", "boolean"], "default": null },
-    { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null }
+    { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null },
+
+    { "name": "trigger_source", "type": ["null", "string"], "default": null, "doc": "How the execution started: api, ois, grpc-push, startup" },
+    { "name": "triggered_by", "type": ["null", "string"], "default": null, "doc": "Verified party that started the execution (the acting agent of a delegated token); null when unknown" },
+    { "name": "on_behalf_of", "type": ["null", "string"], "default": null, "doc": "User an agent acted for (subject of a delegated token)" },
+    { "name": "caller_groups", "type": ["null", { "type": "array", "items": "string" }], "default": null, "doc": "Verified caller's groups" },
+    { "name": "caller_tenant", "type": ["null", "string"], "default": null, "doc": "Verified caller's tenant" },
+    { "name": "caller_verified", "type": ["null", "boolean"], "default": null, "doc": "True when the identity fields come from a validated token" },
+    { "name": "correlation_id", "type": ["null", "string"], "default": null, "doc": "Caller-supplied correlation id (X-Correlation-Id)" }
   ]
 }

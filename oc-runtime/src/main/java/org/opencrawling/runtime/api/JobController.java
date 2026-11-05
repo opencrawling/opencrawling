@@ -20,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -36,10 +37,14 @@ import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
+import org.opencrawling.core.reporting.ExecutionProvenance;
+import org.opencrawling.core.security.Caller;
 import org.opencrawling.runtime.connector.ConnectorFactory;
 import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
+import org.opencrawling.runtime.security.CallerResolver;
+import org.opencrawling.runtime.security.JwtCallerMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -69,6 +74,10 @@ public class JobController {
 
     @Autowired(required = false)
     private org.opencrawling.runtime.reporting.JobLedgerAccumulator ledgerAccumulator;
+
+    /** Absent outside servlet web apps; then no caller is ever recorded. */
+    @Autowired(required = false)
+    private CallerResolver callerResolver;
 
     @Autowired
     public JobController(
@@ -200,8 +209,12 @@ public class JobController {
     })
     @PostMapping("/{id}/start")
     public ResponseEntity<Void> startJob(
-            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id,
+            @Parameter(description = "Optional id that ties this run to the caller's own request or workflow; recorded in the run's ledger")
+            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         log.info("Starting job {}", id);
+        // Taken here, on the request thread: the run's own thread has no security context.
+        final ExecutionProvenance provenance = provenance(correlationId);
 
         final String cleanId = id != null ? id.trim() : "";
 
@@ -288,7 +301,7 @@ public class JobController {
                 boolean succeeded = false;
                 try {
                     log.info("Background Virtual Thread running [Exec ID: {}]. Path: {}, OutputConnector: {}", executionId, finalActiveJob.path(), finalOutputConnector.getName());
-                    succeeded = jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId, stopRequested);
+                    succeeded = jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId, stopRequested, provenance);
                 } catch (Exception e) {
                     log.error("Background Virtual Thread failed: {}", e.getMessage(), e);
                 }
@@ -537,6 +550,25 @@ public class JobController {
         public static NarrativizationConfig disabled() {
             return new NarrativizationConfig(false, null, null);
         }
+    }
+
+    /** Starts a job with no correlation id. */
+    public ResponseEntity<Void> startJob(String id) {
+        return startJob(id, null);
+    }
+
+    void setCallerResolver(CallerResolver callerResolver) {
+        this.callerResolver = callerResolver;
+    }
+
+    /** Who is starting a run through the API: the verified caller of this request, if there is one. */
+    private ExecutionProvenance provenance(String correlationId) {
+        Optional<Caller> caller = callerResolver != null ? callerResolver.verifiedCaller() : Optional.empty();
+        return caller
+                .map(c -> ExecutionProvenance.verified(c.principal(),
+                        c.attributes().get(JwtCallerMapper.ACTOR) instanceof String actor ? actor : null,
+                        c.groups(), c.tenant(), ExecutionProvenance.SOURCE_API, correlationId))
+                .orElseGet(() -> ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_API, correlationId));
     }
 
     /**

@@ -17,6 +17,7 @@ package org.opencrawling.core.event;
 
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.reporting.DocumentLedgerEntry;
+import org.opencrawling.core.reporting.ExecutionProvenance;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -39,5 +40,20 @@ public record JobExecutionCompletedEvent(
         long failedDocuments,
         long skippedDocuments,
         Map<String, Object> summaryMetrics,
-        List<DocumentLedgerEntry> documentEntries
-) {}
+        List<DocumentLedgerEntry> documentEntries,
+        ExecutionProvenance provenance
+) {
+
+    public JobExecutionCompletedEvent {
+        provenance = provenance != null ? provenance : ExecutionProvenance.unknown();
+    }
+
+    /** An event whose provenance is unknown. */
+    public JobExecutionCompletedEvent(String jobId, String executionId, String jobName, PipelineMode pipelineMode,
+                                      String repositoryConnector, String outputConnector, Instant startTime, Instant endTime,
+                                      long totalDocuments, long successfulDocuments, long failedDocuments, long skippedDocuments,
+                                      Map<String, Object> summaryMetrics, List<DocumentLedgerEntry> documentEntries) {
+        this(jobId, executionId, jobName, pipelineMode, repositoryConnector, outputConnector, startTime, endTime,
+                totalDocuments, successfulDocuments, failedDocuments, skippedDocuments, summaryMetrics, documentEntries, null);
+    }
+}

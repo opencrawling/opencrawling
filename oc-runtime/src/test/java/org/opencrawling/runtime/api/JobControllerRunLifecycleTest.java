@@ -67,7 +67,7 @@ class JobControllerRunLifecycleTest {
                               String transformationConnector, String jobId, String jobName,
                               JobController.NarrativizationConfig narrativization,
                               org.opencrawling.core.pipeline.PipelineMode pipelineMode, String executionId,
-                              BooleanSupplier stopRequested) {
+                              BooleanSupplier stopRequested, org.opencrawling.core.reporting.ExecutionProvenance provenance) {
             started.countDown();
             try {
                 while (!release.await(10, TimeUnit.MILLISECONDS)) {

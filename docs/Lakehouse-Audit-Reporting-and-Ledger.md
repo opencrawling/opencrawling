@@ -125,10 +125,35 @@ All audit records adhere to the canonical schema defined in `job_execution_repor
     { "name": "mig_sidecar_written", "type": ["null", "boolean"], "default": null },
     { "name": "mig_callback_http_status", "type": ["null", "int"], "default": null },
     { "name": "mig_safe_pruned", "type": ["null", "boolean"], "default": null },
-    { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null }
+    { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null },
+
+    { "name": "trigger_source", "type": ["null", "string"], "default": null },
+    { "name": "triggered_by", "type": ["null", "string"], "default": null },
+    { "name": "on_behalf_of", "type": ["null", "string"], "default": null },
+    { "name": "caller_groups", "type": ["null", { "type": "array", "items": "string" }], "default": null },
+    { "name": "caller_tenant", "type": ["null", "string"], "default": null },
+    { "name": "caller_verified", "type": ["null", "boolean"], "default": null },
+    { "name": "correlation_id", "type": ["null", "string"], "default": null }
   ]
 }
 ```
+
+### Run Provenance (who started the execution)
+
+The last seven fields record who started the execution and how. They are the same on every row of one execution, so a query can filter or group documents by the caller that ingested them.
+
+| Field | Meaning |
+|---|---|
+| `trigger_source` | How the execution started: `api` (`POST /api/jobs/{id}/start`), `ois` (OIS ingest), `grpc-push`, or `startup` (crawl on startup). |
+| `triggered_by` | The verified party that started it. For a delegated token (RFC 8693 token exchange), this is the acting agent (`act.sub`); otherwise the token's principal. |
+| `on_behalf_of` | For a delegated token, the user the agent acted for. Empty otherwise. |
+| `caller_groups`, `caller_tenant` | The verified caller's groups and tenant, mapped as for MCP access checks (see [Document Authorization](Document-Authorization.md)). |
+| `caller_verified` | `true` only when the identity fields come from a validated bearer token. |
+| `correlation_id` | The request's `X-Correlation-Id` header, kept when it is a plain id (up to 128 letters, digits and `._:/@-`). |
+
+**Only verified identities are recorded.** An identity is recorded only when the request carried a validated token, which needs `opencrawling.security.identity.mode=jwt` with `protect-api=true` (see the [Configuration Guide](Configuration-Guide.md)). Otherwise the execution records its `trigger_source` and `correlation_id`, with `triggered_by` empty and `caller_verified` false. An identity the client merely asserts is never written to the ledger. OIS and gRPC push requests carry no caller identity, so their executions are always anonymous.
+
+Executions written before these fields existed have them empty (`null`).
 
 ### Parquet Configuration Highlights
 
@@ -173,9 +198,20 @@ Lightweight operational snapshot containing high-level execution statistics:
   "embeddingModel": "mxbai-embed-large",
   "reportPathParquet": "mode=RAG/year=2026/month=10/day=16/job_1_exec_exec-6e03d06c.parquet",
   "reportPathCsv": "mode=RAG/year=2026/month=10/day=16/manifest_exec-6e03d06c.csv",
-  "reportPathJson": "mode=RAG/year=2026/month=10/day=16/summary_exec-6e03d06c.json"
+  "reportPathJson": "mode=RAG/year=2026/month=10/day=16/summary_exec-6e03d06c.json",
+  "provenance": {
+    "triggeredBy": "ingestion-agent",
+    "onBehalfOf": "alice",
+    "callerGroups": ["finance"],
+    "callerTenant": "acme",
+    "callerVerified": true,
+    "triggerSource": "api",
+    "correlationId": "req-42"
+  }
 }
 ```
+
+`provenance` is the execution's [run provenance](#run-provenance-who-started-the-execution). `GET /api/reports` and `GET /api/reports/{jobId}/{executionId}` return it too. Summaries written before it existed have no `provenance`.
 
 ### 4. Optional Avro Container (`job_<jobId>_exec_<execId>.avro`)
 Standard binary Avro file containing embedded schema headers for integration with Kafka Lakehouse connectors or Hadoop ecosystems.
@@ -248,6 +284,14 @@ duckdb -c "SELECT status, count(*) AS doc_count, sum(rag_token_count) AS tokens 
          count(mig_sha256_checksum) AS checksums_verified 
   FROM read_parquet('target/reports/mode=MIGRATION/**/*.parquet') 
   GROUP BY mig_target_bucket;
+  ```
+
+* **Who Ingested What** (run provenance; `union_by_name` lets files written before these columns existed be read together with newer ones):
+  ```sql
+  SELECT trigger_source, triggered_by, on_behalf_of, count(DISTINCT execution_id) AS executions, count(*) AS documents
+  FROM read_parquet('target/reports/**/*.parquet', union_by_name = true)
+  GROUP BY trigger_source, triggered_by, on_behalf_of
+  ORDER BY documents DESC;
   ```
 
 * **AI Ingestion Cost Calculation (e.g. OpenAI text-embedding-3-small at $0.02 / 1M tokens)**:

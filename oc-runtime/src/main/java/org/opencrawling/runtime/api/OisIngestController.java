@@ -154,7 +154,9 @@ public class OisIngestController {
                 ? job.transformationConnector()
                 : "mxbai-embed-large";
         if (ledgerAccumulator != null) {
-            ledgerAccumulator.startExecution(job.id(), execId, jobName, org.opencrawling.core.pipeline.PipelineMode.RAG, repoName, outName);
+            ledgerAccumulator.startExecution(job.id(), execId, jobName, org.opencrawling.core.pipeline.PipelineMode.RAG, repoName, outName,
+                    org.opencrawling.core.reporting.ExecutionProvenance.anonymous(
+                            org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_OIS, null));
         }
 
         try {

@@ -93,7 +93,7 @@ class JobControllerConnectorResolutionTest {
         assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(200);
 
         verify(orchestrator, timeout(5000)).runJob(eq(repository), eq(output), eq("/tmp"), any(), eq(jobId),
-                anyString(), any(), eq(PipelineMode.RAG), anyString(), any());
+                anyString(), any(), eq(PipelineMode.RAG), anyString(), any(), any());
         // The job names connectors that are not saved: the factory is asked with no configuration, as before.
         verify(factory).repository(isNull());
         verify(factory).output(isNull(), eq(PipelineMode.RAG));
@@ -125,6 +125,7 @@ class JobControllerConnectorResolutionTest {
                     any(),
                     eq(PipelineMode.RAG),
                     anyString(),
+                    any(),
                     any());
             verify(factory, never()).repository(any());
         } finally {

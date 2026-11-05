@@ -167,6 +167,7 @@ When the output type is `vespa`, `VespaMcpVectorServer` replaces it.
 ### Security / ACL model
 
 - **Caller identity:** `opencrawling.security.identity.mode` is `none` (default; MCP tools trust the `userPrincipal`/`userRoles` arguments) or `jwt` (OAuth2 resource server; MCP endpoints need a bearer token and `CallerResolver` takes the identity from it). `IdentitySecurityConfiguration` keeps every other path open (no CSRF, no added headers) unless `protect-api` is set. New MCP tools must get their caller from `CallerResolver`, never straight from their arguments.
+- **Run provenance:** every ledger execution records an `ExecutionProvenance` (who started it, how, `X-Correlation-Id`), written to the run summary and to every Parquet/Avro row. Only a verified caller is ever recorded (`CallerResolver.verifiedCaller()`, read on the request thread, since the run's virtual thread has no security context). A new way of starting executions must pass its provenance to `JobLedgerAccumulator.startExecution`.
 - **Where it lives:** `SecurityConfig` is stored as a JSON map in `metadata["security"]`, and flattened into `security_allowed_read` and `security_denied_read` lists for vector-store pre-filtering.
 - **Rules:** it holds `PermissionRule` records with these fields:
   - `identity`
