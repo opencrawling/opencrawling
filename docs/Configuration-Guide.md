@@ -129,6 +129,23 @@ See [Document Authorization](Document-Authorization) for the full property list,
 
 ---
 
+## 🔭 Repository Discovery
+
+Lets agents and API clients list a registered repository's tree and preview a crawl before ingesting (REST `/api/discovery/**`, MCP tools `listRepositoryConnectors`, `exploreRepositoryTree`, `queryRepositoryDryRun`). Results show only what the caller may read by the source repository's ACL; see [Model Context Protocol, Repository discovery](Model-Context-Protocol#-repository-discovery).
+
+*   **`OPENCRAWLING_DISCOVERY_ENABLED`** (`opencrawling.discovery.enabled`): whether the endpoints and tools exist.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_DISCOVERY_ALLOW_ASSERTED_IDENTITY`** (`opencrawling.discovery.allow-asserted-identity`): also accept an identity the client asserts (`userPrincipal`/`userRoles`) instead of requiring a token (`identity.mode=jwt`). Development and tests only.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_DISCOVERY_REVEAL_HIDDEN_COUNTS`** (`opencrawling.discovery.reveal-hidden-counts`): include how many items were hidden from the caller, and a query dry run's total match count.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`opencrawling.discovery.max-depth`**, **`max-nodes`**, **`sample-size`**, **`max-scan`**, **`timeout`**: what a request gets by default and the most it may ask for (defaults `3`, `200`, `10`, `10000`, `30s`; hard caps `10`, `1000`, `50`, `100000`, `2m`).
+
+---
+
 ## 📊 AIOps & Observability Configurations
 
 OpenCrawling integrates end-to-end distributed tracing and metrics that are enabled by default. They can be disabled or fine-tuned using the following environment variables:

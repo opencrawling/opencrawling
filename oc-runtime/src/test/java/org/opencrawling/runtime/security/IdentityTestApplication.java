@@ -82,10 +82,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Import({IdentitySecurityConfiguration.class, McpVectorServer.class, IdentityTestApplication.Endpoints.class})
 public class IdentityTestApplication {
 
-    static final String AUDIENCE = "opencrawling";
+    public static final String AUDIENCE = "opencrawling";
     static final KeyPair TRUSTED_KEY = newKeyPair();
     static final KeyPair OTHER_KEY = newKeyPair();
-    static final Path PUBLIC_KEY_FILE = writePublicKey(TRUSTED_KEY);
+    public static final Path PUBLIC_KEY_FILE = writePublicKey(TRUSTED_KEY);
 
     /** The identity a tool call reached the backend with. */
     public record Seen(String principal, List<String> groups) {}
@@ -160,11 +160,11 @@ public class IdentityTestApplication {
         }
     }
 
-    static String validToken(Map<String, Object> claims) {
+    public static String validToken(Map<String, Object> claims) {
         return token(TRUSTED_KEY, claims, AUDIENCE, Instant.now().plusSeconds(300));
     }
 
-    static McpSyncClient mcpClient(int port, String bearerToken) {
+    public static McpSyncClient mcpClient(int port, String bearerToken) {
         HttpRequest.Builder request = HttpRequest.newBuilder();
         if (bearerToken != null) {
             request.header("Authorization", "Bearer " + bearerToken);

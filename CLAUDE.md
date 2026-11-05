@@ -165,6 +165,8 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
 
 When the output type is `vespa`, `VespaMcpVectorServer` replaces it.
 
+With `opencrawling.discovery.enabled=true` (off by default), `DiscoveryMcpTools` adds `listRepositoryConnectors`, `exploreRepositoryTree` and `queryRepositoryDryRun`, and `DiscoveryController` serves the same under `/api/discovery/**`. `DiscoveryService` decides what a caller sees with the metadata rules on each item's *source* ACL, through a `DocumentAccessGate` on `MetadataAuthorizationProvider`, whatever the authorization mode (OpenFGA only knows indexed documents). It needs a verified caller unless `allow-asserted-identity` is set, and never returns ACLs or repository error details.
+
 ### Security / ACL model
 
 - **Caller identity:** `opencrawling.security.identity.mode` is `none` (default; MCP tools trust the `userPrincipal`/`userRoles` arguments) or `jwt` (OAuth2 resource server; MCP endpoints need a bearer token and `CallerResolver` takes the identity from it). `IdentitySecurityConfiguration` keeps every other path open (no CSRF, no added headers) unless `protect-api` is set. New MCP tools must get their caller from `CallerResolver`, never straight from their arguments.
