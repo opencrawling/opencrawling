@@ -41,6 +41,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag_name: ${{ steps.version.outputs.tag_name }}
+      hashes: ${{ steps.hash.outputs.hashes }}
 
     steps:
       - name: Checkout repository
@@ -118,6 +119,12 @@ jobs:
           chmod +x scripts/generate-pdf-guide.sh
           ./scripts/generate-pdf-guide.sh "${{ steps.version.outputs.version }}"
 
+      - name: Generate Hashes for SLSA Provenance
+        id: hash
+        run: |
+          cd dist
+          echo "hashes=$(sha256sum *.zip *.pdf 2>/dev/null | base64 -w0)" >> $GITHUB_OUTPUT
+
       - name: Upload Distribution ZIP Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
@@ -137,6 +144,7 @@ jobs:
     needs: build-vm-distributions
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Download Distribution ZIP Artifacts
@@ -145,7 +153,18 @@ jobs:
           name: opencrawling-vm-dist-packages
           path: release-dist/
 
-      - name: Attach Distribution ZIPs & Checksums to GitHub Release
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign Release Checksums with Cosign
+        run: |
+          cosign sign-blob --yes \
+            --bundle release-dist/SHA256SUMS.txt.sigstore.json \
+            release-dist/SHA256SUMS.txt
+        env:
+          COSIGN_YES: "true"
+
+      - name: Attach Distribution ZIPs, Checksums & Signatures to GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.build-vm-distributions.outputs.tag_name }}
@@ -153,6 +172,21 @@ jobs:
             release-dist/*.zip
             release-dist/*.sha256
             release-dist/SHA256SUMS.txt
+            release-dist/SHA256SUMS.txt.sigstore.json
             release-dist/*.pdf
             release-dist/docker-compose-decoupled-dockerhub.yml
             release-dist/docker-compose-apps-dockerhub.yml
+
+  provenance:
+    name: Generate SLSA Build Provenance (10/10 Scorecard)
+    needs: [build-vm-distributions, publish-dist-release-assets]
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.build-vm-distributions.outputs.hashes }}"
+      upload-tag-name: "${{ needs.build-vm-distributions.outputs.tag_name }}"
+      upload-assets: true
