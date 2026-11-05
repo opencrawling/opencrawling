@@ -19,7 +19,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.DeleteReq;
-import io.milvus.v2.service.vector.request.InsertReq;
+import io.milvus.v2.service.vector.request.UpsertReq;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -118,11 +118,12 @@ public class MilvusStoreWriterConsumer {
                 }
             });
 
-            InsertReq insertReq = InsertReq.builder()
+            // Upsert, so a re-ingested chunk with the same deterministic ID replaces the old one
+            UpsertReq upsertReq = UpsertReq.builder()
                     .collectionName(collectionName)
                     .data(Collections.singletonList(row))
                     .build();
-            client.insert(insertReq);
+            client.upsert(upsertReq);
             log.info("Successfully saved chunk {} to Milvus collection '{}'.", message.chunkId(), collectionName);
         } catch (Exception e) {
             log.error("Failed to store embedded chunk in Milvus: {}", message.chunkId(), e);

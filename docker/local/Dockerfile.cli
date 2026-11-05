@@ -32,6 +32,7 @@ COPY oc-alfresco-repository-connector/pom.xml oc-alfresco-repository-connector/
 COPY oc-iceberg-repository-connector/pom.xml oc-iceberg-repository-connector/
 COPY oc-flowable-repository-connector/pom.xml oc-flowable-repository-connector/
 COPY oc-camunda-repository-connector/pom.xml oc-camunda-repository-connector/
+COPY oc-web-repository-connector/pom.xml oc-web-repository-connector/
 COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
 COPY oc-cmis-repository-connector/pom.xml oc-cmis-repository-connector/
 COPY oc-doxis-repository-connector/pom.xml oc-doxis-repository-connector/

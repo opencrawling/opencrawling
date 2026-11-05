@@ -122,6 +122,7 @@
         <module>oc-openarch-repository-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
+        <module>oc-web-repository-connector</module>
         <module>oc-aps-repository-connector</module>
         <module>oc-cmis-repository-connector</module>
         <module>oc-doxis-client</module>

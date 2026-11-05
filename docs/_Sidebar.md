@@ -5,6 +5,7 @@
 * **[Configuration Guide](Configuration-Guide)**
 * **[Lakehouse Audit Reporting & Ledger](Lakehouse-Audit-Reporting-and-Ledger)**
 * **[Model Context Protocol](Model-Context-Protocol)**
+* **[Web Crawler Specification](Web-Crawler-Specification)**
 * **[Document Authorization](Document-Authorization)**
 * **[gRPC Push Connector](gRPC-Push-Connector)**
 * **[Migration Guide](Migration-Guide)**

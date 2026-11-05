@@ -23,6 +23,15 @@ Every document OpenCrawling retrieves for a caller (through the MCP tools, and s
 - The gate asks the configured `AuthorizationProvider` about the whole page of candidates at once (one round trip for a remote engine).
 - **Fail closed.** A document with no permission data is denied. If the provider cannot decide (engine down, timeout, malformed answer), the whole request fails with an error. It never falls back to weaker rules.
 
+### Who the caller is
+
+The caller's principal and roles come from one of two places, set by `opencrawling.security.identity.mode`:
+
+- **`none` (default):** the MCP tool arguments `userPrincipal` and `userRoles`. The client asserts them and the server cannot check them, so the MCP endpoint must only be reachable by trusted clients.
+- **`jwt`:** the request's bearer token, validated by the runtime as an OAuth2 resource server. The tool arguments are ignored, so a client cannot claim to be someone else. A request without a valid token gets `401` and reaches no store.
+
+The principal and the groups come from separate token claims and are never mixed, which keeps the `user:` / `group:` rule below intact. Setup and claim mapping: [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-identity).
+
 ## Permissions: what gets indexed
 
 Connectors describe a document's permissions as a `SecurityConfig` (a list of rules: `identity`, `identityType`, `access`), plus, for older connectors, a legacy comma-separated `acl` string. One normalizer, `EffectiveAcl`, turns them into what every store indexes (`security_allowed_read`, `security_denied_read`, `security_inheritance`) and into what OpenFGA receives:
