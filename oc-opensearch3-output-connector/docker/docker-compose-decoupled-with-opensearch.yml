@@ -83,7 +83,7 @@ services:
   ollama-model-puller:
     image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-opensearch
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
