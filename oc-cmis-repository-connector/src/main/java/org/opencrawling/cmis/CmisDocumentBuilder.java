@@ -270,7 +270,7 @@ public class CmisDocumentBuilder {
         }
     }
 
-    private static Instant parseTimestamp(String value) {
+    static Instant parseTimestamp(String value) {
         if (value == null || value.isBlank()) {
             return Instant.now();
         }

@@ -356,6 +356,9 @@ public class CmisClient {
 
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            if (response.statusCode() == 404) {
+                throw new java.io.FileNotFoundException("CMIS object not found: " + objectIdOrPath);
+            }
             throw new IOException("Failed to get CMIS object from " + urlBuilder + ". HTTP " + response.statusCode() + ": " + response.body());
         }
 

@@ -111,6 +111,7 @@ docker compose -f docker-compose-decoupled.yml up -d --build  # one container pe
   - reporting, AIOps and the gRPC transport
 - **`oc-embedding-service`**: a standalone app. `EmbeddingConsumer` reads chunks, and `EmbeddingModelFactory` picks Ollama or OpenAI per job. It caches clients by `engine-modelName`.
 - **`oc-*-repository-connector`**: the sources. Each one implements `scan(basePath) -> Flux<RepositoryDocument>` and, optionally, `getSchema()`.
+  - A connector can also implement `DiscoverableRepositoryConnector` (`oc-core`, `connector.discovery`): `explore` lists the tree and `dryRun` previews what a crawl would take, both bounded and without reading content (CMIS today). Each `DiscoveryNode` carries the source ACL and the id the crawler indexes it under; an unknown ACL is `null` and must be denied, never treated as public.
 - **`oc-*-output-connector`**: the sinks. Each non-pgvector sink ships its own `messaging/*StoreWriterConsumer`.
 - **`oc-observability`**: OTel / Micrometer helpers.
 - **`oc-grpc-api`**: the Protobuf contracts for the optional transport (`opencrawling.transport.mode` = `AUTO` | `GRPC` | `REST`).
