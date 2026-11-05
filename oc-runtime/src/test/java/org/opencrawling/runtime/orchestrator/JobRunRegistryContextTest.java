@@ -33,6 +33,15 @@ class JobRunRegistryContextTest {
         runner.run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context.getBean(JobRunRegistry.class).maxConcurrentRuns()).isZero();
+            assertThat(context.getBean(JobRunRegistry.class).maxConcurrentRunsPerCaller()).isZero();
+        });
+    }
+
+    @Test
+    void springBuildsTheRegistryWithTheConfiguredPerCallerCap() {
+        runner.withPropertyValues("opencrawling.jobs.max-concurrent-runs-per-caller=2").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(JobRunRegistry.class).maxConcurrentRunsPerCaller()).isEqualTo(2);
         });
     }
 
