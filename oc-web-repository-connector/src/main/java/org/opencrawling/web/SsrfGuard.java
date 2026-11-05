@@ -47,6 +47,7 @@ public final class SsrfGuard implements DnsResolver {
         Cidr.parse("240.0.0.0/4"),      // reserved, broadcast
         Cidr.parse("::/128"),           // unspecified
         Cidr.parse("::1/128"),          // loopback
+        Cidr.parse("64:ff9b:1::/48"),   // local-use IPv4/IPv6 translation (RFC 8215)
         Cidr.parse("fc00::/7"),         // unique local
         Cidr.parse("fe80::/10"),        // link-local
         Cidr.parse("ff00::/8"));        // multicast
@@ -120,8 +121,8 @@ public final class SsrfGuard implements DnsResolver {
     }
 
     /**
-     * Returns the IPv4 address embedded in an IPv4-compatible or NAT64 (64:ff9b::/96) IPv6 address,
-     * so it can't be used to reach a blocked IPv4 range.
+     * Returns the IPv4 address embedded in an IPv4-compatible, IPv4-mapped (::ffff:0:0/96),
+     * or NAT64 (64:ff9b::/96) IPv6 address, so it can't be used to reach a blocked IPv4 range.
      */
     private static InetAddress embeddedIpv4(InetAddress address) {
         if (!(address instanceof Inet6Address)) {
@@ -130,8 +131,9 @@ public final class SsrfGuard implements DnsResolver {
         byte[] bytes = address.getAddress();
         boolean nat64 = bytes[0] == 0 && bytes[1] == 0x64 && bytes[2] == (byte) 0xff && bytes[3] == (byte) 0x9b
             && allZero(bytes, 4, 12);
+        boolean mapped = allZero(bytes, 0, 10) && bytes[10] == (byte) 0xff && bytes[11] == (byte) 0xff;
         boolean compatible = allZero(bytes, 0, 12) && !(bytes[12] == 0 && bytes[13] == 0 && bytes[14] == 0);
-        if (!nat64 && !compatible) {
+        if (!nat64 && !mapped && !compatible) {
             return address;
         }
         try {
