@@ -19,18 +19,17 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * What a crawl of a scope would pick up, before any authorization check.
+ * What a crawl of a scope would pick up, as far as the caller may see it.
  *
- * <p>The count covers every matching document in the source. Callers that expose it to a user must check the
- * samples, and report the count as an estimate, since the user may not be allowed to read all of them.
- *
- * @param matchCount       how many documents match
+ * @param matchCount       how many matching documents the filter shows; for a scope whose items cannot be
+ *                         checked one by one (a query), how many match in all, reported as {@code ESTIMATE}
  * @param countAccuracy    how far {@code matchCount} can be trusted
- * @param samples          up to the requested number of matching documents, never {@code null}
+ * @param samples          up to the requested number of visible matching documents, never {@code null}
+ * @param hiddenCount      how many matching documents the filter hid, or {@code null} when they were not checked
  * @param truncationReason why the preview stopped early, or {@code null}
  */
 public record DryRunResult(long matchCount, CountAccuracy countAccuracy, List<DiscoveryNode> samples,
-                           TruncationReason truncationReason) {
+                           Long hiddenCount, TruncationReason truncationReason) {
 
     public DryRunResult {
         Objects.requireNonNull(countAccuracy, "countAccuracy");

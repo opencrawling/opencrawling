@@ -17,6 +17,7 @@ package org.opencrawling.cmis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -42,6 +43,7 @@ import org.opencrawling.core.connector.discovery.DryRunRequest;
 import org.opencrawling.core.connector.discovery.DryRunResult;
 import org.opencrawling.core.connector.discovery.ExploreRequest;
 import org.opencrawling.core.connector.discovery.TruncationReason;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -338,13 +340,13 @@ class CmisDiscoveryTest {
         CmisRepositoryConnector financeOnly = connector("/Finance", true, CmisCrawlMode.FOLDER, false, 100);
 
         assertThatThrownBy(() -> financeOnly.explore(new ExploreRequest("/Public", 1, 10, true, TIMEOUT)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outside");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
         assertThatThrownBy(() -> financeOnly.explore(new ExploreRequest("f3", 1, 10, true, TIMEOUT)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outside");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
         assertThatThrownBy(() -> connector().explore(new ExploreRequest("/System", 1, 10, true, TIMEOUT)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outside");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
         assertThatThrownBy(() -> connector().explore(new ExploreRequest("d1", 1, 10, true, TIMEOUT)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not a CMIS folder");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
         assertThatThrownBy(() -> connector().explore(new ExploreRequest("/Nowhere", 1, 10, true, TIMEOUT)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
         assertThat(names(financeOnly.explore(new ExploreRequest(null, 1, 10, true, TIMEOUT)).nodes()))
@@ -399,6 +401,7 @@ class CmisDiscoveryTest {
         // A query crawl takes every result, so the dry run counts them all.
         assertThat(result.matchCount()).isEqualTo(7);
         assertThat(result.countAccuracy()).isEqualTo(CountAccuracy.EXACT);
+        assertThat(result.hiddenCount()).isZero();
         assertThat(result.samples()).singleElement().satisfies(sample -> {
             assertThat(sample.id()).isEqualTo("cmis://repo/documents/d1");
             assertThat(sample.security()).isNotNull();
@@ -436,5 +439,112 @@ class CmisDiscoveryTest {
         // A scope that is not a SELECT is taken as a folder, and a folder that does not exist is refused.
         assertThatThrownBy(() -> connector().dryRun(new DryRunRequest("DELETE FROM cmis:document", 1, 10, TIMEOUT)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No CMIS folder");
+    }
+
+    // ---- Visibility filter ----
+
+    /** Shows items whose ACL names one of the identities; an unknown ACL is hidden. */
+    private static VisibilityFilter readableBy(String... identities) {
+        Set<String> allowed = Set.of(identities);
+        return nodes -> {
+            boolean[] visible = new boolean[nodes.size()];
+            for (int i = 0; i < visible.length; i++) {
+                DiscoveryNode node = nodes.get(i);
+                visible[i] = node.security() != null
+                        && node.security().permissions().stream().anyMatch(rule -> allowed.contains(rule.identity()));
+            }
+            return visible;
+        };
+    }
+
+    @Test
+    void hiddenFoldersAreNeitherListedNorOpened() {
+        DiscoveryResult result = connector().explore(new ExploreRequest(null, 5, 100, true, TIMEOUT), readableBy("GROUP_EVERYONE"));
+
+        assertThat(names(result.nodes())).containsExactly("Public", "a.txt", "b.txt");
+        // Finance and noacl.txt; nothing below Finance was even read.
+        assertThat(result.hiddenCount()).isEqualTo(2);
+        assertThat(requests).noneMatch(request -> request.contains("objectId=f1&cmisselector=children"));
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test
+    void theNodeLimitCountsOnlyVisibleNodes() {
+        DiscoveryResult result = connector().explore(new ExploreRequest(null, 5, 3, true, TIMEOUT), readableBy("GROUP_EVERYONE"));
+
+        assertThat(names(result.nodes())).containsExactly("Public", "a.txt", "b.txt");
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test
+    void aHiddenStartFolderReadsLikeOneThatDoesNotExist() {
+        VisibilityFilter everyone = readableBy("GROUP_EVERYONE");
+
+        Throwable hidden = catchThrowable(() -> connector().explore(new ExploreRequest("/Finance", 1, 10, true, TIMEOUT), everyone));
+        Throwable absent = catchThrowable(() -> connector().explore(new ExploreRequest("/Nowhere", 1, 10, true, TIMEOUT), everyone));
+
+        assertThat(hidden).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("No CMIS folder '/Finance' in this connector's scope.");
+        assertThat(absent).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("No CMIS folder '/Nowhere' in this connector's scope.");
+        assertThatThrownBy(() -> connector().dryRun(new DryRunRequest("/Finance", 1, 10, TIMEOUT), everyone))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage(hidden.getMessage());
+    }
+
+    @Test
+    void outOfScopeAndNonFolderStartsReadLikeMissingOnes() {
+        CmisRepositoryConnector financeOnly = connector("/Finance", true, CmisCrawlMode.FOLDER, false, 100);
+
+        assertThatThrownBy(() -> financeOnly.explore(new ExploreRequest("/Public", 1, 10, true, TIMEOUT)))
+                .hasMessage("No CMIS folder '/Public' in this connector's scope.");
+        assertThatThrownBy(() -> connector().explore(new ExploreRequest("d1", 1, 10, true, TIMEOUT)))
+                .hasMessage("No CMIS folder 'd1' in this connector's scope.");
+    }
+
+    @Test
+    void aFilterThatCannotDecideStopsDiscovery() {
+        VisibilityFilter broken = nodes -> { throw new IllegalStateException("authorization unavailable"); };
+        VisibilityFilter miscounting = nodes -> new boolean[] {true, true, true, true, true, true, true, true, true};
+
+        assertThatThrownBy(() -> connector().explore(new ExploreRequest(null, 1, 10, true, TIMEOUT), broken))
+                .hasMessageContaining("authorization unavailable");
+        assertThatThrownBy(() -> connector().explore(new ExploreRequest(null, 1, 10, true, TIMEOUT), miscounting))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("decisions");
+        assertThatThrownBy(() -> connector().dryRun(new DryRunRequest(null, 1, 10, TIMEOUT), broken))
+                .hasMessageContaining("authorization unavailable");
+    }
+
+    @Test
+    void aFolderDryRunCountsOnlyWhatTheCallerMayRead() {
+        DryRunResult result = connector().dryRun(new DryRunRequest(null, 10, 100, TIMEOUT), readableBy("GROUP_EVERYONE"));
+
+        assertThat(names(result.samples())).containsExactlyInAnyOrder("a.txt", "b.txt");
+        assertThat(result.matchCount()).isEqualTo(2);
+        assertThat(result.countAccuracy()).isEqualTo(CountAccuracy.EXACT);
+        // budget.pdf and old.pdf (finance only) and noacl.txt.
+        assertThat(result.hiddenCount()).isEqualTo(3);
+        assertThat(result.samples()).allMatch(sample -> sample.parentId() == null);
+    }
+
+    @Test
+    void aQueryDryRunEstimatesTheCountAndChecksEachSample() {
+        DryRunResult result = connector().dryRun(new DryRunRequest("SELECT * FROM cmis:document", 1, 100, TIMEOUT),
+                readableBy("GROUP_EVERYONE"));
+
+        assertThat(result.matchCount()).isEqualTo(7);
+        assertThat(result.countAccuracy()).isEqualTo(CountAccuracy.ESTIMATE);
+        assertThat(result.hiddenCount()).isNull();
+        // budget.pdf and old.pdf come first but are hidden; a.txt is the first visible match.
+        assertThat(names(result.samples())).containsExactly("a.txt");
+    }
+
+    @Test
+    void aQueryDryRunReadsAtMostFiveCandidatesPerSample() {
+        DryRunResult result = connector().dryRun(new DryRunRequest("SELECT * FROM cmis:document", 1, 100, TIMEOUT),
+                readableBy("nobody"));
+
+        assertThat(result.samples()).isEmpty();
+        assertThat(requests).filteredOn(request -> request.contains("cmisselector=object")).hasSize(
+                CmisRepositoryConnector.SAMPLE_CANDIDATES_PER_SAMPLE);
     }
 }

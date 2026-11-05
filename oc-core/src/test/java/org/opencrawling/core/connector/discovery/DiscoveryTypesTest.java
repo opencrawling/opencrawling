@@ -70,13 +70,31 @@ class DiscoveryTypesTest {
     @Test
     void resultsAreImmutableCopiesAndSayWhetherTheyWereTruncated() {
         List<DiscoveryNode> nodes = new ArrayList<>(List.of(node(null)));
-        DiscoveryResult result = new DiscoveryResult(nodes, null);
+        DiscoveryResult result = new DiscoveryResult(nodes, 0, null);
         nodes.clear();
 
         assertThat(result.nodes()).hasSize(1);
         assertThat(result.truncated()).isFalse();
-        assertThat(new DiscoveryResult(null, TruncationReason.MAX_NODES).truncated()).isTrue();
-        assertThat(new DryRunResult(3, CountAccuracy.LOWER_BOUND, null, TruncationReason.MAX_SCAN).samples()).isEmpty();
+        assertThat(new DiscoveryResult(null, 0, TruncationReason.MAX_NODES).truncated()).isTrue();
+        assertThat(new DryRunResult(3, CountAccuracy.LOWER_BOUND, null, null, TruncationReason.MAX_SCAN).samples()).isEmpty();
         assertThatThrownBy(() -> result.nodes().add(node(null))).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void theShowEverythingFilterShowsEveryNodeAndSaysSo() {
+        assertThat(VisibilityFilter.ALL.visible(List.of(node(null), node(null)))).containsExactly(true, true);
+        assertThat(VisibilityFilter.ALL.showsEverything()).isTrue();
+        VisibilityFilter some = nodes -> new boolean[nodes.size()];
+        assertThat(some.showsEverything()).isFalse();
+    }
+
+    @Test
+    void aFilterMustAnswerOncePerNode() {
+        assertThat(VisibilityFilter.decide(nodes -> null, List.of())).isEmpty();
+        assertThatThrownBy(() -> VisibilityFilter.decide(nodes -> new boolean[1], List.of(node(null), node(null))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> VisibilityFilter.decide(nodes -> null, List.of(node(null))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new DiscoveryResult(List.of(), -1, null)).isInstanceOf(IllegalArgumentException.class);
     }
 }

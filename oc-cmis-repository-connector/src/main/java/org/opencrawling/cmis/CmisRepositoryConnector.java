@@ -40,6 +40,7 @@ import org.opencrawling.core.connector.discovery.DryRunRequest;
 import org.opencrawling.core.connector.discovery.DryRunResult;
 import org.opencrawling.core.connector.discovery.ExploreRequest;
 import org.opencrawling.core.connector.discovery.TruncationReason;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
@@ -547,21 +548,19 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
     /**
      * Lists the tree below a folder, breadth-first. The folder must be the configured root or below it, and not
      * excluded; excluded folders are left out of the listing, as the crawler leaves them out. ACLs are always
-     * requested, whatever {@code include-acls} says, since the caller decides on them.
+     * requested, whatever {@code include-acls} says, since the filter decides on them.
      */
     @Override
-    public DiscoveryResult explore(ExploreRequest request) {
+    public DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter) {
         long deadline = System.nanoTime() + request.timeout().toNanos();
         ensureConnected();
         try {
-            JsonNode start = folderInScope(request.start() != null ? request.start() : configuredRoot());
+            String startRef = request.start() != null ? request.start() : configuredRoot();
+            DiscoveryNode startNode = visibleFolder(folderInScope(startRef), startRef, filter);
             Deque<DiscoveryNode> folders = new ArrayDeque<>();
-            DiscoveryNode startNode = folderNode(start, null, 0);
-            if (startNode == null) {
-                throw new DiscoveryException("The CMIS folder has no object id.", null);
-            }
             folders.add(startNode);
             List<DiscoveryNode> nodes = new ArrayList<>();
+            long hidden = 0;
             TruncationReason truncation = null;
             while (!folders.isEmpty()) {
                 DiscoveryNode folder = folders.poll();
@@ -569,17 +568,26 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
                 boolean hasMore = true;
                 while (hasMore) {
                     if (System.nanoTime() - deadline > 0) {
-                        return new DiscoveryResult(nodes, TruncationReason.TIMEOUT);
+                        return new DiscoveryResult(nodes, hidden, TruncationReason.TIMEOUT);
                     }
                     CmisClient.CmisChildrenResult page = cmisClient.getChildren(
                             resolvedRepositoryId, folder.sourceId(), skipCount, batchSize, true);
+                    List<DiscoveryNode> candidates = new ArrayList<>();
                     for (JsonNode child : page.objects()) {
                         DiscoveryNode node = childNode(child, folder.sourceId(), folder.depth() + 1);
-                        if (node == null || (node.type() == DiscoveryNode.NodeType.DOCUMENT && !request.includeDocuments())) {
+                        if (node != null && (node.type() == DiscoveryNode.NodeType.FOLDER || request.includeDocuments())) {
+                            candidates.add(node);
+                        }
+                    }
+                    boolean[] visible = VisibilityFilter.decide(filter, candidates);
+                    for (int i = 0; i < visible.length; i++) {
+                        if (!visible[i]) {
+                            hidden++;
                             continue;
                         }
+                        DiscoveryNode node = candidates.get(i);
                         if (nodes.size() >= request.maxNodes()) {
-                            return new DiscoveryResult(nodes, TruncationReason.MAX_NODES);
+                            return new DiscoveryResult(nodes, hidden, TruncationReason.MAX_NODES);
                         }
                         nodes.add(node);
                         if (node.type() == DiscoveryNode.NodeType.FOLDER) {
@@ -594,7 +602,7 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
                     skipCount += page.objects().size();
                 }
             }
-            return new DiscoveryResult(nodes, truncation);
+            return new DiscoveryResult(nodes, hidden, truncation);
         } catch (IOException e) {
             throw new DiscoveryException("CMIS exploration failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -608,9 +616,14 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
      * with {@code include-subfolders}, its subfolders' documents) that match the version policy, skipping excluded
      * folders; for a query, every result, as a query crawl takes them. Without a scope, the connector's own
      * configured query or root folder.
+     *
+     * <p>In a folder scope every document is checked against the filter, so the count is the caller's. Subfolders
+     * are walked whether or not the filter shows them, since a crawl takes their documents too; samples name no
+     * folder. A query returns no ACLs, so its count covers every match ({@code ESTIMATE} unless the filter shows
+     * everything) and only its samples are checked.
      */
     @Override
-    public DryRunResult dryRun(DryRunRequest request) {
+    public DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter) {
         long deadline = System.nanoTime() + request.timeout().toNanos();
         ensureConnected();
         String scope = request.scope();
@@ -621,8 +634,11 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
             scope = crawlMode == CmisCrawlMode.QUERY ? cmisQuery : null;
         }
         try {
-            return isQuery(scope) ? dryRunQuery(readOnlyQuery(scope), request, deadline)
-                    : dryRunFolder(folderInScope(scope != null ? scope : configuredRoot()), request, deadline);
+            if (isQuery(scope)) {
+                return dryRunQuery(readOnlyQuery(scope), request, filter, deadline);
+            }
+            String folderRef = scope != null ? scope : configuredRoot();
+            return dryRunFolder(visibleFolder(folderInScope(folderRef), folderRef, filter), request, filter, deadline);
         } catch (IOException e) {
             throw new DiscoveryException("CMIS dry run failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -631,13 +647,31 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
         }
     }
 
-    private DryRunResult dryRunFolder(JsonNode start, DryRunRequest request, long deadline)
+    /** The starting folder as a node, refused as not found when the filter hides it. */
+    private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
+        DiscoveryNode node = folderNode(folder, null, 0);
+        if (node == null) {
+            throw new DiscoveryException("The CMIS folder '" + reference + "' has no object id.", null);
+        }
+        if (!VisibilityFilter.decide(filter, List.of(node))[0]) {
+            throw new IllegalArgumentException(notFound(reference));
+        }
+        return node;
+    }
+
+    private static String notFound(String reference) {
+        return "No CMIS folder '" + reference + "' in this connector's scope.";
+    }
+
+    private DryRunResult dryRunFolder(DiscoveryNode start, DryRunRequest request, VisibilityFilter filter, long deadline)
             throws IOException, InterruptedException {
         Deque<String> folders = new ArrayDeque<>();
-        folders.add(objectId(start));
+        folders.add(start.sourceId());
         Set<String> visited = new HashSet<>();
         List<DiscoveryNode> samples = new ArrayList<>();
+        long scanned = 0;
         long count = 0;
+        long hidden = 0;
         while (!folders.isEmpty()) {
             String folderId = folders.poll();
             if (!visited.add(folderId)) {
@@ -647,11 +681,12 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
             boolean hasMore = true;
             while (hasMore) {
                 if (System.nanoTime() - deadline > 0) {
-                    return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, TruncationReason.TIMEOUT);
+                    return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, hidden, TruncationReason.TIMEOUT);
                 }
                 CmisClient.CmisChildrenResult page = cmisClient.getChildren(resolvedRepositoryId, folderId, skipCount, batchSize, true);
+                List<DiscoveryNode> documents = new ArrayList<>();
                 for (JsonNode child : page.objects()) {
-                    DiscoveryNode node = childNode(child, folderId, 1);
+                    DiscoveryNode node = childNode(child, null, 1);
                     if (node == null) {
                         continue;
                     }
@@ -659,27 +694,41 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
                         if (includeSubfolders) {
                             folders.add(node.sourceId());
                         }
-                        continue;
+                    } else {
+                        documents.add(node);
                     }
-                    if (count >= request.maxScan()) {
-                        return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, TruncationReason.MAX_SCAN);
+                }
+                boolean[] visible = VisibilityFilter.decide(filter, documents);
+                for (int i = 0; i < visible.length; i++) {
+                    if (scanned >= request.maxScan()) {
+                        return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, hidden, TruncationReason.MAX_SCAN);
+                    }
+                    scanned++;
+                    if (!visible[i]) {
+                        hidden++;
+                        continue;
                     }
                     count++;
                     if (samples.size() < request.sampleSize()) {
-                        samples.add(node);
+                        samples.add(documents.get(i));
                     }
                 }
                 hasMore = page.hasMoreItems() && !page.objects().isEmpty();
                 skipCount += page.objects().size();
             }
         }
-        return new DryRunResult(count, CountAccuracy.EXACT, samples, null);
+        return new DryRunResult(count, CountAccuracy.EXACT, samples, hidden, null);
     }
 
-    private DryRunResult dryRunQuery(String query, DryRunRequest request, long deadline)
+    /** How many query results may be read again for each sample asked for, looking for visible ones. */
+    static final int SAMPLE_CANDIDATES_PER_SAMPLE = 5;
+
+    private DryRunResult dryRunQuery(String query, DryRunRequest request, VisibilityFilter filter, long deadline)
             throws IOException, InterruptedException {
         boolean searchAllVersions = versionsMode == CmisVersionsMode.ALL;
-        List<String> sampleIds = new ArrayList<>();
+        int candidateLimit = filter.showsEverything() ? request.sampleSize()
+                : (int) Math.min((long) request.sampleSize() * SAMPLE_CANDIDATES_PER_SAMPLE, request.maxScan());
+        List<String> candidateIds = new ArrayList<>();
         long count = 0;
         TruncationReason truncation = null;
         int skipCount = 0;
@@ -698,26 +747,35 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
                 }
                 count++;
                 String objectId = CmisDocumentBuilder.getPropertyValue(result, "cmis:objectId");
-                if (sampleIds.size() < request.sampleSize() && objectId != null && !objectId.isBlank()) {
-                    sampleIds.add(objectId);
+                if (candidateIds.size() < candidateLimit && objectId != null && !objectId.isBlank()) {
+                    candidateIds.add(objectId);
                 }
             }
             hasMore = page.hasMoreItems() && !page.results().isEmpty();
             skipCount += page.results().size();
         }
-        // Query results carry no ACL, so each sample is read again with its ACL.
-        List<DiscoveryNode> samples = new ArrayList<>();
-        for (String objectId : sampleIds) {
+        // Query results carry no ACL, so each candidate sample is read again with its ACL.
+        List<DiscoveryNode> candidates = new ArrayList<>();
+        for (String objectId : candidateIds) {
             if (System.nanoTime() - deadline > 0) {
                 truncation = truncation != null ? truncation : TruncationReason.TIMEOUT;
                 break;
             }
             DiscoveryNode node = documentNode(cmisClient.getObject(resolvedRepositoryId, objectId, true), null, 1);
             if (node != null) {
-                samples.add(node);
+                candidates.add(node);
             }
         }
-        return new DryRunResult(count, truncation == null ? CountAccuracy.EXACT : CountAccuracy.LOWER_BOUND, samples, truncation);
+        boolean[] visible = VisibilityFilter.decide(filter, candidates);
+        List<DiscoveryNode> samples = new ArrayList<>();
+        for (int i = 0; i < visible.length && samples.size() < request.sampleSize(); i++) {
+            if (visible[i]) {
+                samples.add(candidates.get(i));
+            }
+        }
+        CountAccuracy accuracy = !filter.showsEverything() ? CountAccuracy.ESTIMATE
+                : truncation == null ? CountAccuracy.EXACT : CountAccuracy.LOWER_BOUND;
+        return new DryRunResult(count, accuracy, samples, filter.showsEverything() ? 0L : null, truncation);
     }
 
     private static boolean isQuery(String scope) {
@@ -745,7 +803,7 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
 
     /**
      * Reads a folder and checks that the connector may look into it: it must be the configured root or below it,
-     * and not excluded.
+     * and not excluded. Every refusal reads the same, so that a caller cannot learn what exists outside its view.
      *
      * @throws IllegalArgumentException when it does not exist, is not a folder or is out of scope
      */
@@ -754,15 +812,15 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
         try {
             folder = cmisClient.getObject(resolvedRepositoryId, folderIdOrPath, true);
         } catch (FileNotFoundException e) {
-            throw new IllegalArgumentException("No CMIS folder '" + folderIdOrPath + "'.", e);
+            throw new IllegalArgumentException(notFound(folderIdOrPath), e);
         }
         if (!"cmis:folder".equalsIgnoreCase(CmisDocumentBuilder.getPropertyValue(folder, "cmis:baseTypeId"))) {
-            throw new IllegalArgumentException("'" + folderIdOrPath + "' is not a CMIS folder.");
+            throw new IllegalArgumentException(notFound(folderIdOrPath));
         }
         String path = CmisDocumentBuilder.getPropertyValue(folder, "cmis:path");
         String rootPath = configuredRootPath();
         if (path == null || !isWithin(path, rootPath) || isExcluded(path)) {
-            throw new IllegalArgumentException("Folder '" + folderIdOrPath + "' is outside this connector's scope.");
+            throw new IllegalArgumentException(notFound(folderIdOrPath));
         }
         return folder;
     }

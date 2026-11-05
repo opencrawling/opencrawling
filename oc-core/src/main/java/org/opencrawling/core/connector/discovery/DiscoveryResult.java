@@ -20,13 +20,17 @@ import java.util.List;
 /**
  * The nodes an exploration found, in breadth-first order.
  *
- * @param nodes            the nodes, never {@code null}
+ * @param nodes            the visible nodes, never {@code null}
+ * @param hiddenCount      how many items in the opened folders the filter hid
  * @param truncationReason why the walk stopped early, or {@code null} when it covered everything in its bounds
  */
-public record DiscoveryResult(List<DiscoveryNode> nodes, TruncationReason truncationReason) {
+public record DiscoveryResult(List<DiscoveryNode> nodes, long hiddenCount, TruncationReason truncationReason) {
 
     public DiscoveryResult {
         nodes = nodes == null ? List.of() : List.copyOf(nodes);
+        if (hiddenCount < 0) {
+            throw new IllegalArgumentException("hiddenCount must not be negative");
+        }
     }
 
     public boolean truncated() {

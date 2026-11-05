@@ -22,26 +22,42 @@ import org.opencrawling.core.connector.RepositoryConnector;
  * and preview what a scope matches.
  *
  * <p>Neither operation reads document content. Both stay within the request's bounds and report when they
- * stopped early. Every node carries the access control the source reports for it, so the caller can decide what a
- * user may see; a connector never filters by user itself.
+ * stopped early. Every node carries the access control the source reports for it.
+ *
+ * <p>What a caller sees is decided by a {@link VisibilityFilter}, applied page by page: a folder the caller cannot
+ * see is not opened (so nothing below it is named), a starting folder the caller cannot see is reported as not
+ * found, and the bounds count only visible items.
  *
  * <p>Implementations must reject a query that could change the repository: a dry-run scope is read-only.
  */
 public interface DiscoverableRepositoryConnector extends RepositoryConnector {
 
     /**
-     * Lists folders (and, if asked, documents) below the request's starting node.
+     * Lists the folders (and, if asked, documents) below the request's starting folder that the filter shows.
      *
-     * @throws IllegalArgumentException when the starting node does not exist or is not a folder
+     * @throws IllegalArgumentException when the starting folder does not exist, is not a folder, is out of scope,
+     *                                  or is hidden by the filter
      * @throws DiscoveryException       when the repository cannot be reached or answers with an error
      */
-    DiscoveryResult explore(ExploreRequest request);
+    DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter);
 
     /**
-     * Counts the documents a crawl of the request's scope would pick up and returns some of them.
+     * Counts the documents a crawl of the request's scope would pick up that the filter shows, and returns some of
+     * them.
      *
-     * @throws IllegalArgumentException when the scope is not a folder or a read-only query
+     * @throws IllegalArgumentException when the scope is not a folder or a read-only query, or is a folder hidden by
+     *                                  the filter
      * @throws DiscoveryException       when the repository cannot be reached or answers with an error
      */
-    DryRunResult dryRun(DryRunRequest request);
+    DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter);
+
+    /** {@link #explore(ExploreRequest, VisibilityFilter)} showing everything. */
+    default DiscoveryResult explore(ExploreRequest request) {
+        return explore(request, VisibilityFilter.ALL);
+    }
+
+    /** {@link #dryRun(DryRunRequest, VisibilityFilter)} showing everything. */
+    default DryRunResult dryRun(DryRunRequest request) {
+        return dryRun(request, VisibilityFilter.ALL);
+    }
 }
