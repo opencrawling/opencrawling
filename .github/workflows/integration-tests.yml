@@ -180,7 +180,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Restore Maven cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.m2/repository
           key: setup-java-${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
