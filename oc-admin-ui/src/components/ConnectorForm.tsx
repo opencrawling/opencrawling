@@ -107,6 +107,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
     return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
   }
+  if (className.includes('web.WebRepositoryConnector')) {
+    return { icon: Globe, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
@@ -412,6 +415,7 @@ export default function ConnectorForm() {
       { label: 'Flowable Repository Connector', value: 'org.opencrawling.flowable.FlowableRepositoryConnector' },
       { label: 'Camunda Repository Connector', value: 'org.opencrawling.camunda.CamundaRepositoryConnector' },
       { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
+      { label: 'Web Crawler (HTTP/HTTPS)', value: 'org.opencrawling.web.WebRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
       { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
       { label: 'Doxis Repository (Intelligent Content Automation)', value: 'org.opencrawling.doxis.DoxisRepositoryConnector' },
@@ -1272,6 +1276,81 @@ export default function ConnectorForm() {
                           Stamps <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_process_instance_id</code>, <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_identity_users</code>, and <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_identity_groups</code> for enterprise process authorization pushdown.
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Web Crawler: defaults for every job using this connector; a job's crawlSpec overrides them */}
+                  {selectedClass === 'org.opencrawling.web.WebRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">User Agent</label>
+                        <input
+                          {...register('configuration.userAgent', { required: true })}
+                          defaultValue="OpenCrawlingBot/1.0 (+https://opencrawling.github.io)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted">Must include a contact URL or email address so site owners can reach you.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Depth</label>
+                        <input type="number" {...register('configuration.maxDepth')} defaultValue={3} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Politeness Delay (ms)</label>
+                        <input type="number" {...register('configuration.delayMs')} defaultValue={1000} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Crawled Pages</label>
+                        <input type="number" {...register('configuration.maxPages')} defaultValue={1000} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Access Control</label>
+                        <select {...register('configuration.aclMode')} defaultValue="public" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none">
+                          <option value="public">Public: everyone can search the content</option>
+                          <option value="static">Restricted to one user or group</option>
+                        </select>
+                      </div>
+                      {watch('configuration.aclMode') === 'static' && (
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Allowed User or Group</label>
+                          <input {...register('configuration.aclIdentity', { required: true })} placeholder="e.g. employees" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Include Patterns (one regex per line)</label>
+                        <textarea {...register('configuration.includePatterns')} rows={3} placeholder="^/docs/" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Exclude Patterns (one regex per line)</label>
+                        <textarea {...register('configuration.excludePatterns')} rows={3} placeholder="\.(png|jpe?g|gif|css|js)$" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="webStayOnDomain" {...register('configuration.stayOnDomain')} defaultChecked={true} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webStayOnDomain" className="text-sm font-medium cursor-pointer">Stay on the seed domain</label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="webRespectRobots" {...register('configuration.respectRobots')} defaultChecked={true} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webRespectRobots" className="text-sm font-medium cursor-pointer">Respect robots.txt (turn off only for sites you own)</label>
+                      </div>
+                      <div className="flex items-center gap-2 col-span-2">
+                        <input type="checkbox" id="webAllowPrivate" {...register('configuration.allowPrivateNetworks')} defaultChecked={false} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webAllowPrivate" className="text-sm font-medium cursor-pointer">Allow crawling private networks (intranets)</label>
+                      </div>
+                      {watch('configuration.allowPrivateNetworks') && (
+                        <>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">Private Network Allowlist</label>
+                            <input {...register('configuration.privateAllowlist', { required: true })} placeholder="intranet.example.com, 10.20.0.0/16" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                            <p className="text-xs text-muted">Host names or CIDR ranges the crawler may reach. Everything else on internal networks stays blocked.</p>
+                          </div>
+                          {watch('configuration.aclMode') !== 'static' && (
+                            <div className="flex items-center gap-2 col-span-2">
+                              <input type="checkbox" id="webConfirmPublic" {...register('configuration.confirmPublicExposure')} className="rounded border-border text-primary focus:ring-primary/50" />
+                              <label htmlFor="webConfirmPublic" className="text-sm font-medium cursor-pointer">I confirm this private content may be searchable by everyone</label>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
 

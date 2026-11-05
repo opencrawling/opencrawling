@@ -20,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.springframework.http.ResponseEntity;
@@ -27,7 +28,10 @@ import org.springframework.web.bind.annotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.opencrawling.core.connector.JobContext;
+import org.opencrawling.core.connector.RepositoryConnectorFactory;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
@@ -57,6 +61,9 @@ public class JobController {
 
     @Autowired(required = false)
     private PipelineProperties pipelineProperties;
+
+    @Autowired(required = false)
+    private Environment environment;
 
     @Autowired(required = false)
     private org.opencrawling.runtime.reporting.JobLedgerAccumulator ledgerAccumulator;
@@ -108,7 +115,7 @@ public class JobController {
         @ApiResponse(responseCode = "400", description = "Invalid job configuration or unrecognized pipeline mode")
     })
     @PostMapping
-    public ResponseEntity<Void> saveJob(@RequestBody JobDTO job) {
+    public ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
         log.info("Saving job: {}", job.name());
         try {
             PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
@@ -116,6 +123,11 @@ public class JobController {
         } catch (IllegalArgumentException e) {
             log.warn("Rejecting job '{}': {}", job.name(), e.getMessage());
             return ResponseEntity.badRequest().build();
+        }
+        String validationError = validate(job);
+        if (validationError != null) {
+            log.warn("Rejecting job '{}': {}", job.name(), validationError);
+            return ResponseEntity.badRequest().body(Map.of("error", validationError));
         }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
             // Generate unique ID based on timestamp
@@ -133,7 +145,8 @@ public class JobController {
                 "N/A",
                 job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
                 job.narrativization(),
-                job.pipelineMode()
+                job.pipelineMode(),
+                job.crawlSpec()
             );
             jobs.add(newJob);
         } else {
@@ -154,7 +167,8 @@ public class JobController {
                         existing.lastRun(),
                         job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
                         job.narrativization() != null ? job.narrativization() : existing.narrativization(),
-                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode()
+                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode(),
+                        job.crawlSpec() != null ? job.crawlSpec() : existing.crawlSpec()
                     ));
                     break;
                 }
@@ -207,7 +221,16 @@ public class JobController {
                     .findFirst()
                     .orElse(null);
                     
-                if (connConfig != null) {
+                RepositoryConnectorFactory factory = connConfig != null ? findFactory(connConfig.className()) : null;
+                if (factory != null) {
+                    try {
+                        resolvedConnector = factory.create(connConfig.configuration(), jobContext(activeJob));
+                    } catch (IllegalArgumentException e) {
+                        log.error("Job {} has an invalid configuration: {}", cleanId, e.getMessage());
+                        updateJobStatusAndStage(cleanId, "Error", "Failed", activeJob.documents());
+                        return ResponseEntity.badRequest().build();
+                    }
+                } else if (connConfig != null) {
                     if (connConfig.className().contains("Alfresco")) {
                         String url = connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
                         String username = connConfig.configuration().getOrDefault("username", "admin");
@@ -710,7 +733,8 @@ public class JobController {
                     lastRun,
                     job.transformationConnector(),
                     job.narrativization(),
-                    job.pipelineMode()
+                    job.pipelineMode(),
+                    job.crawlSpec()
                 ));
                 break;
             }
@@ -735,7 +759,8 @@ public class JobController {
                     LocalDateTime.now().format(formatter),
                     job.transformationConnector(),
                     job.narrativization(),
-                    job.pipelineMode()
+                    job.pipelineMode(),
+                    job.crawlSpec()
                 ));
                 break;
             }
@@ -762,7 +787,8 @@ public class JobController {
                     LocalDateTime.now().format(formatter),
                     job.transformationConnector(),
                     job.narrativization(),
-                    job.pipelineMode()
+                    job.pipelineMode(),
+                    job.crawlSpec()
                 ));
                 PersistenceHelper.save("jobs.json", jobs);
                 break;
@@ -810,6 +836,46 @@ public class JobController {
         }
     }
 
+    /**
+     * Validates a job against its repository connector's factory, if it has one.
+     *
+     * @return the validation error, or null if the job is valid
+     */
+    private String validate(JobDTO job) {
+        ConnectorController.ConnectorDTO connConfig = PersistenceHelper
+            .loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of()).stream()
+            .filter(c -> c.name().equalsIgnoreCase(job.repositoryConnector()))
+            .findFirst()
+            .orElse(null);
+        RepositoryConnectorFactory factory = connConfig != null ? findFactory(connConfig.className()) : null;
+        if (factory == null) {
+            return null;
+        }
+        try {
+            factory.create(connConfig.configuration(), jobContext(job));
+            return null;
+        } catch (IllegalArgumentException e) {
+            return e.getMessage();
+        }
+    }
+
+    private static RepositoryConnectorFactory findFactory(String className) {
+        if (className == null) {
+            return null;
+        }
+        for (RepositoryConnectorFactory factory : ServiceLoader.load(RepositoryConnectorFactory.class)) {
+            if (factory.className().equals(className)) {
+                return factory;
+            }
+        }
+        return null;
+    }
+
+    private JobContext jobContext(JobDTO job) {
+        return new JobContext(job.id(), job.path(), job.crawlSpec(),
+            environment != null ? environment::getProperty : key -> null);
+    }
+
     @Schema(description = "Pipeline job definition and execution status")
     public static record JobDTO(
         @Schema(description = "Unique job identifier", example = "1")
@@ -837,7 +903,9 @@ public class JobController {
         @Schema(description = "Auto-Narrativization Copilot configuration")
         NarrativizationConfig narrativization,
         @Schema(description = "Execution pipeline mode (RAG or MIGRATION)", example = "RAG")
-        String pipelineMode
+        String pipelineMode,
+        @Schema(description = "Connector-specific job settings, such as the web crawler's seeds and limits")
+        Map<String, Object> crawlSpec
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
@@ -857,11 +925,29 @@ public class JobController {
             String transformationConnector,
             NarrativizationConfig narrativization
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null);
+        }
+
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization,
+            String pipelineMode
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null);
         }
 
         public JobDTO withPipelineMode(String mode) {
-            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode);
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec);
         }
     }
 }

@@ -121,6 +121,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
+  if (className.includes('web.WebRepositoryConnector')) {
+    return { icon: Globe, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
@@ -429,6 +432,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           label: 'Workflow Definition Key / Scope Filter',
           placeholder: 'e.g. loanApplication or / for all',
           description: 'Workflow definition key to crawl (e.g. loanApplication) or / to scan all historic workflows.'
+        };
+      case 'org.opencrawling.web.WebRepositoryConnector':
+        return {
+          label: 'Seed URLs',
+          placeholder: 'e.g. https://docs.example.com/',
+          description: 'One or more start URLs, separated by spaces or new lines. Crawl limits come from the connector settings.'
         };
       case 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector':
         return {
