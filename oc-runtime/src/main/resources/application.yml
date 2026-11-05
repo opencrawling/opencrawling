@@ -159,6 +159,9 @@ opencrawling:
   jobs:
     # Job runs at the same time in this runtime (job API); further starts get 429. 0 = no cap.
     max-concurrent-runs: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS:0}
+    # Runs one verified caller (jwt mode with protect-api) may hold at the same time; further starts get 429.
+    # Runs started without a verified caller only count towards max-concurrent-runs. 0 = no cap.
+    max-concurrent-runs-per-caller: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS_PER_CALLER:0}
   ingest:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
