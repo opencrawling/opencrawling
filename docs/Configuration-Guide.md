@@ -79,8 +79,13 @@ Jobs started through the job API (`POST /api/jobs/{id}/start`, the admin UI, the
 *   **`OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS`** (`opencrawling.jobs.max-concurrent-runs`): how many jobs may run at the same time; a start beyond it returns `429`.
     *   *Type*: `int`
     *   *Default*: `0` (no cap)
+*   **`OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS_PER_CALLER`** (`opencrawling.jobs.max-concurrent-runs-per-caller`): how many runs one verified caller may hold at the same time; a start beyond it returns `429`.
+    *   *Type*: `int`
+    *   *Default*: `0` (no cap)
+    *   **Who counts as a caller:** a run has a caller only when its start request carried a validated token, which needs `jwt` mode with `protect-api` (see [Caller Identity](#-caller-identity)). The caller is the token's principal, or the acting agent for a delegated token, so an agent is capped across all the users it acts for. The same name in different tenants counts as different callers.
+    *   **Runs without a caller:** they count only towards `max-concurrent-runs`. Set that too if anonymous starts must be limited.
 *   **Stop:** `POST /api/jobs/{id}/stop` ends the crawl, at the latest before its next document, and the job shows `Finished` with stage `Stopped`. It returns `202` while the run winds down; a job with no run here (for example a `Running` status left over from a restart) is simply marked `Finished`.
-*   **Runs in progress:** `GET /api/jobs/runs`, and `GET /api/jobs/{id}/run` for one job (`404` when it is not running).
+*   **Runs in progress:** `GET /api/jobs/runs`, and `GET /api/jobs/{id}/run` for one job (`404` when it is not running). Each run shows its `caller` (empty when it has none).
 *   **Outcome:** a run that fails shows `Error`; before, a failed run was also shown as `Finished`.
 *   **Provenance:** each run's ledger records who started it and how (`trigger_source`, `triggered_by`, `on_behalf_of`, ...). The caller is recorded only when the start request carried a validated token, which needs `jwt` mode with `protect-api` (see [Caller Identity](#-caller-identity)); an optional `X-Correlation-Id` header is recorded as `correlation_id`. See [Run Provenance](Lakehouse-Audit-Reporting-and-Ledger.md#run-provenance-who-started-the-execution).
 

@@ -42,6 +42,9 @@ import java.util.function.Consumer;
  * <p>{@link #stop} sets the run's stop flag and interrupts its thread. The body receives the flag and must end
  * soon after it becomes true; {@link JobOrchestrator} checks it before every document.
  *
+ * <p>A run may name the verified caller that started it. With a per-caller cap, one caller can hold at most that
+ * many runs at the same time; runs without a known caller count only towards the overall cap.
+ *
  * <p>Runs live in memory, in the process that started them. A job whose saved status says "Running" after a
  * restart has no run here and can be started again.
  */
@@ -51,10 +54,10 @@ public class JobRunRegistry {
     private static final Logger log = LoggerFactory.getLogger(JobRunRegistry.class);
 
     /** What a running job looks like from outside. */
-    public record RunInfo(String jobId, String executionId, Instant startedAt, boolean stopRequested) {}
+    public record RunInfo(String jobId, String executionId, Instant startedAt, boolean stopRequested, String caller) {}
 
     /** The outcome of {@link #reserve}. */
-    public sealed interface ReserveResult permits Reserved, AlreadyRunning, LimitReached {}
+    public sealed interface ReserveResult permits Reserved, AlreadyRunning, LimitReached, CallerLimitReached {}
 
     public record Reserved(Reservation reservation) implements ReserveResult {}
 
@@ -62,17 +65,32 @@ public class JobRunRegistry {
 
     public record LimitReached(int limit) implements ReserveResult {}
 
+    /** The caller already holds as many runs as the per-caller cap allows. */
+    public record CallerLimitReached(String caller, int limit) implements ReserveResult {}
+
     private final int maxConcurrentRuns;
+    private final int maxConcurrentRunsPerCaller;
     private final Clock clock;
     private final Map<String, Run> runs = new LinkedHashMap<>();
 
     @Autowired
-    public JobRunRegistry(@Value("${opencrawling.jobs.max-concurrent-runs:0}") int maxConcurrentRuns) {
-        this(maxConcurrentRuns, Clock.systemUTC());
+    public JobRunRegistry(@Value("${opencrawling.jobs.max-concurrent-runs:0}") int maxConcurrentRuns,
+                          @Value("${opencrawling.jobs.max-concurrent-runs-per-caller:0}") int maxConcurrentRunsPerCaller) {
+        this(maxConcurrentRuns, maxConcurrentRunsPerCaller, Clock.systemUTC());
+    }
+
+    /** A registry with no per-caller cap. */
+    public JobRunRegistry(int maxConcurrentRuns) {
+        this(maxConcurrentRuns, 0, Clock.systemUTC());
     }
 
     JobRunRegistry(int maxConcurrentRuns, Clock clock) {
+        this(maxConcurrentRuns, 0, clock);
+    }
+
+    JobRunRegistry(int maxConcurrentRuns, int maxConcurrentRunsPerCaller, Clock clock) {
         this.maxConcurrentRuns = Math.max(0, maxConcurrentRuns);
+        this.maxConcurrentRunsPerCaller = Math.max(0, maxConcurrentRunsPerCaller);
         this.clock = clock;
     }
 
@@ -81,10 +99,24 @@ public class JobRunRegistry {
         return maxConcurrentRuns;
     }
 
+    /** The configured cap on runs one caller may hold at the same time; 0 means no cap. */
+    public int maxConcurrentRunsPerCaller() {
+        return maxConcurrentRunsPerCaller;
+    }
+
+    /** Takes the job's slot for a run with no known caller. */
+    public ReserveResult reserve(String jobId, String executionId) {
+        return reserve(jobId, executionId, null);
+    }
+
     /**
-     * Takes the job's slot. Fails when the job already has a run, or when the cap on runs is reached.
+     * Takes the job's slot. Fails when the job already has a run, when the cap on runs is reached, or when
+     * {@code caller} already holds as many runs as the per-caller cap allows.
+     *
+     * @param caller the verified caller starting the run, or {@code null} when unknown (then only the overall cap
+     *               applies)
      */
-    public synchronized ReserveResult reserve(String jobId, String executionId) {
+    public synchronized ReserveResult reserve(String jobId, String executionId, String caller) {
         Run existing = runs.get(jobId);
         if (existing != null) {
             return new AlreadyRunning(existing.info());
@@ -92,7 +124,11 @@ public class JobRunRegistry {
         if (maxConcurrentRuns > 0 && runs.size() >= maxConcurrentRuns) {
             return new LimitReached(maxConcurrentRuns);
         }
-        Run run = new Run(jobId, executionId, clock.instant());
+        if (caller != null && maxConcurrentRunsPerCaller > 0
+                && runs.values().stream().filter(run -> caller.equals(run.caller)).count() >= maxConcurrentRunsPerCaller) {
+            return new CallerLimitReached(caller, maxConcurrentRunsPerCaller);
+        }
+        Run run = new Run(jobId, executionId, caller, clock.instant());
         runs.put(jobId, run);
         return new Reserved(new Reservation(run));
     }
@@ -173,13 +209,15 @@ public class JobRunRegistry {
     private static final class Run {
         private final String jobId;
         private final String executionId;
+        private final String caller;
         private final Instant startedAt;
         private final AtomicBoolean stopRequested = new AtomicBoolean();
         private Thread thread;
 
-        private Run(String jobId, String executionId, Instant startedAt) {
+        private Run(String jobId, String executionId, String caller, Instant startedAt) {
             this.jobId = jobId;
             this.executionId = executionId;
+            this.caller = caller;
             this.startedAt = startedAt;
         }
 
@@ -198,7 +236,7 @@ public class JobRunRegistry {
         }
 
         private RunInfo info() {
-            return new RunInfo(jobId, executionId, startedAt, stopRequested.get());
+            return new RunInfo(jobId, executionId, startedAt, stopRequested.get(), caller);
         }
     }
 }

@@ -150,7 +150,8 @@
         <tika.version>4.2.0</tika.version>
         <jackson.version>2.21.7</jackson.version>
         <jackson-annotations.version>2.22</jackson-annotations.version>
-        <tools-jackson.version>3.2.2</tools-jackson.version>
+        <tools-jackson.version>3.2.4</tools-jackson.version>
+        <jsoup.version>1.24.1</jsoup.version>
         <assertj.version>3.27.7</assertj.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-io.version>2.22.0</commons-io.version>
@@ -216,6 +217,11 @@
                 <groupId>tools.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${tools-jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jsoup</groupId>
+                <artifactId>jsoup</artifactId>
+                <version>${jsoup.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.assertj</groupId>

@@ -205,7 +205,7 @@ public class JobController {
         @ApiResponse(responseCode = "200", description = "Job start signal accepted and initiated"),
         @ApiResponse(responseCode = "404", description = "Job not found"),
         @ApiResponse(responseCode = "409", description = "Job already running, or its connectors cannot be used"),
-        @ApiResponse(responseCode = "429", description = "The cap on runs at the same time (opencrawling.jobs.max-concurrent-runs) is reached")
+        @ApiResponse(responseCode = "429", description = "The cap on runs at the same time (opencrawling.jobs.max-concurrent-runs), or the caller's own cap (opencrawling.jobs.max-concurrent-runs-per-caller), is reached")
     })
     @PostMapping("/{id}/start")
     public ResponseEntity<Void> startJob(
@@ -231,13 +231,17 @@ public class JobController {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
             String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
             JobRunRegistry.Reservation reservation;
-            switch (runRegistry.reserve(activeJob.id(), executionId)) {
+            switch (runRegistry.reserve(activeJob.id(), executionId, callerKey(provenance))) {
                 case JobRunRegistry.AlreadyRunning running -> {
                     log.warn("Job {} is already running [Exec ID: {}]; start rejected.", activeJob.id(), running.run().executionId());
                     return ResponseEntity.status(409).build();
                 }
                 case JobRunRegistry.LimitReached limit -> {
                     log.warn("Job {} not started: {} runs are already in progress (opencrawling.jobs.max-concurrent-runs).", activeJob.id(), limit.limit());
+                    return ResponseEntity.status(429).build();
+                }
+                case JobRunRegistry.CallerLimitReached callerLimit -> {
+                    log.warn("Job {} not started: its caller already has {} runs in progress (opencrawling.jobs.max-concurrent-runs-per-caller).", activeJob.id(), callerLimit.limit());
                     return ResponseEntity.status(429).build();
                 }
                 case JobRunRegistry.Reserved reserved -> reservation = reserved.reservation();
@@ -559,6 +563,19 @@ public class JobController {
 
     void setCallerResolver(CallerResolver callerResolver) {
         this.callerResolver = callerResolver;
+    }
+
+    /**
+     * The key the per-caller cap counts runs under: the verified party that starts the run (for a delegated token,
+     * the acting agent), qualified by its tenant when it has one. {@code null} for a run with no verified caller.
+     */
+    static String callerKey(ExecutionProvenance provenance) {
+        if (provenance == null || !provenance.callerVerified() || provenance.triggeredBy() == null) {
+            return null;
+        }
+        return provenance.callerTenant() != null
+                ? provenance.callerTenant() + "/" + provenance.triggeredBy()
+                : provenance.triggeredBy();
     }
 
     /** Who is starting a run through the API: the verified caller of this request, if there is one. */

@@ -167,6 +167,7 @@ jobs:
     needs: build-and-test-cli
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Download CLI Executable Artifact
@@ -175,11 +176,24 @@ jobs:
           name: oc-cli-jar
           path: release-assets/
 
-      - name: Upload Assets to GitHub Release
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign CLI JAR with Cosign (Keyless)
+        run: |
+          for jar in release-assets/oc-cli-*.jar; do
+            cosign sign-blob --yes --bundle "${jar}.sigstore.json" "$jar"
+          done
+        env:
+          COSIGN_YES: "true"
+
+      - name: Upload Assets & Signatures to GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.build-and-test-cli.outputs.tag_name }}
-          files: release-assets/oc-cli-*.jar
+          files: |
+            release-assets/oc-cli-*.jar
+            release-assets/oc-cli-*.jar.sigstore.json
 
   publish-homebrew-tap:
     name: Update Homebrew Tap Formula

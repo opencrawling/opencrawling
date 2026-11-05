@@ -151,7 +151,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
 
 ### Concurrency and tracing constraints
 
-- **Virtual threads** are enabled globally (`spring.threads.virtual.enabled=true`). Job API runs start through `JobRunRegistry` (one run per job, optional cap `opencrawling.jobs.max-concurrent-runs`, real stop). A stop sets a flag that `JobOrchestrator` checks before every document and interrupts the run's thread, so a crawl ends at the latest before its next document. Connectors should let an interrupt end a blocking call in `scan` rather than swallow it, so a stop does not have to wait for the next document.
+- **Virtual threads** are enabled globally (`spring.threads.virtual.enabled=true`). Job API runs start through `JobRunRegistry` (one run per job, optional caps `opencrawling.jobs.max-concurrent-runs` and `max-concurrent-runs-per-caller`, real stop). A stop sets a flag that `JobOrchestrator` checks before every document and interrupts the run's thread, so a crawl ends at the latest before its next document. Connectors should let an interrupt end a blocking call in `scan` rather than swallow it, so a stop does not have to wait for the next document.
 - **Fan-out** goes through `StructuredTaskScope` (a preview API).
 - **Trace context** isn't inherited by virtual threads forked in a `StructuredTaskScope`. Wrap every forked task in `ObservabilityTask.observed(...)` (from `oc-observability`) so the trace reaches the Kafka `traceparent` headers.
 - **Streaming:** connectors must keep heap use constant. Use cursor fetch sizes and `InputStream` content in `RepositoryDocument`. Never materialize whole result sets or files.
