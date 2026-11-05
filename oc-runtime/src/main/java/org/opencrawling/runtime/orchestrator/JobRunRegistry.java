@@ -17,6 +17,7 @@ package org.opencrawling.runtime.orchestrator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -65,6 +66,7 @@ public class JobRunRegistry {
     private final Clock clock;
     private final Map<String, Run> runs = new LinkedHashMap<>();
 
+    @Autowired
     public JobRunRegistry(@Value("${opencrawling.jobs.max-concurrent-runs:0}") int maxConcurrentRuns) {
         this(maxConcurrentRuns, Clock.systemUTC());
     }
