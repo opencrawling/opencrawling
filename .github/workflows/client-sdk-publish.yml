@@ -105,20 +105,31 @@ jobs:
           mkdir -p oc-java-client-sdk/target/release-jar
           BUILT_JAR=$(ls oc-java-client-sdk/target/oc-java-client-sdk-*.jar 2>/dev/null | grep -v 'sources' | grep -v 'javadoc' | grep -v 'original' | head -n 1)
           if [ -n "${{ steps.version.outputs.version }}" ]; then
-            cp "$BUILT_JAR" "oc-java-client-sdk/target/release-jar/oc-java-client-sdk-${{ steps.version.outputs.version }}.jar"
+            TARGET_NAME="oc-java-client-sdk-${{ steps.version.outputs.version }}.jar"
+            cp "$BUILT_JAR" "oc-java-client-sdk/target/release-jar/${TARGET_NAME}"
+            if [ -f "${BUILT_JAR}.asc" ]; then
+              cp "${BUILT_JAR}.asc" "oc-java-client-sdk/target/release-jar/${TARGET_NAME}.asc"
+            fi
           else
             cp "$BUILT_JAR" "oc-java-client-sdk/target/release-jar/"
+            if [ -f "${BUILT_JAR}.asc" ]; then
+              cp "${BUILT_JAR}.asc" "oc-java-client-sdk/target/release-jar/"
+            fi
           fi
 
       - name: Upload SDK JAR Artifact
         uses: actions/upload-artifact@v7.0.2
         with:
           name: oc-java-client-sdk-jar
-          path: oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+          path: |
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar.asc
 
-      - name: Attach SDK JAR to GitHub Release
+      - name: Attach SDK JAR & Signature to GitHub Release
         if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && steps.version.outputs.tag_name != '')) && steps.version.outputs.tag_name != ''
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
-          files: oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+          files: |
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar.asc
