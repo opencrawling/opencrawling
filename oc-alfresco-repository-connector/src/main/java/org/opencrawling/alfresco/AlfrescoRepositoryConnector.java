@@ -25,20 +25,34 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import org.opencrawling.core.connector.RepositoryConnector;
+import org.opencrawling.core.connector.discovery.CountAccuracy;
+import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DiscoveryException;
+import org.opencrawling.core.connector.discovery.DiscoveryNode;
+import org.opencrawling.core.connector.discovery.DiscoveryResult;
+import org.opencrawling.core.connector.discovery.DryRunRequest;
+import org.opencrawling.core.connector.discovery.DryRunResult;
+import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.TruncationReason;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
 import org.slf4j.Logger;
@@ -61,7 +75,7 @@ import reactor.core.publisher.FluxSink;
  * Integrates zero-trust ACL mapping, binary payload thresholds, and Java 25 Virtual Threads.
  */
 @Component
-public class AlfrescoRepositoryConnector implements RepositoryConnector {
+public class AlfrescoRepositoryConnector implements DiscoverableRepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(AlfrescoRepositoryConnector.class);
 
@@ -319,7 +333,7 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
                trimmed.startsWith("@");
     }
 
-    private record QueryInfo(String query, String language) {}
+    record QueryInfo(String query, String language) {}
 
     private QueryInfo resolveQueryInfo(String rawQuery) {
         if (rawQuery == null || rawQuery.isBlank() || rawQuery.equals("-root-") || rawQuery.equals("/")) {
@@ -688,5 +702,489 @@ public class AlfrescoRepositoryConnector implements RepositoryConnector {
             securityResult.securityConfig(),
             modifiedAt
         );
+    }
+
+    // ---- Discovery and dry run (#203) ----
+
+    /** Longest query a dry run accepts. */
+    static final int MAX_QUERY_LENGTH = 4000;
+    /** A node reference that is not a path: a node id or an alias such as {@code -root-}. */
+    private static final Pattern NODE_ID = Pattern.compile("[A-Za-z0-9-]{1,128}");
+    private static final Set<String> QUERY_LANGUAGES = Set.of("afts", "cmis", "lucene");
+    private static final Set<String> PUBLIC_AUTHORITIES = Set.of("group_everyone", "guest", "role_anonymous", "everyone");
+
+    private void ensureConnected() {
+        if (httpClient == null) {
+            try {
+                connect();
+            } catch (Exception e) {
+                throw new DiscoveryException("Cannot connect to Alfresco: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * Lists the tree below a folder, breadth-first. The folder must be the configured root (folder, site or path)
+     * or below it, and neither it nor a folder between it and the root may be excluded; excluded folders are left
+     * out of the listing, as the crawler leaves them out. Permissions are always requested, whatever
+     * {@code include-acls} says, since the filter decides on them.
+     */
+    @Override
+    public DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter) {
+        long deadline = System.nanoTime() + request.timeout().toNanos();
+        ensureConnected();
+        try {
+            String startRef = request.start() != null ? request.start() : configuredRootRef();
+            DiscoveryNode startNode = visibleFolder(folderInScope(startRef), startRef, filter);
+            Deque<DiscoveryNode> folders = new ArrayDeque<>();
+            folders.add(startNode);
+            List<DiscoveryNode> nodes = new ArrayList<>();
+            long hidden = 0;
+            TruncationReason truncation = null;
+            while (!folders.isEmpty()) {
+                DiscoveryNode folder = folders.poll();
+                int skipCount = 0;
+                boolean hasMore = true;
+                while (hasMore) {
+                    if (System.nanoTime() - deadline > 0) {
+                        return new DiscoveryResult(nodes, hidden, TruncationReason.TIMEOUT);
+                    }
+                    JsonNode list = discoveryChildren(folder.sourceId(), skipCount).path("list");
+                    List<DiscoveryNode> candidates = new ArrayList<>();
+                    int entries = 0;
+                    for (JsonNode wrapper : list.path("entries")) {
+                        entries++;
+                        DiscoveryNode node = childNode(wrapper.path("entry"), folder.sourceId(), folder.depth() + 1);
+                        if (node != null && (node.type() == DiscoveryNode.NodeType.FOLDER || request.includeDocuments())) {
+                            candidates.add(node);
+                        }
+                    }
+                    boolean[] visible = VisibilityFilter.decide(filter, candidates);
+                    for (int i = 0; i < visible.length; i++) {
+                        if (!visible[i]) {
+                            hidden++;
+                            continue;
+                        }
+                        DiscoveryNode node = candidates.get(i);
+                        if (nodes.size() >= request.maxNodes()) {
+                            return new DiscoveryResult(nodes, hidden, TruncationReason.MAX_NODES);
+                        }
+                        nodes.add(node);
+                        if (node.type() == DiscoveryNode.NodeType.FOLDER) {
+                            if (node.depth() < request.maxDepth()) {
+                                folders.add(node);
+                            } else {
+                                truncation = TruncationReason.MAX_DEPTH;
+                            }
+                        }
+                    }
+                    hasMore = entries > 0 && list.path("pagination").path("hasMoreItems").asBoolean(false);
+                    skipCount += entries;
+                }
+            }
+            return new DiscoveryResult(nodes, hidden, truncation);
+        } catch (IOException e) {
+            throw new DiscoveryException("Alfresco exploration failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("Alfresco exploration was interrupted.", e);
+        }
+    }
+
+    /**
+     * Counts what a crawl of the scope would pick up that the filter shows, with the crawler's rules: for a folder,
+     * its files (and, with {@code include-subfolders}, its subfolders' files) that pass the MIME type filter,
+     * skipping excluded folders; for a query (AFTS, CMIS or Lucene, as the crawler takes it), every file it
+     * returns. Without a scope, the connector's configured query or root.
+     *
+     * <p>Alfresco returns permissions with search results too, so a query's count is checked item by item, like a
+     * folder's. Subfolders are walked whether or not the filter shows them, since a crawl takes their files too;
+     * samples name no folder.
+     */
+    @Override
+    public DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter) {
+        long deadline = System.nanoTime() + request.timeout().toNanos();
+        ensureConnected();
+        String scope = request.scope();
+        try {
+            if ((scope == null && crawlMode == AlfrescoCrawlMode.QUERY) || isQueryString(scope)) {
+                QueryInfo query = readOnlyQuery(scope == null ? new QueryInfo(searchQuery, queryLanguage) : resolveQueryInfo(scope));
+                return dryRunQuery(query, request, filter, deadline);
+            }
+            String folderRef = scope != null ? scope : configuredRootRef();
+            return dryRunFolder(visibleFolder(folderInScope(folderRef), folderRef, filter), request, filter, deadline);
+        } catch (IOException e) {
+            throw new DiscoveryException("Alfresco dry run failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("Alfresco dry run was interrupted.", e);
+        }
+    }
+
+    private DryRunResult dryRunFolder(DiscoveryNode start, DryRunRequest request, VisibilityFilter filter, long deadline)
+            throws IOException, InterruptedException {
+        Deque<String> folders = new ArrayDeque<>();
+        folders.add(start.sourceId());
+        Set<String> visited = new HashSet<>();
+        Tally tally = new Tally(request);
+        while (!folders.isEmpty()) {
+            String folderId = folders.poll();
+            if (!visited.add(folderId)) {
+                continue;
+            }
+            int skipCount = 0;
+            boolean hasMore = true;
+            while (hasMore) {
+                if (System.nanoTime() - deadline > 0) {
+                    return tally.result(TruncationReason.TIMEOUT);
+                }
+                JsonNode list = discoveryChildren(folderId, skipCount).path("list");
+                List<DiscoveryNode> documents = new ArrayList<>();
+                int entries = 0;
+                for (JsonNode wrapper : list.path("entries")) {
+                    entries++;
+                    DiscoveryNode node = childNode(wrapper.path("entry"), null, 1);
+                    if (node == null) {
+                        continue;
+                    }
+                    if (node.type() == DiscoveryNode.NodeType.FOLDER) {
+                        if (includeSubfolders) {
+                            folders.add(node.sourceId());
+                        }
+                    } else {
+                        documents.add(node);
+                    }
+                }
+                if (!tally.add(documents, filter)) {
+                    return tally.result(TruncationReason.MAX_SCAN);
+                }
+                hasMore = entries > 0 && list.path("pagination").path("hasMoreItems").asBoolean(false);
+                skipCount += entries;
+            }
+        }
+        return tally.result(null);
+    }
+
+    private DryRunResult dryRunQuery(QueryInfo query, DryRunRequest request, VisibilityFilter filter, long deadline)
+            throws IOException, InterruptedException {
+        Tally tally = new Tally(request);
+        int skipCount = 0;
+        boolean hasMore = true;
+        while (hasMore) {
+            if (System.nanoTime() - deadline > 0) {
+                return tally.result(TruncationReason.TIMEOUT);
+            }
+            JsonNode list = discoverySearch(query, skipCount).path("list");
+            List<DiscoveryNode> documents = new ArrayList<>();
+            int entries = 0;
+            for (JsonNode wrapper : list.path("entries")) {
+                entries++;
+                JsonNode entry = wrapper.path("entry");
+                // A query crawl takes the files it returns, filtered only by MIME type.
+                if (entry.path("isFile").asBoolean(true) && matchesMimeType(entry.path("content").path("mimeType").asText(""))) {
+                    DiscoveryNode node = documentNode(entry, null, 1);
+                    if (node != null) {
+                        documents.add(node);
+                    }
+                }
+            }
+            if (!tally.add(documents, filter)) {
+                return tally.result(TruncationReason.MAX_SCAN);
+            }
+            hasMore = entries > 0 && list.path("pagination").path("hasMoreItems").asBoolean(false);
+            skipCount += entries;
+        }
+        return tally.result(null);
+    }
+
+    /** Counts a dry run's documents page by page against the filter and the scan limit. */
+    private static final class Tally {
+        private final DryRunRequest request;
+        private final List<DiscoveryNode> samples = new ArrayList<>();
+        private long scanned;
+        private long count;
+        private long hidden;
+
+        Tally(DryRunRequest request) {
+            this.request = request;
+        }
+
+        /** @return false when the scan limit was reached */
+        boolean add(List<DiscoveryNode> documents, VisibilityFilter filter) {
+            boolean[] visible = VisibilityFilter.decide(filter, documents);
+            for (int i = 0; i < visible.length; i++) {
+                if (scanned >= request.maxScan()) {
+                    return false;
+                }
+                scanned++;
+                if (!visible[i]) {
+                    hidden++;
+                    continue;
+                }
+                count++;
+                if (samples.size() < request.sampleSize()) {
+                    samples.add(documents.get(i));
+                }
+            }
+            return true;
+        }
+
+        DryRunResult result(TruncationReason truncation) {
+            return new DryRunResult(count, truncation == null ? CountAccuracy.EXACT : CountAccuracy.LOWER_BOUND,
+                    samples, hidden, truncation);
+        }
+    }
+
+    /** A query scope in one of the languages the Search API takes, and of bounded length. */
+    static QueryInfo readOnlyQuery(QueryInfo query) {
+        String language = query.language() == null ? "" : query.language().toLowerCase(Locale.ROOT);
+        if (!QUERY_LANGUAGES.contains(language)) {
+            throw new IllegalArgumentException("A query scope must be AFTS, CMIS or Lucene.");
+        }
+        if (query.query() == null || query.query().isBlank()) {
+            throw new IllegalArgumentException("A query scope must not be empty.");
+        }
+        if (query.query().length() > MAX_QUERY_LENGTH) {
+            throw new IllegalArgumentException("A query scope may be at most " + MAX_QUERY_LENGTH + " characters.");
+        }
+        return new QueryInfo(query.query(), language);
+    }
+
+    /** The configured root as a reference: the root folder id, the site's document library, or the root path. */
+    private String configuredRootRef() {
+        if (rootFolderId != null && !rootFolderId.isBlank()) {
+            return rootFolderId;
+        }
+        if (siteId != null && !siteId.isBlank()) {
+            return "/Sites/" + siteId + "/documentLibrary";
+        }
+        return rootFolderPath == null || rootFolderPath.isBlank() ? "/" : rootFolderPath;
+    }
+
+    private static String notFound(String reference) {
+        return "No Alfresco folder '" + reference + "' in this connector's scope.";
+    }
+
+    /**
+     * Reads a folder and checks that the connector may look into it: it must be the configured root or below it
+     * (by the ids of its ancestors), and neither it nor a folder between it and the root may be excluded. Every
+     * refusal reads the same, so that a caller cannot learn what exists outside its view.
+     */
+    private JsonNode folderInScope(String reference) throws IOException, InterruptedException {
+        JsonNode folder = discoveryNode(reference);
+        JsonNode root = discoveryNode(configuredRootRef());
+        if (folder == null || root == null || !folder.path("isFolder").asBoolean(false)) {
+            throw new IllegalArgumentException(notFound(reference));
+        }
+        String rootId = root.path("id").asText();
+        if (!rootId.equals(folder.path("id").asText())) {
+            boolean belowRoot = false;
+            for (JsonNode ancestor : folder.path("path").path("elements")) {
+                if (belowRoot && isFolderExcluded(ancestor.path("name").asText(""), ancestor.path("id").asText(""))) {
+                    throw new IllegalArgumentException(notFound(reference));
+                }
+                if (rootId.equals(ancestor.path("id").asText())) {
+                    belowRoot = true;
+                }
+            }
+            if (!belowRoot || isFolderExcluded(folder.path("name").asText(""), folder.path("id").asText(""))) {
+                throw new IllegalArgumentException(notFound(reference));
+            }
+        }
+        return folder;
+    }
+
+    /** The starting folder as a node, refused as not found when the filter hides it. */
+    private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
+        DiscoveryNode node = folderNode(folder, null, 0);
+        if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
+            throw new IllegalArgumentException(notFound(reference));
+        }
+        return node;
+    }
+
+    /** A node by id or by path from the repository root, with its path and permissions; {@code null} when absent. */
+    private JsonNode discoveryNode(String reference) throws IOException, InterruptedException {
+        String ref = reference == null ? "/" : reference.strip();
+        StringBuilder uri = new StringBuilder(url).append("/nodes/");
+        if (ref.startsWith("/")) {
+            uri.append("-root-?include=path,permissions");
+            String relative = ref.replaceAll("^/+", "").replaceAll("/+$", "");
+            if (!relative.isEmpty()) {
+                uri.append("&relativePath=").append(URLEncoder.encode(relative, StandardCharsets.UTF_8));
+            }
+        } else if (NODE_ID.matcher(ref).matches()) {
+            uri.append(ref).append("?include=path,permissions");
+        } else {
+            return null;
+        }
+        HttpResponse<String> response = get(uri.toString());
+        if (response.statusCode() == 404) {
+            return null;
+        }
+        if (response.statusCode() != 200) {
+            throw new IOException("Alfresco returned HTTP " + response.statusCode() + " for node '" + ref + "'.");
+        }
+        return objectMapper.readTree(response.body()).path("entry");
+    }
+
+    private JsonNode discoveryChildren(String nodeId, int skipCount) throws IOException, InterruptedException {
+        String uri = url + "/nodes/" + URLEncoder.encode(nodeId, StandardCharsets.UTF_8) + "/children?skipCount=" + skipCount
+                + "&maxItems=" + batchSize + "&include=path,permissions";
+        HttpResponse<String> response = get(uri);
+        if (response.statusCode() != 200) {
+            throw new IOException("Alfresco returned HTTP " + response.statusCode() + " listing node '" + nodeId + "'.");
+        }
+        return objectMapper.readTree(response.body());
+    }
+
+    private JsonNode discoverySearch(QueryInfo query, int skipCount) throws IOException, InterruptedException {
+        Map<String, Object> body = Map.of(
+                "query", Map.of("language", query.language(), "query", query.query()),
+                "paging", Map.of("maxItems", batchSize, "skipCount", skipCount),
+                "include", List.of("path", "permissions"));
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(resolveSearchUrl()))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("Authorization", authHeader)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 400) {
+            throw new IllegalArgumentException("Alfresco did not accept the query.");
+        }
+        if (response.statusCode() != 200) {
+            throw new IOException("Alfresco search returned HTTP " + response.statusCode() + ".");
+        }
+        return objectMapper.readTree(response.body());
+    }
+
+    private HttpResponse<String> get(String uri) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(uri))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** A child as a node, or {@code null} when the crawler would not take it. */
+    private DiscoveryNode childNode(JsonNode entry, String parentId, int depth) {
+        if (entry.path("isFolder").asBoolean(false)) {
+            return isFolderExcluded(entry.path("name").asText(""), entry.path("id").asText("")) ? null
+                    : folderNode(entry, parentId, depth);
+        }
+        if (entry.path("isFile").asBoolean(false)) {
+            JsonNode content = entry.path("content");
+            if (includeContentStream && content.isMissingNode()) {
+                return null;
+            }
+            return matchesMimeType(content.path("mimeType").asText("")) ? documentNode(entry, parentId, depth) : null;
+        }
+        return null;
+    }
+
+    private DiscoveryNode folderNode(JsonNode entry, String parentId, int depth) {
+        String id = entry.path("id").asText("");
+        if (id.isBlank()) {
+            return null;
+        }
+        return new DiscoveryNode("alfresco-folder:" + id, id, parentId, entry.path("name").asText(id), pathOf(entry),
+                DiscoveryNode.NodeType.FOLDER, depth, null, null, modifiedAt(entry), null,
+                discoverySecurity(entry.path("permissions")));
+    }
+
+    private DiscoveryNode documentNode(JsonNode entry, String parentId, int depth) {
+        String id = entry.path("id").asText("");
+        if (id.isBlank()) {
+            return null;
+        }
+        JsonNode content = entry.path("content");
+        String mimeType = content.path("mimeType").asText("");
+        // The crawler indexes a file under its node id.
+        return new DiscoveryNode(id, id, parentId, entry.path("name").asText(id), pathOf(entry),
+                DiscoveryNode.NodeType.DOCUMENT, depth, mimeType.isBlank() ? null : mimeType,
+                content.has("sizeInBytes") ? content.path("sizeInBytes").asLong() : null, modifiedAt(entry), null,
+                discoverySecurity(entry.path("permissions")));
+    }
+
+    private static String pathOf(JsonNode entry) {
+        String parentPath = entry.path("path").path("name").asText("");
+        if (parentPath.isBlank()) {
+            return null;
+        }
+        return (parentPath.endsWith("/") ? parentPath : parentPath + "/") + entry.path("name").asText("");
+    }
+
+    /** Alfresco writes offsets without a colon ({@code 2026-11-05T10:00:00.000+0000}). */
+    private static final java.time.format.DateTimeFormatter ALFRESCO_TIME =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX][XX]");
+
+    static Instant modifiedAt(JsonNode entry) {
+        String value = entry.path("modifiedAt").asText("");
+        if (value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(value, ALFRESCO_TIME).toInstant();
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The node's effective permissions (locally set, plus inherited ones when inheritance is on), or {@code null}
+     * when Alfresco returned none or none that allow anything.
+     *
+     * <p>Unlike the crawler's mapping, missing permissions are never read as public, and a DENIED entry becomes a
+     * {@code deny} rule, so a caller Alfresco denies is not shown the node.
+     */
+    static SecurityConfig discoverySecurity(JsonNode permissions) {
+        if (permissions == null || permissions.isMissingNode() || permissions.isNull()) {
+            return null;
+        }
+        List<JsonNode> aces = new ArrayList<>();
+        permissions.path("locallySet").forEach(aces::add);
+        if (permissions.path("isInheritanceEnabled").asBoolean(true)) {
+            permissions.path("inherited").forEach(aces::add);
+        }
+        List<PermissionRule> rules = new ArrayList<>();
+        boolean allows = false;
+        for (JsonNode ace : aces) {
+            String authority = ace.path("authorityId").asText("").strip();
+            if (authority.isEmpty()) {
+                continue;
+            }
+            boolean denied = "DENIED".equalsIgnoreCase(ace.path("accessStatus").asText("ALLOWED"));
+            boolean everyone = PUBLIC_AUTHORITIES.contains(authority.toLowerCase(Locale.ROOT));
+            String type = everyone ? "public"
+                    : authority.startsWith("GROUP_") || authority.startsWith("ROLE_") ? "group" : "user";
+            String identity = everyone ? "public" : authority;
+            if (denied) {
+                // A denial of everyone denies no one in particular; it cannot be expressed as a rule.
+                if (!everyone) {
+                    rules.add(new PermissionRule(identity, type, authority, "deny"));
+                }
+            } else {
+                rules.add(new PermissionRule(identity, type, authority, accessLevel(ace.path("name").asText("Consumer"))));
+                allows = true;
+            }
+        }
+        return allows ? new SecurityConfig(permissions.path("isInheritanceEnabled").asBoolean(true), rules) : null;
+    }
+
+    private static String accessLevel(String roleName) {
+        String lower = roleName.toLowerCase(Locale.ROOT);
+        if (lower.contains("coordinator") || lower.contains("admin")) {
+            return "admin";
+        }
+        if (lower.contains("collaborator") || lower.contains("contributor") || lower.contains("editor") || lower.contains("write")) {
+            return "write";
+        }
+        return "read";
     }
 }
