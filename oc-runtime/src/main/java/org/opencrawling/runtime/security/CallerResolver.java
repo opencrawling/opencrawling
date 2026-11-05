@@ -24,6 +24,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Decides who an MCP tool call is made for.
@@ -58,6 +59,22 @@ public final class CallerResolver {
 
     public boolean isVerified() {
         return verified;
+    }
+
+    /**
+     * The current request's verified caller, if there is one: in {@code jwt} mode, the caller of a request that
+     * carries a validated token. Empty in {@code none} mode and for requests without one (for example API requests
+     * when {@code protect-api} is off). Never an asserted identity.
+     */
+    public Optional<Caller> verifiedCaller() {
+        if (!verified) {
+            return Optional.empty();
+        }
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof JwtAuthenticationToken token) || !token.isAuthenticated()) {
+            return Optional.empty();
+        }
+        return Optional.of(mapper.toCaller(token.getToken().getClaims()));
     }
 
     /**

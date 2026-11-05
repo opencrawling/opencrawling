@@ -118,7 +118,10 @@ public class OpenCrawlingApplication {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
                     log.info("Triggering sample crawl job on target: {} with transformation connector: {}", targetPath, transformationConnector);
-                    crawlSuccess = orchestrator.runJob(activeConnector, isStandaloneCrawler ? null : outputConnector, targetPath, transformationConnector);
+                    crawlSuccess = orchestrator.runJob(activeConnector, isStandaloneCrawler ? null : outputConnector, targetPath,
+                            transformationConnector, "1", null, null, null, null, () -> false,
+                            org.opencrawling.core.reporting.ExecutionProvenance.anonymous(
+                                    org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_STARTUP, null));
                 }
             } else {
                 log.info("Sample crawl job on startup is disabled. Use properties to enable it (spring.opencrawling.crawl-on-startup=true).");

@@ -20,6 +20,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.reporting.DocumentLedgerEntry;
+import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.push.grpc.GrpcPushProperties;
 import org.opencrawling.push.grpc.OisDocumentTranslator;
 import org.opencrawling.push.grpc.PushDocumentDispatcher;
@@ -48,6 +49,10 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @Service
 public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
+
+    /** Pushed documents carry no caller identity; their executions record only how they arrived. */
+    private static final ExecutionProvenance PUSH_PROVENANCE =
+            ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_GRPC_PUSH, null);
 
     private static final Logger log = LoggerFactory.getLogger(RuntimePushDocumentDispatcher.class);
 
@@ -157,7 +162,7 @@ public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
         if (standalone) {
             execId = "exec-push-" + UUID.randomUUID().toString().substring(0, 8);
             if (ledgerAccumulator != null) {
-                ledgerAccumulator.startExecution(job.id(), execId, jobName, PipelineMode.RAG, repoName, outName);
+                ledgerAccumulator.startExecution(job.id(), execId, jobName, PipelineMode.RAG, repoName, outName, PUSH_PROVENANCE);
             }
         } else {
             streamTrack = getOrCreateStreamTrack(streamExecutionId, job, jobName, repoName, outName, model);
@@ -292,7 +297,7 @@ public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
                     ? streamExecutionId
                     : streamExecutionId + "-" + job.id().replaceAll("[^a-zA-Z0-9_-]", "");
             if (ledgerAccumulator != null && !ledgerAccumulator.hasActiveExecution(execId)) {
-                ledgerAccumulator.startExecution(job.id(), execId, jobName, PipelineMode.RAG, repoName, outName);
+                ledgerAccumulator.startExecution(job.id(), execId, jobName, PipelineMode.RAG, repoName, outName, PUSH_PROVENANCE);
             }
             StreamExecutionTrack created = new StreamExecutionTrack(job.id(), execId, model, System.currentTimeMillis());
             tracks.add(created);

@@ -18,6 +18,7 @@ package org.opencrawling.runtime.reporting;
 import org.opencrawling.core.event.JobExecutionCompletedEvent;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.reporting.DocumentLedgerEntry;
+import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -53,6 +54,22 @@ public class JobLedgerAccumulator {
             PipelineMode pipelineMode,
             String repositoryConnector,
             String outputConnector) {
+        startExecution(jobId, executionId, jobName, pipelineMode, repositoryConnector, outputConnector, null);
+    }
+
+    /**
+     * Starts tracking an execution.
+     *
+     * @param provenance who started it and how; {@code null} when unknown
+     */
+    public void startExecution(
+            String jobId,
+            String executionId,
+            String jobName,
+            PipelineMode pipelineMode,
+            String repositoryConnector,
+            String outputConnector,
+            ExecutionProvenance provenance) {
         ExecutionContext context = new ExecutionContext(
                 jobId,
                 executionId,
@@ -60,10 +77,13 @@ public class JobLedgerAccumulator {
                 pipelineMode != null ? pipelineMode : PipelineMode.RAG,
                 repositoryConnector != null ? repositoryConnector : "UnknownRepository",
                 outputConnector != null ? outputConnector : "UnknownOutput",
-                Instant.now()
+                Instant.now(),
+                provenance != null ? provenance : ExecutionProvenance.unknown()
         );
         activeExecutions.put(executionId, context);
-        log.info("Initialized JobLedgerAccumulator for job '{}' [Exec ID: {}, Mode: {}]", context.jobName, executionId, context.pipelineMode);
+        log.info("Initialized JobLedgerAccumulator for job '{}' [Exec ID: {}, Mode: {}, Source: {}, Triggered by: {}]",
+                context.jobName, executionId, context.pipelineMode, context.provenance.triggerSource(),
+                context.provenance.triggeredBy() != null ? context.provenance.triggeredBy() : "unknown");
     }
 
     public boolean hasActiveExecution(String executionId) {
@@ -144,7 +164,8 @@ public class JobLedgerAccumulator {
                 failed,
                 skipped,
                 summaryMetrics,
-                entries
+                entries,
+                context.provenance
         );
 
         completedExecutions.put(executionId, event);
@@ -183,10 +204,12 @@ public class JobLedgerAccumulator {
         final String repositoryConnector;
         final String outputConnector;
         final Instant startTime;
+        final ExecutionProvenance provenance;
         final List<DocumentLedgerEntry> entries = new CopyOnWriteArrayList<>();
 
         ExecutionContext(String jobId, String executionId, String jobName, PipelineMode pipelineMode,
-                         String repositoryConnector, String outputConnector, Instant startTime) {
+                         String repositoryConnector, String outputConnector, Instant startTime,
+                         ExecutionProvenance provenance) {
             this.jobId = jobId;
             this.executionId = executionId;
             this.jobName = jobName;
@@ -194,6 +217,7 @@ public class JobLedgerAccumulator {
             this.repositoryConnector = repositoryConnector;
             this.outputConnector = outputConnector;
             this.startTime = startTime;
+            this.provenance = provenance;
         }
     }
 }

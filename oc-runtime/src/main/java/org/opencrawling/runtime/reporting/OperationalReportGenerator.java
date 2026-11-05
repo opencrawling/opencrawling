@@ -112,7 +112,8 @@ public class OperationalReportGenerator {
                 // Paths
                 relativeParquet,
                 String.format("manifest_%s.csv", event.executionId()),
-                String.format("summary_%s.json", event.executionId())
+                String.format("summary_%s.json", event.executionId()),
+                event.provenance()
         );
 
         objectMapper.writeValue(jsonFile, summary);

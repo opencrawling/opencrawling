@@ -26,6 +26,7 @@ import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.opencrawling.core.event.JobExecutionCompletedEvent;
 import org.opencrawling.core.reporting.DocumentLedgerEntry;
+import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -124,7 +125,7 @@ public class ParquetJobReportGenerator {
                 .build()) {
 
             for (DocumentLedgerEntry doc : event.documentEntries()) {
-                GenericRecord record = mapToAvroRecord(doc, schema);
+                GenericRecord record = mapToAvroRecord(doc, event.provenance(), schema);
                 writer.write(record);
             }
         } catch (Exception writeEx) {
@@ -142,7 +143,7 @@ public class ParquetJobReportGenerator {
             try (DataFileWriter<GenericRecord> avroWriter = new DataFileWriter<>(new GenericDatumWriter<>(schema))) {
                 avroWriter.create(schema, avroFile);
                 for (DocumentLedgerEntry doc : event.documentEntries()) {
-                    avroWriter.append(mapToAvroRecord(doc, schema));
+                    avroWriter.append(mapToAvroRecord(doc, event.provenance(), schema));
                 }
             }
             log.info("Successfully generated companion binary Avro file: {}", avroFile.getAbsolutePath());
@@ -152,6 +153,11 @@ public class ParquetJobReportGenerator {
     }
 
     public GenericRecord mapToAvroRecord(DocumentLedgerEntry doc, Schema schema) {
+        return mapToAvroRecord(doc, null, schema);
+    }
+
+    /** One ledger row: the document's own fields plus its execution's provenance, repeated on every row. */
+    public GenericRecord mapToAvroRecord(DocumentLedgerEntry doc, ExecutionProvenance provenance, Schema schema) {
         GenericRecord r = new GenericData.Record(schema);
         r.put("job_id", doc.jobId());
         r.put("execution_id", doc.executionId());
@@ -182,6 +188,17 @@ public class ParquetJobReportGenerator {
         r.put("mig_callback_http_status", doc.migCallbackHttpStatus());
         r.put("mig_safe_pruned", doc.migSafePruned());
         r.put("mig_reclaimed_bytes", doc.migReclaimedBytes());
+
+        // Provenance: who started the execution
+        if (provenance != null) {
+            r.put("trigger_source", provenance.triggerSource());
+            r.put("triggered_by", provenance.triggeredBy());
+            r.put("on_behalf_of", provenance.onBehalfOf());
+            r.put("caller_groups", provenance.callerGroups().isEmpty() ? null : provenance.callerGroups());
+            r.put("caller_tenant", provenance.callerTenant());
+            r.put("caller_verified", provenance.callerVerified());
+            r.put("correlation_id", provenance.correlationId());
+        }
 
         return r;
     }
