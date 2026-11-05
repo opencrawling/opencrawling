@@ -36,13 +36,13 @@ class OpenFgaIdentifiersTest {
 
     @Test
     void identitiesAreLowerCasedAndEscaped() {
-        assertThat(OpenFgaIdentifiers.rawGroup("  Finance ")).isEqualTo("group:r_finance");
-        assertThat(OpenFgaIdentifiers.rawGroup("DOMAIN\\Jane Doe@corp.com#1"))
-                .isEqualTo("group:r_domain%5Cjane%20doe%40corp.com%231");
-        assertThat(OpenFgaIdentifiers.rawGroup("100%")).isEqualTo("group:r_100%25");
-        assertThat(OpenFgaIdentifiers.rawGroup("Zoë")).isEqualTo("group:r_zo%C3%AB");
+        assertThat(OpenFgaIdentifiers.groupNameGroup("Finance")).isEqualTo("group:g_finance");
+        assertThat(OpenFgaIdentifiers.groupNameGroup("DOMAIN\\Jane Doe@corp.com#1"))
+                .isEqualTo("group:g_domain%5Cjane%20doe%40corp.com%231");
+        assertThat(OpenFgaIdentifiers.groupNameGroup("100%")).isEqualTo("group:g_100%25");
+        assertThat(OpenFgaIdentifiers.groupNameGroup("Zoë")).isEqualTo("group:g_zo%C3%AB");
         for (String identity : new String[] {"a b", "x:y", "p#q", "u@v", "tab\there", "%", "group:Finance"}) {
-            assertThat(OpenFgaIdentifiers.rawGroup(identity)).matches(OBJECT);
+            assertThat(OpenFgaIdentifiers.groupNameGroup(identity)).matches(OBJECT);
             assertThat(OpenFgaIdentifiers.userObject(identity)).matches(OBJECT);
         }
     }
@@ -50,25 +50,32 @@ class OpenFgaIdentifiersTest {
     @Test
     void longIdentitiesAreHashedUnambiguously() {
         String longIdentity = "x".repeat(OpenFgaIdentifiers.MAX_ENCODED_LENGTH + 1);
-        String group = OpenFgaIdentifiers.rawGroup(longIdentity);
-        assertThat(group).matches("group:r_%h[0-9a-f]{64}").matches(OBJECT);
-        assertThat(OpenFgaIdentifiers.rawGroup("x".repeat(OpenFgaIdentifiers.MAX_ENCODED_LENGTH)))
-                .isEqualTo("group:r_" + "x".repeat(OpenFgaIdentifiers.MAX_ENCODED_LENGTH));
+        String group = OpenFgaIdentifiers.groupNameGroup(longIdentity);
+        assertThat(group).matches("group:g_%h[0-9a-f]{64}").matches(OBJECT);
+        assertThat(OpenFgaIdentifiers.groupNameGroup("x".repeat(OpenFgaIdentifiers.MAX_ENCODED_LENGTH)))
+                .isEqualTo("group:g_" + "x".repeat(OpenFgaIdentifiers.MAX_ENCODED_LENGTH));
         // "%h..." cannot come out of the encoder for a short identity: a literal % is always escaped.
-        assertThat(OpenFgaIdentifiers.rawGroup("%h" + "0".repeat(64))).startsWith("group:r_%25h");
+        assertThat(OpenFgaIdentifiers.groupNameGroup("%h" + "0".repeat(64))).startsWith("group:g_%25h");
     }
 
     @Test
-    void prefixesAreStrippedTheWayTheMetadataEvaluatorStripsThem() {
-        assertThat(OpenFgaIdentifiers.aclEntryGroups("group:Finance"))
-                .containsExactly("group:r_group%3Afinance", "group:s_finance");
-        assertThat(OpenFgaIdentifiers.aclEntryGroups("USER:alice"))
-                .containsExactly("group:r_user%3Aalice", "group:s_alice");
+    void anEntrysPrefixDecidesWhetherItHoldsUsersGroupsOrBoth() {
+        assertThat(OpenFgaIdentifiers.aclEntryGroups("group:Finance")).containsExactly("group:g_finance");
+        assertThat(OpenFgaIdentifiers.aclEntryGroups("USER:alice")).containsExactly("group:u_alice");
+        assertThat(OpenFgaIdentifiers.aclEntryGroups(" finance ")).containsExactly("group:u_finance", "group:g_finance");
+        // Only the first prefix is the kind; the rest is the name.
+        assertThat(OpenFgaIdentifiers.aclEntryGroups("user:group:x")).containsExactly("group:u_group%3Ax");
         // A principal only loses user:, a role only loses group:.
-        assertThat(OpenFgaIdentifiers.principalGroups("group:alice"))
-                .containsExactly("group:r_group%3Aalice", "group:s_group%3Aalice");
-        assertThat(OpenFgaIdentifiers.roleGroups("user:finance"))
-                .containsExactly("group:r_user%3Afinance", "group:s_user%3Afinance");
+        assertThat(OpenFgaIdentifiers.principalGroup("User:Alice")).isEqualTo("group:u_alice");
+        assertThat(OpenFgaIdentifiers.principalGroup("group:alice")).isEqualTo("group:u_group%3Aalice");
+        assertThat(OpenFgaIdentifiers.roleGroup("Group:Finance")).isEqualTo("group:g_finance");
+        assertThat(OpenFgaIdentifiers.roleGroup("user:finance")).isEqualTo("group:g_user%3Afinance");
+    }
+
+    @Test
+    void aUserAndAGroupWithTheSameNameNeverShareAGroup() {
+        assertThat(OpenFgaIdentifiers.aclEntryGroups("group:finance")).doesNotContain(OpenFgaIdentifiers.principalGroup("finance"));
+        assertThat(OpenFgaIdentifiers.aclEntryGroups("user:alice")).doesNotContain(OpenFgaIdentifiers.roleGroup("alice"));
     }
 
     @Test
@@ -76,7 +83,7 @@ class OpenFgaIdentifiersTest {
         String[][] pairs = {{"IŞIK", "ışık"}, {"ſtrasse", "STRASSE"}, {"Σοφία", "σοφίΑ"}, {"ς", "Σ"}, {"µ", "μ"},
                 {"K", "\u212A"}, {"İ", "i"}, {"İ", "i\u0307"}, {"Straße", "STRASSE"}, {"alice", "ALICE"}};
         for (String[] pair : pairs) {
-            assertThat(OpenFgaIdentifiers.rawGroup(pair[0]).equals(OpenFgaIdentifiers.rawGroup(pair[1])))
+            assertThat(OpenFgaIdentifiers.groupNameGroup(pair[0]).equals(OpenFgaIdentifiers.groupNameGroup(pair[1])))
                     .as("%s vs %s", pair[0], pair[1]).isEqualTo(pair[0].equalsIgnoreCase(pair[1]));
         }
     }

@@ -45,6 +45,8 @@ jobs:
             script: "test-cli-decoupled.sh"
           - name: "Docker Decoupled Pipeline Test Suite"
             script: "test-docker-decoupled.sh"
+          - name: "Root CLI Runner Scripts Test Suite"
+            script: "test-run-scripts.sh"
           - name: "OIS Ingest Endpoint Decoupled Test Suite"
             script: "test-ois-ingest-decoupled.sh"
           - name: "Java Client SDK Test Suite"
@@ -176,7 +178,7 @@ jobs:
         run: mvn clean install -DskipTests -DskipITs
 
       - name: Make scripts executable
-        run: chmod +x scripts/*.sh
+        run: chmod +x run.sh scripts/*.sh
 
       - name: Ensure data directories have write permissions
         run: |

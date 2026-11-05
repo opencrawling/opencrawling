@@ -38,16 +38,15 @@ class TuplePlanTest {
     }
 
     @Test
-    void grantsAndDenialsBecomeRawAndStrippedGroupTuples() {
+    void grantsAndDenialsBecomeUserOrGroupNameTuples() {
         String doc = OpenFgaIdentifiers.documentObject("d1");
         Set<DocumentTuple> tuples = TuplePlan.desired("d1", acl(List.of("group:Finance", "public"), List.of("bob")));
 
         assertThat(tuples).containsExactly(
-                new DocumentTuple(doc, "grantee", "group:r_group%3Afinance#member"),
-                new DocumentTuple(doc, "grantee", "group:s_finance#member"),
+                new DocumentTuple(doc, "grantee", "group:g_finance#member"),
                 new DocumentTuple(doc, "grantee", "user:*"),
-                new DocumentTuple(doc, "blocked", "group:r_bob#member"),
-                new DocumentTuple(doc, "blocked", "group:s_bob#member"));
+                new DocumentTuple(doc, "blocked", "group:u_bob#member"),
+                new DocumentTuple(doc, "blocked", "group:g_bob#member"));
     }
 
     @Test
@@ -57,8 +56,8 @@ class TuplePlanTest {
 
         TuplePlan plan = TuplePlan.diff(before, after);
 
-        assertThat(plan.writes()).extracting(DocumentTuple::user).containsExactly("group:r_c#member", "group:s_c#member");
-        assertThat(plan.deletes()).extracting(DocumentTuple::user).containsExactly("group:r_a#member", "group:s_a#member");
+        assertThat(plan.writes()).extracting(DocumentTuple::user).containsExactly("group:u_c#member", "group:g_c#member");
+        assertThat(plan.deletes()).extracting(DocumentTuple::user).containsExactly("group:u_a#member", "group:g_a#member");
         assertThat(plan.steps()).hasSize(1);
         assertThat(TuplePlan.diff(after, after).steps()).isEmpty();
     }

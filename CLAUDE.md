@@ -10,6 +10,24 @@ Longer-form docs live in `docs/`: `Architecture.md` (pipeline, tracing, the conn
 
 ## Build and Test
 
+You can use the cross-platform root CLI wrappers (`./run.sh` on macOS/Linux, `run.bat` on Windows) or invoke Maven/Docker directly:
+
+```bash
+./run.sh build                               # build via containerized oc-maven-builder (mounts ~/.m2)
+./run.sh build:offline                       # fast offline build via oc-maven-builder
+./run.sh build:host                          # build using host JDK 25 & Maven
+./run.sh mvn test -pl oc-runtime             # run custom Maven goals inside oc-maven-builder
+./run.sh test:unit                           # run unit tests via oc-maven-builder
+./run.sh test:it [filter]                    # run integration tests with local BuildKit cache overlay
+./run.sh test:local-dev                      # run local Docker build acceleration test suite
+./run.sh ui:dev                              # start React Admin UI Vite dev server on :5173
+./run.sh ui:build                            # build React Admin UI production bundle
+./run.sh license:format                      # apply Apache 2.0 license headers
+./run.sh clean [--prune]                     # clean target/ dirs (and optionally prune Docker build cache)
+```
+
+Direct host commands:
+
 ```bash
 mvn clean install                            # all modules + unit tests (also builds oc-admin-ui); ~8 min
 mvn clean install -DskipTests                # fast build
@@ -61,6 +79,13 @@ Logs go to `logs/integration-tests/`. CI runs these scripts as a matrix (`.githu
 ## Infrastructure (Docker)
 
 ```bash
+./run.sh decoupled:up                                         # fast local decoupled stack (BuildKit ~/.m2 cache mounts)
+./run.sh apps:up                                              # fast local monolithic apps stack
+./run.sh infra:up                                             # core infra only (PostgreSQL+pgvector, Redis, Ollama, Kafka)
+./run.sh status                                               # inspect running container status
+./run.sh logs [service]                                       # follow container logs
+./run.sh down                                                 # stop all active local stacks
+
 docker compose up -d                                          # PostgreSQL+pgvector, Redis, Ollama, Kafka (KRaft)
 docker compose -f docker-compose-apps.yml up -d --build       # monolithic app containers
 docker compose -f docker-compose-decoupled.yml up -d --build  # one container per pipeline stage
@@ -133,7 +158,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
 ### MCP server
 
 `McpVectorServer` uses Spring AI MCP with the `STREAMABLE_HTTP` transport on the runtime port and exposes three `@McpTool` methods:
-- **`secureVectorSearch`** runs a similarity search pre-filtered on `security_allowed_read` and `acl` metadata fields, then authoritatively re-checks each hit against `SecurityConfig` via `McpAclEvaluator`.
+- **`secureVectorSearch`** runs a similarity search pre-filtered on the `security_read_keys`, `security_allowed_read` and `acl` metadata fields (pgvector), then authoritatively re-checks each hit against `SecurityConfig` via `McpAclEvaluator`.
 - **`getDocumentContent`** returns a document's chunks by URI, behind the same ACL guard.
 - **`listAccessibleSources`** lists the indexed URIs that a principal and its groups can see.
 

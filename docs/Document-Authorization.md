@@ -37,7 +37,18 @@ Connectors describe a document's permissions as a `SecurityConfig` (a list of ru
 | no rules, only an `acl` | the `acl` tokens grant read (`read` itself is a keyword and is dropped) |
 | neither | nobody may read the document |
 
-**Caller matching.** A permission identity matches the caller when it equals (case-insensitively) the caller's principal or one of its roles, either as written or with a leading `user:` / `group:` prefix removed. `public` matches everyone.
+**Caller matching.** Names are compared case-insensitively, without a leading `user:` on the caller's principal or `group:` on its roles. The permission identity's own prefix decides what it can match:
+
+| Identity | Matches |
+|---|---|
+| `user:alice` | a caller whose principal is `alice` (or `user:alice`), never a role |
+| `group:finance` | a caller holding the role `finance` (or `group:finance`), never a principal |
+| `finance` (no prefix) | a principal or a role named `finance` |
+| `public` | everyone |
+
+A user is therefore never granted, or denied, as a group of the same name (#224). Connectors that write identities without a prefix keep the behaviour they had. A blank identity matches no caller.
+
+**pgvector read keys.** pgvector pre-filters candidates in SQL by exact match, which cannot express the rule above. Its writers therefore also store `security_read_keys`: `user:Alice` as `u:alice`, `group:Finance` as `g:finance`, a bare `Finance` as both `u:finance` and `g:finance`, and `public` as `public`. The search asks for `public`, `u:<principal>` and `g:<role>` for each role, with the same case folding and prefix handling, so the pre-filter keeps exactly the documents the rule grants. Chunks written before these keys existed are still matched on their raw identities, including the caller's `user:`/`group:` forms; a grant that differs from the caller only in case (`Finance` against the role `finance`) is found after the document is re-indexed.
 
 > [!NOTE]
 > Today the caller's principal and roles are **asserted by the MCP client** in the tool arguments. They are not verified by the server. Verified identities (OAuth2/OIDC) are the subject of issue #187; the gate's `Caller` already carries an `authenticated` flag for it.
@@ -77,16 +88,16 @@ type document
 ```
 
 - **Documents** are `document:<sha256 of the document id>` (fixed length, safe for any id).
-- **Each permission identity** becomes group membership tuples: `grantee` for grants, `blocked` for denies. `public` becomes `user:*`. Because the stored-ACL matching accepts an identity both verbatim and without a `user:`/`group:` prefix, each identity is written as two groups (`r_<raw>` and `s_<stripped>`). Identities are lower-cased and percent-encoded; very long ones are hashed.
-- **The caller** is checked as a user whose principal and roles are passed with the request as *contextual* memberships of the same groups.
+- **Each permission identity** becomes group membership tuples: `grantee` for grants, `blocked` for denies. `public` becomes `user:*`. Each identity is written to the group of its kind: `user:alice` to `u_alice`, `group:finance` to `g_finance`, and an identity without a prefix to both `u_<name>` and `g_<name>`. Names are lower-cased and percent-encoded; very long ones are hashed.
+- **The caller** is checked as a user whose principal (`u_<name>`) and roles (`g_<name>` each) are passed with the request as *contextual* memberships.
 
 With this mapping OpenFGA reproduces the stored-ACL decisions exactly. A differential test checks 37,500 random document/caller pairs against a real OpenFGA server (`OpenFgaDifferentialIT`).
 
-**Real relationship-based access control on top.** Group memberships can also be *stored* in OpenFGA (for example `group:s_finance#member@user:p_dave`, or nested groups). A stored membership takes effect on the next request, without re-indexing anything. Syncing memberships from an identity provider or from repository group directories is a follow-up step tied to #187.
+**Real relationship-based access control on top.** Group memberships can also be *stored* in OpenFGA (for example `group:g_finance#member@user:p_dave`, or nested groups). A stored membership takes effect on the next request, without re-indexing anything. Syncing memberships from an identity provider or from repository group directories is a follow-up step tied to #187.
 
 ### Keeping OpenFGA in step (permission sync)
 
-`AuthorizationSyncConsumer` reads the documents topic (`opencrawling-documents`) with its own consumer group (`opencrawling-authz-sync`). That covers crawled, OIS-REST and gRPC-pushed documents alike, whatever the output store. For each document it:
+`AuthorizationSyncConsumer` reads the documents topic (`opencrawling-documents`) with its own consumer group (`opencrawling-authz-sync-v2`). That covers crawled, OIS-REST and gRPC-pushed documents alike, whatever the output store. For each document it:
 
 1. reads the document's current tuples from OpenFGA,
 2. computes the tuples its current permissions call for,
@@ -115,7 +126,7 @@ When OpenFGA can deny results the store ranked highly (`intersection` and `openf
 | `opencrawling.security.authorization.openfga.batch-size` | | `50` | Checks per BatchCheck request (OpenFGA's default server limit) |
 | `opencrawling.security.authorization.openfga.max-parallel-requests` | | `10` | BatchCheck requests sent in parallel |
 | `opencrawling.security.authorization.openfga.sync.enabled` | `OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_SYNC_ENABLED` | `true` | Run the permission sync consumer in this service |
-| `opencrawling.security.authorization.openfga.sync-group-id` | | `opencrawling-authz-sync` | Consumer group of the permission sync |
+| `opencrawling.security.authorization.openfga.sync-group-id` | | `opencrawling-authz-sync-v2` | Consumer group of the permission sync |
 
 Configure the mode in the services that **serve** retrieval (the MCP server). The sync consumer runs where the module is active; with several such services, Kafka spreads the partitions across them.
 
@@ -157,13 +168,24 @@ OpenFGA must receive the permissions of documents that were indexed before the s
 - **Replay from Kafka (automatic).** The sync consumer group starts at the earliest retained offset of `opencrawling-documents`, so on first start it replays every document still on the topic (topic retention, 7 days by default). To replay again later, stop the services running the sync and reset the group:
 
   ```bash
-  kafka-consumer-groups.sh --bootstrap-server <kafka> --group opencrawling-authz-sync \
+  kafka-consumer-groups.sh --bootstrap-server <kafka> --group opencrawling-authz-sync-v2 \
     --topic opencrawling-documents --reset-offsets --to-earliest --execute
   ```
 
 - **Re-crawl** for everything older than the retained topic. Re-crawling republishes each document with its current source permissions. That is also the only way to refresh what the vector stores hold for documents indexed before the current permission rules.
 
 Shadow mode (step 3 above) tells you when the backfill is complete. There is deliberately no command that copies permissions out of the vector stores into OpenFGA: stored permissions of old documents may predate the current normalization rules, and copying them would carry those differences into OpenFGA.
+
+### Upgrading from the first OpenFGA release
+
+Releases before #224 stored every identity as two groups (`r_<raw>` and `s_<stripped>`) and let users and groups of the same name match each other. The new groups (`u_<name>`, `g_<name>`) start empty, so a document is denied in `intersection`/`openfga` mode until its permissions are synced again. The default sync consumer group changed to `opencrawling-authz-sync-v2` for this reason: on first start it replays the retained documents topic and rewrites each document's tuples (the old `r_`/`s_` tuples are removed in the same sync).
+
+1. Before upgrading, switch the MCP server to `shadow` (or `metadata`) mode.
+2. Deploy. The sync replays the retained topic; re-crawl anything older (see Backfill).
+3. Wait until `oc.authz.shadow.mismatch` stays at zero, then switch back.
+4. Delete the old consumer group: `kafka-consumer-groups.sh --bootstrap-server <kafka> --delete --group opencrawling-authz-sync`.
+
+If you set `sync-group-id` yourself, either change it or reset that group to the earliest offset (Backfill above). Stored group memberships written under `group:s_<name>` must be rewritten as `group:g_<name>`.
 
 ## Operations
 
@@ -184,12 +206,12 @@ Shadow mode (step 3 above) tells you when the backfill is complete. There is del
 - permission syncs are retried and, if still failing, are recorded in `opencrawling-documents.authz-dlt`. **Do not replay that topic as it is.** A later update of the same document may already have been applied, and replaying the older one would roll its permissions back. Once OpenFGA is healthy, reset the sync group to the first dead letter's original offset (record header `kafka_dlt-original-offset`) so that updates replay in order, or re-crawl the affected documents:
 
   ```bash
-  kafka-consumer-groups.sh --bootstrap-server <kafka> --group opencrawling-authz-sync \
+  kafka-consumer-groups.sh --bootstrap-server <kafka> --group opencrawling-authz-sync-v2 \
     --topic opencrawling-documents:<partition> --reset-offsets --to-offset <original offset> --execute
   ```
 
 **Limits:**
-- A caller may carry at most 49 roles in `intersection`/`openfga` mode. OpenFGA accepts 100 contextual tuples per check, and each identity needs two. A caller with more is denied. Stored memberships remove this limit.
+- A caller may carry at most 99 roles in `intersection`/`openfga` mode. OpenFGA accepts 100 contextual tuples per check: one for the principal and one per role. A caller with more is denied. Stored memberships remove this limit.
 - Results are checked by their **source document id**. Chunks written without one are denied in `intersection`/`openfga` modes until they are re-crawled: this applies to chunks Qdrant, Milvus, OpenSearch and Solr wrote before the tombstone fix, and to chunks from the all-in-one pgvector, OpenSearch and Vespa connectors written before #45. The `metadata` and `shadow` modes are unaffected.
 - OpenArch federated search checks OpenArch's own document ids. Unless those documents also flow through the documents topic, they have no tuples and are denied in `intersection`/`openfga` modes.
 

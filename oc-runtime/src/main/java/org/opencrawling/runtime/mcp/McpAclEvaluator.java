@@ -19,6 +19,7 @@ import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Server-side Zero-Trust Access Control List (ACL) evaluator.
@@ -30,6 +31,8 @@ import java.util.*;
 public final class McpAclEvaluator {
 
     private static final String PUBLIC_IDENTITY = "public";
+    private static final Pattern USER_PREFIX = Pattern.compile("^(?i)user:");
+    private static final Pattern GROUP_PREFIX = Pattern.compile("^(?i)group:");
 
     private McpAclEvaluator() {
         // Utility class
@@ -181,26 +184,37 @@ public final class McpAclEvaluator {
         return false;
     }
 
+    /**
+     * Whether an ACL identity matches the caller. Names are compared case-insensitively, without a leading
+     * {@code user:} on the principal or {@code group:} on a role. The identity's own prefix decides which side it
+     * can match: {@code user:x} only the principal, {@code group:x} only a role, and an identity without a prefix
+     * either of them. A user is therefore never granted (or denied) as a group of the same name.
+     */
     public static boolean matchesIdentity(String identity, String userPrincipal, Collection<String> userRoles) {
         if (identity == null) return false;
         String trimmed = identity.trim();
+        if (trimmed.isEmpty()) {
+            // A blank identity names no one (EffectiveAcl and OpenFGA drop it too), even for a caller whose
+            // principal is only a prefix such as "user:".
+            return false;
+        }
         if (PUBLIC_IDENTITY.equalsIgnoreCase(trimmed)) {
             return true;
         }
-        String stripped = trimmed.replaceFirst("^(?i)(group|user):", "");
-        if (userPrincipal != null && !userPrincipal.isBlank()) {
-            String p = userPrincipal.trim();
-            String pStripped = p.replaceFirst("^(?i)user:", "");
-            if (p.equalsIgnoreCase(trimmed) || pStripped.equalsIgnoreCase(stripped)) {
+        boolean userOnly = USER_PREFIX.matcher(trimmed).lookingAt();
+        boolean groupOnly = GROUP_PREFIX.matcher(trimmed).lookingAt();
+        String name = (userOnly || groupOnly) ? trimmed.substring(trimmed.indexOf(':') + 1) : trimmed;
+        if (!groupOnly && userPrincipal != null && !userPrincipal.isBlank()) {
+            String principalName = USER_PREFIX.matcher(userPrincipal.trim()).replaceFirst("");
+            if (principalName.equalsIgnoreCase(name)) {
                 return true;
             }
         }
-        if (userRoles != null) {
+        if (!userOnly && userRoles != null) {
             for (String role : userRoles) {
                 if (role != null) {
-                    String r = role.trim();
-                    String rStripped = r.replaceFirst("^(?i)group:", "");
-                    if (r.equalsIgnoreCase(trimmed) || rStripped.equalsIgnoreCase(stripped)) {
+                    String roleName = GROUP_PREFIX.matcher(role.trim()).replaceFirst("");
+                    if (roleName.equalsIgnoreCase(name)) {
                         return true;
                     }
                 }

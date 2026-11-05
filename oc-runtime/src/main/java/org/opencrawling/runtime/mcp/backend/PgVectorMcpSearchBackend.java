@@ -16,6 +16,7 @@
 package org.opencrawling.runtime.mcp.backend;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.opencrawling.core.security.ReadKeys;
 import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
@@ -33,6 +34,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Component
 @ConditionalOnProperty(name = "opencrawling.mcp.server.enabled", havingValue = "true", matchIfMissing = true)
@@ -40,6 +42,8 @@ import java.util.*;
 public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(PgVectorMcpSearchBackend.class);
+    private static final Pattern USER_PREFIX = Pattern.compile("^(?i)user:");
+    private static final Pattern GROUP_PREFIX = Pattern.compile("^(?i)group:");
 
     private final VectorStore vectorStore;
     private final VectorStore vectorStore384;
@@ -319,23 +323,35 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
             String userPrincipal,
             List<String> userRoles
     ) {
-        var securityExpression = b.or(b.eq("acl", "public"), b.eq("security_allowed_read", "public"));
+        // Chunks written with read keys match exactly as the access gate decides (case, user:/group: prefixes).
+        List<Object> callerKeys = new ArrayList<>(ReadKeys.forCaller(userPrincipal, userRoles));
+        var securityExpression = b.in(ReadKeys.FIELD, callerKeys);
 
-        if (userPrincipal != null && !userPrincipal.trim().isBlank()) {
+        // Chunks written before read keys existed only carry the raw identities: match the caller's own spelling
+        // and, so that prefixed grants are not hidden, its user:/group: forms. Case differences still need the
+        // read keys (re-index).
+        Set<Object> rawIdentities = new LinkedHashSet<>();
+        rawIdentities.add("public");
+        if (userPrincipal != null && !userPrincipal.isBlank()) {
             String principal = userPrincipal.trim();
-            securityExpression = b.or(securityExpression, b.or(b.eq("acl", principal), b.eq("security_allowed_read", principal)));
+            String name = USER_PREFIX.matcher(principal).replaceFirst("");
+            rawIdentities.add(principal);
+            rawIdentities.add(name);
+            rawIdentities.add("user:" + name);
         }
-
-        if (userRoles != null && !userRoles.isEmpty()) {
+        if (userRoles != null) {
             for (String role : userRoles) {
                 if (role != null && !role.isBlank()) {
-                    String r = role.trim();
-                    securityExpression = b.or(securityExpression, b.or(b.eq("acl", r), b.eq("security_allowed_read", r)));
+                    String group = role.trim();
+                    String name = GROUP_PREFIX.matcher(group).replaceFirst("");
+                    rawIdentities.add(group);
+                    rawIdentities.add(name);
+                    rawIdentities.add("group:" + name);
                 }
             }
         }
-
-        return securityExpression;
+        List<Object> raw = new ArrayList<>(rawIdentities);
+        return b.or(securityExpression, b.or(b.in("acl", raw), b.in("security_allowed_read", raw)));
     }
 
     private String formatAcl(Object aclObj) {

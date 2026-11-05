@@ -182,6 +182,29 @@ class PgVectorMcpSearchBackendTest {
     }
 
     @Test
+    void theStoredAclFilterAsksForTheCallersReadKeysAndItsPrefixedForms() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
+
+        backend.secureVectorSearch("query", "User:Alice", List.of("GROUP:Finance"), 5, 0.0, null);
+
+        ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(captor.capture());
+        String jsonPath = new org.springframework.ai.vectorstore.pgvector.PgVectorFilterExpressionConverter()
+                .convertExpression(captor.getValue().getFilterExpression());
+
+        assertThat(jsonPath)
+                .contains("$.\"security_read_keys\" == \"public\"")
+                .contains("$.\"security_read_keys\" == \"u:alice\"")
+                .contains("$.\"security_read_keys\" == \"g:finance\"")
+                // chunks written before read keys existed
+                .contains("$.\"security_allowed_read\" == \"user:Alice\"")
+                .contains("$.\"security_allowed_read\" == \"Alice\"")
+                .contains("$.\"security_allowed_read\" == \"group:Finance\"")
+                .contains("$.\"security_allowed_read\" == \"Finance\"")
+                .contains("$.\"acl\" == \"public\"");
+    }
+
+    @Test
     void testEmptyPermissionsDocumentExcludedFromAllToolsForOutsider() {
         // A document pushed with "permissions": [] has:
         // acl="", security_allowed_read=[], and security.permissions=[]

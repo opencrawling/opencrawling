@@ -187,4 +187,47 @@ class McpAclEvaluatorTest {
         org.assertj.core.api.Assertions.assertThat(McpAclEvaluator.isAccessible(java.util.Map.of("acl", "hr,finance"),
                 "x", java.util.List.of("finance"))).isTrue();
     }
+
+    @Test
+    void aGroupGrantIsNotReadableByAUserOfTheSameName() {
+        Map<String, Object> meta = Map.of("security_allowed_read", List.of("group:finance"));
+        assertFalse(McpAclEvaluator.isAccessible(meta, "finance", List.of()));
+        assertFalse(McpAclEvaluator.isAccessible(meta, "user:finance", List.of()));
+        assertTrue(McpAclEvaluator.isAccessible(meta, "dave", List.of("finance")));
+        assertTrue(McpAclEvaluator.isAccessible(meta, "dave", List.of("GROUP:Finance")));
+        // A role named like a principal does not make the caller that user either.
+        assertFalse(McpAclEvaluator.isAccessible(Map.of("security_allowed_read", List.of("user:alice")),
+                "bob", List.of("alice")));
+        assertTrue(McpAclEvaluator.isAccessible(Map.of("security_allowed_read", List.of("user:alice")),
+                "User:Alice", List.of()));
+    }
+
+    @Test
+    void aDenyOnlyAppliesToItsOwnKind() {
+        Map<String, Object> userDeny = Map.of("security_allowed_read", List.of("public"),
+                "security_denied_read", List.of("user:alice"));
+        assertFalse(McpAclEvaluator.isAccessible(userDeny, "alice", List.of()));
+        assertTrue(McpAclEvaluator.isAccessible(userDeny, "bob", List.of("alice")));
+
+        Map<String, Object> groupDeny = Map.of("security_allowed_read", List.of("public"),
+                "security_denied_read", List.of("group:contractors"));
+        assertFalse(McpAclEvaluator.isAccessible(groupDeny, "bob", List.of("contractors")));
+        assertTrue(McpAclEvaluator.isAccessible(groupDeny, "contractors", List.of()));
+    }
+
+    @Test
+    void anIdentityWithoutAPrefixStillMatchesAUserOrAGroup() {
+        Map<String, Object> meta = Map.of("security_allowed_read", List.of("finance"));
+        assertTrue(McpAclEvaluator.isAccessible(meta, "finance", List.of()));
+        assertTrue(McpAclEvaluator.isAccessible(meta, "user:finance", List.of()));
+        assertTrue(McpAclEvaluator.isAccessible(meta, "dave", List.of("group:finance")));
+        assertFalse(McpAclEvaluator.isAccessible(meta, "dave", List.of("user:finance")));
+    }
+
+    @Test
+    void theStructuredSecurityObjectFollowsTheSameRule() {
+        SecurityConfig sc = new SecurityConfig(true, List.of(new PermissionRule("group:finance", "GROUP", "Finance", "read")));
+        assertFalse(McpAclEvaluator.isAccessible(Map.of("security", sc), "finance", List.of()));
+        assertTrue(McpAclEvaluator.isAccessible(Map.of("security", sc), "dave", List.of("finance")));
+    }
 }

@@ -240,6 +240,39 @@ class OzoneOutputConnectorTest {
     }
 
     @Test
+    void testHierarchicalKeyAppendsFilenameWhenRelativePathIsDirectory() throws Exception {
+        byte[] raw = "large-payload".getBytes(StandardCharsets.UTF_8);
+        RepositoryDocument doc = new RepositoryDocument(
+                "/crawl/large/large-24mb.bin",
+                "s3://claims/large-24mb.bin",
+                new ByteArrayInputStream(raw),
+                Map.of(
+                        "file_name", List.of("large-24mb.bin"),
+                        "file_path", List.of("/crawl/large/large-24mb.bin"),
+                        "relativePath", List.of("large"),
+                        "relative_path", List.of("large")
+                ),
+                "",
+                SecurityConfig.createPublic(),
+                Instant.now(),
+                DocumentAction.UPSERT
+        );
+
+        assertEquals("large/large-24mb.bin", connector.resolveKey(doc));
+
+        connector.send(doc).block();
+        assertTrue(client.exists("large/large-24mb.bin"));
+        assertTrue(client.exists("large/large-24mb.bin.ois.json"));
+        OisMigrationDocument ois = objectMapper.readValue(
+                client.getStorage().get("large/large-24mb.bin.ois.json"),
+                OisMigrationDocument.class
+        );
+        assertEquals("large/large-24mb.bin", ois.contentRef().key());
+        assertEquals("large-24mb.bin", ois.contentRef().filename());
+        assertEquals("large/large-24mb.bin", ois.source().originalPath());
+    }
+
+    @Test
     void testFlatKeySanitizesDocumentId() {
         properties.setKeyStrategy("FLAT");
         RepositoryDocument doc = new RepositoryDocument(

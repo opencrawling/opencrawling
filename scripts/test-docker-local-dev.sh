@@ -33,7 +33,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 PASSED_COUNT=0
-TOTAL_TESTS=7
+TOTAL_TESTS=8
 
 log_step() {
     echo -e "\n${BOLD}${CYAN}────────────────────────────────────────────────────────────────────────────────${NC}"
@@ -221,6 +221,43 @@ for svc in oc-crawler oc-ingestion-consumer oc-embedding-consumer oc-writer-cons
 done
 
 log_pass "Compose service resolution verified for decoupled local stack"
+
+# ------------------------------------------------------------------------------
+# STEP 8: Verify Root CLI Convenience Scripts (run.sh and run.bat)
+# ------------------------------------------------------------------------------
+log_step "8" "Verifying root developer CLI scripts (run.sh and run.bat)..."
+
+if [ ! -x "run.sh" ]; then
+    log_fail "run.sh is missing or not executable in project root"
+    exit 1
+fi
+
+if [ ! -f "run.bat" ]; then
+    log_fail "run.bat is missing in project root"
+    exit 1
+fi
+
+bash -n run.sh || {
+    log_fail "run.sh failed bash syntax check"
+    exit 1
+}
+
+RUN_HELP_OUTPUT=$(./run.sh help)
+for expected_cmd in "build" "build:offline" "decoupled:up" "apps:up" "test:it" "ui:dev"; do
+    if ! echo "$RUN_HELP_OUTPUT" | grep -q "$expected_cmd"; then
+        log_fail "run.sh help output is missing expected command: $expected_cmd"
+        exit 1
+    fi
+done
+
+for expected_bat_cmd in "cmd_build" "cmd_decoupled_up" "cmd_apps_up" "cmd_test_it" "cmd_ui_dev"; do
+    if ! grep -q "$expected_bat_cmd" run.bat; then
+        log_fail "run.bat is missing expected command handler: $expected_bat_cmd"
+        exit 1
+    fi
+done
+
+log_pass "Root CLI convenience scripts (run.sh and run.bat) verified"
 
 # ------------------------------------------------------------------------------
 # Teardown & Execution Summary

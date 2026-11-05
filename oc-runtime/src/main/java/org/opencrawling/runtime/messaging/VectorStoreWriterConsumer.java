@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.security.ReadKeys;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -176,6 +177,7 @@ public class VectorStoreWriterConsumer {
         metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
         metadata.put("security_allowed_read", effectiveAcl.allowedRead());
         metadata.put("security_denied_read", effectiveAcl.deniedRead());
+        metadata.put(ReadKeys.FIELD, ReadKeys.forAllowed(effectiveAcl.allowedRead()));
     }
 
     private String getTableName(Integer dimensions) {
