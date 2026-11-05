@@ -198,7 +198,7 @@ Follow the blueprint and quality checklist in `docs/Architecture.md`, or generat
 - **Root `pom.xml`:** register the module in `<modules>` and `<dependencyManagement>`.
 - **`oc-runtime/pom.xml`:** add the module as a dependency.
 - **UI discovery:** `ConnectorController` lists connectors from two places. One is its hard-coded built-in defaults. The other is `ServiceLoader` discovery, which needs a `META-INF/services/org.opencrawling.core.connector.<Kind>Connector` file (the archetypes generate one).
-- **Job dispatch:** `JobController` picks the connector by matching substrings of the configured `className` (for example `contains("Jdbc")`). A repository connector that needs custom wiring needs a branch there.
+- **Job dispatch:** jobs started through the job API get their connectors from `ConnectorFactory` (`oc-runtime/.../connector/`). `RepositoryKind` / `OutputKind` match substrings of the configured `className` (for example `contains("Jdbc")`). A new repository connector needs a kind and a builder there; an unknown repository class stops the job (no fallback to the file system), while unknown outputs use the runtime's configured output.
 - **Health check:** add a probe in `ConnectorCheckerService`.
 - **Admin UI:** add the connector's form to `oc-admin-ui/src/components/ConnectorForm.tsx`.
 - **Docker:** add the JAR to `docker/Dockerfile.crawler` and `docker/Dockerfile.ingestion-consumer`, and give the module its own `docker/docker-compose-decoupled-with-<name>.yml`.
