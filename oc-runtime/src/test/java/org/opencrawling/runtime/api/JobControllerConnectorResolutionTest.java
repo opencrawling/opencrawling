@@ -50,13 +50,15 @@ class JobControllerConnectorResolutionTest {
     private JobOrchestrator orchestrator;
     private ConnectorFactory factory;
     private JobController controller;
+    private org.opencrawling.runtime.orchestrator.JobRunRegistry registry;
     private String jobId;
 
     @BeforeEach
     void setUp() {
         orchestrator = mock(JobOrchestrator.class);
         factory = mock(ConnectorFactory.class);
-        controller = new JobController(orchestrator, factory, mock(JdbcTemplate.class));
+        registry = new org.opencrawling.runtime.orchestrator.JobRunRegistry(0);
+        controller = new JobController(orchestrator, factory, registry, mock(JdbcTemplate.class));
         String name = "resolution-test-" + UUID.randomUUID();
         controller.saveJob(new JobController.JobDTO("new", name, "No_Such_Connector", "No_Such_Output", "", "/tmp",
                 null, null, 0, null, null, null, "rag"));
@@ -91,7 +93,7 @@ class JobControllerConnectorResolutionTest {
         assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(200);
 
         verify(orchestrator, timeout(5000)).runJob(eq(repository), eq(output), eq("/tmp"), any(), eq(jobId),
-                anyString(), any(), eq(PipelineMode.RAG), anyString());
+                anyString(), any(), eq(PipelineMode.RAG), anyString(), any());
         // The job names connectors that are not saved: the factory is asked with no configuration, as before.
         verify(factory).repository(isNull());
         verify(factory).output(isNull(), eq(PipelineMode.RAG));
@@ -122,8 +124,34 @@ class JobControllerConnectorResolutionTest {
                     anyString(),
                     any(),
                     eq(PipelineMode.RAG),
-                    anyString());
+                    anyString(),
+                    any());
             verify(factory, never()).repository(any());
+        } finally {
+            controller.deleteJob(webJobId);
+            PersistenceHelper.save("connectors.json", java.util.List.of());
+        }
+    }
+
+    @Test
+    void aConnectorFactorySpiRejectionFreesTheJobsSlot() {
+        PersistenceHelper.save("connectors.json", java.util.List.of(new ConnectorController.ConnectorDTO(
+                "Web_Crawler", "Web Crawler", "repository", "org.opencrawling.web.WebRepositoryConnector", 10, java.util.Map.of())));
+        String name = "web-reject-test-" + UUID.randomUUID();
+        controller.saveJob(new JobController.JobDTO("new", name, "Web_Crawler", "No_Such_Output", "", "https://example.com",
+                null, null, 0, null, null, null, "rag", null));
+        String webJobId = controller.getAllJobs().stream().filter(job -> job.name().equals(name)).findFirst().orElseThrow().id();
+        try {
+            // The connector's configuration becomes invalid after the job was saved.
+            PersistenceHelper.save("connectors.json", java.util.List.of(new ConnectorController.ConnectorDTO(
+                    "Web_Crawler", "Web Crawler", "repository", "org.opencrawling.web.WebRepositoryConnector", 10,
+                    java.util.Map.of("maxDepth", "99"))));
+
+            assertThat(controller.startJob(webJobId).getStatusCode().value()).isEqualTo(409);
+
+            assertThat(registry.run(webJobId)).isEmpty();
+            assertThat(controller.getJob(webJobId).getBody().status()).isEqualTo("Error");
+            verifyNoInteractions(orchestrator);
         } finally {
             controller.deleteJob(webJobId);
             PersistenceHelper.save("connectors.json", java.util.List.of());

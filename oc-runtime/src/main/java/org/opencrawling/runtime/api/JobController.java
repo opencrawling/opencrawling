@@ -39,6 +39,7 @@ import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.runtime.connector.ConnectorFactory;
 import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
+import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -57,6 +58,7 @@ public class JobController {
     private final List<JobDTO> jobs;
     private final JobOrchestrator jobOrchestrator;
     private final ConnectorFactory connectorFactory;
+    private final JobRunRegistry runRegistry;
     private final JdbcTemplate jdbcTemplate;
 
     @Autowired(required = false)
@@ -72,9 +74,11 @@ public class JobController {
     public JobController(
             JobOrchestrator jobOrchestrator,
             ConnectorFactory connectorFactory,
+            JobRunRegistry runRegistry,
             JdbcTemplate jdbcTemplate) {
         this.jobOrchestrator = jobOrchestrator;
         this.connectorFactory = connectorFactory;
+        this.runRegistry = runRegistry;
         this.jdbcTemplate = jdbcTemplate;
         
         // Initial defaults
@@ -113,7 +117,7 @@ public class JobController {
         @ApiResponse(responseCode = "400", description = "Invalid job configuration or unrecognized pipeline mode")
     })
     @PostMapping
-    public ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
+    public synchronized ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
         log.info("Saving job: {}", job.name());
         try {
             PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
@@ -128,8 +132,8 @@ public class JobController {
             return ResponseEntity.badRequest().body(Map.of("error", validationError));
         }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
-            // Generate unique ID based on timestamp
-            String newId = String.valueOf(System.currentTimeMillis());
+            // Timestamp-based id, moved forward while taken: jobs saved in the same millisecond used to share one.
+            String newId = newJobId();
             JobDTO newJob = new JobDTO(
                 newId,
                 job.name(),
@@ -188,12 +192,16 @@ public class JobController {
     }
 
     @Operation(summary = "Start a pipeline job", description = "Initiates asynchronous crawling and ingestion execution for the specified job on a Java 25 Virtual Thread.")
-    @ApiResponse(responseCode = "200", description = "Job start signal accepted and initiated")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Job start signal accepted and initiated"),
+        @ApiResponse(responseCode = "404", description = "Job not found"),
+        @ApiResponse(responseCode = "409", description = "Job already running, or its connectors cannot be used"),
+        @ApiResponse(responseCode = "429", description = "The cap on runs at the same time (opencrawling.jobs.max-concurrent-runs) is reached")
+    })
     @PostMapping("/{id}/start")
     public ResponseEntity<Void> startJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Starting job {}", id);
-        updateJobStatus(id, "Running");
 
         final String cleanId = id != null ? id.trim() : "";
 
@@ -205,8 +213,23 @@ public class JobController {
             
         if (activeJob == null) {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
+            return ResponseEntity.notFound().build();
         } else {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
+            String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+            JobRunRegistry.Reservation reservation;
+            switch (runRegistry.reserve(activeJob.id(), executionId)) {
+                case JobRunRegistry.AlreadyRunning running -> {
+                    log.warn("Job {} is already running [Exec ID: {}]; start rejected.", activeJob.id(), running.run().executionId());
+                    return ResponseEntity.status(409).build();
+                }
+                case JobRunRegistry.LimitReached limit -> {
+                    log.warn("Job {} not started: {} runs are already in progress (opencrawling.jobs.max-concurrent-runs).", activeJob.id(), limit.limit());
+                    return ResponseEntity.status(429).build();
+                }
+                case JobRunRegistry.Reserved reserved -> reservation = reserved.reservation();
+            }
+            updateJobStatus(id, "Running");
             final PipelineMode mode = resolvePipelineMode(activeJob);
             RepositoryConnector resolvedConnector;
             OutputConnector resolvedOutputConnector;
@@ -228,6 +251,7 @@ public class JobController {
                     try {
                         resolvedConnector = factory.create(connConfig.configuration(), jobContext(activeJob));
                     } catch (IllegalArgumentException e) {
+                        reservation.release();
                         log.error("Job {} rejected: invalid configuration: {}", id, e.getMessage(), e);
                         updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
                         return ResponseEntity.status(409).build();
@@ -237,6 +261,7 @@ public class JobController {
                 }
                 resolvedOutputConnector = connectorFactory.output(outConfig, mode);
             } catch (ConnectorResolutionException e) {
+                reservation.release();
                 log.error("Job {} rejected: {}", id, e.getMessage(), e);
                 updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
                 return ResponseEntity.status(409).build();
@@ -245,6 +270,7 @@ public class JobController {
             // Fail fast: the Apache Ozone and AWS S3 output connectors are dedicated to Migration Mode only
             if ((resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector
                     || resolvedOutputConnector instanceof org.opencrawling.s3.S3OutputConnector) && !mode.isMigration()) {
+                reservation.release();
                 String connectorName = resolvedOutputConnector.getClass().getSimpleName();
                 log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
                 updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
@@ -258,17 +284,24 @@ public class JobController {
             log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
-            Thread.ofVirtual().start(() -> {
-                String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+            reservation.start(stopRequested -> {
+                boolean succeeded = false;
                 try {
                     log.info("Background Virtual Thread running [Exec ID: {}]. Path: {}, OutputConnector: {}", executionId, finalActiveJob.path(), finalOutputConnector.getName());
-                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId);
-                    log.info("Background Virtual Thread completed successfully!");
-                    long docCount = resolveExecutionDocCount(executionId, finalActiveJob.documents());
-                    updateJobStatusAndStage(id, "Finished", "Completed", docCount);
+                    succeeded = jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId, stopRequested);
                 } catch (Exception e) {
                     log.error("Background Virtual Thread failed: {}", e.getMessage(), e);
-                    long docCount = resolveExecutionDocCount(executionId, finalActiveJob.documents());
+                }
+                // A stop interrupts this thread; clear it so the status updates below are not cut short.
+                Thread.interrupted();
+                long docCount = resolveExecutionDocCount(executionId, finalActiveJob.documents());
+                if (stopRequested.getAsBoolean()) {
+                    log.info("Job {} stopped [Exec ID: {}].", id, executionId);
+                    updateJobStatusAndStage(id, "Finished", "Stopped", docCount);
+                } else if (succeeded) {
+                    log.info("Background Virtual Thread completed successfully!");
+                    updateJobStatusAndStage(id, "Finished", "Completed", docCount);
+                } else {
                     updateJobStatusAndStage(id, "Error", "Failed", docCount);
                 }
             });
@@ -277,14 +310,65 @@ public class JobController {
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "Stop a pipeline job", description = "Signals a running pipeline job to terminate execution gracefully.")
-    @ApiResponse(responseCode = "200", description = "Job stop signal processed")
+    @Operation(summary = "Stop a pipeline job", description = "Stops a running pipeline job: the crawl ends at the latest before its next document, "
+            + "and the job is marked Finished with stage Stopped. A job with no run in this runtime (for example a saved 'Running' status left by a "
+            + "restart) is marked Finished.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "202", description = "Stop requested; the job's status changes when its run has ended"),
+        @ApiResponse(responseCode = "200", description = "The job had no run here; its status was set to Finished"),
+        @ApiResponse(responseCode = "404", description = "Job not found")
+    })
     @PostMapping("/{id}/stop")
     public ResponseEntity<Void> stopJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Stopping job {}", id);
+        JobDTO job = findJob(id);
+        if (job == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (runRegistry.stop(job.id())) {
+            return ResponseEntity.accepted().build();
+        }
         updateJobStatus(id, "Finished");
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "List running jobs", description = "The job runs in progress in this runtime, oldest first.")
+    @ApiResponse(responseCode = "200", description = "Runs in progress")
+    @GetMapping("/runs")
+    public List<JobRunRegistry.RunInfo> getRuns() {
+        return runRegistry.runs();
+    }
+
+    @Operation(summary = "Get a job's run", description = "The job's run in progress in this runtime: execution id, start time and whether a stop was requested.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "The job is running"),
+        @ApiResponse(responseCode = "404", description = "The job has no run in progress here")
+    })
+    @GetMapping("/{id}/run")
+    public ResponseEntity<JobRunRegistry.RunInfo> getRun(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
+        JobDTO job = findJob(id);
+        if (job == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return runRegistry.run(job.id()).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    }
+
+    private String newJobId() {
+        long candidate = System.currentTimeMillis();
+        while (findJob(String.valueOf(candidate)) != null) {
+            candidate++;
+        }
+        return String.valueOf(candidate);
+    }
+
+    private JobDTO findJob(String id) {
+        String cleanId = id != null ? id.trim() : "";
+        return jobs.stream()
+            .filter(j -> j.id() != null && j.id().trim().equalsIgnoreCase(cleanId))
+            .findFirst()
+            .orElse(null);
     }
 
     @Operation(summary = "Pause a pipeline job", description = "Signals a running pipeline job to pause execution.")
