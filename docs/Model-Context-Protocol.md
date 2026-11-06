@@ -89,6 +89,14 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
   - **Ingest (`UPSERT`):** the document must be one the connector's folder crawl would take (inside the configured root, not in an excluded folder, matching the version and type filters) and one the caller may read by its source ACL. It is fetched as the crawl would emit it, under the same id and with its source permissions, and runs as a one-document job (`kind` `DOCUMENT`). A document that is hidden, out of scope or missing gets the same `400`.
   - **Remove (`DELETE`):** a tombstone is published only when the repository reports that it no longer has the document, so a live document can never be removed from the index this way. Asking to remove a document that still exists and that the caller may read gets `409`. Every other request gets the same `202`, whether or not anything was removed, so a caller learns nothing about documents it cannot read.
   - Only CMIS and Alfresco connectors that crawl a folder tree support this.
+- **Human approval (optional):** with `opencrawling.jobs.dynamic.require-approval=true`, an agent's folder job or document ingest is checked as usual, so something the caller cannot see is still refused at once. It is then filed as `PENDING_APPROVAL` instead of starting.
+  - **Approve:** a member of `admin-groups` approves it with `POST /api/jobs/dynamic/{jobId}/approve`. That must be someone other than the user who asked. The folder or document is checked again under the requester's identity, since access may have changed while it waited, and the job starts under the same id. If the check fails, the job ends `FAILED` with the reason in its `note`.
+  - **Reject:** `POST /api/jobs/dynamic/{jobId}/reject` with an optional `{"reason"}` ends it `REJECTED`.
+  - **Cancel:** the owner can cancel a pending job with `stopDynamicJob` (`STOPPED`).
+  - **Expiry:** an unanswered job expires after `approval-timeout` (default `24h`, state `EXPIRED`).
+  - **Limit:** each user may have `max-pending-per-user` (default `10`) jobs waiting.
+  - **What is never held:** removals of deleted documents (they can only remove documents the repository no longer has), and BPM events (an administrator's route already authorizes them).
+  - **Approval is REST only:** there is no MCP tool for it, so an agent cannot approve jobs.
 - **Status is kept in memory** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs, and is lost on restart. The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
 
 ---

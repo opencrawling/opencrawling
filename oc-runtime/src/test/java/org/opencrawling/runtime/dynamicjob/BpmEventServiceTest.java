@@ -132,6 +132,15 @@ class BpmEventServiceTest {
     }
 
     @Test
+    void bpmEventsAreNeverHeldForApproval() {
+        jobProperties.setRequireApproval(true);
+
+        BpmEventService.EventResult result = service.fromSource("flowable", event("e-a", "contract", "signed", "public-guide"));
+
+        assertThat(awaitEnd(result.jobId()).state()).isEqualTo(DynamicJobService.State.COMPLETED);
+    }
+
+    @Test
     void routesMatchEngineProcessAndTransitionInOrder() {
         assertThat(service.fromSource("aps", new BpmEventService.Event("e-2", "aps", "contract", null, "signed", "finance-report")).route())
                 .as("engine flowable only").isNull();

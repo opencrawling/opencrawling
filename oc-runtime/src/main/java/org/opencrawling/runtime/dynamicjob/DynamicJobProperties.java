@@ -48,6 +48,15 @@ public class DynamicJobProperties {
     private List<String> adminGroups = new ArrayList<>();
     /** How many of its dynamic jobs one user may have running at the same time (0: no limit of its own). */
     private int maxRunningPerUser = 2;
+    /**
+     * Whether an agent's folder job or document ingest waits for a member of the admin groups to approve it. Removals
+     * of deleted documents and BPM events are never held.
+     */
+    private boolean requireApproval = false;
+    /** How long a job may wait for approval before it expires. */
+    private Duration approvalTimeout = Duration.ofHours(24);
+    /** How many of its jobs one user may have waiting for approval (0: no limit). */
+    private int maxPendingPerUser = 10;
     /** How long a finished job's status, and the idempotency key that started it, are kept. */
     private Duration retention = Duration.ofHours(24);
     /** The most finished jobs kept; the oldest go first. */
@@ -101,6 +110,30 @@ public class DynamicJobProperties {
 
     public void setMaxRunningPerUser(int maxRunningPerUser) {
         this.maxRunningPerUser = maxRunningPerUser;
+    }
+
+    public boolean isRequireApproval() {
+        return requireApproval;
+    }
+
+    public void setRequireApproval(boolean requireApproval) {
+        this.requireApproval = requireApproval;
+    }
+
+    public Duration getApprovalTimeout() {
+        return approvalTimeout;
+    }
+
+    public void setApprovalTimeout(Duration approvalTimeout) {
+        this.approvalTimeout = approvalTimeout;
+    }
+
+    public int getMaxPendingPerUser() {
+        return maxPendingPerUser;
+    }
+
+    public void setMaxPendingPerUser(int maxPendingPerUser) {
+        this.maxPendingPerUser = maxPendingPerUser;
     }
 
     public Duration getRetention() {

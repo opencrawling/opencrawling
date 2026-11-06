@@ -171,6 +171,10 @@ Lets a verified caller, typically an agent, ingest a folder of a registered conn
     *   *Type*: list
     *   *Default*: empty
 *   **`opencrawling.jobs.dynamic.max-running-per-user`**: dynamic jobs one user may have running at once (`0`: no cap of its own). Default `2`. The runtime's `max-concurrent-runs` and `max-concurrent-runs-per-caller` apply as well.
+*   **`OPENCRAWLING_JOBS_DYNAMIC_REQUIRE_APPROVAL`** (`opencrawling.jobs.dynamic.require-approval`): whether an agent's folder job or document ingest waits for a member of `admin-groups`, other than the requester, to approve it (`POST /api/jobs/dynamic/{jobId}/approve` or `/reject`). Removals of deleted documents and BPM events are never held.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`opencrawling.jobs.dynamic.approval-timeout`**, **`max-pending-per-user`**: how long a job may wait for approval before it expires, and how many jobs one user may have waiting (defaults `24h`, `10`).
 *   **`opencrawling.jobs.dynamic.retention`**, **`max-retained`**: how long a finished job's status and its `Idempotency-Key` are kept, and how many finished jobs at most (defaults `24h`, `1000`). Kept in memory, so lost on restart.
 *   **`opencrawling.jobs.dynamic.transformation-connector`**: the embedding (transformation) connector dynamic jobs use. Default `Ollama_Embedding_Default`.
 

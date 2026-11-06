@@ -186,7 +186,8 @@ public class BpmEventService {
         log.info("BPM event {} from '{}' ({} / {}, instance {}): route '{}', {} of '{}' on '{}'.", event.eventId(),
                 requester.principal(), event.processDefinitionKey(), event.transition(), event.processInstanceId(),
                 routeName, request.action(), request.document(), registration.name());
-        Object outcome = jobs.document(requester, registration, request, null, VisibilityFilter.ALL, properties.getMaxRunning());
+        Object outcome = jobs.document(requester, registration, request, null, VisibilityFilter.ALL, properties.getMaxRunning(),
+                null, null);
         if (outcome instanceof DynamicJobService.Accepted accepted) {
             return new EventResult(ACCEPTED, event.eventId(), routeName, registration.name(), request.document(),
                     accepted.jobId(), accepted.executionId(), null, false);

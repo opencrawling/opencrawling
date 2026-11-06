@@ -179,6 +179,12 @@ opencrawling:
       admin-groups: ${OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS:}
       # Dynamic jobs one user may have running at once (0 = no cap of its own; max-concurrent-runs* still apply).
       max-running-per-user: 2
+      # Whether an agent's folder job or document ingest waits for a member of admin-groups (not the requester) to
+      # approve it (POST /api/jobs/dynamic/{jobId}/approve or /reject). Removals of deleted documents and BPM events
+      # are never held. Unanswered jobs expire after approval-timeout.
+      require-approval: ${OPENCRAWLING_JOBS_DYNAMIC_REQUIRE_APPROVAL:false}
+      approval-timeout: 24h
+      max-pending-per-user: 10
       # How long a finished job's status and its Idempotency-Key are kept (in memory, lost on restart).
       retention: 24h
       max-retained: 1000
