@@ -56,7 +56,7 @@ flowchart TD
 ```
 
 1.  **Crawl & Check-In**: The repository connector discovers a document. Instead of sending the full payload, it saves the file to a shared file/object storage and publishes an `IngestionMessage` (the Claim Check) to Kafka.
-2.  **Text Extraction & Chunking**: The `IngestionConsumer` reads the message, fetches the file from storage, extracts text using **Apache Tika**, splits it into semantic chunks, and publishes them to `opencrawling-chunks`.
+2.  **Text Extraction & Chunking**: The `IngestionConsumer` reads the message, fetches the file from storage, extracts text using **Apache Tika**, splits it into semantic chunks, and publishes them to `opencrawling-chunks`. With pre-embedding governance on (`opencrawling.governance.enabled`), the extracted text and metadata first go through the configured hooks, which approve, sanitize or reject the document; see [Configuration Guide, Pre-Embedding Governance](Configuration-Guide#%EF%B8%8F-pre-embedding-governance).
 3.  **Embedding Generation**: The `oc-embedding-service` consumes chunks, generates embedding vectors, and pushes them to `opencrawling-embedded`.
 4.  **Vector Store Sync**: The `VectorStoreWriterConsumer` saves the vectors, metadata, and Security SIDs into the vector database.
 
