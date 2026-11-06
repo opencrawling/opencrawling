@@ -66,8 +66,8 @@ public class DynamicJobConfiguration {
      * default, and no narrativization.
      */
     static DynamicJobService.CrawlRunner crawlRunner(JobOrchestrator orchestrator, DynamicJobProperties properties) {
-        return (connector, start, jobId, jobName, executionId, stopRequested, provenance) ->
+        return (connector, start, jobId, jobName, executionId, stopRequested, provenance, chunking) ->
                 orchestrator.runJob(connector, null, start, properties.getTransformationConnector(), jobId, jobName,
-                        NarrativizationConfig.disabled(), PipelineMode.RAG, executionId, stopRequested, provenance);
+                        NarrativizationConfig.disabled(), PipelineMode.RAG, executionId, stopRequested, provenance, chunking);
     }
 }

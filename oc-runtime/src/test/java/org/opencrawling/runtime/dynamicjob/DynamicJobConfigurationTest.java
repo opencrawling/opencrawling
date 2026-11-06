@@ -18,6 +18,7 @@ package org.opencrawling.runtime.dynamicjob;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.connector.ConnectorFactory;
@@ -109,6 +110,8 @@ class DynamicJobConfigurationTest {
             assertThat(defaults.isRequireApproval()).isFalse();
             assertThat(defaults.getApprovalTimeout()).isEqualTo(Duration.ofHours(24));
             assertThat(defaults.getMaxPendingPerUser()).isEqualTo(10);
+            assertThat(defaults.getMinChunkSize()).isEqualTo(100);
+            assertThat(defaults.getMaxChunkSize()).isEqualTo(2048);
         });
         runner.withPropertyValues("opencrawling.jobs.dynamic.enabled=true",
                 "opencrawling.jobs.dynamic.connectors=Alfresco_Main,CMIS_Archive",
@@ -121,6 +124,8 @@ class DynamicJobConfigurationTest {
                 "opencrawling.jobs.dynamic.approval-timeout=3h",
                 "opencrawling.jobs.dynamic.max-pending-per-user=4",
                 "opencrawling.jobs.dynamic.max-retained=10",
+                "opencrawling.jobs.dynamic.min-chunk-size=200",
+                "opencrawling.jobs.dynamic.max-chunk-size=1024",
                 "opencrawling.jobs.dynamic.transformation-connector=OpenAI_Embedding").run(context -> {
             DynamicJobProperties properties = context.getBean(DynamicJobProperties.class);
             assertThat(properties.getConnectors()).containsExactly("Alfresco_Main", "CMIS_Archive");
@@ -133,6 +138,8 @@ class DynamicJobConfigurationTest {
             assertThat(properties.getApprovalTimeout()).isEqualTo(Duration.ofHours(3));
             assertThat(properties.getMaxPendingPerUser()).isEqualTo(4);
             assertThat(properties.getMaxRetained()).isEqualTo(10);
+            assertThat(properties.getMinChunkSize()).isEqualTo(200);
+            assertThat(properties.getMaxChunkSize()).isEqualTo(1024);
             assertThat(properties.getTransformationConnector()).isEqualTo("OpenAI_Embedding");
         });
     }
@@ -145,15 +152,16 @@ class DynamicJobConfigurationTest {
         RepositoryConnector connector = new FakeDiscoverableConnector();
         BooleanSupplier stop = () -> false;
         ExecutionProvenance provenance = ExecutionProvenance.verified("alice", null, List.of(), null, "mcp", null);
+        ChunkingSpec chunking = new ChunkingSpec(400, null, null, false);
         when(orchestrator.runJob(any(), any(), any(), any(), any(), any(), any(NarrativizationConfig.class), any(),
-                any(), any(), any())).thenReturn(true);
+                any(), any(), any(), any())).thenReturn(true);
 
         boolean result = DynamicJobConfiguration.crawlRunner(orchestrator, properties)
-                .run(connector, "folder-1", "dyn-1", "Q3", "exec-1", stop, provenance);
+                .run(connector, "folder-1", "dyn-1", "Q3", "exec-1", stop, provenance, chunking);
 
         assertThat(result).isTrue();
         verify(orchestrator).runJob(eq(connector), isNull(), eq("folder-1"), eq("OpenAI_Embedding"), eq("dyn-1"),
                 eq("Q3"), eq(NarrativizationConfig.disabled()), eq(PipelineMode.RAG), eq("exec-1"), eq(stop),
-                eq(provenance));
+                eq(provenance), eq(chunking));
     }
 }

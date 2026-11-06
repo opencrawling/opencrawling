@@ -76,7 +76,7 @@ class BpmEventHttpTest {
     static class Events {
         @Bean
         DynamicJobService dynamicJobService(DynamicJobProperties properties) {
-            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance) -> {
+            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance, chunking) -> {
                 CRAWLS.add(start + " via " + provenance.triggerSource() + " by " + provenance.triggeredBy());
                 return true;
             };

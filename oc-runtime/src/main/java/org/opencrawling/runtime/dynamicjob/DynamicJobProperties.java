@@ -61,6 +61,13 @@ public class DynamicJobProperties {
     private Duration retention = Duration.ofHours(24);
     /** The most finished jobs kept; the oldest go first. */
     private int maxRetained = 1_000;
+    /**
+     * The smallest chunk size, in tokens, a caller may ask for. A job that asks for none uses the ingestion
+     * consumer's default (800).
+     */
+    private int minChunkSize = 100;
+    /** The largest chunk size, in tokens, a caller may ask for; at most 8192. Keep it within the embedding model's input. */
+    private int maxChunkSize = 2048;
     /** The transformation (embedding) connector dynamic jobs use. */
     private String transformationConnector = "Ollama_Embedding_Default";
 
@@ -150,6 +157,22 @@ public class DynamicJobProperties {
 
     public void setMaxRetained(int maxRetained) {
         this.maxRetained = maxRetained;
+    }
+
+    public int getMinChunkSize() {
+        return minChunkSize;
+    }
+
+    public void setMinChunkSize(int minChunkSize) {
+        this.minChunkSize = minChunkSize;
+    }
+
+    public int getMaxChunkSize() {
+        return maxChunkSize;
+    }
+
+    public void setMaxChunkSize(int maxChunkSize) {
+        this.maxChunkSize = maxChunkSize;
     }
 
     public String getTransformationConnector() {

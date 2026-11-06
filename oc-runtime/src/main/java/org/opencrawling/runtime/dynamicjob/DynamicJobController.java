@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.security.Caller;
 import org.opencrawling.runtime.security.CallerResolver;
@@ -66,14 +67,15 @@ public class DynamicJobController {
      * A dynamic job request.
      *
      * @param validateOnly check everything and start nothing
+     * @param chunking     how to split the job's documents; omitted for the default chunking
      */
-    public record DynamicJobBody(String connector, String start, String name, Boolean validateOnly) {}
+    public record DynamicJobBody(String connector, String start, String name, Boolean validateOnly, ChunkingSpec chunking) {}
 
     @Operation(summary = "Start a dynamic job", description = "Crawls a folder of a registered connector listed for dynamic jobs. "
             + "The folder must be in the connector's scope and readable by the caller; documents keep their source permissions.")
     @ApiResponse(responseCode = "202", description = "Started (or started earlier with the same Idempotency-Key)")
     @ApiResponse(responseCode = "200", description = "With validateOnly: the request is valid; nothing was started")
-    @ApiResponse(responseCode = "400", description = "Invalid request, unknown start folder, or a connector that cannot run dynamic jobs")
+    @ApiResponse(responseCode = "400", description = "Invalid request or chunking, unknown start folder, or a connector that cannot run dynamic jobs")
     @ApiResponse(responseCode = "401", description = "No verified caller")
     @ApiResponse(responseCode = "403", description = "The token names no user or lacks the required scope")
     @ApiResponse(responseCode = "404", description = "No such connector available for dynamic jobs")
@@ -86,8 +88,9 @@ public class DynamicJobController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         Caller caller = caller();
-        DynamicJobBody request = body != null ? body : new DynamicJobBody(null, null, null, null);
-        DynamicJobService.JobRequest job = new DynamicJobService.JobRequest(request.connector(), request.start(), request.name());
+        DynamicJobBody request = body != null ? body : new DynamicJobBody(null, null, null, null, null);
+        DynamicJobService.JobRequest job = new DynamicJobService.JobRequest(request.connector(), request.start(),
+                request.name(), request.chunking());
         if (Boolean.TRUE.equals(request.validateOnly())) {
             return ResponseEntity.ok(service.validate(caller, job));
         }
@@ -101,8 +104,10 @@ public class DynamicJobController {
      *
      * @param document the document's repository id (as discovery returns it)
      * @param action   {@code UPSERT} (default) or {@code DELETE}
+     * @param chunking for an UPSERT, how to split the document; omitted for the default chunking
      */
-    public record DocumentBody(String connector, String document, DynamicJobService.DocumentRequest.Action action) {}
+    public record DocumentBody(String connector, String document, DynamicJobService.DocumentRequest.Action action,
+                               ChunkingSpec chunking) {}
 
     @Operation(summary = "Ingest or remove one document", description = "UPSERT fetches a document of a registered "
             + "connector listed for dynamic jobs, if it is in the connector's scope and readable by the caller, and ingests "
@@ -118,9 +123,10 @@ public class DynamicJobController {
             @RequestBody(required = false) DocumentBody body,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        DocumentBody request = body != null ? body : new DocumentBody(null, null, null);
+        DocumentBody request = body != null ? body : new DocumentBody(null, null, null, null);
         Object result = service.document(caller(),
-                new DynamicJobService.DocumentRequest(request.connector(), request.document(), request.action()),
+                new DynamicJobService.DocumentRequest(request.connector(), request.document(), request.action(),
+                        request.chunking()),
                 idempotencyKey, ExecutionProvenance.SOURCE_DYNAMIC_API, correlationId);
         if (result instanceof DynamicJobService.Accepted accepted) {
             return ResponseEntity.accepted().location(URI.create(accepted.statusUrl())).body(accepted);

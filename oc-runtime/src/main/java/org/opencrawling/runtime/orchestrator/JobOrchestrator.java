@@ -28,6 +28,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 import org.slf4j.Logger;
@@ -164,6 +165,21 @@ public class JobOrchestrator {
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
             BooleanSupplier stopRequested, ExecutionProvenance provenance) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, narrativization,
+                pipelineMode, executionId, stopRequested, provenance, null);
+    }
+
+    /**
+     * Runs a job as {@link #runJob(RepositoryConnector, OutputConnector, String, String, String, String,
+     * NarrativizationConfig, PipelineMode, String, BooleanSupplier, ExecutionProvenance)} does, with the job's own
+     * chunking. The chunking travels with each document on the documents topic, so it applies to documents the
+     * ingestion consumer chunks; an output connector that is given the documents directly chunks them its own way.
+     *
+     * @param chunking how the ingestion consumer splits this job's documents; {@code null} for its defaults
+     */
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
         
         PipelineMode resolvedMode = pipelineMode != null ? pipelineMode :
             (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.fromString(defaultPipelineMode));
@@ -183,13 +199,13 @@ public class JobOrchestrator {
         }
 
         return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId,
-                stopRequested != null ? stopRequested : () -> false, provenance);
+                stopRequested != null ? stopRequested : () -> false, provenance, chunking);
     }
 
     @SuppressWarnings("preview")
     private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, String jobName, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode, String executionId,
-            BooleanSupplier stopRequested, ExecutionProvenance provenance) {
+            BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
         log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
@@ -292,7 +308,8 @@ public class JobOrchestrator {
                                 finalEngine,
                                 finalConfig,
                                 doc.action(),
-                                pipelineMode
+                                pipelineMode,
+                                chunking
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation

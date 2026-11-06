@@ -23,6 +23,7 @@ import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConne
 import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
 import org.opencrawling.core.security.Caller;
@@ -90,7 +91,7 @@ public class DynamicJobService {
     @FunctionalInterface
     public interface CrawlRunner {
         boolean run(RepositoryConnector connector, String start, String jobId, String jobName, String executionId,
-                    BooleanSupplier stopRequested, ExecutionProvenance provenance);
+                    BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking);
     }
 
     /**
@@ -111,16 +112,29 @@ public class DynamicJobService {
      * @param document the document's id in the repository (as discovery returns it), never a path
      * @param action   {@code UPSERT} (default) to ingest it again, {@code DELETE} to remove it from the index once
      *                 the repository no longer has it
+     * @param chunking for an UPSERT, how to split the document; {@code null} for the default chunking
      */
-    public record DocumentRequest(String connector, String document, Action action) {
+    public record DocumentRequest(String connector, String document, Action action, ChunkingSpec chunking) {
         public enum Action { UPSERT, DELETE }
+
+        public DocumentRequest(String connector, String document, Action action) {
+            this(connector, document, action, null);
+        }
     }
 
     /** The answer to a DELETE: the same whether or not anything was removed. */
     public record DeletionAccepted(String connector, String document, String note) {}
 
-    /** What a caller asks for: a registered connector, optionally a start folder (id or path) and a label. */
-    public record JobRequest(String connector, String start, String name) {}
+    /**
+     * What a caller asks for: a registered connector, optionally a start folder (id or path), a label and how to
+     * split the documents ({@code null}: the default chunking).
+     */
+    public record JobRequest(String connector, String start, String name, ChunkingSpec chunking) {
+
+        public JobRequest(String connector, String start, String name) {
+            this(connector, start, name, null);
+        }
+    }
 
     /** The folder a job crawls from. */
     public record StartView(String id, String name, String path) {
@@ -140,10 +154,13 @@ public class DynamicJobService {
      */
     public record Accepted(String jobId, String executionId, String statusUrl, State state, boolean replayed) {}
 
-    /** A job's status. {@code documents} is known once the job has ended. */
+    /**
+     * A job's status. {@code documents} is known once the job has ended; {@code chunking} is the chunking the job
+     * asked for, {@code null} for the default.
+     */
     public record JobStatus(String jobId, String executionId, String name, String connector, Kind kind, StartView start,
                             State state, boolean stopRequested, Instant createdAt, Instant finishedAt, Long documents,
-                            String owner, String triggerSource, String approvedBy, String note) {}
+                            String owner, String triggerSource, String approvedBy, String note, ChunkingSpec chunking) {}
 
     private final Supplier<List<ConnectorDTO>> connectors;
     private final Function<ConnectorDTO, RepositoryConnector> builder;
@@ -181,6 +198,7 @@ public class DynamicJobService {
     public Validated validate(Caller caller, JobRequest request) {
         requireCaller(caller, properties.getRequiredScope());
         JobRequest checked = checked(request);
+        checkChunking(checked.chunking());
         DiscoveryNode start = resolveStart(caller, registration(checked.connector(), true), checked.start());
         return new Validated(true, checked.connector(), StartView.of(start));
     }
@@ -197,6 +215,7 @@ public class DynamicJobService {
                           String correlationId) {
         requireCaller(caller, properties.getRequiredScope());
         JobRequest checked = checked(request);
+        checkChunking(checked.chunking());
         String key = checkedKey(idempotencyKey);
         Accepted replay = replay(owner(caller), key, checked);
         if (replay != null) {
@@ -233,6 +252,7 @@ public class DynamicJobService {
                            String correlationId) {
         requireCaller(caller, properties.getDocumentScope());
         DocumentRequest checked = checked(request);
+        checkChunking(checked.chunking());
         String key = checkedKey(idempotencyKey);
         if (checked.action() == DocumentRequest.Action.UPSERT) {
             Accepted replay = replay(owner(caller), key, checked);
@@ -342,7 +362,7 @@ public class DynamicJobService {
         String jobId = newJobId();
         String executionId = newExecutionId();
         Entry entry = new Entry(jobId, executionId, name, registration.name(), kind, StartView.of(target), owner,
-                requester.principal(), triggerSource, clock.instant());
+                requester.principal(), triggerSource, clock.instant(), chunkingOf(fingerprint));
 
         synchronized (this) {
             evict();
@@ -381,7 +401,7 @@ public class DynamicJobService {
                                      String name, Kind kind, DiscoveryNode target, Pending pending) {
         String owner = requester.owner();
         Entry entry = new Entry(newJobId(), newExecutionId(), name, registration.name(), kind, StartView.of(target), owner,
-                requester.principal(), requester.provenance().triggerSource(), clock.instant());
+                requester.principal(), requester.provenance().triggerSource(), clock.instant(), chunkingOf(fingerprint));
         entry.state = State.PENDING_APPROVAL;
         entry.pending = pending;
         synchronized (this) {
@@ -571,7 +591,7 @@ public class DynamicJobService {
         try {
             boolean published = runner.run(new SingleDocumentConnector(tombstone, null), indexedId, jobId,
                     "Removal of " + request.document() + " on " + registration.name(), executionId, () -> false,
-                    requester.provenance());
+                    requester.provenance(), null);
             log.info("Dynamic job {} [Exec ID: {}]: '{}' asked to remove '{}' from the index ({}): {}.", jobId,
                     executionId, requester.principal(), indexedId, registration.name(), published ? "published" : "failed");
         } catch (RuntimeException e) {
@@ -672,7 +692,7 @@ public class DynamicJobService {
             throw new DynamicJobException(HttpStatus.BAD_REQUEST,
                     "The job name may be at most " + MAX_NAME_LENGTH + " characters, with no control characters.");
         }
-        return new JobRequest(request.connector().strip(), start, name);
+        return new JobRequest(request.connector().strip(), start, name, normalized(request.chunking()));
     }
 
     static DocumentRequest checked(DocumentRequest request) {
@@ -687,8 +707,41 @@ public class DynamicJobService {
             throw new DynamicJobException(HttpStatus.BAD_REQUEST,
                     "A document id may be at most " + MAX_START_LENGTH + " characters, with no control characters.");
         }
-        return new DocumentRequest(request.connector().strip(), document,
-                request.action() != null ? request.action() : DocumentRequest.Action.UPSERT);
+        DocumentRequest.Action action = request.action() != null ? request.action() : DocumentRequest.Action.UPSERT;
+        ChunkingSpec chunking = normalized(request.chunking());
+        if (chunking != null && action == DocumentRequest.Action.DELETE) {
+            throw new DynamicJobException(HttpStatus.BAD_REQUEST, "Chunking applies to UPSERT requests only.");
+        }
+        return new DocumentRequest(request.connector().strip(), document, action, chunking);
+    }
+
+    private static ChunkingSpec normalized(ChunkingSpec chunking) {
+        return chunking == null || chunking.isEmpty() ? null : chunking;
+    }
+
+    private static ChunkingSpec chunkingOf(Object request) {
+        return switch (request) {
+            case JobRequest job -> job.chunking();
+            case DocumentRequest document -> document.chunking();
+            case null, default -> null;
+        };
+    }
+
+    /** Refuses chunking outside what the runtime allows; {@code null} (the default chunking) always passes. */
+    private void checkChunking(ChunkingSpec chunking) {
+        if (chunking == null) {
+            return;
+        }
+        int minSize = Math.max(1, properties.getMinChunkSize());
+        int maxSize = Math.min(ChunkingSpec.LIMIT_CHUNK_SIZE, properties.getMaxChunkSize());
+        if (chunking.chunkSize() != null && (chunking.chunkSize() < minSize || chunking.chunkSize() > maxSize)) {
+            throw new DynamicJobException(HttpStatus.BAD_REQUEST,
+                    "The chunk size must be from " + minSize + " to " + maxSize + " tokens.");
+        }
+        if (!chunking.isWithinLimits()) {
+            throw new DynamicJobException(HttpStatus.BAD_REQUEST, "The minimum chunk lengths must be from 0 to "
+                    + ChunkingSpec.LIMIT_CHARS + " characters.");
+        }
     }
 
     private static String checkedKey(String idempotencyKey) {
@@ -855,7 +908,8 @@ public class DynamicJobService {
                        ExecutionProvenance provenance) {
         boolean succeeded = false;
         try {
-            succeeded = runner.run(connector, start, entry.jobId, entry.name, entry.executionId, stopRequested, provenance);
+            succeeded = runner.run(connector, start, entry.jobId, entry.name, entry.executionId, stopRequested, provenance,
+                    entry.chunking);
         } catch (RuntimeException e) {
             log.error("Dynamic job {} failed: {}", entry.jobId, e.getMessage(), e);
         } finally {
@@ -893,6 +947,7 @@ public class DynamicJobService {
         private final String principal;
         private final String triggerSource;
         private final Instant createdAt;
+        private final ChunkingSpec chunking;
         private volatile State state = State.RUNNING;
         private volatile boolean stopRequested;
         private volatile Instant finishedAt;
@@ -903,7 +958,7 @@ public class DynamicJobService {
         private volatile String note;
 
         private Entry(String jobId, String executionId, String name, String connector, Kind kind, StartView start,
-                      String owner, String principal, String triggerSource, Instant createdAt) {
+                      String owner, String principal, String triggerSource, Instant createdAt, ChunkingSpec chunking) {
             this.jobId = jobId;
             this.executionId = executionId;
             this.name = name;
@@ -914,6 +969,7 @@ public class DynamicJobService {
             this.principal = principal;
             this.triggerSource = triggerSource;
             this.createdAt = createdAt;
+            this.chunking = chunking;
         }
 
         private void finish(State end, Long documents, Instant at) {
@@ -924,7 +980,7 @@ public class DynamicJobService {
 
         private JobStatus view() {
             return new JobStatus(jobId, executionId, name, connector, kind, start, state, stopRequested, createdAt,
-                    finishedAt, documents, principal, triggerSource, approvedBy, note);
+                    finishedAt, documents, principal, triggerSource, approvedBy, note, chunking);
         }
     }
 

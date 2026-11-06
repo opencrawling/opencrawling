@@ -24,6 +24,9 @@ import org.opencrawling.core.security.SecurityConfig;
 /**
  * Message payload sent to Kafka to trigger vector store processing or content migration.
  * Follows the Claim Check pattern: carries metadata and URI, consumer pulls content.
+ *
+ * <p>{@code chunking} is optional: {@code null} (and in messages from producers that predate it) means the
+ * ingestion consumer's default chunking.
  */
 public record IngestionMessage(
     String documentId,
@@ -36,7 +39,8 @@ public record IngestionMessage(
     String transformationEngine,
     Map<String, String> transformationConfig,
     DocumentAction action,
-    PipelineMode pipelineMode
+    PipelineMode pipelineMode,
+    ChunkingSpec chunking
 ) {
     public IngestionMessage {
         if (pipelineMode == null) {
@@ -48,6 +52,25 @@ public record IngestionMessage(
         if (action == null) {
             action = DocumentAction.UPSERT;
         }
+        if (chunking != null && chunking.isEmpty()) {
+            chunking = null;
+        }
+    }
+
+    public IngestionMessage(
+        String documentId,
+        String uri,
+        Map<String, List<String>> metadata,
+        String acl,
+        SecurityConfig security,
+        String lastModified,
+        String transformationConnector,
+        String transformationEngine,
+        Map<String, String> transformationConfig,
+        DocumentAction action,
+        PipelineMode pipelineMode
+    ) {
+        this(documentId, uri, metadata, acl, security, lastModified, transformationConnector, transformationEngine, transformationConfig, action, pipelineMode, null);
     }
 
     public IngestionMessage(
