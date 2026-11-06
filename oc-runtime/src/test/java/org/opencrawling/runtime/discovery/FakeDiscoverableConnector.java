@@ -1,0 +1,118 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opencrawling.runtime.discovery;
+
+import org.opencrawling.core.connector.discovery.CountAccuracy;
+import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DiscoveryNode;
+import org.opencrawling.core.connector.discovery.DiscoveryResult;
+import org.opencrawling.core.connector.discovery.DryRunRequest;
+import org.opencrawling.core.connector.discovery.DryRunResult;
+import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
+import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.PermissionRule;
+import org.opencrawling.core.security.SecurityConfig;
+import reactor.core.publisher.Flux;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+
+/** A discoverable connector over a fixed list of nodes; it applies the filter it is given to all of them. */
+public class FakeDiscoverableConnector implements DiscoverableRepositoryConnector {
+
+    static final List<DiscoveryNode> NODES = List.of(
+            node("finance-folder", DiscoveryNode.NodeType.FOLDER, rule("group:finance", "group", "read")),
+            node("finance-report", DiscoveryNode.NodeType.DOCUMENT, rule("group:finance", "group", "read")),
+            node("alice-notes", DiscoveryNode.NodeType.DOCUMENT, rule("user:alice", "user", "read")),
+            node("public-guide", DiscoveryNode.NodeType.DOCUMENT, rule("public", "public", "read")),
+            node("finance-but-not-bob", DiscoveryNode.NodeType.DOCUMENT,
+                    rule("group:finance", "group", "read"), rule("user:bob", "user", "deny")),
+            node("unknown-acl", DiscoveryNode.NodeType.DOCUMENT));
+
+    ExploreRequest lastExplore;
+    DryRunRequest lastDryRun;
+    VisibilityFilter lastFilter;
+    boolean disconnected;
+    Supplier<RuntimeException> failure;
+    CountAccuracy dryRunAccuracy = CountAccuracy.EXACT;
+
+    static DiscoveryNode node(String name, DiscoveryNode.NodeType type, PermissionRule... rules) {
+        SecurityConfig security = rules.length == 0 ? null : new SecurityConfig(true, List.of(rules));
+        return new DiscoveryNode("fake://" + name, name, "root", name, "/" + name, type, 1,
+                type == DiscoveryNode.NodeType.DOCUMENT ? "text/plain" : null, 1L, null, null, security);
+    }
+
+    static PermissionRule rule(String identity, String type, String access) {
+        return new PermissionRule(identity, type, identity, access);
+    }
+
+    @Override
+    public DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter) {
+        lastExplore = request;
+        lastFilter = filter;
+        if (failure != null) {
+            throw failure.get();
+        }
+        List<DiscoveryNode> visible = visible(filter);
+        return new DiscoveryResult(visible, NODES.size() - visible.size(), null);
+    }
+
+    @Override
+    public DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter) {
+        lastDryRun = request;
+        lastFilter = filter;
+        if (failure != null) {
+            throw failure.get();
+        }
+        List<DiscoveryNode> visible = visible(filter);
+        long hidden = NODES.size() - visible.size();
+        return dryRunAccuracy == CountAccuracy.ESTIMATE
+                ? new DryRunResult(NODES.size(), CountAccuracy.ESTIMATE, visible, null, null)
+                : new DryRunResult(visible.size(), dryRunAccuracy, visible, hidden, null);
+    }
+
+    private static List<DiscoveryNode> visible(VisibilityFilter filter) {
+        boolean[] decisions = VisibilityFilter.decide(filter, NODES);
+        List<DiscoveryNode> visible = new ArrayList<>();
+        for (int i = 0; i < decisions.length; i++) {
+            if (decisions[i]) {
+                visible.add(NODES.get(i));
+            }
+        }
+        return visible;
+    }
+
+    @Override
+    public Flux<RepositoryDocument> scan(String basePath) {
+        return Flux.empty();
+    }
+
+    @Override
+    public String getName() {
+        return "fake";
+    }
+
+    @Override
+    public void connect() {
+    }
+
+    @Override
+    public void disconnect() {
+        disconnected = true;
+    }
+}

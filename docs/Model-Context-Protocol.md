@@ -41,6 +41,30 @@ The MCP server exposes three standard tools regardless of which target vector da
 
 ---
 
+## 🔭 Repository discovery
+
+With `opencrawling.discovery.enabled=true`, three more tools let an agent look at a registered repository before anything is ingested. They read no content and ingest nothing.
+
+| MCP Tool | Description | Parameters |
+|---|---|---|
+| `listRepositoryConnectors` | Lists the registered repository connectors that support discovery: names and descriptions only, never their configuration. | `userPrincipal`, `userRoles` |
+| `exploreRepositoryTree` | Lists folders and documents breadth-first from a folder (the connector's configured root by default). | `connector` (required)<br>`start` (folder id or path)<br>`depth`<br>`maxNodes`<br>`includeDocuments` (default `true`)<br>`userPrincipal`, `userRoles` |
+| `queryRepositoryDryRun` | Previews a crawl of a folder or a read-only query: how many matching documents the caller may read, and samples. | `connector` (required)<br>`scope` (folder id or path, or a query such as a CMIS `SELECT`)<br>`sampleSize`<br>`maxScan`<br>`userPrincipal`, `userRoles` |
+
+The same operations are available over REST: `GET /api/discovery/connectors`, `GET /api/discovery/{connector}/tree` and `POST /api/discovery/{connector}/dry-run` (body `{"scope", "sampleSize", "maxScan"}`).
+
+- **Which connectors:** the repository connectors registered in `connectors.json` (the ones the job API runs) whose implementation supports discovery. Today that is CMIS.
+- **Who the caller is:** the caller must be verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`), because discovery reads live repositories with the connector's own credentials. `opencrawling.discovery.allow-asserted-identity=true` also accepts the `userPrincipal`/`userRoles` arguments, for development and tests only.
+- **What the caller sees:** each item is decided with the metadata rules (the same rules as `metadata` mode, including the `user:`/`group:` separation) on the ACL the *source repository* reports for it now, whatever `opencrawling.security.authorization.mode` is. OpenFGA only holds permissions for documents that have been indexed, so it would hide every folder and every document not yet ingested. As a result, group memberships kept only in OpenFGA are not taken into account here: discovery may show a caller less than it may read, never more.
+  - A folder the caller cannot read is not opened, so nothing below it is named.
+  - A start folder the caller cannot read, one outside the connector's configured root, and one that does not exist all give the same answer.
+  - An item whose ACL the repository does not return is never shown.
+  - Results never include ACLs.
+- **Counts:** a folder dry run checks every document, so its count is the caller's (`EXACT`, or `LOWER_BOUND` when it stopped at `maxScan` or the timeout). A query returns no ACLs, so its matches cannot be checked one by one: only its samples are checked, and no count is returned unless `opencrawling.discovery.reveal-hidden-counts=true` (then the total match count, as `ESTIMATE`). The same setting adds `hiddenCount`, the number of items hidden from the caller.
+- **Bounds:** every request is held within the configured `max-depth`, `max-nodes`, `sample-size`, `max-scan` and `timeout`, and results say when and why they were truncated.
+
+---
+
 ## 🗄️ Supported Target Vector Databases
 
 The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 9 stores:

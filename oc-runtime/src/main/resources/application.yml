@@ -162,6 +162,22 @@ opencrawling:
     # Runs one verified caller (jwt mode with protect-api) may hold at the same time; further starts get 429.
     # Runs started without a verified caller only count towards max-concurrent-runs. 0 = no cap.
     max-concurrent-runs-per-caller: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS_PER_CALLER:0}
+  discovery:
+    # Repository discovery and dry runs (REST /api/discovery/**, MCP tools listRepositoryConnectors,
+    # exploreRepositoryTree and queryRepositoryDryRun). Results are decided with the metadata rules on each
+    # item's source ACL, whatever security.authorization.mode is.
+    enabled: ${OPENCRAWLING_DISCOVERY_ENABLED:false}
+    # Discovery reads live repositories with the connector's credentials, so it needs a caller verified by token
+    # (security.identity.mode=jwt). true also accepts asserted identities: development and tests only.
+    allow-asserted-identity: ${OPENCRAWLING_DISCOVERY_ALLOW_ASSERTED_IDENTITY:false}
+    # Whether results say how many items were hidden from the caller, and give a query's total match count.
+    reveal-hidden-counts: ${OPENCRAWLING_DISCOVERY_REVEAL_HIDDEN_COUNTS:false}
+    # Defaults and upper limits for each request (hard caps: depth 10, nodes 1000, samples 50, scan 100000, 2m).
+    max-depth: 3
+    max-nodes: 200
+    sample-size: 10
+    max-scan: 10000
+    timeout: 30s
   ingest:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
