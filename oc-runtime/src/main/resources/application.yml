@@ -162,6 +162,24 @@ opencrawling:
     # Runs one verified caller (jwt mode with protect-api) may hold at the same time; further starts get 429.
     # Runs started without a verified caller only count towards max-concurrent-runs. 0 = no cap.
     max-concurrent-runs-per-caller: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS_PER_CALLER:0}
+    dynamic:
+      # Jobs a verified caller (typically an agent) describes and starts itself: REST /api/jobs/dynamic/**, MCP
+      # tools triggerDynamicJob, getDynamicJobStatus, listDynamicJobs and stopDynamicJob. Needs
+      # security.identity.mode=jwt (and protect-api for REST). The caller only picks a start folder that is in a
+      # listed connector's scope and that it may read; documents go through the documents topic in RAG mode.
+      enabled: ${OPENCRAWLING_JOBS_DYNAMIC_ENABLED:false}
+      # Registered repository connectors (names in connectors.json) dynamic jobs may use. Empty: none.
+      connectors: ${OPENCRAWLING_JOBS_DYNAMIC_CONNECTORS:}
+      # OAuth2 scope the token must carry. Blank: not checked.
+      required-scope: ${OPENCRAWLING_JOBS_DYNAMIC_REQUIRED_SCOPE:oc:jobs:write}
+      # Groups whose members may read and stop every dynamic job, not only their own.
+      admin-groups: ${OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS:}
+      # Dynamic jobs one user may have running at once (0 = no cap of its own; max-concurrent-runs* still apply).
+      max-running-per-user: 2
+      # How long a finished job's status and its Idempotency-Key are kept (in memory, lost on restart).
+      retention: 24h
+      max-retained: 1000
+      transformation-connector: Ollama_Embedding_Default
   discovery:
     # Repository discovery and dry runs (REST /api/discovery/**, MCP tools listRepositoryConnectors,
     # exploreRepositoryTree and queryRepositoryDryRun). Results are decided with the metadata rules on each

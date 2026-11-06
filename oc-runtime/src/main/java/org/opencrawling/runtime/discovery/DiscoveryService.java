@@ -28,8 +28,6 @@ import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
 import org.opencrawling.core.security.Caller;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
-import org.opencrawling.runtime.authorization.DocumentAccessGate;
-import org.opencrawling.runtime.authorization.MetadataAuthorizationProvider;
 import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,16 +38,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.IntStream;
 
 /**
  * Lists registered repositories' trees and previews crawls on behalf of a caller.
  *
- * <p>What the caller sees is decided with the metadata rules on the source repository's own ACL, through a
- * {@link DocumentAccessGate} built on {@link MetadataAuthorizationProvider}, whatever authorization mode the
- * runtime is configured with. A relationship provider such as OpenFGA only knows documents that have been indexed,
- * so it would hide every folder and every document not yet ingested. The cost: group memberships held only in
- * OpenFGA are not taken into account here, so a caller may see less than it may read, never more.
+ * <p>What the caller sees is decided by {@link SourceAclVisibility}: the metadata rules on the source repository's
+ * own ACL, whatever authorization mode the runtime is configured with (see there for why, and what it costs).
  *
  * <p>Results never include an item's ACL, and name nothing the caller cannot see.
  */
@@ -64,7 +58,6 @@ public class DiscoveryService {
     private final Supplier<List<ConnectorDTO>> connectors;
     private final Function<ConnectorDTO, RepositoryConnector> builder;
     private final DiscoveryProperties properties;
-    private final DocumentAccessGate gate = new DocumentAccessGate(new MetadataAuthorizationProvider());
 
     /**
      * @param connectors the registered connectors
@@ -170,13 +163,7 @@ public class DiscoveryService {
 
     /** Shows the nodes the caller may read by the metadata rules on their source ACL. */
     VisibilityFilter filterFor(Caller caller) {
-        return nodes -> {
-            List<Integer> readable = gate.filter(caller, IntStream.range(0, nodes.size()).boxed().toList(),
-                    index -> nodes.get(index).toResourceRef());
-            boolean[] visible = new boolean[nodes.size()];
-            readable.forEach(index -> visible[index] = true);
-            return visible;
-        };
+        return SourceAclVisibility.forCaller(caller);
     }
 
     private List<ConnectorDTO> registered() {
@@ -185,7 +172,8 @@ public class DiscoveryService {
                 .filter(connector -> connector != null && "repository".equalsIgnoreCase(connector.type())).toList();
     }
 
-    static boolean discoverable(ConnectorDTO connector) {
+    /** Whether a registered connector's class supports discovery, judged without building it. */
+    public static boolean discoverable(ConnectorDTO connector) {
         if (connector.className() == null || connector.className().isBlank()) {
             return false;
         }

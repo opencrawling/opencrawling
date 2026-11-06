@@ -41,6 +41,11 @@ public final class JwtCallerMapper {
     public static final String CLIENT = "client";
     /** Attribute holding the acting party of a delegated (RFC 8693 token exchange) token: {@code act.sub}. */
     public static final String ACTOR = "actor";
+    /**
+     * Attribute holding the token's OAuth2 scopes, as a list of strings: the space-separated {@code scope} claim
+     * and the {@code scp} claim (a list or a space-separated string). Never mixed into the groups.
+     */
+    public static final String SCOPES = "scopes";
 
     private final List<String> principalClaims;
     private final List<String> groupClaims;
@@ -96,8 +101,38 @@ public final class JwtCallerMapper {
         if (claims.get("act") instanceof Map<?, ?> act) {
             putString(attributes, ACTOR, act.get("sub"));
         }
+        Set<String> scopes = new LinkedHashSet<>();
+        addScopes(scopes, claims.get("scope"));
+        addScopes(scopes, claims.get("scp"));
+        if (!scopes.isEmpty()) {
+            attributes.put(SCOPES, List.copyOf(scopes));
+        }
 
         return new Caller(principal, List.copyOf(groups), tenant, true, attributes);
+    }
+
+    private static void addScopes(Set<String> scopes, Object claim) {
+        if (claim instanceof String value) {
+            for (String scope : value.trim().split("\\s+")) {
+                if (!scope.isEmpty()) {
+                    scopes.add(scope);
+                }
+            }
+        } else if (claim instanceof Collection<?> values) {
+            for (Object value : values) {
+                if (value instanceof String scope) {
+                    addScopes(scopes, scope);
+                }
+            }
+        }
+    }
+
+    /** The scopes recorded on a caller by {@link #toCaller(Map)}; empty for a caller from anywhere else. */
+    public static List<String> scopes(Caller caller) {
+        if (caller == null || !(caller.attributes().get(SCOPES) instanceof List<?> values)) {
+            return List.of();
+        }
+        return values.stream().filter(String.class::isInstance).map(String.class::cast).toList();
     }
 
     private static void addGroup(Set<String> groups, String group) {

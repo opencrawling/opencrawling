@@ -569,7 +569,7 @@ public class JobController {
      * The key the per-caller cap counts runs under: the verified party that starts the run (for a delegated token,
      * the acting agent), qualified by its tenant when it has one. {@code null} for a run with no verified caller.
      */
-    static String callerKey(ExecutionProvenance provenance) {
+    public static String callerKey(ExecutionProvenance provenance) {
         if (provenance == null || !provenance.callerVerified() || provenance.triggeredBy() == null) {
             return null;
         }

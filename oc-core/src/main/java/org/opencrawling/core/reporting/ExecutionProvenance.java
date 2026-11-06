@@ -32,8 +32,9 @@ import java.util.regex.Pattern;
  * @param callerGroups   the verified caller's groups; empty when unknown
  * @param callerTenant   the verified caller's tenant; {@code null} when unknown
  * @param callerVerified {@code true} only when the identity fields come from a validated token
- * @param triggerSource  how the execution started: {@link #SOURCE_API}, {@link #SOURCE_OIS}, {@link #SOURCE_GRPC_PUSH},
- *                       {@link #SOURCE_STARTUP}; {@code null} when unknown
+ * @param triggerSource  how the execution started: {@link #SOURCE_API}, {@link #SOURCE_DYNAMIC_API},
+ *                       {@link #SOURCE_MCP}, {@link #SOURCE_OIS}, {@link #SOURCE_GRPC_PUSH}, {@link #SOURCE_STARTUP};
+ *                       {@code null} when unknown
  * @param correlationId  a caller-supplied id that ties the execution to the caller's own request or workflow
  */
 public record ExecutionProvenance(
@@ -48,6 +49,10 @@ public record ExecutionProvenance(
 
     /** Started through the job API ({@code POST /api/jobs/{id}/start}). */
     public static final String SOURCE_API = "api";
+    /** A job the caller described itself, through {@code POST /api/jobs/dynamic}. */
+    public static final String SOURCE_DYNAMIC_API = "dynamic-api";
+    /** A job the caller described itself, through an MCP tool. */
+    public static final String SOURCE_MCP = "mcp";
     /** A document pushed to the OIS ingest endpoint. */
     public static final String SOURCE_OIS = "ois";
     /** A document pushed over the gRPC push transport. */

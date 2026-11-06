@@ -144,7 +144,7 @@ The last seven fields record who started the execution and how. They are the sam
 
 | Field | Meaning |
 |---|---|
-| `trigger_source` | How the execution started: `api` (`POST /api/jobs/{id}/start`), `ois` (OIS ingest), `grpc-push`, or `startup` (crawl on startup). |
+| `trigger_source` | How the execution started: `api` (`POST /api/jobs/{id}/start`), `dynamic-api` (`POST /api/jobs/dynamic`), `mcp` (the `triggerDynamicJob` MCP tool), `ois` (OIS ingest), `grpc-push`, or `startup` (crawl on startup). |
 | `triggered_by` | The verified party that started it. For a delegated token (RFC 8693 token exchange), this is the acting agent (`act.sub`); otherwise the token's principal. |
 | `on_behalf_of` | For a delegated token, the user the agent acted for. Empty otherwise. |
 | `caller_groups`, `caller_tenant` | The verified caller's groups and tenant, mapped as for MCP access checks (see [Document Authorization](Document-Authorization.md)). |

@@ -994,6 +994,32 @@ public class AlfrescoRepositoryConnector implements DiscoverableRepositoryConnec
         return folder;
     }
 
+    /**
+     * The folder a crawl from {@code reference} would start at. Only for a connector that crawls a folder tree: one
+     * set up to crawl a query ignores the start folder in {@link #scan(String)}. The node's {@code sourceId} is the
+     * folder's node id as the repository reports it, which {@code scan} reads as a start node.
+     */
+    @Override
+    public DiscoveryNode crawlStart(String reference, VisibilityFilter filter) {
+        if (crawlMode == AlfrescoCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        ensureConnected();
+        String folderRef = reference == null || reference.isBlank() ? configuredRootRef() : reference.strip();
+        try {
+            // A query string is not a folder, so it is refused as missing; scan() only ever gets the folder's id.
+            return visibleFolder(folderInScope(folderRef), folderRef, filter);
+        } catch (IOException e) {
+            throw new DiscoveryException("Alfresco folder lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("Alfresco folder lookup was interrupted.", e);
+        }
+    }
+
+    static final String NOT_A_FOLDER_CRAWL =
+            "This connector crawls a query, not a folder tree, so a crawl cannot start from a folder.";
+
     /** The starting folder as a node, refused as not found when the filter hides it. */
     private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
         DiscoveryNode node = folderNode(folder, null, 0);

@@ -647,6 +647,31 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
         }
     }
 
+    /**
+     * The folder a crawl from {@code reference} would start at. Only for a connector that crawls a folder tree: one
+     * set up to crawl a query or the change log ignores the start folder in {@link #scan(String)}.
+     */
+    @Override
+    public DiscoveryNode crawlStart(String reference, VisibilityFilter filter) {
+        if (changeLogEnabled || crawlMode == CmisCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        ensureConnected();
+        String folderRef = reference == null || reference.isBlank() ? configuredRoot() : reference.strip();
+        try {
+            // A query string is not a folder, so it is refused as missing; scan() only ever gets the folder's id.
+            return visibleFolder(folderInScope(folderRef), folderRef, filter);
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS folder lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS folder lookup was interrupted.", e);
+        }
+    }
+
+    static final String NOT_A_FOLDER_CRAWL =
+            "This connector crawls a query or the change log, not a folder tree, so a crawl cannot start from a folder.";
+
     /** The starting folder as a node, refused as not found when the filter hides it. */
     private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
         DiscoveryNode node = folderNode(folder, null, 0);

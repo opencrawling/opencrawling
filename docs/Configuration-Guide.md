@@ -151,6 +151,28 @@ Lets agents and API clients list a registered repository's tree and preview a cr
 
 ---
 
+## 🚚 Dynamic Jobs
+
+Lets a verified caller, typically an agent, ingest a folder of a registered connector without an administrator creating a job (REST `/api/jobs/dynamic/**`, MCP tools `triggerDynamicJob`, `getDynamicJobStatus`, `listDynamicJobs`, `stopDynamicJob`). Needs `opencrawling.security.identity.mode=jwt`, plus `protect-api` for REST. See [Model Context Protocol, Dynamic jobs](Model-Context-Protocol#-dynamic-jobs).
+
+*   **`OPENCRAWLING_JOBS_DYNAMIC_ENABLED`** (`opencrawling.jobs.dynamic.enabled`): whether the endpoints and tools exist.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_JOBS_DYNAMIC_CONNECTORS`** (`opencrawling.jobs.dynamic.connectors`): the registered repository connectors (names in `connectors.json`) dynamic jobs may use, comma-separated. Each must support discovery and crawl a folder tree (CMIS, Alfresco).
+    *   *Type*: list
+    *   *Default*: empty (none)
+*   **`OPENCRAWLING_JOBS_DYNAMIC_REQUIRED_SCOPE`** (`opencrawling.jobs.dynamic.required-scope`): the OAuth2 scope the caller's token must carry (`scope` or `scp` claim). Blank: not checked.
+    *   *Type*: `string`
+    *   *Default*: `oc:jobs:write`
+*   **`OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS`** (`opencrawling.jobs.dynamic.admin-groups`): groups whose members may read and stop every dynamic job, not only their own.
+    *   *Type*: list
+    *   *Default*: empty
+*   **`opencrawling.jobs.dynamic.max-running-per-user`**: dynamic jobs one user may have running at once (`0`: no cap of its own). Default `2`. The runtime's `max-concurrent-runs` and `max-concurrent-runs-per-caller` apply as well.
+*   **`opencrawling.jobs.dynamic.retention`**, **`max-retained`**: how long a finished job's status and its `Idempotency-Key` are kept, and how many finished jobs at most (defaults `24h`, `1000`). Kept in memory, so lost on restart.
+*   **`opencrawling.jobs.dynamic.transformation-connector`**: the embedding (transformation) connector dynamic jobs use. Default `Ollama_Embedding_Default`.
+
+---
+
 ## 📊 AIOps & Observability Configurations
 
 OpenCrawling integrates end-to-end distributed tracing and metrics that are enabled by default. They can be disabled or fine-tuned using the following environment variables:

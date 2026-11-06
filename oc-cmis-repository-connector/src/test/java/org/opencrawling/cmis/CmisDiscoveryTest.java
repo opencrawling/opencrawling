@@ -501,6 +501,50 @@ class CmisDiscoveryTest {
                 .hasMessage("No CMIS folder 'd1' in this connector's scope.");
     }
 
+    // ---- Crawl start ----
+
+    @Test
+    void aCrawlStartIsAVisibleFolderInScopeAndTheScanTakesItsId() {
+        DiscoveryNode start = connector().crawlStart("/Finance", readableBy("GROUP_finance"));
+
+        assertThat(start.sourceId()).isEqualTo("f1");
+        assertThat(start.type()).isEqualTo(DiscoveryNode.NodeType.FOLDER);
+        assertThat(connector().scan(start.sourceId()).map(doc -> doc.id()).collectList().block())
+                .containsExactlyInAnyOrder("cmis://repo/documents/d1", "cmis://repo/documents/d2");
+        assertThat(connector().crawlStart(null, VisibilityFilter.ALL).sourceId()).isEqualTo("root");
+    }
+
+    @Test
+    void aCrawlStartTheCallerCannotSeeOrOutOfScopeReadsLikeAMissingFolder() {
+        VisibilityFilter everyone = readableBy("GROUP_EVERYONE");
+        CmisRepositoryConnector financeOnly = connector("/Finance", true, CmisCrawlMode.FOLDER, false, 100);
+
+        assertThatThrownBy(() -> connector().crawlStart("/Finance", everyone))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("No CMIS folder '/Finance' in this connector's scope.");
+        assertThatThrownBy(() -> connector().crawlStart("/Nowhere", everyone))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("No CMIS folder '/Nowhere' in this connector's scope.");
+        assertThatThrownBy(() -> financeOnly.crawlStart("/Public", VisibilityFilter.ALL))
+                .hasMessage("No CMIS folder '/Public' in this connector's scope.");
+        assertThatThrownBy(() -> connector().crawlStart("/System", VisibilityFilter.ALL))
+                .hasMessage("No CMIS folder '/System' in this connector's scope.");
+        assertThatThrownBy(() -> connector().crawlStart("d1", VisibilityFilter.ALL))
+                .hasMessage("No CMIS folder 'd1' in this connector's scope.");
+    }
+
+    @Test
+    void aCrawlStartIsNeverAQuery() {
+        assertThatThrownBy(() -> connector().crawlStart("SELECT * FROM cmis:document", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No CMIS folder");
+    }
+
+    @Test
+    void aQueryOrChangeLogConnectorHasNoCrawlStart() {
+        assertThatThrownBy(() -> connector("/", true, CmisCrawlMode.QUERY, false, 100).crawlStart("/Public", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
+        assertThatThrownBy(() -> connector("/", true, CmisCrawlMode.FOLDER, true, 100).crawlStart("/Public", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
+    }
+
     @Test
     void aFilterThatCannotDecideStopsDiscovery() {
         VisibilityFilter broken = nodes -> { throw new IllegalStateException("authorization unavailable"); };

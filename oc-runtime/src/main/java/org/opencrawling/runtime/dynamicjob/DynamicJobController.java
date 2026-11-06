@@ -1,0 +1,129 @@
+/*
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opencrawling.runtime.dynamicjob;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.opencrawling.core.reporting.ExecutionProvenance;
+import org.opencrawling.core.security.Caller;
+import org.opencrawling.runtime.security.CallerResolver;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * REST access to dynamic jobs. The caller always comes from the request's validated token: these endpoints need
+ * {@code opencrawling.security.identity.mode=jwt} with {@code protect-api}, and never accept an asserted identity.
+ */
+@RestController
+@RequestMapping("/api/jobs/dynamic")
+@ConditionalOnProperty(name = DynamicJobProperties.PREFIX + ".enabled", havingValue = "true")
+@Tag(name = "Dynamic Jobs", description = "Jobs a caller describes and starts itself, on a registered connector, from a folder it may read")
+public class DynamicJobController {
+
+    private final DynamicJobService service;
+    private CallerResolver callerResolver = CallerResolver.asserted();
+
+    public DynamicJobController(DynamicJobService service) {
+        this.service = service;
+    }
+
+    @Autowired(required = false)
+    public void setCallerResolver(CallerResolver callerResolver) {
+        if (callerResolver != null) {
+            this.callerResolver = callerResolver;
+        }
+    }
+
+    /**
+     * A dynamic job request.
+     *
+     * @param validateOnly check everything and start nothing
+     */
+    public record DynamicJobBody(String connector, String start, String name, Boolean validateOnly) {}
+
+    @Operation(summary = "Start a dynamic job", description = "Crawls a folder of a registered connector listed for dynamic jobs. "
+            + "The folder must be in the connector's scope and readable by the caller; documents keep their source permissions.")
+    @ApiResponse(responseCode = "202", description = "Started (or started earlier with the same Idempotency-Key)")
+    @ApiResponse(responseCode = "200", description = "With validateOnly: the request is valid; nothing was started")
+    @ApiResponse(responseCode = "400", description = "Invalid request, unknown start folder, or a connector that cannot run dynamic jobs")
+    @ApiResponse(responseCode = "401", description = "No verified caller")
+    @ApiResponse(responseCode = "403", description = "The token names no user or lacks the required scope")
+    @ApiResponse(responseCode = "404", description = "No such connector available for dynamic jobs")
+    @ApiResponse(responseCode = "409", description = "Idempotency-Key reused for a different job, or the connector is misconfigured")
+    @ApiResponse(responseCode = "429", description = "Too many jobs running")
+    @PostMapping
+    public ResponseEntity<?> start(
+            @RequestBody(required = false) DynamicJobBody body,
+            @Parameter(description = "Repeating a request with the same key returns the job the first one started")
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        Caller caller = caller();
+        DynamicJobBody request = body != null ? body : new DynamicJobBody(null, null, null, null);
+        DynamicJobService.JobRequest job = new DynamicJobService.JobRequest(request.connector(), request.start(), request.name());
+        if (Boolean.TRUE.equals(request.validateOnly())) {
+            return ResponseEntity.ok(service.validate(caller, job));
+        }
+        DynamicJobService.Accepted accepted = service.start(caller, job, idempotencyKey,
+                ExecutionProvenance.SOURCE_DYNAMIC_API, correlationId);
+        return ResponseEntity.accepted().location(URI.create(accepted.statusUrl())).body(accepted);
+    }
+
+    @Operation(summary = "List dynamic jobs", description = "The caller's own dynamic jobs (every job for admin groups), newest first.")
+    @GetMapping
+    public List<DynamicJobService.JobStatus> list() {
+        return service.list(caller());
+    }
+
+    @Operation(summary = "Get a dynamic job's status")
+    @ApiResponse(responseCode = "404", description = "No such job, or not one the caller may see")
+    @GetMapping("/{jobId}")
+    public DynamicJobService.JobStatus status(@PathVariable String jobId) {
+        return service.status(caller(), jobId);
+    }
+
+    @Operation(summary = "Stop a dynamic job", description = "The crawl ends at the latest before its next document.")
+    @ApiResponse(responseCode = "202", description = "Stop requested")
+    @ApiResponse(responseCode = "409", description = "The job is not running")
+    @PostMapping("/{jobId}/stop")
+    public ResponseEntity<DynamicJobService.JobStatus> stop(@PathVariable String jobId) {
+        return ResponseEntity.accepted().body(service.stop(caller(), jobId));
+    }
+
+    @ExceptionHandler(DynamicJobException.class)
+    ResponseEntity<Map<String, String>> failed(DynamicJobException e) {
+        return ResponseEntity.status(e.status()).body(Map.of("error", e.getMessage()));
+    }
+
+    /** The request's verified caller, or {@code null} (refused by the service) when there is none. */
+    private Caller caller() {
+        return callerResolver.verifiedCaller().orElse(null);
+    }
+}
