@@ -66,7 +66,7 @@ public class CmisSecurityMapper {
         return new SecurityConfig(isExact, rules);
     }
 
-    private static String extractPrincipalId(JsonNode ace) {
+    static String extractPrincipalId(JsonNode ace) {
         JsonNode principalNode = ace.path("principal");
         if (principalNode.isObject() && principalNode.has("principalId")) {
             return principalNode.path("principalId").asText();
