@@ -52,7 +52,8 @@ import java.util.Set;
  *   <li>{@code jwt}: a resource-server chain that requires a valid bearer token on the MCP endpoints (and on
  *       {@code /api/**} with {@code protect-api}); every other request falls through to the open chain. The
  *       resource-server chain matches only those paths, so a bearer token meant for another endpoint (the OIS
- *       ingest token) is never parsed as a JWT.</li>
+ *       ingest token) is never parsed as a JWT. BPM events that carry a source's signature or Basic credentials
+ *       are left to the event endpoint, which checks them.</li>
  * </ul>
  *
  * <p>Only servlet web applications get this configuration. The decoupled crawler and consumer containers run without
@@ -69,6 +70,16 @@ public class IdentitySecurityConfiguration {
 
     /** Has its own bearer token ({@code opencrawling.ingest.ois.token}); never under the JWT chain. */
     static final String OIS_INGEST_PATH = "/api/v1/ingest/ois/**";
+
+    /**
+     * BPM events signed with a source's HMAC secret or sent with its static token over Basic auth: the event
+     * endpoint checks those itself, so they skip the JWT chain. Events with a bearer token stay under it.
+     */
+    static final String BPM_EVENTS_PATH = "/api/events/bpm/**";
+
+    static final RequestMatcher BPM_SHARED_SECRET = request -> request.getHeader("X-OpenCrawling-Signature") != null
+            || (request.getHeader("Authorization") != null
+                && request.getHeader("Authorization").regionMatches(true, 0, "Basic ", 0, 6));
 
     @Bean
     public CallerResolver callerResolver(IdentityProperties properties, Environment environment) {
@@ -128,7 +139,7 @@ public class IdentitySecurityConfiguration {
 
     /**
      * The requests that need a token in {@code jwt} mode: the MCP endpoints, plus {@code /api/**} (except OIS
-     * ingest) with {@code protect-api}.
+     * ingest, and BPM events that carry a source's signature or Basic credentials) with {@code protect-api}.
      */
     static RequestMatcher protectedRequests(IdentityProperties properties, Environment environment) {
         PathPatternRequestMatcher.Builder paths = PathPatternRequestMatcher.withDefaults();
@@ -138,7 +149,8 @@ public class IdentitySecurityConfiguration {
         }
         if (properties.isProtectApi()) {
             matchers.add(new AndRequestMatcher(paths.matcher("/api/**"),
-                    new NegatedRequestMatcher(paths.matcher(OIS_INGEST_PATH))));
+                    new NegatedRequestMatcher(paths.matcher(OIS_INGEST_PATH)),
+                    new NegatedRequestMatcher(new AndRequestMatcher(paths.matcher(BPM_EVENTS_PATH), BPM_SHARED_SECRET))));
         }
         return new OrRequestMatcher(matchers);
     }

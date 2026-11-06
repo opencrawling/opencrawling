@@ -45,7 +45,8 @@ class DynamicJobConfigurationTest {
             .withBean(ConnectorFactory.class, () -> mock(ConnectorFactory.class))
             .withBean(JobOrchestrator.class, () -> mock(JobOrchestrator.class))
             .withBean(JobRunRegistry.class, () -> new JobRunRegistry(0))
-            .withUserConfiguration(DynamicJobConfiguration.class, DynamicJobController.class, DynamicJobMcpTools.class);
+            .withUserConfiguration(DynamicJobConfiguration.class, DynamicJobController.class, DynamicJobMcpTools.class,
+                    BpmEventConfiguration.class, BpmEventController.class);
 
     @Test
     void dynamicJobsAreOffByDefault() {
@@ -54,7 +55,31 @@ class DynamicJobConfigurationTest {
             assertThat(context).doesNotHaveBean(DynamicJobService.class);
             assertThat(context).doesNotHaveBean(DynamicJobController.class);
             assertThat(context).doesNotHaveBean(DynamicJobMcpTools.class);
+            assertThat(context).doesNotHaveBean(BpmEventService.class);
+            assertThat(context).doesNotHaveBean(BpmEventController.class);
         });
+    }
+
+    @Test
+    void bpmEventsAloneBringTheServiceButNotTheAgentEndpoints() {
+        runner.withPropertyValues("opencrawling.events.bpm.enabled=true",
+                "opencrawling.events.bpm.sources[0].name=aps",
+                "opencrawling.events.bpm.sources[0].token=aps-static-token-0123456789abcdefghijklmn").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(BpmEventService.class);
+            assertThat(context).hasSingleBean(BpmEventController.class);
+            assertThat(context).hasSingleBean(DynamicJobService.class);
+            assertThat(context).doesNotHaveBean(DynamicJobController.class);
+            assertThat(context).doesNotHaveBean(DynamicJobMcpTools.class);
+            assertThat(context.getBean(BpmEventProperties.class).getRequiredScope()).isEqualTo("oc:events:write");
+        });
+    }
+
+    @Test
+    void aBpmSourceWithAShortSecretStopsStartup() {
+        runner.withPropertyValues("opencrawling.events.bpm.enabled=true",
+                "opencrawling.events.bpm.sources[0].name=aps", "opencrawling.events.bpm.sources[0].token=short")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test

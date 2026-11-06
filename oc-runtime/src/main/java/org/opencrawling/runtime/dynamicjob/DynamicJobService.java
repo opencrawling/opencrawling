@@ -21,6 +21,7 @@ import org.opencrawling.core.connector.discovery.DiscoveryException;
 import org.opencrawling.core.connector.discovery.DiscoveryNode;
 import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
 import org.opencrawling.core.connector.discovery.FetchedDocument;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
@@ -175,7 +176,7 @@ public class DynamicJobService {
     public Validated validate(Caller caller, JobRequest request) {
         requireCaller(caller, properties.getRequiredScope());
         JobRequest checked = checked(request);
-        DiscoveryNode start = resolveStart(caller, registration(checked.connector()), checked.start());
+        DiscoveryNode start = resolveStart(caller, registration(checked.connector(), true), checked.start());
         return new Validated(true, checked.connector(), StartView.of(start));
     }
 
@@ -196,11 +197,11 @@ public class DynamicJobService {
         if (replay != null) {
             return replay;
         }
-        ConnectorDTO registration = registration(checked.connector());
+        ConnectorDTO registration = registration(checked.connector(), true);
         DiscoveryNode start = resolveStart(caller, registration, checked.start());
         String name = checked.name() != null ? checked.name() : "Dynamic job on " + registration.name();
-        return launch(caller, key, checked, registration, name, Kind.FOLDER, start, () -> builder.apply(registration),
-                start.sourceId(), triggerSource, correlationId);
+        return launch(requester(caller, triggerSource, correlationId), key, checked, registration, name, Kind.FOLDER,
+                start, () -> builder.apply(registration), start.sourceId(), properties.getMaxRunningPerUser());
     }
 
     /**
@@ -229,7 +230,20 @@ public class DynamicJobService {
                 return replay;
             }
         }
-        ConnectorDTO registration = registration(checked.connector());
+        return document(requester(caller, triggerSource, correlationId), registration(checked.connector(), true),
+                checked, key, SourceAclVisibility.forCaller(caller), properties.getMaxRunningPerUser());
+    }
+
+    /**
+     * Ingests or removes one document for a requester whose right to ask was already checked: a verified caller
+     * (with its source-ACL filter) or a configured BPM event route (with {@link VisibilityFilter#ALL}, since the
+     * route, not the requester, decides what may be ingested). The connector still holds the document to its scope.
+     *
+     * @param request      a checked request
+     * @param runningLimit how many of the requester's jobs may run at once (0: no limit of its own)
+     */
+    Object document(Requester requester, ConnectorDTO registration, DocumentRequest request, String key,
+                    VisibilityFilter filter, int runningLimit) {
         RepositoryConnector built = build(registration);
         FetchedDocument fetched;
         boolean handedOver = false;
@@ -239,34 +253,32 @@ public class DynamicJobService {
                         + "' cannot fetch single documents.");
             }
             try {
-                fetched = repositoryCall(registration, () -> connector.fetchDocument(checked.document(),
-                        SourceAclVisibility.forCaller(caller)));
+                fetched = repositoryCall(registration, () -> connector.fetchDocument(request.document(), filter));
             } catch (DynamicJobException e) {
                 if (e.status() != HttpStatus.BAD_REQUEST) {
                     throw e;
                 }
                 // Hidden, out of scope or not a document: the same answers as for a missing one.
-                if (checked.action() == DocumentRequest.Action.DELETE) {
-                    return deletionAccepted(registration, checked);
+                if (request.action() == DocumentRequest.Action.DELETE) {
+                    return deletionAccepted(registration, request);
                 }
-                throw documentNotAvailable(checked, registration);
+                throw documentNotAvailable(request, registration);
             }
-            if (checked.action() == DocumentRequest.Action.DELETE) {
+            if (request.action() == DocumentRequest.Action.DELETE) {
                 if (fetched instanceof FetchedDocument.Found) {
-                    throw new DynamicJobException(HttpStatus.CONFLICT, "Document '" + checked.document()
+                    throw new DynamicJobException(HttpStatus.CONFLICT, "Document '" + request.document()
                             + "' still exists in the repository, so it is not removed from the index.");
                 }
                 String indexedId = ((FetchedDocument.Gone) fetched).indexedId();
-                publishTombstone(caller, registration, checked, indexedId, triggerSource, correlationId);
-                return deletionAccepted(registration, checked);
+                publishTombstone(requester, registration, request, indexedId);
+                return deletionAccepted(registration, request);
             }
             if (!(fetched instanceof FetchedDocument.Found found)) {
-                throw documentNotAvailable(checked, registration);
+                throw documentNotAvailable(request, registration);
             }
             RepositoryConnector single = new SingleDocumentConnector(found.document(), built);
-            Accepted accepted = launch(caller, key, checked, registration, "Document " + found.node().name() + " on "
-                    + registration.name(), Kind.DOCUMENT, found.node(), () -> single, found.node().sourceId(),
-                    triggerSource, correlationId);
+            Accepted accepted = launch(requester, key, request, registration, "Document " + found.node().name() + " on "
+                    + registration.name(), Kind.DOCUMENT, found.node(), () -> single, found.node().sourceId(), runningLimit);
             handedOver = true;
             return accepted;
         } finally {
@@ -276,16 +288,32 @@ public class DynamicJobService {
         }
     }
 
+    /**
+     * Who a job runs for.
+     *
+     * @param owner      the key its status is filed under: only requests with the same owner (and admins) see it
+     * @param principal  the name shown as the job's owner and in the logs
+     * @param provenance what the ledger records about who started it
+     */
+    record Requester(String owner, String principal, ExecutionProvenance provenance) {}
+
+    private Requester requester(Caller caller, String triggerSource, String correlationId) {
+        return new Requester(owner(caller), caller.principal(), ExecutionProvenance.verified(caller.principal(),
+                caller.attributes().get(JwtCallerMapper.ACTOR) instanceof String actor ? actor : null,
+                caller.groups(), caller.tenant(), triggerSource, correlationId));
+    }
+
     /** Runs a crawl as a job the caller can follow; {@code crawler} is disconnected when the run ends. */
-    private Accepted launch(Caller caller, String key, Object fingerprint, ConnectorDTO registration, String name,
+    private Accepted launch(Requester requester, String key, Object fingerprint, ConnectorDTO registration, String name,
                             Kind kind, DiscoveryNode target, Supplier<RepositoryConnector> crawler, String scanFrom,
-                            String triggerSource, String correlationId) {
-        String owner = owner(caller);
-        ExecutionProvenance provenance = provenance(caller, triggerSource, correlationId);
+                            int runningLimit) {
+        String owner = requester.owner();
+        ExecutionProvenance provenance = requester.provenance();
+        String triggerSource = provenance.triggerSource();
         String jobId = newJobId();
         String executionId = newExecutionId();
         Entry entry = new Entry(jobId, executionId, name, registration.name(), kind, StartView.of(target), owner,
-                caller.principal(), triggerSource, clock.instant());
+                requester.principal(), triggerSource, clock.instant());
 
         synchronized (this) {
             evict();
@@ -293,11 +321,10 @@ public class DynamicJobService {
             if (replay != null) {
                 return replay;
             }
-            int limit = properties.getMaxRunningPerUser();
-            if (limit > 0 && jobs.values().stream()
-                    .filter(job -> job.owner.equals(owner) && job.state == State.RUNNING).count() >= limit) {
+            if (runningLimit > 0 && jobs.values().stream()
+                    .filter(job -> job.owner.equals(owner) && job.state == State.RUNNING).count() >= runningLimit) {
                 throw new DynamicJobException(HttpStatus.TOO_MANY_REQUESTS,
-                        "You already have " + limit + " dynamic jobs running.");
+                        "You already have " + runningLimit + " dynamic jobs running.");
             }
             jobs.put(jobId, entry);
             if (key != null) {
@@ -315,7 +342,7 @@ public class DynamicJobService {
             throw forget(entry, key, notConfigured(registration.name()));
         }
         log.info("Dynamic job {} [Exec ID: {}] started by '{}' ({}) on '{}' from {} '{}'.", jobId, executionId,
-                caller.principal(), triggerSource, registration.name(), kind.name().toLowerCase(java.util.Locale.ROOT), scanFrom);
+                requester.principal(), triggerSource, registration.name(), kind.name().toLowerCase(java.util.Locale.ROOT), scanFrom);
         reservation.start(stopRequested -> crawl(entry, connector, scanFrom, stopRequested, provenance));
         return new Accepted(jobId, executionId, STATUS_PATH + jobId, State.RUNNING, false);
     }
@@ -338,17 +365,16 @@ public class DynamicJobService {
      * logged and recorded in the ledger but not reported: the answer must not depend on whether the document ever
      * existed.
      */
-    private void publishTombstone(Caller caller, ConnectorDTO registration, DocumentRequest request, String indexedId,
-                                  String triggerSource, String correlationId) {
+    private void publishTombstone(Requester requester, ConnectorDTO registration, DocumentRequest request, String indexedId) {
         RepositoryDocument tombstone = RepositoryDocument.createTombstone(indexedId, indexedId);
         String jobId = newJobId();
         String executionId = newExecutionId();
         try {
             boolean published = runner.run(new SingleDocumentConnector(tombstone, null), indexedId, jobId,
                     "Removal of " + request.document() + " on " + registration.name(), executionId, () -> false,
-                    provenance(caller, triggerSource, correlationId));
+                    requester.provenance());
             log.info("Dynamic job {} [Exec ID: {}]: '{}' asked to remove '{}' from the index ({}): {}.", jobId,
-                    executionId, caller.principal(), indexedId, registration.name(), published ? "published" : "failed");
+                    executionId, requester.principal(), indexedId, registration.name(), published ? "published" : "failed");
         } catch (RuntimeException e) {
             log.error("Dynamic job {}: the tombstone for '{}' could not be published: {}", jobId, indexedId, e.getMessage(), e);
         } finally {
@@ -363,12 +389,6 @@ public class DynamicJobService {
     private static DynamicJobException documentNotAvailable(DocumentRequest request, ConnectorDTO registration) {
         return new DynamicJobException(HttpStatus.BAD_REQUEST, "No document '" + request.document()
                 + "' is available to you from connector '" + registration.name() + "'.");
-    }
-
-    private ExecutionProvenance provenance(Caller caller, String triggerSource, String correlationId) {
-        return ExecutionProvenance.verified(caller.principal(),
-                caller.attributes().get(JwtCallerMapper.ACTOR) instanceof String actor ? actor : null,
-                caller.groups(), caller.tenant(), triggerSource, correlationId);
     }
 
     private static String newJobId() {
@@ -447,7 +467,7 @@ public class DynamicJobService {
         return new JobRequest(request.connector().strip(), start, name);
     }
 
-    private static DocumentRequest checked(DocumentRequest request) {
+    static DocumentRequest checked(DocumentRequest request) {
         if (request == null || request.connector() == null || request.connector().isBlank()) {
             throw new DynamicJobException(HttpStatus.BAD_REQUEST, "Name a registered repository connector.");
         }
@@ -478,8 +498,8 @@ public class DynamicJobService {
      * The registration of a connector dynamic jobs may use. A connector that is not listed and one that does not
      * exist are reported alike.
      */
-    private ConnectorDTO registration(String name) {
-        boolean listed = properties.getConnectors().stream()
+    ConnectorDTO registration(String name, boolean requireListed) {
+        boolean listed = !requireListed || properties.getConnectors().stream()
                 .anyMatch(allowed -> allowed != null && allowed.strip().equalsIgnoreCase(name));
         List<ConnectorDTO> all = connectors.get();
         ConnectorDTO registration = !listed || all == null ? null : all.stream()

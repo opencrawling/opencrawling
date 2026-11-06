@@ -32,7 +32,7 @@
     { "name": "mig_safe_pruned", "type": ["null", "boolean"], "default": null },
     { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null },
 
-    { "name": "trigger_source", "type": ["null", "string"], "default": null, "doc": "How the execution started: api, dynamic-api, mcp, ois, grpc-push, startup" },
+    { "name": "trigger_source", "type": ["null", "string"], "default": null, "doc": "How the execution started: api, dynamic-api, mcp, bpm, ois, grpc-push, startup" },
     { "name": "triggered_by", "type": ["null", "string"], "default": null, "doc": "Verified party that started the execution (the acting agent of a delegated token); null when unknown" },
     { "name": "on_behalf_of", "type": ["null", "string"], "default": null, "doc": "User an agent acted for (subject of a delegated token)" },
     { "name": "caller_groups", "type": ["null", { "type": "array", "items": "string" }], "default": null, "doc": "Verified caller's groups" },
