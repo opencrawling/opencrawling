@@ -39,7 +39,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -96,7 +95,7 @@ class DynamicJobServiceTest {
     };
     final Runner runner = new Runner();
     final DynamicJobProperties properties = new DynamicJobProperties();
-    final Map<String, Long> documentCounts = new LinkedHashMap<>();
+    final Map<String, Long> documentCounts = new java.util.concurrent.ConcurrentHashMap<>();
     final MutableClock clock = new MutableClock();
     JobRunRegistry registry = new JobRunRegistry(0);
     DynamicJobService service;
@@ -279,9 +278,12 @@ class DynamicJobServiceTest {
         Caller agentForAlice = new Caller("alice", List.of("finance"), "acme", true,
                 Map.of(JwtCallerMapper.SCOPES, List.of(SCOPE), JwtCallerMapper.ACTOR, "ingest-agent"));
 
+        // Held until its document count is known, or the run could end and read no count first.
+        runner.hold = new CountDownLatch(1);
         DynamicJobService.Accepted accepted = service.start(agentForAlice,
                 new DynamicJobService.JobRequest("Fake_Repo", "finance-folder", "Q3 reports"), null, "mcp", "req-1");
         documentCounts.put(accepted.executionId(), 7L);
+        runner.hold.countDown();
         DynamicJobService.JobStatus status = awaitEnd(agentForAlice, accepted.jobId());
 
         assertThat(accepted.jobId()).startsWith("dyn-");
