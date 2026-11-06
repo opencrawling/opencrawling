@@ -63,6 +63,34 @@ The same operations are available over REST: `GET /api/discovery/connectors`, `G
 - **Counts:** a folder dry run checks every document, so its count is the caller's (`EXACT`, or `LOWER_BOUND` when it stopped at `maxScan` or the timeout). A query returns no ACLs, so its matches cannot be checked one by one: only its samples are checked, and no count is returned unless `opencrawling.discovery.reveal-hidden-counts=true` (then the total match count, as `ESTIMATE`). The same setting adds `hiddenCount`, the number of items hidden from the caller.
 - **Bounds:** every request is held within the configured `max-depth`, `max-nodes`, `sample-size`, `max-scan` and `timeout`, and results say when and why they were truncated.
 
+## 🗂️ OIS sidecars
+
+With `opencrawling.sidecars.enabled=true`, two tools read the OIS metadata sidecars (`<key>.ois.json`) that the Ozone and S3 migration writers store next to each migrated binary. An agent gets each document's metadata without downloading the binary.
+
+| MCP Tool | Description | Parameters |
+|---|---|---|
+| `listSidecarStores` | Lists the stores whose sidecars may be read: their names, descriptions and kinds (`ozone` or `s3`), never their configuration. | `userPrincipal`, `userRoles` |
+| `readOisSidecars` | Returns a page of the sidecars under a key prefix that the caller may read, in key order. Each one gives the document's id, source, file name, MIME type, size, checksum and metadata, and the page carries totals: count, bytes, by MIME type, by source type. | `connector` (required)<br>`prefix` (relative to where the connector writes)<br>`limit`<br>`cursor` (the previous page's `nextCursor`)<br>`userPrincipal`, `userRoles` |
+
+The same operations are available over REST: `GET /api/sidecars` and `GET /api/sidecars/{connector}?prefix=&limit=&cursor=`.
+
+- **Who the caller is:** the caller must be verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`), must name a user, and must carry the scope in `opencrawling.sidecars.required-scope` (default `oc:sidecars:read`). `allow-asserted-identity=true` also accepts the `userPrincipal`/`userRoles` arguments, for development and tests only.
+- **Which stores:** only the registered Ozone and S3 output connectors listed in `opencrawling.sidecars.connectors` (empty by default, so none). A store that is not listed reads exactly like one that does not exist (`404`). The store is opened with the connector's own settings, read-only, and its bucket is never created.
+- **Which keys:**
+  - For S3, the prefix is relative to the connector's `keyPrefix`, so nothing outside it is read. For Ozone, it is relative to the bucket.
+  - Only `*.ois.json` objects are read. The writers' `.tombstones/` and `.opencrawling/` keys are skipped.
+  - A sidecar that is not an `UPSERT`, is not valid JSON of the expected form, or is larger than `max-sidecar-bytes` is skipped.
+- **What the caller sees:**
+  - Each sidecar is decided by the runtime's authorization gate, the same one search uses, in batches. The gate decides on the sidecar's document id and the `security` the sidecar carries, so in `openfga` mode the document's OpenFGA permissions decide.
+  - A sidecar with no permissions at all is never returned.
+  - Answers do not include permissions, and never say how many sidecars were hidden.
+  - The aggregates count only the sidecars returned.
+- **Paging:**
+  - `nextCursor` continues the listing. The cursor is encrypted, because it holds the last key looked at, which may belong to a sidecar the caller cannot read.
+  - A cursor works only for the same caller, store and prefix, and only for `cursor-ttl` (default `1h`).
+  - By default each instance seals cursors with a random key, so a cursor works only on the instance that gave it, until it restarts. Behind a load balancer, set the same `cursor-secret` (at least 32 characters) on every instance.
+- **Bounds:** a request returns at most `limit` sidecars (default `50`, up to `max-limit`, `200`) and at most 8 MB of sidecars. It lists at most `max-scan` keys (default `5000`). When it stops at that bound it says so (`scanLimitReached`) and still gives a cursor.
+
 ## 🚚 Dynamic jobs
 
 With `opencrawling.jobs.dynamic.enabled=true`, an agent can ingest a folder it found through discovery, without an administrator creating a job for it. The agent names a connector and a start folder; it never supplies endpoints, hosts, credentials or connector settings.

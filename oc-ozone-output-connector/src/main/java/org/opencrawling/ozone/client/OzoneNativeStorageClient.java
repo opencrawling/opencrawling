@@ -212,6 +212,42 @@ public class OzoneNativeStorageClient implements OzoneStorageClient {
     }
 
     @Override
+    public KeyPage listKeys(String prefix, String startAfter, int maxKeys) throws Exception {
+        if (!connected) {
+            connect();
+        }
+        String keyPrefix = prefix != null ? prefix : "";
+        int max = Math.max(1, maxKeys);
+        java.util.List<String> keys = new java.util.ArrayList<>(Math.min(max, 1000));
+        if (fallbackMode || ozoneBucket == null) {
+            java.util.Iterator<String> sorted = new java.util.TreeSet<>(fallbackStorage.keySet()).iterator();
+            boolean more = false;
+            while (sorted.hasNext()) {
+                String key = sorted.next();
+                if (!key.startsWith(keyPrefix) || (startAfter != null && key.compareTo(startAfter) <= 0)) {
+                    continue;
+                }
+                if (keys.size() == max) {
+                    more = true;
+                    break;
+                }
+                keys.add(key);
+            }
+            return new KeyPage(keys, more);
+        }
+        // Ozone lists the keys after prevKey, in key order.
+        java.util.Iterator<? extends org.apache.hadoop.ozone.client.OzoneKey> listed =
+                ozoneBucket.listKeys(keyPrefix, startAfter != null && !startAfter.isEmpty() ? startAfter : null);
+        while (listed.hasNext()) {
+            if (keys.size() == max) {
+                return new KeyPage(keys, true);
+            }
+            keys.add(listed.next().getName());
+        }
+        return new KeyPage(keys, false);
+    }
+
+    @Override
     public void deleteObject(String key) throws Exception {
         if (!connected) {
             connect();

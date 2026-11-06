@@ -288,6 +288,27 @@ Authorization: ${ocEventsAuthorization}</flowable:expression>
 
 ---
 
+## 🗂️ OIS Sidecars
+
+Lets a verified caller, typically an agent, read the OIS metadata sidecars (`<key>.ois.json`) of content migrated to Apache Ozone or AWS S3, without downloading the binaries (REST `/api/sidecars/**`, MCP tools `listSidecarStores` and `readOisSidecars`). Each sidecar is filtered by the runtime's authorization gate, as search results are. See [Model Context Protocol, OIS sidecars](Model-Context-Protocol#%EF%B8%8F-ois-sidecars).
+
+*   **`OPENCRAWLING_SIDECARS_ENABLED`** (`opencrawling.sidecars.enabled`): whether the endpoints and tools exist.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_SIDECARS_CONNECTORS`** (`opencrawling.sidecars.connectors`): the registered Ozone or S3 output connectors (names in `connectors.json`) whose sidecars may be read, comma-separated.
+    *   *Type*: list
+    *   *Default*: empty (none)
+*   **`OPENCRAWLING_SIDECARS_REQUIRED_SCOPE`** (`opencrawling.sidecars.required-scope`): the OAuth2 scope the caller's token must carry. Blank: not checked.
+    *   *Type*: `string`
+    *   *Default*: `oc:sidecars:read`
+*   **`opencrawling.sidecars.allow-asserted-identity`**: also accept the `userPrincipal`/`userRoles` arguments without a token. Development and tests only. Default `false`.
+*   **`opencrawling.sidecars.default-limit`**, **`max-limit`**: sidecars per answer when a request does not say, and the most it may ask for (defaults `50`, `200`; never above `1000`). An answer also stops at 8 MB of sidecars.
+*   **`opencrawling.sidecars.max-scan`**: keys one request lists before it stops and returns a cursor (default `5000`; never above `50000`).
+*   **`opencrawling.sidecars.max-sidecar-bytes`**: larger sidecars are skipped (default `1048576`; never above 16 MB).
+*   **`OPENCRAWLING_SIDECARS_CURSOR_SECRET`** (`opencrawling.sidecars.cursor-secret`), **`opencrawling.sidecars.cursor-ttl`**: paging cursors are encrypted with this secret (at least 32 characters) and expire after the TTL (default `1h`). Blank: a random key per instance, so a cursor only works on the instance that gave it, until it restarts.
+
+---
+
 ## 🛡️ Pre-Embedding Governance
 
 Checks every document before it is chunked and embedded. Hooks run in the ingestion consumer, in the order listed, and each one approves the document, approves a sanitized version (for example with personal data masked), or rejects it. A sanitized version is what the next hook sees, and the first rejection ends the evaluation. It applies to every document that reaches the ingestion consumer: admin jobs, dynamic jobs, BPM events, OIS and gRPC push.
