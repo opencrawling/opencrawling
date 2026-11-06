@@ -47,7 +47,7 @@ public class FakeDiscoverableConnector implements DocumentFetchingRepositoryConn
 
     ExploreRequest lastExplore;
     DryRunRequest lastDryRun;
-    VisibilityFilter lastFilter;
+    public volatile VisibilityFilter lastFilter;
     public volatile boolean disconnected;
     public Supplier<RuntimeException> failure;
     CountAccuracy dryRunAccuracy = CountAccuracy.EXACT;

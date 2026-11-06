@@ -153,7 +153,7 @@ Lets agents and API clients list a registered repository's tree and preview a cr
 
 ## 🚚 Dynamic Jobs
 
-Lets a verified caller, typically an agent, ingest a folder of a registered connector without an administrator creating a job or one document of it (REST `/api/jobs/dynamic/**`, MCP tools `triggerDynamicJob`, `getDynamicJobStatus`, `listDynamicJobs`, `stopDynamicJob`, `ingestDocument`, `removeDeletedDocument`). Needs `opencrawling.security.identity.mode=jwt`, plus `protect-api` for REST. See [Model Context Protocol, Dynamic jobs](Model-Context-Protocol#-dynamic-jobs).
+Lets a verified caller, typically an agent, ingest a folder of a registered connector, or one document of it, without an administrator creating a job (REST `/api/jobs/dynamic/**`, MCP tools `triggerDynamicJob`, `getDynamicJobStatus`, `listDynamicJobs`, `stopDynamicJob`, `ingestDocument`, `removeDeletedDocument`). Needs `opencrawling.security.identity.mode=jwt`, plus `protect-api` for REST. See [Model Context Protocol, Dynamic jobs](Model-Context-Protocol#-dynamic-jobs).
 
 *   **`OPENCRAWLING_JOBS_DYNAMIC_ENABLED`** (`opencrawling.jobs.dynamic.enabled`): whether the endpoints and tools exist.
     *   *Type*: `boolean`
@@ -173,6 +173,113 @@ Lets a verified caller, typically an agent, ingest a folder of a registered conn
 *   **`opencrawling.jobs.dynamic.max-running-per-user`**: dynamic jobs one user may have running at once (`0`: no cap of its own). Default `2`. The runtime's `max-concurrent-runs` and `max-concurrent-runs-per-caller` apply as well.
 *   **`opencrawling.jobs.dynamic.retention`**, **`max-retained`**: how long a finished job's status and its `Idempotency-Key` are kept, and how many finished jobs at most (defaults `24h`, `1000`). Kept in memory, so lost on restart.
 *   **`opencrawling.jobs.dynamic.transformation-connector`**: the embedding (transformation) connector dynamic jobs use. Default `Ollama_Embedding_Default`.
+
+---
+
+## 🔔 BPM Document Events
+
+Lets a BPM engine (Flowable, Alfresco Process Services) have one document ingested again, or removed from the index, as soon as a process reaches a transition. The engine POSTs an event to `/api/events/bpm/document-transition`, and a route that an administrator configured decides what happens. Ingestion is asynchronous and usually takes seconds, not milliseconds.
+
+**The event body (JSON):**
+
+```json
+{
+  "eventId": "contract-4711-signed",
+  "engine": "flowable",
+  "processDefinitionKey": "contract-approval",
+  "processInstanceId": "4711",
+  "transition": "contractSigned",
+  "documentId": "a1b2c3d4-0000-4000-8000-123456789abc"
+}
+```
+
+*   `eventId` (required) is the sender's unique id for the event: 1 to 200 letters, digits, `.`, `_`, `:` or `-`.
+    *   A repeat from the same sender within `dedup-retention` gets the first answer again, marked `"duplicate": true`, and nothing is done twice.
+    *   An event that failed is not remembered, so the sender can retry it.
+*   `processDefinitionKey` and `transition` (required) are matched against the routes. `activityId` is read when there is no `transition`.
+*   `documentId` (required) is the document's id in the route's repository (for Alfresco the node id, for CMIS the object id), never a path.
+*   `engine` is matched by routes that name one, ignoring case. `processInstanceId` is logged.
+
+**Routes:** the first route whose `engine` (when set), `process` and `transition` (each `*` for any) match is used. The route, not the event, names the connector and the action:
+*   `UPSERT` (the default) ingests the document again. It must be one the connector's folder crawl would take: inside the configured root, not in an excluded folder, and matching the type filters. It runs as a one-document job.
+*   `DELETE` removes the document from the index only when the repository reports that it no longer has it. A document that still exists is not removed (`409`).
+
+Some rules apply whichever route matches:
+*   **The sender's own access is not checked.** An engine's service account rarely appears in document ACLs. The document keeps its source permissions in the index, so search still shows each user only what they may read.
+*   **Which connectors a route can name:** it must be registered in `connectors.json` and support single documents (CMIS, Alfresco). It does not have to be listed in `opencrawling.jobs.dynamic.connectors`.
+*   **The answers:**
+    *   An event no route matches gets `200` with `"status": "IGNORED"`.
+    *   A handled event gets `202` with `"status": "ACCEPTED"`. For an `UPSERT`, the answer includes the `jobId` an admin can follow.
+
+**Authentication**, checked in this order:
+1.  **HMAC signature:** three headers.
+    *   `X-OpenCrawling-Source`: the source's name.
+    *   `X-OpenCrawling-Timestamp`: seconds since the epoch.
+    *   `X-OpenCrawling-Signature: sha256=<hex>`: the HMAC-SHA256, keyed with the source's `hmac-secret`, of the timestamp, a `.`, and the exact request body.
+
+    A timestamp further than `max-clock-skew` from the runtime's clock is refused, so a captured request cannot be replayed later.
+2.  **Static token over Basic auth:** the username is the source's name and the password is its `token`. This suits engines that can only send a fixed credential. Event-id deduplication is the only replay protection, so prefer HMAC or a bearer token where the engine can send one.
+3.  **Bearer token** with the scope `required-scope` (default `oc:events:write`). This needs `opencrawling.security.identity.mode=jwt` and `protect-api`.
+
+Every refused credential gets the same `401`. With `protect-api`, requests to the event endpoint that carry a signature or Basic credentials skip the JWT check, because the endpoint checks them itself. Every other `/api/**` request still needs a token.
+
+**Settings:**
+*   **`OPENCRAWLING_EVENTS_BPM_ENABLED`** (`opencrawling.events.bpm.enabled`): whether the endpoint exists.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_EVENTS_BPM_REQUIRED_SCOPE`** (`opencrawling.events.bpm.required-scope`): the scope a bearer token must carry. Blank: bearer tokens are not accepted.
+    *   *Type*: `string`
+    *   *Default*: `oc:events:write`
+*   **`opencrawling.events.bpm.sources[n].name`**, **`hmac-secret`**, **`token`**: senders with a shared secret.
+    *   Each source needs at least one secret of 32 characters or more, or the runtime does not start.
+    *   Pass secrets through environment variables, never in a committed file.
+*   **`opencrawling.events.bpm.routes[n].name`**, **`engine`**, **`process`**, **`transition`**, **`connector`**, **`action`**: the routes.
+*   **Limits and retention:**
+    *   `opencrawling.events.bpm.max-clock-skew`: default `5m`.
+    *   `dedup-retention`: default `24h`.
+    *   `max-remembered-events`: default `10000`.
+    *   `max-running`: default `10` jobs per sender at once.
+
+```yaml
+opencrawling:
+  events:
+    bpm:
+      enabled: true
+      sources:
+        - name: aps
+          token: ${OPENCRAWLING_BPM_APS_TOKEN}
+      routes:
+        - name: contract-signed
+          process: contract-approval
+          transition: contractSigned
+          connector: Alfresco_Main
+          action: UPSERT
+```
+
+**Flowable:** an HTTP task (`flowable:type="http"`) can send the event. Its `requestHeaders` and `requestBody` fields take expressions.
+*   **Basic auth:** put the `Authorization` header in `requestHeaders`.
+*   **HMAC:** compute the signature with a bean of your own, for example `${ocSigner.sign(execution)}`, using the algorithm above.
+
+```xml
+<serviceTask id="notifyOpenCrawling" flowable:type="http">
+  <extensionElements>
+    <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+    <flowable:field name="requestUrl"><flowable:string>https://opencrawling.example.com/api/events/bpm/document-transition</flowable:string></flowable:field>
+    <flowable:field name="requestHeaders">
+      <flowable:expression>Content-Type: application/json
+Authorization: ${ocEventsAuthorization}</flowable:expression>
+    </flowable:field>
+    <flowable:field name="requestBody">
+      <flowable:expression>{"eventId":"${execution.processInstanceId}-contractSigned","engine":"flowable","processDefinitionKey":"contract-approval","processInstanceId":"${execution.processInstanceId}","transition":"contractSigned","documentId":"${contractNodeId}"}</flowable:expression>
+    </flowable:field>
+  </extensionElements>
+</serviceTask>
+```
+
+**Alfresco Process Services:** add a REST call task, in three steps:
+1.  As an administrator, define an endpoint for OpenCrawling with Basic authentication. The username is the source's name and the password is its token.
+2.  Map a JSON request body with `${variable}` placeholders for the process variables that hold the event id and the document id.
+3.  Check the placeholders against your APS version: they resolve process variables.
 
 ---
 

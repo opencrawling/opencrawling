@@ -25,7 +25,7 @@ import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,11 +34,12 @@ import java.time.Clock;
 import java.util.List;
 
 /**
- * Dynamic jobs, when {@code opencrawling.jobs.dynamic.enabled} is on. They use the registered connectors the job
+ * Dynamic jobs, when {@code opencrawling.jobs.dynamic.enabled} is on, or BPM events need them
+ * ({@code opencrawling.events.bpm.enabled}). They use the registered connectors the job
  * API runs ({@code connectors.json}), built the same way, and the same run registry and its caps.
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = DynamicJobProperties.PREFIX + ".enabled", havingValue = "true")
+@ConditionalOnExpression("${" + DynamicJobProperties.PREFIX + ".enabled:false} or ${" + BpmEventProperties.PREFIX + ".enabled:false}")
 @EnableConfigurationProperties(DynamicJobProperties.class)
 public class DynamicJobConfiguration {
 

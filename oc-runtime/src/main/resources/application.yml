@@ -199,6 +199,37 @@ opencrawling:
     sample-size: 10
     max-scan: 10000
     timeout: 30s
+  events:
+    bpm:
+      # Document-transition events from BPM engines (POST /api/events/bpm/document-transition): a configured route
+      # turns a process transition into a single-document ingest (UPSERT) or removal (DELETE).
+      enabled: ${OPENCRAWLING_EVENTS_BPM_ENABLED:false}
+      # Bearer tokens (identity.mode=jwt with protect-api) must carry this scope. Blank: tokens are not accepted.
+      required-scope: ${OPENCRAWLING_EVENTS_BPM_REQUIRED_SCOPE:oc:events:write}
+      # HMAC-signed requests: how far X-OpenCrawling-Timestamp may be from this runtime's clock.
+      max-clock-skew: 5m
+      # How long, and how many, handled event ids are remembered so a repeat is not acted on twice.
+      dedup-retention: 24h
+      max-remembered-events: 10000
+      # Jobs one sender's events may have running at once (0 = no cap of its own).
+      max-running: 10
+      # Senders with a shared secret (at least 32 characters): hmac-secret for X-OpenCrawling-Signature, and/or
+      # token for Basic auth (username = the source's name). Example:
+      #   sources:
+      #     - name: flowable
+      #       hmac-secret: ${OPENCRAWLING_BPM_FLOWABLE_SECRET}
+      #     - name: aps
+      #       token: ${OPENCRAWLING_BPM_APS_TOKEN}
+      sources: []
+      # Which events are acted on: the first route matching the event's engine (optional), process and transition
+      # ("*" for any) names the registered connector and the action (UPSERT or DELETE). Example:
+      #   routes:
+      #     - name: contract-signed
+      #       process: contract-approval
+      #       transition: contractSigned
+      #       connector: Alfresco_Main
+      #       action: UPSERT
+      routes: []
   ingest:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
