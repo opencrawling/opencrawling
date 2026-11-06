@@ -224,6 +224,9 @@ oc --version
 | `oc copilot` | `narrativize`, `mock` | Generate natural language Mustache templates from schemas. |
 | `oc archetype` | `init` | Scaffold custom repository/output connector Maven projects. |
 | `oc schema` | `validate` | Validate Open Ingestion Standard (OIS) schemas offline. |
+| `oc report` | `list`, `get`, `ledger`, `export`, `query` | Post-job audit reporting, Parquet ledger downloads, and DuckDB OLAP querying. |
+| `oc openapi` | `status`, `export`, `tools`, `diff`, `ui`, `validate` | OpenAPI 3.1 specification introspection, AI agent tool export, and contract diff. |
+| `oc discovery` | `connectors`, `tree`, `dry-run` | Pre-crawl repository discovery, live hierarchy exploration, and dry-run preview. |
 | `oc config` | `set`, `get`, `context` | Manage active server URL contexts and credentials. |
 
 > For complete flag details, environment variables, and GitHub Actions workflow integration examples, visit the [OpenCrawling CLI Wiki Documentation](https://github.com/opencrawling/opencrawling/wiki/OpenCrawling-CLI).

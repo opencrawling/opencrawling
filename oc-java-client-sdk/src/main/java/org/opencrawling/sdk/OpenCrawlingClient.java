@@ -60,6 +60,11 @@ public interface OpenCrawlingClient extends AutoCloseable {
      */
     OpenApiClient openApi();
 
+    /**
+     * Client for pre-crawl repository discovery and dry-run inspection (/api/discovery/**).
+     */
+    DiscoveryClient discovery();
+
     @Override
     default void close() {
         // No-op default close for resources

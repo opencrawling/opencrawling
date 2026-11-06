@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,9 +53,14 @@ public class CliConfigService {
     }
 
     public static OpenCrawlingClient createClient(String overrideUrl, String overrideApiKey) {
+        return createClient(overrideUrl, overrideApiKey, null);
+    }
+
+    public static OpenCrawlingClient createClient(String overrideUrl, String overrideApiKey, String overrideBearerToken) {
         CliConfig config = loadConfig();
         String baseUrl = overrideUrl != null && !overrideUrl.isBlank() ? overrideUrl : config.serverUrl();
         String apiKey = overrideApiKey != null && !overrideApiKey.isBlank() ? overrideApiKey : config.apiKey();
+        String token = overrideBearerToken != null && !overrideBearerToken.isBlank() ? overrideBearerToken : config.bearerToken();
 
         OpenCrawlingClient.Builder builder = OpenCrawlingClient.builder()
                 .baseUrl(baseUrl);
@@ -64,8 +69,8 @@ public class CliConfigService {
             builder.apiKey(apiKey);
         }
 
-        if (config.bearerToken() != null && !config.bearerToken().isBlank()) {
-            builder.bearerToken(config.bearerToken());
+        if (token != null && !token.isBlank()) {
+            builder.bearerToken(token);
         }
 
         return builder.build();
