@@ -69,14 +69,14 @@ With `opencrawling.jobs.dynamic.enabled=true`, an agent can ingest a folder it f
 
 | MCP Tool | Description | Parameters |
 |---|---|---|
-| `triggerDynamicJob` | Starts a job that crawls a folder of a registered connector. Returns `jobId`, `executionId` and `statusUrl`. | `connector` (required)<br>`start` (folder id or path; the connector's configured root by default)<br>`name`<br>`validateOnly` (check, start nothing)<br>`idempotencyKey`<br>`correlationId` |
+| `triggerDynamicJob` | Starts a job that crawls a folder of a registered connector. Returns `jobId`, `executionId` and `statusUrl`. | `connector` (required)<br>`start` (folder id or path; the connector's configured root by default)<br>`name`<br>`validateOnly` (check, start nothing)<br>`idempotencyKey`<br>`correlationId`<br>chunking: `chunkSize`, `minChunkSizeChars`, `minChunkLengthToEmbed`, `keepSeparator` |
 | `getDynamicJobStatus` | The job's state (`RUNNING`, `COMPLETED`, `FAILED`, `STOPPED`) and, once it has ended, how many documents it handled. | `jobId` (required) |
 | `listDynamicJobs` | The caller's dynamic jobs that are still remembered, newest first. | |
 | `stopDynamicJob` | Stops a running job before its next document. | `jobId` (required) |
-| `ingestDocument` | Ingests one document again, as a one-document job. Returns `jobId` like `triggerDynamicJob`. | `connector` (required)<br>`document` (its repository id, as `exploreRepositoryTree` returns it; required)<br>`idempotencyKey`<br>`correlationId` |
+| `ingestDocument` | Ingests one document again, as a one-document job. Returns `jobId` like `triggerDynamicJob`. | `connector` (required)<br>`document` (its repository id, as `exploreRepositoryTree` returns it; required)<br>`idempotencyKey`<br>`correlationId`<br>chunking, as for `triggerDynamicJob` |
 | `removeDeletedDocument` | Removes a document from the index because it was deleted in its repository. | `connector` (required)<br>`document` (required)<br>`correlationId` |
 
-The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"connector", "start", "name", "validateOnly"}`, headers `Idempotency-Key` and `X-Correlation-Id`; answers `202` with a `Location`), `GET /api/jobs/dynamic`, `GET /api/jobs/dynamic/{jobId}`, `POST /api/jobs/dynamic/{jobId}/stop`, and for one document `POST /api/jobs/dynamic/documents` (body `{"connector", "document", "action"}` with `action` `UPSERT`, the default, or `DELETE`).
+The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"connector", "start", "name", "validateOnly", "chunking"}`, headers `Idempotency-Key` and `X-Correlation-Id`; answers `202` with a `Location`), `GET /api/jobs/dynamic`, `GET /api/jobs/dynamic/{jobId}`, `POST /api/jobs/dynamic/{jobId}/stop`, and for one document `POST /api/jobs/dynamic/documents` (body `{"connector", "document", "action", "chunking"}` with `action` `UPSERT`, the default, or `DELETE`).
 
 - **Who the caller is:** always verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`). There is no asserted-identity option. The token must name a user and carry the scope in `opencrawling.jobs.dynamic.required-scope` (default `oc:jobs:write`, read from the `scope` or `scp` claim).
 - **Which connectors:** only the registered connectors listed in `opencrawling.jobs.dynamic.connectors` (empty by default, so none) that support discovery and crawl a folder tree. A connector set up to crawl a query or a change log is refused. A connector that is not listed reads exactly like one that does not exist.
@@ -97,6 +97,13 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
   - **Limit:** each user may have `max-pending-per-user` (default `10`) jobs waiting.
   - **What is never held:** removals of deleted documents (they can only remove documents the repository no longer has), and BPM events (an administrator's route already authorizes them).
   - **Approval is REST only:** there is no MCP tool for it, so an agent cannot approve jobs.
+- **Chunking (optional):** a job may set how its documents are split, as a REST `chunking` object (`{"chunkSize": 400}`) or the MCP parameters of the same names. Each setting left out keeps the default of Spring AI's `TokenTextSplitter`:
+  - `chunkSize`: tokens per chunk (default `800`), from `min-chunk-size` (default `100`) to `max-chunk-size` (default `2048`, never above `8192`). Keep `max-chunk-size` within your embedding model's input.
+  - `minChunkSizeChars`: a chunk is cut at its last sentence end once it has this many characters (default `350`).
+  - `minChunkLengthToEmbed`: chunks shorter than this many characters are dropped (default `5`).
+  - `keepSeparator`: whether line breaks stay in the chunk text (default `true`).
+
+  There is no overlap setting (the splitter does not overlap chunks) and no limit on the number of chunks (past it, the splitter puts the rest of the document into one oversized chunk). A removal takes no chunking (`400`). The chunking travels with each document on the documents topic and shows in the job's status. A later crawl of the same document chunks it its own way and replaces its chunks, since chunk ids come from the document id and the position.
 - **Status is kept in memory** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs, and is lost on restart. The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
 
 ---

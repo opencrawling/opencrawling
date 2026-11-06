@@ -188,6 +188,10 @@ opencrawling:
       # How long a finished job's status and its Idempotency-Key are kept (in memory, lost on restart).
       retention: 24h
       max-retained: 1000
+      # The chunk sizes (tokens) a job may ask for with its own chunking; never above 8192. Keep max-chunk-size
+      # within the embedding model's input. Jobs without chunking use the ingestion consumer's default (800).
+      min-chunk-size: 100
+      max-chunk-size: 2048
       transformation-connector: Ollama_Embedding_Default
   discovery:
     # Repository discovery and dry runs (REST /api/discovery/**, MCP tools listRepositoryConnectors,

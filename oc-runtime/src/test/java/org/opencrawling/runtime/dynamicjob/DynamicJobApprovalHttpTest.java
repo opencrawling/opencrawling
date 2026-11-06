@@ -66,7 +66,7 @@ class DynamicJobApprovalHttpTest {
     static class Jobs {
         @Bean
         DynamicJobService dynamicJobService(DynamicJobProperties properties) {
-            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance) -> {
+            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance, chunking) -> {
                 CRAWLS.add(jobId + " from " + start + " by " + provenance.triggeredBy());
                 return true;
             };

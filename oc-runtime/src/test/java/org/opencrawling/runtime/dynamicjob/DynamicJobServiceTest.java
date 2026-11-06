@@ -22,6 +22,7 @@ import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.connector.discovery.DiscoveryException;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
 import org.opencrawling.core.security.Caller;
@@ -65,13 +66,15 @@ class DynamicJobServiceTest {
         final List<String> starts = Collections.synchronizedList(new ArrayList<>());
         final List<ExecutionProvenance> provenances = Collections.synchronizedList(new ArrayList<>());
         final List<RepositoryConnector> connectors = Collections.synchronizedList(new ArrayList<>());
+        final List<java.util.Optional<ChunkingSpec>> chunkings = Collections.synchronizedList(new ArrayList<>());
         volatile CountDownLatch hold = new CountDownLatch(0);
         volatile boolean succeed = true;
         volatile RuntimeException failure;
 
         @Override
         public boolean run(RepositoryConnector connector, String start, String jobId, String jobName, String executionId,
-                           BooleanSupplier stopRequested, ExecutionProvenance provenance) {
+                           BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
+            chunkings.add(java.util.Optional.ofNullable(chunking));
             starts.add(start);
             provenances.add(provenance);
             connectors.add(connector);
@@ -666,6 +669,100 @@ class DynamicJobServiceTest {
         assertThat(service.document(documentCaller("alice"), delete("deleted-old"), null, "api", null))
                 .isInstanceOf(DynamicJobService.DeletionAccepted.class);
         assertThat(runner.starts).containsExactly("finance-report", "fake://deleted-old");
+    }
+
+    // ---- Chunking ----
+
+    static DynamicJobService.JobRequest chunked(ChunkingSpec chunking) {
+        return new DynamicJobService.JobRequest("Fake_Repo", null, null, chunking);
+    }
+
+    @Test
+    void aJobsChunkingReachesItsCrawlAndShowsInItsStatus() {
+        ChunkingSpec chunking = new ChunkingSpec(400, 100, 10, false);
+        DynamicJobService.Accepted folder = service.start(caller("alice"), chunked(chunking), null, "api", null);
+        DynamicJobService.JobStatus status = awaitEnd(caller("alice"), folder.jobId());
+
+        assertThat(status.chunking()).isEqualTo(chunking);
+        Object document = service.document(documentCaller("alice", "finance"), new DynamicJobService.DocumentRequest(
+                "Fake_Repo", "finance-report", null, new ChunkingSpec(300, null, null, null)), null, "api", null);
+        awaitEnd(documentCaller("alice"), ((DynamicJobService.Accepted) document).jobId());
+        DynamicJobService.Accepted plain = service.start(caller("alice"), request(null), null, "api", null);
+        assertThat(awaitEnd(caller("alice"), plain.jobId()).chunking()).isNull();
+
+        assertThat(runner.chunkings).containsExactly(java.util.Optional.of(chunking),
+                java.util.Optional.of(new ChunkingSpec(300, null, null, null)), java.util.Optional.empty());
+    }
+
+    @Test
+    void anEmptyChunkingIsTheDefaultChunking() {
+        DynamicJobService.Accepted accepted = service.start(caller("alice"),
+                chunked(new ChunkingSpec(null, null, null, null)), "k-1", "api", null);
+        assertThat(awaitEnd(caller("alice"), accepted.jobId()).chunking()).isNull();
+        assertThat(runner.chunkings).containsExactly(java.util.Optional.empty());
+        // The same request as one without chunking, so the key replays it.
+        assertThat(service.start(caller("alice"), request(null), "k-1", "api", null).replayed()).isTrue();
+    }
+
+    @Test
+    void chunkingOutsideWhatTheAdministratorAllowsIsRefusedAndStartsNothing() {
+        properties.setMinChunkSize(200);
+        properties.setMaxChunkSize(1000);
+
+        for (ChunkingSpec refused : List.of(new ChunkingSpec(199, null, null, null),
+                new ChunkingSpec(1001, null, null, null), new ChunkingSpec(null, -1, null, null),
+                new ChunkingSpec(null, 100_001, null, null), new ChunkingSpec(null, null, -1, null),
+                new ChunkingSpec(null, null, 100_001, null))) {
+            assertThat(statusOf(() -> service.start(caller("alice"), chunked(refused), null, "api", null)))
+                    .as("%s", refused).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(statusOf(() -> service.validate(caller("alice"), chunked(refused))))
+                    .as("validate %s", refused).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(statusOf(() -> service.document(documentCaller("alice", "finance"),
+                    new DynamicJobService.DocumentRequest("Fake_Repo", "finance-report", null, refused), null, "api", null)))
+                    .as("document %s", refused).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+        assertThat(runner.starts).isEmpty();
+
+        DynamicJobService.Accepted edges = service.start(caller("alice"),
+                chunked(new ChunkingSpec(200, 0, 0, true)), null, "api", null);
+        DynamicJobService.Accepted top = service.start(caller("alice"),
+                chunked(new ChunkingSpec(1000, 100_000, 100_000, null)), null, "api", null);
+        awaitEnd(caller("alice"), edges.jobId());
+        awaitEnd(caller("alice"), top.jobId());
+        assertThat(runner.starts).hasSize(2);
+    }
+
+    @Test
+    void theRuntimeNeverAllowsMoreThanTheHardLimits() {
+        properties.setMaxChunkSize(100_000);
+
+        DynamicJobException refused = catchThrowableOfType(DynamicJobException.class, () -> service.start(caller("alice"),
+                chunked(new ChunkingSpec(8193, null, null, null)), null, "api", null));
+        assertThat(refused.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(refused.getMessage()).isEqualTo("The chunk size must be from 100 to 8192 tokens.");
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void removalsTakeNoChunking() {
+        assertThat(statusOf(() -> service.document(documentCaller("alice"), new DynamicJobService.DocumentRequest(
+                "Fake_Repo", "deleted-old", DynamicJobService.DocumentRequest.Action.DELETE,
+                new ChunkingSpec(300, null, null, null)), null, "api", null))).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void anApprovedJobKeepsItsChunkingAndAKeyTellsChunkingsApart() {
+        properties.setRequireApproval(true);
+        ChunkingSpec chunking = new ChunkingSpec(500, null, null, null);
+        DynamicJobService.Accepted pending = service.start(caller("alice"), chunked(chunking), "q-1", "api", null);
+        assertThat(service.status(caller("alice"), pending.jobId()).chunking()).isEqualTo(chunking);
+        assertThat(statusOf(() -> service.start(caller("alice"), chunked(new ChunkingSpec(600, null, null, null)),
+                "q-1", "api", null))).isEqualTo(HttpStatus.CONFLICT);
+
+        service.approve(admin("olga"), pending.jobId());
+        assertThat(awaitEnd(caller("alice"), pending.jobId()).chunking()).isEqualTo(chunking);
+        assertThat(runner.chunkings).containsExactly(java.util.Optional.of(chunking));
     }
 
     // ---- Idempotency ----

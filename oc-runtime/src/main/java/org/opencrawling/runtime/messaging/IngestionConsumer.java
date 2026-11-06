@@ -22,6 +22,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.document.DocumentAction;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.pipeline.PipelineMode;
@@ -54,7 +55,10 @@ public class IngestionConsumer {
     private static final Logger log = LoggerFactory.getLogger(IngestionConsumer.class);
     
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private static final int MAX_CACHED_SPLITTERS = 64;
+
     private final TokenTextSplitter textSplitter;
+    private final Map<ChunkingSpec, TokenTextSplitter> splitters = new java.util.concurrent.ConcurrentHashMap<>();
     private final TextExtractionService textExtractionService;
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties claimCheckProperties;
@@ -72,6 +76,46 @@ public class IngestionConsumer {
         this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+    }
+
+    /**
+     * The splitter for a message: the default one, or one built from the job's chunking. Chunking outside the limits
+     * no job may exceed is ignored (with a warning) rather than failing the document; the producers check it first.
+     */
+    TokenTextSplitter splitterFor(IngestionMessage message) {
+        ChunkingSpec chunking = message.chunking();
+        if (chunking == null || chunking.isEmpty()) {
+            return textSplitter;
+        }
+        if (!chunking.isWithinLimits()) {
+            log.warn("Document {} asks for chunking outside the allowed limits ({}); using the default chunking.",
+                    message.documentId(), chunking);
+            return textSplitter;
+        }
+        TokenTextSplitter cached = splitters.get(chunking);
+        if (cached != null) {
+            return cached;
+        }
+        TokenTextSplitter splitter = TokenTextSplitter.builder()
+                .withChunkSize(chunking.effectiveChunkSize())
+                .withMinChunkSizeChars(chunking.effectiveMinChunkSizeChars())
+                .withMinChunkLengthToEmbed(chunking.effectiveMinChunkLengthToEmbed())
+                .withKeepSeparator(chunking.effectiveKeepSeparator())
+                .build();
+        // A few distinct settings are expected; past the bound, splitters are built per document instead.
+        if (splitters.size() < MAX_CACHED_SPLITTERS) {
+            splitters.putIfAbsent(chunking, splitter);
+        }
+        return splitter;
+    }
+
+    private static Map<String, String> chunkingAttributes(IngestionMessage message, int chunkCount) {
+        ChunkingSpec chunking = message.chunking();
+        if (chunking == null) {
+            return Map.of("chunkCount", String.valueOf(chunkCount));
+        }
+        return Map.of("chunkCount", String.valueOf(chunkCount),
+                "chunkSize", String.valueOf(chunking.effectiveChunkSize()));
     }
 
     @jakarta.annotation.PostConstruct
@@ -210,15 +254,15 @@ public class IngestionConsumer {
                 // Construct Spring AI Document
                 Document aiDoc = new Document(message.documentId(), text, metadata);
                 
-                // Chunk the document using TokenTextSplitter
+                // Chunk the document using TokenTextSplitter, with the job's own settings when it has any
                 long chunkStart = System.currentTimeMillis();
-                List<Document> chunks = textSplitter.apply(List.of(aiDoc));
+                List<Document> chunks = splitterFor(message).apply(List.of(aiDoc));
                 long chunkTime = System.currentTimeMillis() - chunkStart;
 
                 if (traceStore != null) {
                     traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
                             UUID.randomUUID().toString(), traceId, jobId, "Chunking", "TokenTextSplitter",
-                            chunkStart, chunkTime, "SUCCESS", null, Map.of("chunkCount", String.valueOf(chunks.size()))
+                            chunkStart, chunkTime, "SUCCESS", null, chunkingAttributes(message, chunks.size())
                     ));
                 }
 

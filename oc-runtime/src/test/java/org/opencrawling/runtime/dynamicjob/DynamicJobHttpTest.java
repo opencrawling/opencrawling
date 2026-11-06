@@ -18,6 +18,7 @@ package org.opencrawling.runtime.dynamicjob;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.opencrawling.runtime.discovery.FakeDiscoverableConnector;
@@ -63,6 +64,8 @@ class DynamicJobHttpTest {
 
     /** Where each crawl started and by which trigger. */
     static final List<String> CRAWLS = Collections.synchronizedList(new ArrayList<>());
+    /** The chunking each crawl ran with, by start and user. */
+    static final Map<String, ChunkingSpec> CHUNKINGS = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Configuration
     @EnableConfigurationProperties(DynamicJobProperties.class)
@@ -72,7 +75,10 @@ class DynamicJobHttpTest {
         DynamicJobService dynamicJobService(DynamicJobProperties properties) {
             ConnectorDTO fake = new ConnectorDTO("Fake_Repo", "A fake repository", "repository",
                     FakeDiscoverableConnector.class.getName(), 1, Map.of());
-            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance) -> {
+            DynamicJobService.CrawlRunner runner = (connector, start, jobId, jobName, executionId, stop, provenance, chunking) -> {
+                if (chunking != null) {
+                    CHUNKINGS.put(start + " by " + provenance.triggeredBy(), chunking);
+                }
                 CRAWLS.add(start + " via " + provenance.triggerSource() + " by " + provenance.triggeredBy());
                 return true;
             };
@@ -216,6 +222,40 @@ class DynamicJobHttpTest {
                 .statusCode()).isEqualTo(403);
         assertThat(send("POST", "/api/jobs/dynamic/documents",
                 "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\"}", null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void aJobsChunkingIsTakenOverRestAndMcp() throws Exception {
+        String erin = tokenFor("erin", "oc:jobs:write oc:jobs:run", "finance");
+
+        HttpResponse<String> folder = send("POST", "/api/jobs/dynamic",
+                "{\"connector\":\"Fake_Repo\",\"start\":\"finance-folder\",\"chunking\":{\"chunkSize\":400,\"keepSeparator\":false}}", erin);
+        assertThat(folder.statusCode()).isEqualTo(202);
+        awaitCrawl("finance-folder via " + ExecutionProvenance.SOURCE_DYNAMIC_API + " by erin");
+        assertThat(CHUNKINGS.get("finance-folder by erin")).isEqualTo(new ChunkingSpec(400, null, null, false));
+        assertThat(send("GET", "/api/jobs/dynamic/" + field(folder.body(), "jobId"), null, erin).body())
+                .contains("\"chunking\":{\"chunkSize\":400");
+
+        HttpResponse<String> document = send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\",\"chunking\":{\"minChunkLengthToEmbed\":20}}", erin);
+        assertThat(document.statusCode()).isEqualTo(202);
+        awaitCrawl("finance-report via " + ExecutionProvenance.SOURCE_DYNAMIC_API + " by erin");
+        assertThat(CHUNKINGS.get("finance-report by erin")).isEqualTo(new ChunkingSpec(null, null, 20, null));
+
+        assertThat(send("POST", "/api/jobs/dynamic",
+                "{\"connector\":\"Fake_Repo\",\"chunking\":{\"chunkSize\":5}}", erin).statusCode()).isEqualTo(400);
+        assertThat(send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"deleted-x\",\"action\":\"DELETE\",\"chunking\":{\"chunkSize\":300}}", erin)
+                .statusCode()).isEqualTo(400);
+
+        try (McpSyncClient client = IdentityTestApplication.mcpClient(port, tokenFor("frank", "oc:jobs:write", "finance"))) {
+            client.initialize();
+            McpSchema.CallToolResult started = client.callTool(new McpSchema.CallToolRequest("triggerDynamicJob",
+                    Map.of("connector", "Fake_Repo", "start", "finance-folder", "chunkSize", 300, "minChunkSizeChars", 100)));
+            assertThat(started.isError()).isNotEqualTo(Boolean.TRUE);
+            awaitCrawl("finance-folder via " + ExecutionProvenance.SOURCE_MCP + " by frank");
+            assertThat(CHUNKINGS.get("finance-folder by frank")).isEqualTo(new ChunkingSpec(300, 100, null, null));
+        }
     }
 
     @Test
