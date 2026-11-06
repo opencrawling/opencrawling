@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
@@ -303,6 +304,87 @@ class WebRepositoryConnectorTest {
         List<RepositoryDocument> docs = crawl(connector("job-1", Map.of("respectRobots", false, "discoverSitemaps", false)));
         assertThat(paths(docs)).contains("/private/secret").doesNotContain("/orphan");
         assertThat(requests).extracting(Request::path).doesNotContain("/robots.txt");
+    }
+
+    @Test
+    void drainsSuspendedHostQueueInstantlyWithoutPolitenessDelays() throws Exception {
+        HttpServer errorServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger errorCount = new AtomicInteger();
+        errorServer.createContext("/robots.txt", exchange -> respond(exchange, text("User-agent: *\nAllow: /\n")));
+        errorServer.createContext("/seed", exchange -> {
+            StringBuilder links = new StringBuilder("<html><body>");
+            for (int i = 0; i < 20; i++) {
+                links.append("<a href='/err").append(i).append("'>link</a> ");
+            }
+            links.append("</body></html>");
+            respond(exchange, html(links.toString()));
+        });
+        errorServer.createContext("/err", exchange -> {
+            errorCount.incrementAndGet();
+            respond(exchange, new Page(500, "text/plain", "server error", Map.of()));
+        });
+        errorServer.start();
+        try {
+            String origin = "http://127.0.0.1:" + errorServer.getAddress().getPort();
+            long start = System.currentTimeMillis();
+            WebCrawlSettings settings = WebCrawlSettings.resolve(Map.of(
+                "seeds", List.of(origin + "/seed"),
+                "delayMs", 100,
+                "hostErrorThreshold", 3,
+                "maxRetries", 0,
+                "allowPrivateNetworks", true,
+                "privateAllowlist", List.of("127.0.0.0/8"),
+                "aclMode", "public",
+                "confirmPublicExposure", true), Map.of(), key -> null, null);
+            WebRepositoryConnector errorConnector = new WebRepositoryConnector(settings, "suspended-test");
+            List<RepositoryDocument> docs = crawl(errorConnector);
+            long elapsed = System.currentTimeMillis() - start;
+
+            // With 20 error links and 100ms delay, crawling all with politeness delays would take > 2000ms.
+            // With instant drainage, only hostErrorThreshold (3) error requests are made, and remaining 17 are discarded immediately.
+            assertThat(errorCount.get()).isEqualTo(3);
+            assertThat(elapsed).isLessThan(1500);
+            assertThat(docs).hasSize(1);
+        } finally {
+            errorServer.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("preview")
+    void concurrentRobotsTxtFetchesProduceOnlyOneHttpRequest() throws Exception {
+        HttpServer robotsServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger robotsFetches = new AtomicInteger();
+        robotsServer.createContext("/robots.txt", exchange -> {
+            robotsFetches.incrementAndGet();
+            sleep(50);
+            respond(exchange, text("User-agent: *\nDisallow: /blocked/\n"));
+        });
+        robotsServer.start();
+        try {
+            String origin = "http://127.0.0.1:" + robotsServer.getAddress().getPort();
+            WebCrawlSettings settings = WebCrawlSettings.resolve(Map.of(
+                "seeds", List.of(origin + "/"),
+                "delayMs", 50,
+                "allowPrivateNetworks", true,
+                "privateAllowlist", List.of("127.0.0.0/8"),
+                "aclMode", "public",
+                "confirmPublicExposure", true), Map.of(), key -> null, null);
+
+            HostRegistry registry = new HostRegistry();
+            try (HttpFetcher fetcher = new HttpFetcher(settings)) {
+                int threads = 10;
+                try (var scope = java.util.concurrent.StructuredTaskScope.open()) {
+                    for (int i = 0; i < threads; i++) {
+                        scope.fork(() -> registry.robots(origin, "OpenCrawlingBot", fetcher, 50, 5));
+                    }
+                    scope.join();
+                }
+            }
+            assertThat(robotsFetches.get()).as("robots.txt should only be fetched once across concurrent calls").isEqualTo(1);
+        } finally {
+            robotsServer.stop(0);
+        }
     }
 
     private WebRepositoryConnector connector(String jobId, Map<String, Object> overrides) {

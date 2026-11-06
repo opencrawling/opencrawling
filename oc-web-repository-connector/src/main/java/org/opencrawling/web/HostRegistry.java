@@ -107,37 +107,84 @@ public final class HostRegistry {
 
     private CachedRules fetchRobots(String origin, String agentName, HttpFetcher fetcher, long delayMs, int maxRedirects)
             throws SsrfGuard.BlockedAddressException {
+        String key = origin + " " + agentName.toLowerCase(Locale.ROOT);
+        CachedRules cached = robots.get(key);
+        if (cached != null && !cached.isExpired()) {
+            return cached;
+        }
         String url = origin + "/robots.txt";
         try {
             for (int hop = 0; hop <= maxRedirects; hop++) {
+                cached = robots.get(key);
+                if (cached != null && !cached.isExpired()) {
+                    return cached;
+                }
                 String target = url;
-                HttpFetcher.Response response = gate(java.net.URI.create(target).getHost())
-                    .call(delayMs, () -> fetcher.get(target, ROBOTS_MAX_BYTES));
+                String host = java.net.URI.create(target).getHost();
+                HttpFetcher.Response response = gate(host != null ? host : "")
+                    .call(delayMs, () -> {
+                        CachedRules insideGate = robots.get(key);
+                        if (insideGate != null && !insideGate.isExpired()) {
+                            return null;
+                        }
+                        HttpFetcher.Response res = fetcher.get(target, ROBOTS_MAX_BYTES);
+                        if (!res.isRedirect()) {
+                            int status = res.status();
+                            CachedRules result;
+                            if (status >= 200 && status < 300) {
+                                BaseRobotRules rules = robotsParser.parseContent(target, res.body(),
+                                    res.header("content-type") != null ? res.header("content-type") : "text/plain",
+                                    List.of(agentName.toLowerCase(Locale.ROOT)));
+                                result = new CachedRules(rules, System.currentTimeMillis() + ROBOTS_TTL.toMillis());
+                            } else {
+                                result = failed(status);
+                            }
+                            robots.put(key, result);
+                        }
+                        return res;
+                    });
+                if (response == null) {
+                    CachedRules existing = robots.get(key);
+                    if (existing != null && !existing.isExpired()) {
+                        return existing;
+                    }
+                    continue;
+                }
                 if (response.isRedirect()) {
                     url = java.net.URI.create(url).resolve(response.header("location")).toString();
                     continue;
                 }
-                int status = response.status();
-                if (status >= 200 && status < 300) {
-                    BaseRobotRules rules = robotsParser.parseContent(url, response.body(),
-                        response.header("content-type") != null ? response.header("content-type") : "text/plain",
-                        List.of(agentName.toLowerCase(Locale.ROOT)));
-                    return new CachedRules(rules, System.currentTimeMillis() + ROBOTS_TTL.toMillis());
+                CachedRules existing = robots.get(key);
+                if (existing != null) {
+                    return existing;
                 }
-                return failed(status);
+                int status = response.status();
+                CachedRules result = (status >= 200 && status < 300)
+                    ? new CachedRules(robotsParser.parseContent(url, response.body(),
+                        response.header("content-type") != null ? response.header("content-type") : "text/plain",
+                        List.of(agentName.toLowerCase(Locale.ROOT))), System.currentTimeMillis() + ROBOTS_TTL.toMillis())
+                    : failed(status);
+                robots.put(key, result);
+                return result;
             }
             // Too many redirects: treat as not found (RFC 9309 §2.3.1.2)
-            return failed(404);
+            CachedRules result = failed(404);
+            robots.put(key, result);
+            return result;
         } catch (SsrfGuard.BlockedAddressException e) {
             throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return failed(503);
+            CachedRules result = failed(503);
+            robots.put(key, result);
+            return result;
         } catch (Exception e) {
             // RFC 9309: an unreachable robots.txt means the whole site is disallowed until the next attempt
             log.warn("Could not fetch {}: {}. Treating the site as disallowed for {} minutes.",
                 url, e.toString(), ROBOTS_FAILURE_TTL.toMinutes());
-            return failed(503);
+            CachedRules result = failed(503);
+            robots.put(key, result);
+            return result;
         }
     }
 

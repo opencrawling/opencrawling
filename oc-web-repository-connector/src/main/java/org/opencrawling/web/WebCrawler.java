@@ -220,7 +220,16 @@ public final class WebCrawler {
         }
         String host = URI.create(task.url()).getHost();
         if (suspendedHosts.contains(host)) {
-            stats.outcome("host-suspended");
+            int discarded;
+            synchronized (queue) {
+                discarded = queue.tasks.size();
+                queue.tasks.clear();
+                queue.scheduled = false;
+            }
+            pending.addAndGet(-discarded);
+            for (int i = 0; i <= discarded; i++) {
+                stats.outcome("host-suspended");
+            }
             return;
         }
 
@@ -374,6 +383,16 @@ public final class WebCrawler {
         int errors = consecutiveErrors.computeIfAbsent(host, h -> new AtomicInteger()).incrementAndGet();
         if (errors >= settings.hostErrorThreshold() && suspendedHosts.add(host)) {
             log.warn("Job {}: suspending host {} for this crawl after {} consecutive errors", jobId, host, errors);
+            int discarded;
+            synchronized (queue) {
+                discarded = queue.tasks.size();
+                queue.tasks.clear();
+                queue.scheduled = false;
+            }
+            pending.addAndGet(-discarded);
+            for (int i = 0; i < discarded; i++) {
+                stats.outcome("host-suspended");
+            }
         }
         if (task.attempt() < settings.maxRetries() && !suspendedHosts.contains(host)) {
             stats.outcome("retry");
@@ -454,6 +473,11 @@ public final class WebCrawler {
 
     private void enqueue(String url, int depth, String referrer, String seed, String anchorText, int redirectHops) {
         if (stopped || seen.contains(url)) {
+            return;
+        }
+        String host = URI.create(url).getHost();
+        if (host != null && suspendedHosts.contains(host)) {
+            stats.outcome("host-suspended");
             return;
         }
         // A rejected URL isn't marked as seen: the scope can grow (seed redirects) and a later, shallower link may pass
