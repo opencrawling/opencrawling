@@ -16,7 +16,8 @@
 package org.opencrawling.runtime.discovery;
 
 import org.opencrawling.core.connector.discovery.CountAccuracy;
-import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.DiscoveryNode;
 import org.opencrawling.core.connector.discovery.DiscoveryResult;
 import org.opencrawling.core.connector.discovery.DryRunRequest;
@@ -33,7 +34,7 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /** A discoverable connector over a fixed list of nodes; it applies the filter it is given to all of them. */
-public class FakeDiscoverableConnector implements DiscoverableRepositoryConnector {
+public class FakeDiscoverableConnector implements DocumentFetchingRepositoryConnector {
 
     static final List<DiscoveryNode> NODES = List.of(
             node("finance-folder", DiscoveryNode.NodeType.FOLDER, rule("group:finance", "group", "read")),
@@ -93,6 +94,31 @@ public class FakeDiscoverableConnector implements DiscoverableRepositoryConnecto
         return dryRunAccuracy == CountAccuracy.ESTIMATE
                 ? new DryRunResult(NODES.size(), CountAccuracy.ESTIMATE, visible, null, null)
                 : new DryRunResult(visible.size(), dryRunAccuracy, visible, hidden, null);
+    }
+
+    /**
+     * A document of {@link #NODES} by name, if the filter shows it; a name starting with {@code deleted-} is one the
+     * repository no longer has; anything else is refused as not found.
+     */
+    @Override
+    public FetchedDocument fetchDocument(String documentId, VisibilityFilter filter) {
+        lastFilter = filter;
+        if (failure != null) {
+            throw failure.get();
+        }
+        if (documentId.startsWith("deleted-")) {
+            return new FetchedDocument.Gone("fake://" + documentId);
+        }
+        DiscoveryNode document = NODES.stream()
+                .filter(node -> node.type() == DiscoveryNode.NodeType.DOCUMENT && node.name().equals(documentId))
+                .findFirst().orElse(null);
+        if (document == null || !VisibilityFilter.decide(filter, List.of(document))[0]) {
+            throw new IllegalArgumentException("No fake document '" + documentId + "' in this connector's scope.");
+        }
+        return new FetchedDocument.Found(document, new RepositoryDocument(document.id(), document.id(),
+                new java.io.ByteArrayInputStream("content".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                java.util.Map.of("name", List.of(document.name())), null, document.security(),
+                java.time.Instant.parse("2026-11-06T10:00:00Z"), org.opencrawling.core.document.DocumentAction.UPSERT));
     }
 
     @Override

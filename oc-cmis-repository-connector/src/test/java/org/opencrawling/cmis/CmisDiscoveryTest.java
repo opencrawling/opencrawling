@@ -42,6 +42,7 @@ import org.opencrawling.core.connector.discovery.DiscoveryResult;
 import org.opencrawling.core.connector.discovery.DryRunRequest;
 import org.opencrawling.core.connector.discovery.DryRunResult;
 import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.TruncationReason;
 import org.opencrawling.core.connector.discovery.VisibilityFilter;
 
@@ -176,6 +177,13 @@ class CmisDiscoveryTest {
         }
         if (selector.equals("object")) {
             send(exchange, 200, JSON.writeValueAsString(json(target, withAcl)));
+        } else if (selector.equals("parents")) {
+            ArrayNode parents = JSON.createArrayNode();
+            Item parent = target.parent() == null ? null : items.get(target.parent());
+            if (parent != null) {
+                parents.addObject().put("relativePathSegment", target.name()).set("object", json(parent, false));
+            }
+            send(exchange, 200, JSON.writeValueAsString(parents));
         } else if (selector.equals("children")) {
             List<Item> children = items.values().stream().filter(item -> target.id().equals(item.parent())).toList();
             send(exchange, 200, page(children, params, "objects", withAcl));
@@ -543,6 +551,66 @@ class CmisDiscoveryTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
         assertThatThrownBy(() -> connector("/", true, CmisCrawlMode.FOLDER, true, 100).crawlStart("/Public", VisibilityFilter.ALL))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
+    }
+
+    // ---- Fetching one document ----
+
+    @Test
+    void aDocumentInScopeTheCallerMayReadIsFetchedAsTheCrawlWouldEmitIt() {
+        FetchedDocument fetched = connector().fetchDocument("d1", readableBy("GROUP_finance"));
+
+        assertThat(fetched).isInstanceOf(FetchedDocument.Found.class);
+        FetchedDocument.Found found = (FetchedDocument.Found) fetched;
+        assertThat(found.node().sourceId()).isEqualTo("d1");
+        assertThat(found.node().parentId()).isEqualTo("f1");
+        assertThat(found.document().id()).isEqualTo("cmis://repo/documents/d1").isEqualTo(found.node().id());
+        assertThat(connector().scan("f1").map(doc -> doc.id()).collectList().block()).contains(found.document().id());
+    }
+
+    @Test
+    void aDocumentTheRepositoryDoesNotHaveIsGoneUnderTheIdItWouldBeIndexedUnder() {
+        assertThat(connector().fetchDocument("zzz", readableBy("GROUP_EVERYONE")))
+                .isEqualTo(new FetchedDocument.Gone("cmis://repo/documents/zzz"));
+    }
+
+    @Test
+    void hiddenOutOfScopeExcludedAndOtherVersionDocumentsReadAlike() {
+        CmisRepositoryConnector financeOnly = connector("/Finance", true, CmisCrawlMode.FOLDER, false, 100);
+        CmisRepositoryConnector financeTopOnly = connector("/Finance", false, CmisCrawlMode.FOLDER, false, 100);
+
+        assertThatThrownBy(() -> connector().fetchDocument("d1", readableBy("GROUP_EVERYONE")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("No CMIS document 'd1' in this connector's scope.");
+        assertThatThrownBy(() -> financeOnly.fetchDocument("d3", VisibilityFilter.ALL))
+                .hasMessage("No CMIS document 'd3' in this connector's scope.");
+        assertThatThrownBy(() -> financeTopOnly.fetchDocument("d2", VisibilityFilter.ALL))
+                .hasMessage("No CMIS document 'd2' in this connector's scope.");
+        assertThat(financeTopOnly.fetchDocument("d1", VisibilityFilter.ALL)).isInstanceOf(FetchedDocument.Found.class);
+        assertThatThrownBy(() -> connector().fetchDocument("d5", VisibilityFilter.ALL))
+                .hasMessage("No CMIS document 'd5' in this connector's scope.");
+        assertThatThrownBy(() -> connector().fetchDocument("d7", VisibilityFilter.ALL))
+                .hasMessage("No CMIS document 'd7' in this connector's scope.");
+        assertThatThrownBy(() -> connector().fetchDocument("f1", VisibilityFilter.ALL))
+                .hasMessage("No CMIS document 'f1' in this connector's scope.");
+        // A document whose ACL the repository does not return is never shown to a caller.
+        assertThatThrownBy(() -> connector().fetchDocument("d6", readableBy("GROUP_EVERYONE")))
+                .hasMessage("No CMIS document 'd6' in this connector's scope.");
+    }
+
+    @Test
+    void aDocumentIsFetchedByIdNeverByPath() {
+        assertThatThrownBy(() -> connector().fetchDocument("/Finance/budget.pdf", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No CMIS document");
+        assertThatThrownBy(() -> connector().fetchDocument(" ", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(requests).noneMatch(request -> request.contains("budget.pdf"));
+    }
+
+    @Test
+    void aQueryOrChangeLogConnectorFetchesNothing() {
+        assertThatThrownBy(() -> connector("/", true, CmisCrawlMode.QUERY, false, 100).fetchDocument("d1", VisibilityFilter.ALL))
+                .hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
+        assertThatThrownBy(() -> connector("/", true, CmisCrawlMode.FOLDER, true, 100).fetchDocument("d1", VisibilityFilter.ALL))
+                .hasMessage(CmisRepositoryConnector.NOT_A_FOLDER_CRAWL);
     }
 
     @Test

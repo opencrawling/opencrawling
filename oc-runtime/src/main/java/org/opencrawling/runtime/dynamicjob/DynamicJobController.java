@@ -96,6 +96,38 @@ public class DynamicJobController {
         return ResponseEntity.accepted().location(URI.create(accepted.statusUrl())).body(accepted);
     }
 
+    /**
+     * A request about one document.
+     *
+     * @param document the document's repository id (as discovery returns it)
+     * @param action   {@code UPSERT} (default) or {@code DELETE}
+     */
+    public record DocumentBody(String connector, String document, DynamicJobService.DocumentRequest.Action action) {}
+
+    @Operation(summary = "Ingest or remove one document", description = "UPSERT fetches a document of a registered "
+            + "connector listed for dynamic jobs, if it is in the connector's scope and readable by the caller, and ingests "
+            + "it as a one-document job. DELETE removes a document from the index once the repository no longer has it; "
+            + "its answer is the same whether or not anything was removed.")
+    @ApiResponse(responseCode = "202", description = "UPSERT: a job was started (see Location). DELETE: accepted")
+    @ApiResponse(responseCode = "400", description = "Invalid request, or no such document available to the caller")
+    @ApiResponse(responseCode = "403", description = "The token names no user or lacks the document scope")
+    @ApiResponse(responseCode = "404", description = "No such connector available for dynamic jobs")
+    @ApiResponse(responseCode = "409", description = "DELETE of a document that still exists, or Idempotency-Key reused")
+    @PostMapping("/documents")
+    public ResponseEntity<?> document(
+            @RequestBody(required = false) DocumentBody body,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        DocumentBody request = body != null ? body : new DocumentBody(null, null, null);
+        Object result = service.document(caller(),
+                new DynamicJobService.DocumentRequest(request.connector(), request.document(), request.action()),
+                idempotencyKey, ExecutionProvenance.SOURCE_DYNAMIC_API, correlationId);
+        if (result instanceof DynamicJobService.Accepted accepted) {
+            return ResponseEntity.accepted().location(URI.create(accepted.statusUrl())).body(accepted);
+        }
+        return ResponseEntity.accepted().body(result);
+    }
+
     @Operation(summary = "List dynamic jobs", description = "The caller's own dynamic jobs (every job for admin groups), newest first.")
     @GetMapping
     public List<DynamicJobService.JobStatus> list() {

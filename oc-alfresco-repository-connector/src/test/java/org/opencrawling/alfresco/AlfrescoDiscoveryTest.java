@@ -44,6 +44,7 @@ import org.opencrawling.core.connector.discovery.DiscoveryResult;
 import org.opencrawling.core.connector.discovery.DryRunRequest;
 import org.opencrawling.core.connector.discovery.DryRunResult;
 import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.TruncationReason;
 import org.opencrawling.core.connector.discovery.VisibilityFilter;
 
@@ -431,6 +432,84 @@ class AlfrescoDiscoveryTest {
 
         assertThatThrownBy(() -> query.crawlStart("/Public", VisibilityFilter.ALL))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage(AlfrescoRepositoryConnector.NOT_A_FOLDER_CRAWL);
+    }
+
+    // ---- Fetching one document ----
+
+    @Test
+    void aDocumentInScopeTheCallerMayReadIsFetchedAsTheCrawlWouldEmitIt() {
+        FetchedDocument fetched = connector().fetchDocument("d1", readableBy("GROUP_finance"));
+
+        assertThat(fetched).isInstanceOf(FetchedDocument.Found.class);
+        FetchedDocument.Found found = (FetchedDocument.Found) fetched;
+        assertThat(found.node().sourceId()).isEqualTo("d1");
+        assertThat(found.node().parentId()).isEqualTo("flib");
+        assertThat(found.document().id()).isEqualTo("d1").isEqualTo(found.node().id());
+        assertThat(found.document().metadata()).containsEntry("mimeType", List.of("application/pdf"));
+        assertThat(found.document().contentStream()).isNotNull();
+    }
+
+    @Test
+    void aDocumentTheRepositoryDoesNotHaveIsGoneUnderItsNodeId() {
+        assertThat(connector().fetchDocument("zzz", readableBy("GROUP_EVERYONE"))).isEqualTo(new FetchedDocument.Gone("zzz"));
+    }
+
+    @Test
+    void hiddenOutOfScopeExcludedAndFilteredDocumentsReadAlike() {
+        AlfrescoRepositoryConnector siteOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "finance-site", true, Set.of(), 100);
+        AlfrescoRepositoryConnector siteTopOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "finance-site", false, Set.of(), 100);
+        AlfrescoRepositoryConnector textOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "", true, Set.of("text/plain"), 100);
+
+        assertThatThrownBy(() -> connector().fetchDocument("d1", readableBy("GROUP_EVERYONE")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("No Alfresco document 'd1' in this connector's scope.");
+        assertThatThrownBy(() -> siteOnly.fetchDocument("d3", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'd3' in this connector's scope.");
+        assertThatThrownBy(() -> siteTopOnly.fetchDocument("d2", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'd2' in this connector's scope.");
+        assertThat(siteTopOnly.fetchDocument("d1", VisibilityFilter.ALL)).isInstanceOf(FetchedDocument.Found.class);
+        assertThatThrownBy(() -> connector().fetchDocument("d5", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'd5' in this connector's scope.");
+        assertThatThrownBy(() -> textOnly.fetchDocument("d1", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'd1' in this connector's scope.");
+        assertThat(textOnly.fetchDocument("d3", VisibilityFilter.ALL)).isInstanceOf(FetchedDocument.Found.class);
+        assertThatThrownBy(() -> connector().fetchDocument("f2", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'f2' in this connector's scope.");
+        assertThatThrownBy(() -> connector().fetchDocument("d9", VisibilityFilter.ALL))
+                .as("a file without content is not crawled").hasMessage("No Alfresco document 'd9' in this connector's scope.");
+        assertThatThrownBy(() -> connector().fetchDocument("d6", readableBy("GROUP_EVERYONE")))
+                .as("no permissions returned: never shown").hasMessage("No Alfresco document 'd6' in this connector's scope.");
+        assertThatThrownBy(() -> connector().fetchDocument("d4", readableBy("bob")))
+                .as("an explicit deny wins").hasMessage("No Alfresco document 'd4' in this connector's scope.");
+    }
+
+    @Test
+    void aFolderIsNeverFetchedAsADocumentEvenWithoutContentDownloads() {
+        AlfrescoRepositoryConnector metadataOnly = new AlfrescoRepositoryConnector(url, "user", "secret", 100,
+                AlfrescoCrawlMode.FOLDER, "/", "", "", true, Set.of("Data Dictionary"), "TYPE:'cm:content'", "afts",
+                false, false, 1024, Set.of(), 5);
+        metadataOnly.setHttpClient(HttpClient.newHttpClient());
+
+        assertThatThrownBy(() -> metadataOnly.fetchDocument("f2", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco document 'f2' in this connector's scope.");
+        assertThat(metadataOnly.fetchDocument("d9", VisibilityFilter.ALL)).isInstanceOf(FetchedDocument.Found.class);
+    }
+
+    @Test
+    void aDocumentIsFetchedByNodeIdNeverByPathOrQuery() {
+        assertThatThrownBy(() -> connector().fetchDocument("/Public/a.txt", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No Alfresco document");
+        assertThatThrownBy(() -> connector().fetchDocument("TYPE:'cm:content'", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No Alfresco document");
+        assertThatThrownBy(() -> connector().fetchDocument("pub/../dd", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(requests).isEmpty();
+        assertThat(searches).isEmpty();
+    }
+
+    @Test
+    void aQueryConnectorFetchesNothing() {
+        assertThatThrownBy(() -> connector(AlfrescoCrawlMode.QUERY, "/", "", "", true, Set.of(), 100).fetchDocument("d1", VisibilityFilter.ALL))
+                .hasMessage(AlfrescoRepositoryConnector.NOT_A_FOLDER_CRAWL);
     }
 
     @Test

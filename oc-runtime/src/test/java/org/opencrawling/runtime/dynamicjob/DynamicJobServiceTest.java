@@ -20,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.connector.discovery.DiscoveryException;
+import org.opencrawling.core.document.DocumentAction;
+import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.security.AuthorizationUnavailableException;
 import org.opencrawling.core.security.Caller;
@@ -101,6 +103,24 @@ class DynamicJobServiceTest {
 
     static Caller caller(String principal, String... groups) {
         return new Caller(principal, List.of(groups), null, true, Map.of(JwtCallerMapper.SCOPES, List.of("openid", SCOPE)));
+    }
+
+    /** A caller whose token carries only the single-document scope. */
+    static Caller documentCaller(String principal, String... groups) {
+        return new Caller(principal, List.of(groups), null, true, Map.of(JwtCallerMapper.SCOPES, List.of("oc:jobs:run")));
+    }
+
+    static DynamicJobService.DocumentRequest upsert(String document) {
+        return new DynamicJobService.DocumentRequest("Fake_Repo", document, null);
+    }
+
+    static DynamicJobService.DocumentRequest delete(String document) {
+        return new DynamicJobService.DocumentRequest("Fake_Repo", document, DynamicJobService.DocumentRequest.Action.DELETE);
+    }
+
+    /** What the crawl of a job's connector emits. */
+    static List<RepositoryDocument> emitted(RepositoryConnector connector) {
+        return connector.scan("ignored").collectList().block();
     }
 
     static DynamicJobService.JobRequest request(String start) {
@@ -352,6 +372,127 @@ class DynamicJobServiceTest {
         assertThat(service.list(caller("bob"))).isEmpty();
         assertThat(service.list(caller("root-user", "oc-admins"))).extracting(DynamicJobService.JobStatus::jobId).containsExactly(alices);
         assertThat(service.status(caller("alice"), alices).state()).isEqualTo(DynamicJobService.State.RUNNING);
+    }
+
+    // ---- One document ----
+
+    @Test
+    void aReadableDocumentInScopeIsIngestedAsAOneDocumentJob() {
+        Object result = service.document(documentCaller("alice", "finance"), upsert("finance-report"), null, "mcp", "wf-9");
+
+        assertThat(result).isInstanceOf(DynamicJobService.Accepted.class);
+        DynamicJobService.Accepted accepted = (DynamicJobService.Accepted) result;
+        DynamicJobService.JobStatus status = awaitEnd(documentCaller("alice"), accepted.jobId());
+        assertThat(status.state()).isEqualTo(DynamicJobService.State.COMPLETED);
+        assertThat(status.kind()).isEqualTo(DynamicJobService.Kind.DOCUMENT);
+        assertThat(status.start().id()).isEqualTo("finance-report");
+        assertThat(runner.starts).containsExactly("finance-report");
+        List<RepositoryDocument> documents = emitted(runner.connectors.get(0));
+        assertThat(documents).singleElement().satisfies(document -> {
+            assertThat(document.id()).isEqualTo("fake://finance-report");
+            assertThat(document.action()).isEqualTo(DocumentAction.UPSERT);
+            assertThat(document.security()).isNotNull();
+        });
+        assertThat(runner.provenances.get(0).correlationId()).isEqualTo("wf-9");
+        // The connector that fetched the document stays open for the run, and is closed after it.
+        assertThat(built).singleElement().satisfies(connector -> assertThat(connector.disconnected).isTrue());
+    }
+
+    @Test
+    void hiddenAndMissingDocumentsAreRefusedAlikeAndNothingRuns() {
+        String hidden = catchThrowableOfType(DynamicJobException.class,
+                () -> service.document(documentCaller("carol"), upsert("finance-report"), null, "api", null)).getMessage();
+        String unknown = catchThrowableOfType(DynamicJobException.class,
+                () -> service.document(documentCaller("carol"), upsert("nope"), null, "api", null)).getMessage();
+        String gone = catchThrowableOfType(DynamicJobException.class,
+                () -> service.document(documentCaller("carol"), upsert("deleted-old"), null, "api", null)).getMessage();
+
+        assertThat(hidden).isEqualTo("No document 'finance-report' is available to you from connector 'Fake_Repo'.");
+        assertThat(unknown).isEqualTo("No document 'nope' is available to you from connector 'Fake_Repo'.");
+        assertThat(gone).isEqualTo("No document 'deleted-old' is available to you from connector 'Fake_Repo'.");
+        assertThat(runner.starts).isEmpty();
+        assertThat(built).hasSize(3).allMatch(connector -> connector.disconnected);
+        // As for search (#224): the group finance does not let a user named finance in.
+        assertThat(statusOf(() -> service.document(documentCaller("finance"), upsert("finance-report"), null, "api", null)))
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void aDocumentTheRepositoryNoLongerHasIsRemovedWithATombstone() {
+        Object result = service.document(documentCaller("alice"), delete("deleted-old"), null, "mcp", null);
+
+        assertThat(result).isEqualTo(new DynamicJobService.DeletionAccepted("Fake_Repo", "deleted-old",
+                DynamicJobService.DELETION_NOTE));
+        assertThat(runner.starts).containsExactly("fake://deleted-old");
+        assertThat(emitted(runner.connectors.get(0))).singleElement().satisfies(tombstone -> {
+            assertThat(tombstone.id()).isEqualTo("fake://deleted-old");
+            assertThat(tombstone.action()).isEqualTo(DocumentAction.DELETE);
+        });
+        assertThat(runner.provenances.get(0).triggeredBy()).isEqualTo("alice");
+        assertThat(service.list(documentCaller("alice"))).isEmpty();
+    }
+
+    @Test
+    void aDeleteOfADocumentTheCallerCannotSeeAnswersLikeOneThatWasRemovedAndRemovesNothing() {
+        Object hidden = service.document(documentCaller("carol"), delete("finance-report"), null, "api", null);
+        Object unknown = service.document(documentCaller("carol"), delete("nope"), null, "api", null);
+
+        assertThat(hidden).isEqualTo(new DynamicJobService.DeletionAccepted("Fake_Repo", "finance-report",
+                DynamicJobService.DELETION_NOTE));
+        assertThat(unknown).isEqualTo(new DynamicJobService.DeletionAccepted("Fake_Repo", "nope",
+                DynamicJobService.DELETION_NOTE));
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void aLiveDocumentIsNeverRemoved() {
+        DynamicJobException e = catchThrowableOfType(DynamicJobException.class,
+                () -> service.document(documentCaller("alice", "finance"), delete("finance-report"), null, "api", null));
+
+        assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void aTombstoneThatCannotBePublishedStillGetsTheSameAnswer() {
+        runner.failure = new IllegalStateException("kafka down at internal-host");
+
+        assertThat(service.document(documentCaller("alice"), delete("deleted-old"), null, "api", null))
+                .isEqualTo(new DynamicJobService.DeletionAccepted("Fake_Repo", "deleted-old", DynamicJobService.DELETION_NOTE));
+    }
+
+    @Test
+    void eachOperationNeedsItsOwnScopeAndEitherScopeFollowsJobs() {
+        assertThat(statusOf(() -> service.start(documentCaller("alice"), request(null), null, "api", null)))
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.document(caller("alice", "finance"), upsert("finance-report"), null, "api", null)))
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.document(Caller.asserted("alice", List.of("finance")), upsert("finance-report"), null, "api", null)))
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        String jobId = ((DynamicJobService.Accepted) service.document(documentCaller("alice", "finance"),
+                upsert("finance-report"), null, "api", null)).jobId();
+
+        assertThat(service.status(caller("alice"), jobId).jobId()).isEqualTo(jobId);
+        assertThat(service.status(documentCaller("alice"), jobId).jobId()).isEqualTo(jobId);
+        assertThat(statusOf(() -> service.status(documentCaller("bob"), jobId))).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void documentRequestsAreCheckedAndReplayedByKey() {
+        assertThat(statusOf(() -> service.document(documentCaller("alice"), upsert(" "), null, "api", null)))
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(statusOf(() -> service.document(documentCaller("alice"),
+                new DynamicJobService.DocumentRequest("Other_Repo", "finance-report", null), null, "api", null)))
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        DynamicJobService.Accepted first = (DynamicJobService.Accepted) service.document(
+                documentCaller("alice", "finance"), upsert("finance-report"), "doc-1", "api", null);
+        DynamicJobService.Accepted again = (DynamicJobService.Accepted) service.document(
+                documentCaller("alice", "finance"), upsert("finance-report"), "doc-1", "api", null);
+
+        assertThat(again.jobId()).isEqualTo(first.jobId());
+        assertThat(again.replayed()).isTrue();
+        assertThat(statusOf(() -> service.document(documentCaller("alice", "finance"), upsert("alice-notes"), "doc-1", "api", null)))
+                .isEqualTo(HttpStatus.CONFLICT);
     }
 
     // ---- Idempotency ----

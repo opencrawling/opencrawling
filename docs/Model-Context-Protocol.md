@@ -73,8 +73,10 @@ With `opencrawling.jobs.dynamic.enabled=true`, an agent can ingest a folder it f
 | `getDynamicJobStatus` | The job's state (`RUNNING`, `COMPLETED`, `FAILED`, `STOPPED`) and, once it has ended, how many documents it handled. | `jobId` (required) |
 | `listDynamicJobs` | The caller's dynamic jobs that are still remembered, newest first. | |
 | `stopDynamicJob` | Stops a running job before its next document. | `jobId` (required) |
+| `ingestDocument` | Ingests one document again, as a one-document job. Returns `jobId` like `triggerDynamicJob`. | `connector` (required)<br>`document` (its repository id, as `exploreRepositoryTree` returns it; required)<br>`idempotencyKey`<br>`correlationId` |
+| `removeDeletedDocument` | Removes a document from the index because it was deleted in its repository. | `connector` (required)<br>`document` (required)<br>`correlationId` |
 
-The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"connector", "start", "name", "validateOnly"}`, headers `Idempotency-Key` and `X-Correlation-Id`; answers `202` with a `Location`), `GET /api/jobs/dynamic`, `GET /api/jobs/dynamic/{jobId}` and `POST /api/jobs/dynamic/{jobId}/stop`.
+The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"connector", "start", "name", "validateOnly"}`, headers `Idempotency-Key` and `X-Correlation-Id`; answers `202` with a `Location`), `GET /api/jobs/dynamic`, `GET /api/jobs/dynamic/{jobId}`, `POST /api/jobs/dynamic/{jobId}/stop`, and for one document `POST /api/jobs/dynamic/documents` (body `{"connector", "document", "action"}` with `action` `UPSERT`, the default, or `DELETE`).
 
 - **Who the caller is:** always verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`). There is no asserted-identity option. The token must name a user and carry the scope in `opencrawling.jobs.dynamic.required-scope` (default `oc:jobs:write`, read from the `scope` or `scp` claim).
 - **Which connectors:** only the registered connectors listed in `opencrawling.jobs.dynamic.connectors` (empty by default, so none) that support discovery and crawl a folder tree. A connector set up to crawl a query or a change log is refused. A connector that is not listed reads exactly like one that does not exist.
@@ -83,6 +85,10 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
 - **Who sees a job:** the user it was started for (whichever agent acted for them, in the same tenant) and members of `opencrawling.jobs.dynamic.admin-groups`. To anyone else it does not exist (`404`).
 - **Limits:** `max-running-per-user` (default `2`) dynamic jobs per user at once, plus the runtime's `opencrawling.jobs.max-concurrent-runs` and `max-concurrent-runs-per-caller`. Over a limit, the answer is `429`.
 - **Idempotency:** repeating a request with the same `Idempotency-Key` returns the job the first one started (`"replayed": true`). The same key with a different request is refused (`409`). Keys belong to the user.
+- **One document:** the token needs `opencrawling.jobs.dynamic.document-scope` (default `oc:jobs:run`) instead of `required-scope`, so a workflow service can refresh documents without being able to crawl folders. Either scope lets a caller follow and stop its own jobs. The document is named by its repository id, never a path.
+  - **Ingest (`UPSERT`):** the document must be one the connector's folder crawl would take (inside the configured root, not in an excluded folder, matching the version and type filters) and one the caller may read by its source ACL. It is fetched as the crawl would emit it, under the same id and with its source permissions, and runs as a one-document job (`kind` `DOCUMENT`). A document that is hidden, out of scope or missing gets the same `400`.
+  - **Remove (`DELETE`):** a tombstone is published only when the repository reports that it no longer has the document, so a live document can never be removed from the index this way. Asking to remove a document that still exists and that the caller may read gets `409`. Every other request gets the same `202`, whether or not anything was removed, so a caller learns nothing about documents it cannot read.
+  - Only CMIS and Alfresco connectors that crawl a folder tree support this.
 - **Status is kept in memory** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs, and is lost on restart. The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
 
 ---

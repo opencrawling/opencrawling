@@ -33,6 +33,8 @@ import java.util.stream.Collectors;
 import org.opencrawling.core.connector.ConnectorSchema;
 import org.opencrawling.core.connector.discovery.CountAccuracy;
 import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.DiscoveryException;
 import org.opencrawling.core.connector.discovery.DiscoveryNode;
 import org.opencrawling.core.connector.discovery.DiscoveryResult;
@@ -61,7 +63,7 @@ import reactor.core.publisher.FluxSink;
  * leveraging Java 25 Virtual Threads (StructuredTaskScope) and Project Reactor.
  */
 @Component
-public class CmisRepositoryConnector implements DiscoverableRepositoryConnector {
+public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(CmisRepositoryConnector.class);
 
@@ -667,6 +669,67 @@ public class CmisRepositoryConnector implements DiscoverableRepositoryConnector 
             Thread.currentThread().interrupt();
             throw new DiscoveryException("CMIS folder lookup was interrupted.", e);
         }
+    }
+
+    /**
+     * Fetches a document the way a folder crawl would emit it. It must be filed in at least one folder the crawl
+     * walks (the configured root, or below it with {@code include-subfolders}, outside excluded folders), match the
+     * version policy, and be shown by the filter. Only for a connector that crawls a folder tree.
+     */
+    @Override
+    public FetchedDocument fetchDocument(String documentId, VisibilityFilter filter) {
+        if (changeLogEnabled || crawlMode == CmisCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        String id = documentId == null ? "" : documentId.strip();
+        if (id.isEmpty() || id.startsWith("/") || id.length() > MAX_DOCUMENT_ID_LENGTH
+                || id.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(documentNotFound(documentId));
+        }
+        ensureConnected();
+        try {
+            JsonNode document;
+            try {
+                document = cmisClient.getObject(resolvedRepositoryId, id, true);
+            } catch (FileNotFoundException e) {
+                return new FetchedDocument.Gone(CmisDocumentBuilder.buildTombstone(resolvedRepositoryId, id).id());
+            }
+            String baseType = CmisDocumentBuilder.getPropertyValue(document, "cmis:baseTypeId");
+            if (!"cmis:document".equalsIgnoreCase(baseType) || !id.equals(objectId(document))) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            String parentId = crawledParent(id);
+            DiscoveryNode node = parentId == null ? null : documentNode(document, parentId, 1);
+            if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            return new FetchedDocument.Found(node, buildSingleDocument(document));
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS document lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS document lookup was interrupted.", e);
+        }
+    }
+
+    static final int MAX_DOCUMENT_ID_LENGTH = 512;
+
+    /** The id of a folder the document is filed in that a crawl walks, or {@code null} when there is none. */
+    private String crawledParent(String documentId) throws IOException, InterruptedException {
+        String rootPath = configuredRootPath();
+        String root = rootPath.endsWith("/") && rootPath.length() > 1 ? rootPath.substring(0, rootPath.length() - 1) : rootPath;
+        for (JsonNode parent : cmisClient.getObjectParents(resolvedRepositoryId, documentId)) {
+            String path = CmisDocumentBuilder.getPropertyValue(parent, "cmis:path");
+            if (path != null && isWithin(path, rootPath) && !isExcluded(path)
+                    && (includeSubfolders || path.equalsIgnoreCase(root))) {
+                return objectId(parent);
+            }
+        }
+        return null;
+    }
+
+    private static String documentNotFound(String reference) {
+        return "No CMIS document '" + reference + "' in this connector's scope.";
     }
 
     static final String NOT_A_FOLDER_CRAWL =

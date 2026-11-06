@@ -43,6 +43,8 @@ import java.util.stream.Collectors;
 
 import org.opencrawling.core.connector.discovery.CountAccuracy;
 import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.DiscoveryException;
 import org.opencrawling.core.connector.discovery.DiscoveryNode;
 import org.opencrawling.core.connector.discovery.DiscoveryResult;
@@ -75,7 +77,7 @@ import reactor.core.publisher.FluxSink;
  * Integrates zero-trust ACL mapping, binary payload thresholds, and Java 25 Virtual Threads.
  */
 @Component
-public class AlfrescoRepositoryConnector implements DiscoverableRepositoryConnector {
+public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(AlfrescoRepositoryConnector.class);
 
@@ -1015,6 +1017,75 @@ public class AlfrescoRepositoryConnector implements DiscoverableRepositoryConnec
             Thread.currentThread().interrupt();
             throw new DiscoveryException("Alfresco folder lookup was interrupted.", e);
         }
+    }
+
+    /**
+     * Fetches a document the way a folder crawl would emit it: a file below the configured root (directly in it
+     * without {@code include-subfolders}), with no excluded folder between them, matching the MIME type filter, and
+     * shown by the filter. Only for a connector that crawls a folder tree.
+     */
+    @Override
+    public FetchedDocument fetchDocument(String documentId, VisibilityFilter filter) {
+        if (crawlMode == AlfrescoCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        String id = documentId == null ? "" : documentId.strip();
+        if (!NODE_ID.matcher(id).matches()) {
+            throw new IllegalArgumentException(documentNotFound(documentId));
+        }
+        ensureConnected();
+        try {
+            HttpResponse<String> response = get(url + "/nodes/" + id + "?include=path,permissions,properties,aspectNames");
+            if (response.statusCode() == 404) {
+                return new FetchedDocument.Gone(id);
+            }
+            if (response.statusCode() != 200) {
+                throw new IOException("Alfresco returned HTTP " + response.statusCode() + " for node '" + id + "'.");
+            }
+            JsonNode entry = objectMapper.readTree(response.body()).path("entry");
+            JsonNode root = discoveryNode(configuredRootRef());
+            JsonNode content = entry.path("content");
+            if (root == null || !entry.path("isFile").asBoolean(false) || !id.equals(entry.path("id").asText())
+                    || (includeContentStream && content.isMissingNode())
+                    || !matchesMimeType(content.path("mimeType").asText(""))
+                    || !crawledFrom(entry, root.path("id").asText())) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            DiscoveryNode node = documentNode(entry, entry.path("parentId").asText(null), 1);
+            if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            return new FetchedDocument.Found(node, createDocument(entry));
+        } catch (IOException e) {
+            throw new DiscoveryException("Alfresco document lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("Alfresco document lookup was interrupted.", e);
+        }
+    }
+
+    /**
+     * Whether a folder crawl from the root would reach the node: the root is among its ancestors, no folder below
+     * the root is excluded, and without {@code include-subfolders} its parent is the root itself.
+     */
+    private boolean crawledFrom(JsonNode entry, String rootId) {
+        boolean belowRoot = false;
+        String parentId = null;
+        for (JsonNode ancestor : entry.path("path").path("elements")) {
+            String ancestorId = ancestor.path("id").asText("");
+            if (belowRoot && isFolderExcluded(ancestor.path("name").asText(""), ancestorId)) {
+                return false;
+            }
+            if (rootId.equals(ancestorId)) {
+                belowRoot = true;
+            }
+            parentId = ancestorId;
+        }
+        return belowRoot && (includeSubfolders || rootId.equals(parentId));
+    }
+
+    private static String documentNotFound(String reference) {
+        return "No Alfresco document '" + reference + "' in this connector's scope.";
     }
 
     static final String NOT_A_FOLDER_CRAWL =

@@ -39,6 +39,11 @@ public class DynamicJobProperties {
     private List<String> connectors = new ArrayList<>();
     /** The OAuth2 scope the caller's token must carry to start, stop or read dynamic jobs. Blank: not checked. */
     private String requiredScope = "oc:jobs:write";
+    /**
+     * The OAuth2 scope the caller's token must carry to ingest or remove a single document. Either scope lets a
+     * caller read and stop its own jobs. Blank: not checked.
+     */
+    private String documentScope = "oc:jobs:run";
     /** Groups whose members may read and stop every dynamic job, not only their own. */
     private List<String> adminGroups = new ArrayList<>();
     /** How many of its dynamic jobs one user may have running at the same time (0: no limit of its own). */
@@ -72,6 +77,14 @@ public class DynamicJobProperties {
 
     public void setRequiredScope(String requiredScope) {
         this.requiredScope = requiredScope;
+    }
+
+    public String getDocumentScope() {
+        return documentScope;
+    }
+
+    public void setDocumentScope(String documentScope) {
+        this.documentScope = documentScope;
     }
 
     public List<String> getAdminGroups() {
