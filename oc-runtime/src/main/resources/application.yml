@@ -240,6 +240,32 @@ opencrawling:
       #       connector: Alfresco_Main
       #       action: UPSERT
       routes: []
+  governance:
+    # Pre-embedding governance: every document the ingestion consumer would chunk goes through the hooks first,
+    # which approve it, mask parts of it, or reject it. Permissions are never changed. Fails closed: when a hook
+    # cannot decide, nothing is embedded. With it on, RAG jobs that would also hand documents straight to an output
+    # connector are refused (409), since that path does not pass the gate: run them on the decoupled pipeline.
+    enabled: ${OPENCRAWLING_GOVERNANCE_ENABLED:false}
+    # In order: pii-masking (built in), http (an external governance service), or a PreEmbeddingGovernanceHook
+    # bean's name. Required when enabled.
+    hooks: ${OPENCRAWLING_GOVERNANCE_HOOKS:}
+    # What a rejection of a new version does to the earlier one: purge (stop serving it) or keep.
+    on-rejected-update: ${OPENCRAWLING_GOVERNANCE_ON_REJECTED_UPDATE:purge}
+    pii:
+      # email, payment-card (Luhn-checked) and/or iban (check digits verified).
+      types: email,payment-card,iban
+      # Whether metadata values are masked too (permission and identity keys never are).
+      mask-metadata: true
+    http:
+      url: ${OPENCRAWLING_GOVERNANCE_HTTP_URL:}
+      # Signs each request (X-OpenCrawling-Timestamp, X-OpenCrawling-Signature); at least 32 characters.
+      secret: ${OPENCRAWLING_GOVERNANCE_HTTP_SECRET:}
+      connect-timeout: 5s
+      timeout: 30s
+      # Attempts per document, the first included; only network errors, 429 and 5xx are retried.
+      max-attempts: 3
+      initial-backoff: 500ms
+      max-backoff: 5s
   ingest:
     ois:
       # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty

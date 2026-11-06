@@ -171,6 +171,14 @@ With `opencrawling.jobs.dynamic.enabled=true` (off by default), `DynamicJobMcpTo
 
 With `opencrawling.events.bpm.enabled=true` (off by default), `BpmEventController` (`POST /api/events/bpm/document-transition`) lets a BPM engine trigger a single-document UPSERT or DELETE: the first matching `routes` entry (engine, process, transition) names the connector and action, and `BpmEventService` calls the same `DynamicJobService` path with `VisibilityFilter.ALL` (the route authorizes, not the sender). A sender authenticates by HMAC signature or Basic static token (`BpmEventAuthenticator`, configured `sources`, secrets of at least 32 characters) or by a bearer token with `oc:events:write`. With `protect-api`, `IdentitySecurityConfiguration` lets only signed or Basic requests to that path skip the JWT chain. Event ids are deduplicated per sender.
 
+### Pre-embedding governance
+
+With `opencrawling.governance.enabled=true` (off by default), `IngestionConsumer` passes each UPSERT's extracted text and metadata through a `GovernanceGate` before chunking it. The gate runs the `hooks` in order: the built-in `pii-masking` (`PiiMaskingGovernanceHook`) or `http` (`HttpGovernanceHook`, HMAC-signed, bounded retries), or any `PreEmbeddingGovernanceHook` bean (SPI in `oc-core`, `core.governance`). Each hook answers APPROVE, SANITIZE or REJECT.
+- **Permissions:** hooks can never change the protected metadata keys (`GovernanceGate.isProtectedKey`).
+- **Failures:** a hook that fails means nothing is embedded.
+- **Rejections:** a rejection publishes a tombstone for the earlier version unless `on-rejected-update=keep`.
+- **Direct outputs:** with the gate on, `JobOrchestrator.bypassesGovernance` refuses RAG runs that have an output connector, because their direct `send` would embed without the gate. The job API answers `409`.
+
 ### Security / ACL model
 
 - **Caller identity:** `opencrawling.security.identity.mode` is `none` (default; MCP tools trust the `userPrincipal`/`userRoles` arguments) or `jwt` (OAuth2 resource server; MCP endpoints need a bearer token and `CallerResolver` takes the identity from it). `IdentitySecurityConfiguration` keeps every other path open (no CSRF, no added headers) unless `protect-api` is set. New MCP tools must get their caller from `CallerResolver`, never straight from their arguments.

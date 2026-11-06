@@ -40,6 +40,7 @@ import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.core.reporting.DocumentLedgerEntry;
 import org.opencrawling.core.reporting.ExecutionProvenance;
+import org.opencrawling.runtime.governance.GovernanceProperties;
 import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import java.io.File;
 import java.io.InputStream;
@@ -75,6 +76,9 @@ public class JobOrchestrator {
 
     @Autowired(required = false)
     private JobLedgerAccumulator ledgerAccumulator;
+
+    @Autowired(required = false)
+    private GovernanceProperties governanceProperties;
 
     @Value("${opencrawling.pipeline.mode:rag}")
     private String defaultPipelineMode = "rag";
@@ -191,6 +195,12 @@ public class JobOrchestrator {
             ? new MustacheTransformationConnector(narrativization.template())
             : null;
 
+        if (bypassesGovernance(outputConnector, resolvedMode)) {
+            log.error("Job {} refused: {}", jobId, GOVERNANCE_BYPASS);
+            traceStore.recordError(jobId, "ERROR", "Governance", "Job refused: " + GOVERNANCE_BYPASS, null);
+            return false;
+        }
+
         if (resolvedMode == PipelineMode.MIGRATION) {
             log.info("Job {} running in MIGRATION mode. Narrativization and vector embeddings are bypassed.", jobId);
         } else if (mustacheConnector != null) {
@@ -200,6 +210,25 @@ public class JobOrchestrator {
 
         return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId,
                 stopRequested != null ? stopRequested : () -> false, provenance, chunking);
+    }
+
+    /** Why a run that would bypass the governance gate is refused. */
+    public static final String GOVERNANCE_BYPASS = "pre-embedding governance is on, and a RAG job that hands documents "
+            + "straight to an output connector would embed them without it. Run RAG jobs on the decoupled pipeline "
+            + "(no output connector on the crawler) or turn governance off.";
+
+    /**
+     * Whether a run would embed documents without the governance gate: with the gate on, a RAG run given an output
+     * connector also sends each document to it directly, and those outputs extract and embed it themselves.
+     */
+    public boolean bypassesGovernance(OutputConnector outputConnector, PipelineMode mode) {
+        return governanceProperties != null && governanceProperties.isEnabled() && outputConnector != null
+                && mode != PipelineMode.MIGRATION;
+    }
+
+    /** For tests and callers that build the orchestrator themselves. */
+    public void setGovernanceProperties(GovernanceProperties governanceProperties) {
+        this.governanceProperties = governanceProperties;
     }
 
     @SuppressWarnings("preview")

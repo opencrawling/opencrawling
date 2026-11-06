@@ -26,6 +26,7 @@ import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.runtime.governance.GovernanceGate;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 
 import org.slf4j.Logger;
@@ -63,6 +64,7 @@ public class IngestionConsumer {
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties claimCheckProperties;
     private final TelemetryTraceStore traceStore;
+    private GovernanceGate governanceGate;
 
     public IngestionConsumer(
             KafkaTemplate<String, Object> kafkaTemplate,
@@ -76,6 +78,15 @@ public class IngestionConsumer {
         this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+    }
+
+    /**
+     * Turns the pre-embedding governance gate on: every UPSERT then goes through it before it is chunked. Without a
+     * gate (the default), documents are chunked as they come.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setGovernanceGate(GovernanceGate governanceGate) {
+        this.governanceGate = governanceGate;
     }
 
     /**
@@ -139,17 +150,7 @@ public class IngestionConsumer {
         try {
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for document: {}. Forwarding tombstone to chunks topic.", message.documentId());
-                DocumentChunkMessage deleteChunkMsg = new DocumentChunkMessage(
-                    message.documentId(),
-                    message.documentId(),
-                    "",
-                    message.metadata() != null ? new HashMap<>(message.metadata()) : Map.of(),
-                    message.transformationConnector(),
-                    message.transformationEngine(),
-                    message.transformationConfig(),
-                    DocumentAction.DELETE
-                );
-                kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, message.documentId(), deleteChunkMsg).get();
+                publishTombstone(message);
                 return;
             }
 
@@ -226,9 +227,22 @@ public class IngestionConsumer {
 
                 log.info("Extracted {} characters from document: {}", text.length(), message.documentId());
 
+                Map<String, List<String>> sourceMetadata = message.metadata() != null ? message.metadata() : Map.of();
+                if (governanceGate != null) {
+                    GovernanceGate.Result governed = govern(message, text, sourceMetadata, traceId, jobId);
+                    if (!governed.embeds()) {
+                        if (governed.status() == GovernanceGate.Status.REJECTED) {
+                            cleanupClaim(fileUri);
+                        }
+                        return;
+                    }
+                    text = governed.text();
+                    sourceMetadata = governed.metadata();
+                }
+
                 // Map repository metadata to Vector Document metadata
                 Map<String, Object> metadata = new HashMap<>();
-                message.metadata().forEach((key, val) -> {
+                sourceMetadata.forEach((key, val) -> {
                     if (val != null) {
                         List<String> cleanedList = new ArrayList<>();
                         for (String s : val) {
@@ -289,19 +303,81 @@ public class IngestionConsumer {
                 }
                 log.info("Successfully published all chunks for document: {}", message.documentId());
 
-            if (claimCheckProperties.isCleanupOnConsume() && !"http".equalsIgnoreCase(fileUri.getScheme()) && !"https".equalsIgnoreCase(fileUri.getScheme())) {
-                try {
-                    claimCheckStore.delete(fileUri);
-                } catch (Exception e) {
-                    log.debug("Cleanup of claim check object {} failed or skipped: {}", fileUri, e.getMessage());
-                }
-            }
+            cleanupClaim(fileUri);
         } catch (java.nio.file.NoSuchFileException e) {
             log.warn("Ingestion file no longer exists (possibly a temporary test file): {}", message.uri());
         } catch (Exception e) {
             log.error("Failed to process Kafka ingestion message: {}", message.documentId(), e);
             if (traceStore != null) {
                 traceStore.recordError(jobId, "ERROR", "IngestionConsumer", "Failed to process Kafka ingestion message: " + e.getMessage(), e.toString());
+            }
+        }
+    }
+
+    /**
+     * Runs the governance gate. A rejected document is not embedded and, unless the gate keeps rejected updates, its
+     * earlier chunks are removed with a tombstone. When the gate cannot decide, nothing is embedded or removed.
+     */
+    private GovernanceGate.Result govern(IngestionMessage message, String text, Map<String, List<String>> metadata,
+                                         String traceId, String jobId) throws Exception {
+        long start = System.currentTimeMillis();
+        GovernanceGate.Result result = governanceGate.evaluate(message.documentId(), message.uri(), text, metadata,
+                message.security());
+        long took = System.currentTimeMillis() - start;
+        Map<String, String> attributes = new java.util.LinkedHashMap<>(result.audit());
+        attributes.put("outcome", result.status().name());
+        if (result.decidedBy() != null) {
+            attributes.put("decidedBy", result.decidedBy());
+        }
+        switch (result.status()) {
+            case APPROVED, SANITIZED -> log.info("Governance {} document {}", result.status(), message.documentId());
+            case REJECTED -> {
+                boolean purge = governanceGate.purgeOnReject();
+                attributes.put("earlierVersion", purge ? "purged" : "kept");
+                log.warn("Governance hook {} rejected document {}: {}. Earlier chunks {}.", result.decidedBy(),
+                        message.documentId(), result.reason(), purge ? "are removed" : "are kept");
+                if (purge) {
+                    publishTombstone(message);
+                }
+            }
+            case UNAVAILABLE -> {
+                log.error("Governance could not decide on document {} ({}: {}); it is not embedded.",
+                        message.documentId(), result.decidedBy(), result.reason());
+                if (traceStore != null) {
+                    traceStore.recordError(jobId, "ERROR", "Governance", "Governance hook " + result.decidedBy()
+                            + " could not decide on document " + message.documentId() + ": " + result.reason(), null);
+                }
+            }
+        }
+        if (traceStore != null) {
+            traceStore.recordSpan(new TelemetryTraceStore.SpanRecord(
+                    UUID.randomUUID().toString(), traceId, jobId, "Governance", "PreEmbeddingGovernance",
+                    start, took, result.status().name(), result.reason(), attributes));
+        }
+        return result;
+    }
+
+    /** Publishes a DELETE for the document's chunks; the writer removes every chunk stored under its id. */
+    private void publishTombstone(IngestionMessage message) throws Exception {
+        DocumentChunkMessage deleteChunkMsg = new DocumentChunkMessage(
+            message.documentId(),
+            message.documentId(),
+            "",
+            message.metadata() != null ? new HashMap<>(message.metadata()) : Map.of(),
+            message.transformationConnector(),
+            message.transformationEngine(),
+            message.transformationConfig(),
+            DocumentAction.DELETE
+        );
+        kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, message.documentId(), deleteChunkMsg).get();
+    }
+
+    private void cleanupClaim(URI fileUri) {
+        if (claimCheckProperties.isCleanupOnConsume() && !"http".equalsIgnoreCase(fileUri.getScheme()) && !"https".equalsIgnoreCase(fileUri.getScheme())) {
+            try {
+                claimCheckStore.delete(fileUri);
+            } catch (Exception e) {
+                log.debug("Cleanup of claim check object {} failed or skipped: {}", fileUri, e.getMessage());
             }
         }
     }

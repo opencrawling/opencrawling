@@ -288,6 +288,60 @@ Authorization: ${ocEventsAuthorization}</flowable:expression>
 
 ---
 
+## 🛡️ Pre-Embedding Governance
+
+Checks every document before it is chunked and embedded. Hooks run in the ingestion consumer, in the order listed, and each one approves the document, approves a sanitized version (for example with personal data masked), or rejects it. A sanitized version is what the next hook sees, and the first rejection ends the evaluation. It applies to every document that reaches the ingestion consumer: admin jobs, dynamic jobs, BPM events, OIS and gRPC push.
+
+*   **Permissions never change.** A hook cannot change a document's permissions: the `security` and `acl` metadata keys, every key starting with `security_` or `acl_`, and `documentId`, `uri` and `lastModified` always keep the values the source gave them.
+*   **It fails closed.** When a hook fails or cannot be reached, the document is not embedded, and an error is recorded in the job's trace. The earlier version, if any, stays, and the claim-check object is kept, so a later crawl can ingest the document again.
+*   **Rejections remove the earlier version by default.** A rejected document is not embedded. With `on-rejected-update: purge` (the default), the chunks of its earlier version are removed too, so the index stops serving text that was not approved again. With `keep`, the last approved version stays searchable.
+*   **Only the decoupled pipeline is governed.** In RAG mode, a job that has an output connector also hands each document straight to that connector, which extracts and embeds it itself and never passes the gate. With governance on, such jobs are refused: the job API answers `409` and the job's stage says why. Run RAG jobs on the decoupled pipeline, where the crawler has no output connector. Migration-mode jobs embed nothing, so they still run.
+*   **Outcomes:** each document gets a `Governance` span in the job's trace, with the outcome (`APPROVED`, `SANITIZED`, `REJECTED` or `UNAVAILABLE`), the hook that rejected it, and the hooks' audit facts, such as `pii-masking.masked.email=2`. The content found is never recorded.
+
+*   **`OPENCRAWLING_GOVERNANCE_ENABLED`** (`opencrawling.governance.enabled`): whether the gate is on.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_GOVERNANCE_HOOKS`** (`opencrawling.governance.hooks`): the hooks to run, in order: `pii-masking`, `http`, or the `name()` of a `PreEmbeddingGovernanceHook` bean (`oc-core`, `org.opencrawling.core.governance`). Required when the gate is on. A hook that is unknown or cannot be built stops startup.
+    *   *Type*: list
+    *   *Default*: empty
+*   **`OPENCRAWLING_GOVERNANCE_ON_REJECTED_UPDATE`** (`opencrawling.governance.on-rejected-update`): `purge` or `keep`.
+    *   *Type*: `string`
+    *   *Default*: `purge`
+*   **`opencrawling.governance.pii.types`**: what the `pii-masking` hook masks: `email`, `payment-card` (13 to 19 digits that pass the Luhn check) and `iban` (check digits verified). Each item found is replaced with `[REDACTED:<TYPE>]`. Default: all three. The hook finds well-formed data only; it is no substitute for a dedicated governance service.
+*   **`opencrawling.governance.pii.mask-metadata`**: whether metadata values are masked too. Default `true`.
+*   **`OPENCRAWLING_GOVERNANCE_HTTP_URL`** (`opencrawling.governance.http.url`), **`OPENCRAWLING_GOVERNANCE_HTTP_SECRET`** (`opencrawling.governance.http.secret`): the governance service the `http` hook asks, and the shared secret it signs requests with (at least 32 characters). Use `https`.
+*   **`opencrawling.governance.http.connect-timeout`**, **`timeout`**, **`max-attempts`**, **`initial-backoff`**, **`max-backoff`**: defaults `5s`, `30s`, `3`, `500ms`, `5s`. Network errors, timeouts, `429` and `5xx` are retried, with the pause doubling up to `max-backoff`. Any other status is not retried. One document can hold the consumer for at most about `max-attempts × timeout` plus the pauses.
+
+**The `http` hook's contract.** For each document, the hook sends `POST <url>` with `Content-Type: application/json`:
+
+```json
+{
+  "documentId": "workspace://SpacesStore/1f0c...",
+  "uri": "file:///claims/1f0c...",
+  "text": "the extracted text",
+  "metadata": {"title": ["Contract 42"], "mimeType": ["application/pdf"]},
+  "security": {"inheritanceEnabled": false, "permissions": [{"identity": "finance", "identityType": "GROUP", "displayName": "Finance", "access": "read"}]}
+}
+```
+
+It signs the request the way BPM events are signed:
+*   `X-OpenCrawling-Timestamp` holds the seconds since the epoch.
+*   `X-OpenCrawling-Signature` holds `sha256=` followed by the lowercase hex HMAC-SHA256 of `timestamp + "." + body`, keyed with the secret.
+
+The service should check the signature and refuse old timestamps. It answers `200` with one of:
+
+```json
+{"decision": "APPROVE", "audit": {"policy": "p-7"}}
+{"decision": "SANITIZE", "text": "the text to embed instead", "metadata": {"title": ["Contract 42"]}}
+{"decision": "REJECT", "reason": "unmasked credentials", "audit": {"policy": "p-9"}}
+```
+
+*   For `SANITIZE`, `metadata` is optional: when it is left out, the metadata stays as it was.
+*   `reason` and the `audit` values appear in traces and logs, so they must not repeat what was found.
+*   An answer that is not one of these counts as no decision, and so does one larger than 32 MB.
+
+---
+
 ## 📊 AIOps & Observability Configurations
 
 OpenCrawling integrates end-to-end distributed tracing and metrics that are enabled by default. They can be disabled or fine-tuned using the following environment variables:

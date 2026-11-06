@@ -293,6 +293,15 @@ public class JobController {
                 updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
                 return ResponseEntity.status(409).build();
             }
+
+            // With pre-embedding governance on, nothing may be embedded without passing the gate.
+            if (jobOrchestrator.bypassesGovernance(resolvedOutputConnector, mode)) {
+                reservation.release();
+                log.error("Job {} rejected: {}", id, JobOrchestrator.GOVERNANCE_BYPASS);
+                updateJobStatusAndStage(id, "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
+                        getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
             
             final RepositoryConnector finalConnector = resolvedConnector;
             final OutputConnector finalOutputConnector = resolvedOutputConnector;

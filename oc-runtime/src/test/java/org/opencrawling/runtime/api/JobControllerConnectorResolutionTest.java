@@ -100,6 +100,25 @@ class JobControllerConnectorResolutionTest {
     }
 
     @Test
+    void aJobThatWouldBypassGovernanceIsRejectedAndFreesItsSlot() {
+        RepositoryConnector repository = mock(RepositoryConnector.class);
+        OutputConnector output = mock(OutputConnector.class);
+        when(factory.repository(any())).thenReturn(repository);
+        when(factory.output(any(), eq(PipelineMode.RAG))).thenReturn(output);
+        when(orchestrator.bypassesGovernance(output, PipelineMode.RAG)).thenReturn(true);
+
+        assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(409);
+
+        JobController.JobDTO job = controller.getJob(jobId).getBody();
+        assertThat(job.status()).isEqualTo("Error");
+        assertThat(job.currentStage()).startsWith("Rejected: ").contains("governance").contains("decoupled");
+        verify(orchestrator, never()).runJob(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // The run's slot was released, so the job can start once nothing bypasses the gate.
+        when(orchestrator.bypassesGovernance(output, PipelineMode.RAG)).thenReturn(false);
+        assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
     void aConnectorFactorySpiBuildsTheConnectorAndRunsTheJob() {
         PersistenceHelper.save("connectors.json", java.util.List.of(new ConnectorController.ConnectorDTO(
                 "Web_Crawler", "Web Crawler", "repository", "org.opencrawling.web.WebRepositoryConnector", 10, java.util.Map.of(
