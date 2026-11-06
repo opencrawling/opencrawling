@@ -97,6 +97,7 @@ public class ConnectorFactory {
                 case MFILES -> buildMFiles(name, config);
                 case FILENET -> buildFileNet(name, config);
                 case DOCUMENTUM -> buildDocumentum(name, config);
+                case HYLAND_CIC -> buildHylandCic(name, config);
                 case JDBC -> buildJdbc(name, config);
                 case GRPC_PUSH -> buildGrpcPush(name, config);
                 default -> throw new IllegalStateException("Unhandled repository kind " + kind);
@@ -130,6 +131,7 @@ public class ConnectorFactory {
                 case SEATUNNEL -> buildSeaTunnel(config, mode);
                 case OZONE -> buildOzone(config, mode);
                 case S3 -> buildS3(config, mode);
+                case HYLAND_CIC -> buildHylandCicOutput(config);
                 default -> throw new IllegalStateException("Unhandled output kind " + kind);
             };
         } catch (RuntimeException e) {
@@ -284,6 +286,14 @@ public class ConnectorFactory {
         log.info("Resolving dynamic Documentum repository connector for '{}' (repository '{}', {} mode)",
                 documentumSettings.url(), documentumSettings.repository(), documentumSettings.crawlMode());
         return new org.opencrawling.documentum.DocumentumRepositoryConnector(documentumSettings);
+    }
+
+    private RepositoryConnector buildHylandCic(String name, Map<String, String> config) {
+        org.opencrawling.hyland.cic.config.HylandCicProperties cicSettings =
+                org.opencrawling.hyland.cic.config.HylandCicProperties.fromConfiguration(config);
+        log.info("Resolving dynamic Hyland CIC repository connector for '{}' (base URL '{}', tenant '{}')",
+                name, cicSettings.getBaseUrl(), cicSettings.getTenantId());
+        return new org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector(cicSettings);
     }
 
     private RepositoryConnector buildJdbc(String name, Map<String, String> config) {
@@ -533,5 +543,13 @@ public class ConnectorFactory {
         s3Connector.setPipelineMode(mode);
         log.info("Resolving dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
         return s3Connector;
+    }
+
+    private OutputConnector buildHylandCicOutput(Map<String, String> config) {
+        org.opencrawling.hyland.cic.config.HylandCicProperties cicSettings =
+                org.opencrawling.hyland.cic.config.HylandCicProperties.fromConfiguration(config);
+        log.info("Resolving dynamic Hyland CIC output connector for base URL '{}' (target folder '{}')",
+                cicSettings.getBaseUrl(), cicSettings.getTargetFolderPath());
+        return new org.opencrawling.hyland.cic.output.HylandCicOutputConnector(cicSettings);
     }
 }

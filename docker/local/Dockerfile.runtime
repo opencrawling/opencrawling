@@ -60,6 +60,7 @@ COPY oc-grpc-push-connector/pom.xml oc-grpc-push-connector/
 COPY oc-openarch-output-connector/pom.xml oc-openarch-output-connector/
 COPY oc-authorization-openfga/pom.xml oc-authorization-openfga/
 COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
+COPY oc-hyland-cic-connector/pom.xml oc-hyland-cic-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
 COPY oc-embedding-service/pom.xml oc-embedding-service/
@@ -109,6 +110,7 @@ COPY oc-alfresco-output-connector/src/ /app/oc-alfresco-output-connector/src/
 COPY oc-openarch-output-connector/src/ /app/oc-openarch-output-connector/src/
 COPY oc-authorization-openfga/src/ /app/oc-authorization-openfga/src/
 COPY oc-openarch-repository-connector/src/ /app/oc-openarch-repository-connector/src/
+COPY oc-hyland-cic-connector/src/ /app/oc-hyland-cic-connector/src/
 COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
 COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
 COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/

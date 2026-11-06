@@ -34,6 +34,7 @@ public enum RepositoryKind {
     MFILES,
     FILENET,
     DOCUMENTUM,
+    HYLAND_CIC,
     JDBC,
     GRPC_PUSH,
     FILESYSTEM,
@@ -69,6 +70,8 @@ public enum RepositoryKind {
             return FILENET;
         } else if (className.contains("DocumentumRepositoryConnector")) {
             return DOCUMENTUM;
+        } else if (className.contains("HylandCic") || className.contains("HylandCIC") || className.contains("hyland-cic")) {
+            return HYLAND_CIC;
         } else if (className.contains("Jdbc")) {
             return JDBC;
         } else if (className.contains("GrpcPush") || className.contains("grpcPush")) {

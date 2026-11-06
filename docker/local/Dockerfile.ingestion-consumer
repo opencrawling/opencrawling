@@ -60,6 +60,7 @@ COPY oc-grpc-push-connector/pom.xml oc-grpc-push-connector/
 COPY oc-openarch-output-connector/pom.xml oc-openarch-output-connector/
 COPY oc-authorization-openfga/pom.xml oc-authorization-openfga/
 COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
+COPY oc-hyland-cic-connector/pom.xml oc-hyland-cic-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
 COPY oc-embedding-service/pom.xml oc-embedding-service/
@@ -109,6 +110,7 @@ COPY oc-grpc-push-connector/src/ /app/oc-grpc-push-connector/src/
 COPY oc-openarch-output-connector/src/ /app/oc-openarch-output-connector/src/
 COPY oc-authorization-openfga/src/ /app/oc-authorization-openfga/src/
 COPY oc-openarch-repository-connector/src/ /app/oc-openarch-repository-connector/src/
+COPY oc-hyland-cic-connector/src/ /app/oc-hyland-cic-connector/src/
 COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
 COPY oc-admin-ui/package.json oc-admin-ui/package-lock.json oc-admin-ui/postcss.config.js oc-admin-ui/tailwind.config.js oc-admin-ui/tsconfig.json oc-admin-ui/tsconfig.node.json oc-admin-ui/vite.config.ts oc-admin-ui/index.html /app/oc-admin-ui/
 COPY oc-runtime/src/ /app/oc-runtime/src/

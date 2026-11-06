@@ -120,6 +120,7 @@
         <module>oc-openarch-output-connector</module>
         <module>oc-authorization-openfga</module>
         <module>oc-openarch-repository-connector</module>
+        <module>oc-hyland-cic-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
         <module>oc-web-repository-connector</module>

@@ -1,0 +1,356 @@
+#
+# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Shared Apache Ozone settings for single-datanode claim-check cluster
+x-ozone-env: &ozone-env
+  OZONE-SITE.XML_ozone.scm.client.address: scm
+  OZONE-SITE.XML_ozone.scm.names: scm
+  OZONE-SITE.XML_ozone.om.address: om
+  OZONE-SITE.XML_ozone.metadata.dirs: /data/metadata
+  OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "1"
+  OZONE-SITE.XML_hdds.scm.safemode.pipeline-availability.check: "false"
+  OZONE-SITE.XML_ozone.server.default.replication: "1"
+  OZONE-SITE.XML_ozone.replication: "1"
+  OZONE-SITE.XML_hdds.scm.wait.time.after.safemode.exit: "5s"
+  OZONE-SITE.XML_ozone.scm.pipeline.creation.interval: "10s"
+  OZONE-SITE.XML_ozone.scm.container.size: "1GB"
+  OZONE-SITE.XML_ozone.scm.block.size: "64MB"
+  OZONE-SITE.XML_hdds.datanode.volume.min.free.space: "1GB"
+  OZONE_OPTS: "-Xmx256m"
+
+services:
+  # --- Vector Store (PostgreSQL / pgvector) ---
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-decoupled-hyland-cic
+    environment:
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+      POSTGRES_DB: opencrawling
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-pgdata-hyland-cic:/var/lib/postgresql/data
+    networks:
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Key-Value Cache & Deduplication State Store (Redis) ---
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-hyland-cic
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-hyland-cic:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- Local LLM & Embedding Service (Ollama) ---
+  ollama:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-decoupled-hyland-cic
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata-hyland-cic:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ollama-model-puller:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-model-puller-decoupled-hyland-cic
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # --- Event Streaming Platform (Apache Kafka) ---
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-hyland-cic
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-hyland-cic:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Apache Ozone Object Storage (Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm-hyland-cic
+    hostname: scm
+    environment:
+      <<: *ozone-env
+    command: ["ozone", "scm"]
+    volumes:
+      - ozone-metadata-hyland-cic:/data/metadata
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om-hyland-cic
+    hostname: om
+    environment:
+      <<: *ozone-env
+    command: ["ozone", "om"]
+    volumes:
+      - ozone-metadata-hyland-cic:/data/metadata
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode-hyland-cic
+    environment:
+      <<: *ozone-env
+    command: ["ozone", "datanode"]
+    volumes:
+      - ozone-datanode-hyland-cic:/data/hdds
+      - ozone-metadata-hyland-cic:/data/metadata
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g-hyland-cic
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      <<: *ozone-env
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services with Hyland CIC Connector ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-hyland-cic
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=hyland-cic
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_BASE_URL=${HYLAND_CIC_BASE_URL:-https://content.cic.hyland.com}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_TOKEN_URL=${HYLAND_CIC_TOKEN_URL:-https://identity.cic.hyland.com/oauth/token}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_CLIENT_ID=${HYLAND_CIC_CLIENT_ID:-cic-client-id}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_CLIENT_SECRET=${HYLAND_CIC_CLIENT_SECRET:-cic-client-secret}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_TENANT_ID=${HYLAND_CIC_TENANT_ID:-tenant-cic}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_REPOSITORY_ID=${HYLAND_CIC_REPOSITORY_ID:-repo-cic}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=NATIVE
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - ../../oc-runtime/data:/data
+      - opencrawling-claims-hyland-cic:/claims
+      - opencrawling-reportsdata-hyland-cic:/data/reports
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: on-failure
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-service-hyland-cic
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=hyland-cic
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-ozone}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=NATIVE
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+    volumes:
+      - opencrawling-claims-hyland-cic:/claims
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-service-hyland-cic
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      - kafka
+      - ollama
+      - postgres
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-hyland-cic
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-hyland-cic
+    ports:
+      - "8080:8080"
+      - "9095:9095"
+      - "9096:9096"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_BASE_URL=${HYLAND_CIC_BASE_URL:-https://content.cic.hyland.com}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_TOKEN_URL=${HYLAND_CIC_TOKEN_URL:-https://identity.cic.hyland.com/oauth/token}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_CLIENT_ID=${HYLAND_CIC_CLIENT_ID:-cic-client-id}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_CLIENT_SECRET=${HYLAND_CIC_CLIENT_SECRET:-cic-client-secret}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_TENANT_ID=${HYLAND_CIC_TENANT_ID:-tenant-cic}
+      - SPRING_OPENCRAWLING_CONNECTOR_HYLAND_CIC_REPOSITORY_ID=${HYLAND_CIC_REPOSITORY_ID:-repo-cic}
+    volumes:
+      - opencrawling-claims-hyland-cic:/claims
+      - opencrawling-reportsdata-hyland-cic:/data/reports
+    depends_on:
+      - postgres
+      - redis
+      - ollama
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  opencrawling-pgdata-hyland-cic:
+    name: opencrawling-pgdata-hyland-cic
+  opencrawling-redisdata-hyland-cic:
+    name: opencrawling-redisdata-hyland-cic
+  opencrawling-ollamadata-hyland-cic:
+    name: opencrawling-ollamadata-hyland-cic
+  opencrawling-kafkadata-hyland-cic:
+    name: opencrawling-kafkadata-hyland-cic
+  opencrawling-claims-hyland-cic:
+    name: opencrawling-claims-hyland-cic
+  opencrawling-reportsdata-hyland-cic:
+    name: opencrawling-reportsdata-hyland-cic
+  ozone-metadata-hyland-cic:
+    name: ozone-metadata-hyland-cic
+  ozone-datanode-hyland-cic:
+    name: ozone-datanode-hyland-cic

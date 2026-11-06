@@ -131,6 +131,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('openarch') || className.includes('OpenArch')) {
     return { icon: Layers, color: 'text-indigo-400', bg: 'bg-indigo-400/10', border: 'border-indigo-500/20' }
   }
+  if (className.includes('hyland.cic') || className.includes('HylandCic')) {
+    return { icon: Cloud, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
   return { icon: Plug2, color: 'text-muted-foreground', bg: 'bg-muted-foreground/10', border: 'border-muted-foreground/20' }
 }
 
@@ -426,6 +429,7 @@ export default function ConnectorForm() {
       { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
       { label: 'gRPC Push Ingestion Connector', value: 'org.opencrawling.push.grpc.GrpcPushRepositoryConnector' },
       { label: 'Hyland OpenArch Federated Repository', value: 'org.opencrawling.openarch.repository.OpenArchRepositoryConnector' },
+      { label: 'Hyland Content Innovation Cloud (HXP REST API)', value: 'org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -445,6 +449,7 @@ export default function ConnectorForm() {
       { label: 'AWS S3 (Migration Mode only)', value: 'org.opencrawling.s3.S3OutputConnector' },
       { label: 'Alfresco Content Services (Migration Mode only)', value: 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' },
       { label: 'Hyland OpenArch Federated Ingestion & Parquet Vector Bridge', value: 'org.opencrawling.openarch.output.OpenArchOutputConnector' },
+      { label: 'Hyland Content Innovation Cloud (HXP Output)', value: 'org.opencrawling.hyland.cic.output.HylandCicOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -3805,6 +3810,183 @@ export default function ConnectorForm() {
                     </div>
                   )}
 
+                  {/* Hyland Content Innovation Cloud (HXP) Repository Connector */}
+                  {selectedClass === 'org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland CIC / HXP API Base URL</label>
+                          <input
+                            {...register('configuration.baseUrl')}
+                            defaultValue="https://api.content.hylandcloud.com"
+                            placeholder="https://api.content.hylandcloud.com"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland IdP OAuth2 Token Endpoint</label>
+                          <input
+                            {...register('configuration.idpTokenUrl')}
+                            defaultValue="https://identity.hylandcloud.com/connect/token"
+                            placeholder="https://identity.hylandcloud.com/connect/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.clientId')}
+                            placeholder="hxp-client-id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.clientSecret')}
+                            placeholder="••••••••••••"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scopes</label>
+                          <input
+                            {...register('configuration.scopes')}
+                            defaultValue="hxp hxp.integrations hxp.content"
+                            placeholder="hxp hxp.integrations hxp.content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Tenant ID (Optional)</label>
+                          <input
+                            {...register('configuration.tenantId')}
+                            placeholder="tenant-uuid-or-slug"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Root Folder Path</label>
+                          <input
+                            {...register('configuration.rootFolderPath')}
+                            defaultValue="/"
+                            placeholder="/"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Root Folder ID (Overrides Path if set)</label>
+                          <input
+                            {...register('configuration.rootFolderId')}
+                            placeholder="folder-uuid"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Search Query (Optional, overrides folder crawl)</label>
+                          <input
+                            {...register('configuration.query')}
+                            placeholder="contentType eq 'FinancialReport'"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Batch Size (Pagination)</label>
+                          <input
+                            type="number"
+                            {...register('configuration.batchSize')}
+                            defaultValue={100}
+                            min={1}
+                            max={1000}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                          <input
+                            type="number"
+                            {...register('configuration.maxContentSizeBytes')}
+                            defaultValue={52428800}
+                            min={1}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input
+                            type="checkbox"
+                            id="includeSubfoldersHxp"
+                            {...register('configuration.includeSubfolders')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeSubfoldersHxp" className="text-sm font-medium cursor-pointer">
+                            Include Subfolders Recursively
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input
+                            type="checkbox"
+                            id="includeAclsHxp"
+                            {...register('configuration.includeAcls')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeAclsHxp" className="text-sm font-medium cursor-pointer">
+                            Sync Zero-Trust ACLs & Permissions
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4 col-span-2">
+                          <input
+                            type="checkbox"
+                            id="includeContentStreamHxp"
+                            {...register('configuration.includeContentStream')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeContentStreamHxp" className="text-sm font-medium cursor-pointer">
+                            Stream &amp; Extract Binary Payloads
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Cloud className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Hyland Content Innovation Cloud (HXP) Microservices Platform</p>
+                            <p className="mt-0.5 opacity-90">
+                              Direct cloud-native ingestion via Content REST API and IdP OAuth2 token exchange with Zero-Trust ACL security mapping and virtual thread streaming.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test HXP Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* PGVector Store */}
                   {selectedClass === 'org.opencrawling.vector.VectorOutputConnector' && (
                     <div className="space-y-4 font-sans text-foreground">
@@ -5214,6 +5396,135 @@ export default function ConnectorForm() {
                           >
                             {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />}
                             Test OpenArch Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hyland Content Innovation Cloud (HXP) Output Connector */}
+                  {selectedClass === 'org.opencrawling.hyland.cic.output.HylandCicOutputConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland CIC / HXP API Base URL</label>
+                          <input
+                            {...register('configuration.baseUrl')}
+                            defaultValue="https://api.content.hylandcloud.com"
+                            placeholder="https://api.content.hylandcloud.com"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland IdP OAuth2 Token Endpoint</label>
+                          <input
+                            {...register('configuration.idpTokenUrl')}
+                            defaultValue="https://identity.hylandcloud.com/connect/token"
+                            placeholder="https://identity.hylandcloud.com/connect/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.clientId')}
+                            placeholder="hxp-client-id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.clientSecret')}
+                            placeholder="••••••••••••"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scopes</label>
+                          <input
+                            {...register('configuration.scopes')}
+                            defaultValue="hxp hxp.integrations hxp.content"
+                            placeholder="hxp hxp.integrations hxp.content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Tenant ID (Optional)</label>
+                          <input
+                            {...register('configuration.tenantId')}
+                            placeholder="tenant-uuid-or-slug"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Target Folder Path</label>
+                          <input
+                            {...register('configuration.targetFolderPath')}
+                            defaultValue="/Enterprise_Ingestion/Automated_Archive"
+                            placeholder="/Enterprise_Ingestion/Automated_Archive"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Target Folder ID (Overrides Path if set)</label>
+                          <input
+                            {...register('configuration.targetFolderId')}
+                            placeholder="folder-uuid"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Default Content Type</label>
+                          <input
+                            {...register('configuration.defaultContentType')}
+                            defaultValue="ArchivedDocument"
+                            placeholder="ArchivedDocument"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Conflict Resolution Policy</label>
+                          <select
+                            {...register('configuration.conflictResolution')}
+                            defaultValue="create-version"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="create-version">Create New Version</option>
+                            <option value="overwrite">Overwrite Existing</option>
+                            <option value="skip">Skip If Exists</option>
+                          </select>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Cloud className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Hyland Content Innovation Cloud (HXP) Output Connector</p>
+                            <p className="mt-0.5 opacity-90">
+                              Uploads, versions, and archives crawled documents into HXP repositories and dossiers with metadata mapping and multi-tenant security.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test HXP Output Connectivity
                           </button>
                         </div>
                       </div>

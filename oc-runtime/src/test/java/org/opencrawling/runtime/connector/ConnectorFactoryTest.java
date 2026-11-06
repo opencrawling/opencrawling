@@ -82,12 +82,15 @@ class ConnectorFactoryTest {
                 "org.opencrawling.jdbc.JdbcRepositoryConnector", Map.of("tableName", "docs", "batchSize", "not-a-number")));
         RepositoryConnector push = factory.repository(connector("push",
                 "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", Map.of()));
+        RepositoryConnector cic = factory.repository(connector("cic",
+                "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", Map.of("baseUrl", "https://hxp.test")));
 
         assertThat(alfresco).isInstanceOf(org.opencrawling.alfresco.AlfrescoRepositoryConnector.class);
         assertThat(cmis).isInstanceOf(CmisRepositoryConnector.class);
         assertThat(iceberg).isInstanceOf(org.opencrawling.iceberg.IcebergRepositoryConnector.class);
         assertThat(jdbc).isInstanceOf(JdbcRepositoryConnector.class);
         assertThat(push).isInstanceOf(GrpcPushRepositoryConnector.class);
+        assertThat(cic).isInstanceOf(org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector.class);
     }
 
     // --- repository: no more silent fallback to the file system ---
@@ -166,5 +169,12 @@ class ConnectorFactoryTest {
         assertThat(factory.output(connector("SeaTunnel_Output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector",
                 Map.of("seatunnelRestUrl", "http://seatunnel.test:5801")), PipelineMode.RAG))
                 .isInstanceOf(SeaTunnelOutputConnector.class);
+    }
+
+    @Test
+    void hylandCicOutputIsBuiltPerJob() {
+        assertThat(factory.output(connector("Hyland_CIC_Output", "org.opencrawling.hyland.cic.output.HylandCicOutputConnector",
+                Map.of("baseUrl", "https://hxp.test")), PipelineMode.RAG))
+                .isInstanceOf(org.opencrawling.hyland.cic.output.HylandCicOutputConnector.class);
     }
 }
