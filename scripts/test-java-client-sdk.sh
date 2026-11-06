@@ -120,7 +120,7 @@ fi
 
 echo -e "${GREEN}================================================================================${NC}"
 echo -e "${GREEN}SUCCESS: OpenCrawling Java Client SDK Integration Test Suite Completed!${NC}"
-echo -e "${GREEN}Covered Services: JobClient, ConnectorClient, SystemClient, ObservabilityClient, CopilotClient, ReportClient, OpenApiClient${NC}"
+echo -e "${GREEN}Covered Services: JobClient, ConnectorClient, SystemClient, ObservabilityClient, CopilotClient, ReportClient, OpenApiClient, DiscoveryClient${NC}"
 echo -e "${GREEN}================================================================================${NC}"
 
 exit 0

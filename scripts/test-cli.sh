@@ -109,7 +109,7 @@ fi
 
 # Step 6: Testing Subcommand Help Displays
 echo -e "${CYAN}[INFO] Step 6: Verifying all subcommand help menus...${NC}"
-for cmd in job connector push copilot aiops system config schema mcf report openapi; do
+for cmd in job connector push copilot aiops system config schema mcf report openapi discovery; do
     $RUN_CLI $cmd --help > /dev/null
     echo -e "${GREEN}  ✔ oc $cmd --help passed.${NC}"
 done
@@ -120,6 +120,10 @@ done
 for openapi_sub in status export endpoints schema validate diff tools ui; do
     $RUN_CLI openapi $openapi_sub --help > /dev/null
     echo -e "${GREEN}  ✔ oc openapi $openapi_sub --help passed.${NC}"
+done
+for discovery_sub in connectors tree dry-run; do
+    $RUN_CLI discovery $discovery_sub --help > /dev/null
+    echo -e "${GREEN}  ✔ oc discovery $discovery_sub --help passed.${NC}"
 done
 
 # Step 7: Testing ManifoldCF Migrator CLI (oc mcf)
@@ -281,6 +285,7 @@ if [ "$HTTP_CODE" = "200" ]; then
     $RUN_CLI connector list
     $RUN_CLI job list
     $RUN_CLI openapi status
+    $RUN_CLI discovery connectors || true
     $RUN_CLI push ping --host 127.0.0.1 --port "${OPENCRAWLING_GRPC_PUSH_PORT:-9096}" || true
     echo -e "${GREEN}  ✔ Live REST API CLI integration tests passed.${NC}"
 else

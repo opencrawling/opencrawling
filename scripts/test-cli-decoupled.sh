@@ -26,7 +26,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PASSED_COUNT=0
-TOTAL_TESTS=16
+TOTAL_TESTS=17
 
 log_step() {
     echo -e "\n${BOLD}${CYAN}────────────────────────────────────────────────────────────────────────────────${NC}"
@@ -244,6 +244,11 @@ else
     log_fail "oc openapi tools failed to write $DECOUPLED_TOOLS_JSON"
     exit 1
 fi
+
+# 4.8 Live Pre-Crawl Repository Discovery ('oc discovery')
+echo -e "\n${CYAN}  [4.15] Querying discoverable repository connectors ('oc discovery connectors')...${NC}"
+$RUN_CLI discovery connectors || true
+log_pass "oc discovery connectors executed successfully"
 
 # ------------------------------------------------------------------------------
 # STEP 5: Final Execution Summary Report

@@ -89,7 +89,7 @@ trap on_exit EXIT
 # ------------------------------------------------------------------------------
 log_step "1" "Compiling and running offline unit tests for oc-java-client-sdk..."
 mvn clean test -pl oc-java-client-sdk -Dtest='!LiveSystemIntegrationTest'
-log_pass "Compiled and passed offline SDK unit tests (JobClient, ConnectorClient, DocumentPayloadTest)"
+log_pass "Compiled and passed offline SDK unit tests (JobClient, ConnectorClient, DocumentPayloadTest, DiscoveryClientTest)"
 
 # ------------------------------------------------------------------------------
 # STEP 2: Boot Decoupled Container Cluster
