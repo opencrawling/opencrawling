@@ -39,6 +39,7 @@ class ConnectorKindTest {
             "org.opencrawling.mfiles.MFilesRepositoryConnector, MFILES",
             "org.opencrawling.filenet.FileNetRepositoryConnector, FILENET",
             "org.opencrawling.documentum.DocumentumRepositoryConnector, DOCUMENTUM",
+            "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector, HYLAND_CIC",
             "org.opencrawling.jdbc.JdbcRepositoryConnector, JDBC",
             "org.opencrawling.push.grpc.GrpcPushRepositoryConnector, GRPC_PUSH",
             "custom.grpcPushSource, GRPC_PUSH",
@@ -76,6 +77,7 @@ class ConnectorKindTest {
             "custom.ozoneSink, OZONE",
             "org.opencrawling.s3.S3OutputConnector, S3",
             "custom.s3sink, S3",
+            "org.opencrawling.hyland.cic.output.HylandCicOutputConnector, HYLAND_CIC",
             // the S3 rule never catches OpenSearch
             "org.opencrawling.opensearch3.OpenSearch3OutputConnector, ACTIVE",
             "custom.opensearch3s3, ACTIVE",

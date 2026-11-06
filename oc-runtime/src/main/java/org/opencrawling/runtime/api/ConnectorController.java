@@ -265,6 +265,21 @@ public class ConnectorController {
             Map.entry("timeoutSeconds", "30"),
             Map.entry("stateDirectory", "data/documentum-state")
         )));
+        defaults.add(new ConnectorDTO("Hyland_CIC_Repository", "Hyland Content Innovation Cloud (HXP) Repository", "repository", "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("baseUrl", "https://api.content.hylandcloud.com"),
+            Map.entry("idpTokenUrl", "https://identity.hylandcloud.com/connect/token"),
+            Map.entry("clientId", ""),
+            Map.entry("clientSecret", ""),
+            Map.entry("scopes", "hxp hxp.integrations hxp.content"),
+            Map.entry("tenantId", ""),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("rootFolderId", ""),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("batchSize", "100"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800")
+        )));
         defaults.add(new ConnectorDTO("Grpc_Push_Connector", "gRPC Push Streaming Ingestion", "repository", "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", 100, Map.of(
             "port", "9096",
             "maxMessageSizeMb", "64",
@@ -412,6 +427,18 @@ public class ConnectorController {
             Map.entry("upsert", "true"),
             Map.entry("syncAcls", "true"),
             Map.entry("uploadBinaries", "true")
+        )));
+        defaults.add(new ConnectorDTO("Hyland_CIC_Output", "Hyland Content Innovation Cloud (HXP) Output Connector", "output", "org.opencrawling.hyland.cic.output.HylandCicOutputConnector", 10, Map.ofEntries(
+            Map.entry("baseUrl", "https://api.content.hylandcloud.com"),
+            Map.entry("idpTokenUrl", "https://identity.hylandcloud.com/connect/token"),
+            Map.entry("clientId", ""),
+            Map.entry("clientSecret", ""),
+            Map.entry("scopes", "hxp hxp.integrations hxp.content"),
+            Map.entry("tenantId", ""),
+            Map.entry("targetFolderPath", "/Enterprise_Ingestion/Automated_Archive"),
+            Map.entry("targetFolderId", ""),
+            Map.entry("defaultContentType", "ArchivedDocument"),
+            Map.entry("conflictResolution", "create-version")
         )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
