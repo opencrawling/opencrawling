@@ -138,6 +138,17 @@ class LiveSystemIntegrationTest {
             List<OpenApiEndpointSummary> endpoints = client.openApi().listEndpoints();
             assertThat(endpoints).isNotEmpty();
             System.out.println("Live System SDK OpenAPI 3.1 Status Asserted: " + openApiStatus.operationCount() + " operations, " + openApiStatus.schemaCount() + " schemas");
+
+            // 8. Pre-Crawl Repository Discovery & Dry-Run Client
+            assertThat(client.discovery()).isNotNull();
+            try {
+                List<DiscoveryConnectorInfo> discoverable = client.discovery().listConnectors();
+                assertThat(discoverable).isNotNull();
+                System.out.println("Live System SDK Discovery Connectors: " + discoverable.size() + " discoverable connectors found");
+            } catch (org.opencrawling.sdk.exceptions.OpenCrawlingApiException e) {
+                // Discovery endpoints might be disabled by default (opencrawling.discovery.enabled=false)
+                System.out.println("Live System SDK Discovery API returned HTTP " + e.getStatusCode() + " (discovery feature may be disabled in cluster config)");
+            }
         }
     }
 }
