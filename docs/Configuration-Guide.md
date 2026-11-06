@@ -153,7 +153,7 @@ Lets agents and API clients list a registered repository's tree and preview a cr
 
 ## 🚚 Dynamic Jobs
 
-Lets a verified caller, typically an agent, ingest a folder of a registered connector without an administrator creating a job (REST `/api/jobs/dynamic/**`, MCP tools `triggerDynamicJob`, `getDynamicJobStatus`, `listDynamicJobs`, `stopDynamicJob`). Needs `opencrawling.security.identity.mode=jwt`, plus `protect-api` for REST. See [Model Context Protocol, Dynamic jobs](Model-Context-Protocol#-dynamic-jobs).
+Lets a verified caller, typically an agent, ingest a folder of a registered connector without an administrator creating a job or one document of it (REST `/api/jobs/dynamic/**`, MCP tools `triggerDynamicJob`, `getDynamicJobStatus`, `listDynamicJobs`, `stopDynamicJob`, `ingestDocument`, `removeDeletedDocument`). Needs `opencrawling.security.identity.mode=jwt`, plus `protect-api` for REST. See [Model Context Protocol, Dynamic jobs](Model-Context-Protocol#-dynamic-jobs).
 
 *   **`OPENCRAWLING_JOBS_DYNAMIC_ENABLED`** (`opencrawling.jobs.dynamic.enabled`): whether the endpoints and tools exist.
     *   *Type*: `boolean`
@@ -164,6 +164,9 @@ Lets a verified caller, typically an agent, ingest a folder of a registered conn
 *   **`OPENCRAWLING_JOBS_DYNAMIC_REQUIRED_SCOPE`** (`opencrawling.jobs.dynamic.required-scope`): the OAuth2 scope the caller's token must carry (`scope` or `scp` claim). Blank: not checked.
     *   *Type*: `string`
     *   *Default*: `oc:jobs:write`
+*   **`OPENCRAWLING_JOBS_DYNAMIC_DOCUMENT_SCOPE`** (`opencrawling.jobs.dynamic.document-scope`): the OAuth2 scope for ingesting or removing one document (`POST /api/jobs/dynamic/documents`, MCP `ingestDocument`, `removeDeletedDocument`). Either scope lets a caller follow and stop its own jobs. Blank: not checked.
+    *   *Type*: `string`
+    *   *Default*: `oc:jobs:run`
 *   **`OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS`** (`opencrawling.jobs.dynamic.admin-groups`): groups whose members may read and stop every dynamic job, not only their own.
     *   *Type*: list
     *   *Default*: empty

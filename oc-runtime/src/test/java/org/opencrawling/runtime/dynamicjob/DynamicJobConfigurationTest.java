@@ -78,12 +78,14 @@ class DynamicJobConfigurationTest {
             DynamicJobProperties defaults = context.getBean(DynamicJobProperties.class);
             assertThat(defaults.getConnectors()).isEmpty();
             assertThat(defaults.getRequiredScope()).isEqualTo("oc:jobs:write");
+            assertThat(defaults.getDocumentScope()).isEqualTo("oc:jobs:run");
             assertThat(defaults.getAdminGroups()).isEmpty();
             assertThat(defaults.getMaxRunningPerUser()).isEqualTo(2);
         });
         runner.withPropertyValues("opencrawling.jobs.dynamic.enabled=true",
                 "opencrawling.jobs.dynamic.connectors=Alfresco_Main,CMIS_Archive",
                 "opencrawling.jobs.dynamic.required-scope=ingest",
+                "opencrawling.jobs.dynamic.document-scope=ingest-one",
                 "opencrawling.jobs.dynamic.admin-groups=oc-admins",
                 "opencrawling.jobs.dynamic.max-running-per-user=5",
                 "opencrawling.jobs.dynamic.retention=2h",
@@ -92,6 +94,7 @@ class DynamicJobConfigurationTest {
             DynamicJobProperties properties = context.getBean(DynamicJobProperties.class);
             assertThat(properties.getConnectors()).containsExactly("Alfresco_Main", "CMIS_Archive");
             assertThat(properties.getRequiredScope()).isEqualTo("ingest");
+            assertThat(properties.getDocumentScope()).isEqualTo("ingest-one");
             assertThat(properties.getAdminGroups()).containsExactly("oc-admins");
             assertThat(properties.getMaxRunningPerUser()).isEqualTo(5);
             assertThat(properties.getRetention()).isEqualTo(Duration.ofHours(2));

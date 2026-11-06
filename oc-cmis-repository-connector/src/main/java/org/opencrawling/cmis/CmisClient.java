@@ -367,6 +367,38 @@ public class CmisClient {
     }
 
     /**
+     * The folders an object is filed in (Browser binding {@code cmisselector=parents}). A document may be filed in
+     * several folders, or in none.
+     */
+    public List<JsonNode> getObjectParents(String repositoryId, String objectId) throws IOException, InterruptedException {
+        String url = getRootFolderUrl(repositoryId) + "?objectId=" + urlEncode(objectId)
+                + "&cmisselector=parents&includeACL=false&includeAllowableActions=false";
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("Accept", "application/json")
+                .GET();
+        if (authHeader != null) {
+            builder.header("Authorization", authHeader);
+        }
+        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() == 404) {
+            throw new java.io.FileNotFoundException("CMIS object not found: " + objectId);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Failed to get CMIS object parents from " + url + ". HTTP " + response.statusCode());
+        }
+        List<JsonNode> parents = new ArrayList<>();
+        JsonNode root = objectMapper.readTree(response.body());
+        if (root.isArray()) {
+            for (JsonNode item : root) {
+                parents.add(item.has("object") ? item.get("object") : item);
+            }
+        }
+        return parents;
+    }
+
+    /**
      * Executes a CMISQL query.
      */
     public CmisQueryResult query(String repositoryId, String cmisQuery, boolean searchAllVersions, int maxItems, int skipCount)

@@ -66,6 +66,25 @@ public class DynamicJobMcpTools {
         return service.start(caller, request, idempotencyKey, ExecutionProvenance.SOURCE_MCP, correlationId);
     }
 
+    @McpTool(description = "Ingest one document of a registered repository connector again, by its repository id (as exploreRepositoryTree returns it). Only documents in the connector's scope that you may read; the document keeps its source permissions. Returns a job id to follow with getDynamicJobStatus.")
+    public Object ingestDocument(
+            @McpToolParam(description = "Name of the registered repository connector", required = true) String connector,
+            @McpToolParam(description = "The document's id in the repository (sourceId), not a path", required = true) String document,
+            @McpToolParam(description = "Repeating a call with the same key returns the job the first call started", required = false) String idempotencyKey,
+            @McpToolParam(description = "Your own id for this request, recorded in the job's ledger", required = false) String correlationId) {
+        return service.document(caller(), new DynamicJobService.DocumentRequest(connector, document,
+                DynamicJobService.DocumentRequest.Action.UPSERT), idempotencyKey, ExecutionProvenance.SOURCE_MCP, correlationId);
+    }
+
+    @McpTool(description = "Remove a document from the index because it was deleted in its repository. Nothing is removed while the repository still has the document. The answer is the same whether or not anything was removed.")
+    public Object removeDeletedDocument(
+            @McpToolParam(description = "Name of the registered repository connector", required = true) String connector,
+            @McpToolParam(description = "The document's id in the repository (sourceId)", required = true) String document,
+            @McpToolParam(description = "Your own id for this request, recorded in the ledger", required = false) String correlationId) {
+        return service.document(caller(), new DynamicJobService.DocumentRequest(connector, document,
+                DynamicJobService.DocumentRequest.Action.DELETE), null, ExecutionProvenance.SOURCE_MCP, correlationId);
+    }
+
     @McpTool(description = "Get the status of a dynamic job you started: running, completed, failed or stopped, and how many documents it handled once it has ended.")
     public DynamicJobService.JobStatus getDynamicJobStatus(
             @McpToolParam(description = "The job id returned by triggerDynamicJob", required = true) String jobId) {

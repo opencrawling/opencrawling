@@ -184,11 +184,47 @@ class DynamicJobHttpTest {
     }
 
     @Test
+    void oneDocumentIsIngestedOrRemovedOverRest() throws Exception {
+        String workflow = tokenFor("alice", "oc:jobs:run", "finance");
+
+        HttpResponse<String> ingested = send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\"}", workflow);
+        assertThat(ingested.statusCode()).isEqualTo(202);
+        String jobId = field(ingested.body(), "jobId");
+        assertThat(ingested.headers().firstValue("Location")).contains("/api/jobs/dynamic/" + jobId);
+        awaitCrawl("finance-report via " + ExecutionProvenance.SOURCE_DYNAMIC_API + " by alice");
+        assertThat(send("GET", "/api/jobs/dynamic/" + jobId, null, workflow).body()).contains("\"kind\":\"DOCUMENT\"");
+
+        HttpResponse<String> removed = send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"deleted-old\",\"action\":\"DELETE\"}", workflow);
+        HttpResponse<String> hidden = send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"alice-notes\",\"action\":\"DELETE\"}",
+                tokenFor("carol", "oc:jobs:run"));
+        assertThat(removed.statusCode()).isEqualTo(202);
+        assertThat(hidden.statusCode()).isEqualTo(202);
+        assertThat(removed.body().replace("deleted-old", "X")).isEqualTo(hidden.body().replace("alice-notes", "X"));
+        awaitCrawl("fake://deleted-old via " + ExecutionProvenance.SOURCE_DYNAMIC_API + " by alice");
+
+        assertThat(send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\",\"action\":\"DELETE\"}", workflow)
+                .statusCode()).isEqualTo(409);
+        assertThat(send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\"}", tokenFor("carol", "oc:jobs:run"))
+                .statusCode()).isEqualTo(400);
+        assertThat(send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\"}", tokenFor("alice", "oc:jobs:write", "finance"))
+                .statusCode()).isEqualTo(403);
+        assertThat(send("POST", "/api/jobs/dynamic/documents",
+                "{\"connector\":\"Fake_Repo\",\"document\":\"finance-report\"}", null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
     void theMcpToolsUseTheTokensCaller() {
         try (McpSyncClient client = IdentityTestApplication.mcpClient(port, tokenFor("alice", "oc:jobs:write", "finance"))) {
             client.initialize();
             assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name)
-                    .contains("triggerDynamicJob", "getDynamicJobStatus", "listDynamicJobs", "stopDynamicJob");
+                    .contains("triggerDynamicJob", "getDynamicJobStatus", "listDynamicJobs", "stopDynamicJob",
+                            "ingestDocument", "removeDeletedDocument");
 
             McpSchema.CallToolResult started = client.callTool(new McpSchema.CallToolRequest("triggerDynamicJob",
                     Map.of("connector", "Fake_Repo", "start", "finance-folder")));
@@ -199,6 +235,17 @@ class DynamicJobHttpTest {
             McpSchema.CallToolResult status = client.callTool(new McpSchema.CallToolRequest("getDynamicJobStatus",
                     Map.of("jobId", jobId)));
             assertThat(((McpSchema.TextContent) status.content().get(0)).text()).contains("\"owner\":\"alice\"");
+        }
+        try (McpSyncClient client = IdentityTestApplication.mcpClient(port, tokenFor("dave", "oc:jobs:run", "finance"))) {
+            client.initialize();
+            McpSchema.CallToolResult ingested = client.callTool(new McpSchema.CallToolRequest("ingestDocument",
+                    Map.of("connector", "Fake_Repo", "document", "finance-report")));
+            assertThat(ingested.isError()).isNotEqualTo(Boolean.TRUE);
+            awaitCrawl("finance-report via " + ExecutionProvenance.SOURCE_MCP + " by dave");
+            McpSchema.CallToolResult removed = client.callTool(new McpSchema.CallToolRequest("removeDeletedDocument",
+                    Map.of("connector", "Fake_Repo", "document", "deleted-mcp")));
+            assertThat(((McpSchema.TextContent) removed.content().get(0)).text()).contains(DynamicJobService.DELETION_NOTE);
+            awaitCrawl("fake://deleted-mcp via " + ExecutionProvenance.SOURCE_MCP + " by dave");
         }
         try (McpSyncClient client = IdentityTestApplication.mcpClient(port, tokenFor("carol", "oc:jobs:write"))) {
             client.initialize();

@@ -172,6 +172,9 @@ opencrawling:
       connectors: ${OPENCRAWLING_JOBS_DYNAMIC_CONNECTORS:}
       # OAuth2 scope the token must carry. Blank: not checked.
       required-scope: ${OPENCRAWLING_JOBS_DYNAMIC_REQUIRED_SCOPE:oc:jobs:write}
+      # OAuth2 scope for ingesting or removing one document (POST /api/jobs/dynamic/documents, MCP ingestDocument
+      # and removeDeletedDocument). Either scope lets a caller follow and stop its own jobs. Blank: not checked.
+      document-scope: ${OPENCRAWLING_JOBS_DYNAMIC_DOCUMENT_SCOPE:oc:jobs:run}
       # Groups whose members may read and stop every dynamic job, not only their own.
       admin-groups: ${OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS:}
       # Dynamic jobs one user may have running at once (0 = no cap of its own; max-concurrent-runs* still apply).
