@@ -106,6 +106,9 @@ class DynamicJobConfigurationTest {
             assertThat(defaults.getDocumentScope()).isEqualTo("oc:jobs:run");
             assertThat(defaults.getAdminGroups()).isEmpty();
             assertThat(defaults.getMaxRunningPerUser()).isEqualTo(2);
+            assertThat(defaults.isRequireApproval()).isFalse();
+            assertThat(defaults.getApprovalTimeout()).isEqualTo(Duration.ofHours(24));
+            assertThat(defaults.getMaxPendingPerUser()).isEqualTo(10);
         });
         runner.withPropertyValues("opencrawling.jobs.dynamic.enabled=true",
                 "opencrawling.jobs.dynamic.connectors=Alfresco_Main,CMIS_Archive",
@@ -114,6 +117,9 @@ class DynamicJobConfigurationTest {
                 "opencrawling.jobs.dynamic.admin-groups=oc-admins",
                 "opencrawling.jobs.dynamic.max-running-per-user=5",
                 "opencrawling.jobs.dynamic.retention=2h",
+                "opencrawling.jobs.dynamic.require-approval=true",
+                "opencrawling.jobs.dynamic.approval-timeout=3h",
+                "opencrawling.jobs.dynamic.max-pending-per-user=4",
                 "opencrawling.jobs.dynamic.max-retained=10",
                 "opencrawling.jobs.dynamic.transformation-connector=OpenAI_Embedding").run(context -> {
             DynamicJobProperties properties = context.getBean(DynamicJobProperties.class);
@@ -123,6 +129,9 @@ class DynamicJobConfigurationTest {
             assertThat(properties.getAdminGroups()).containsExactly("oc-admins");
             assertThat(properties.getMaxRunningPerUser()).isEqualTo(5);
             assertThat(properties.getRetention()).isEqualTo(Duration.ofHours(2));
+            assertThat(properties.isRequireApproval()).isTrue();
+            assertThat(properties.getApprovalTimeout()).isEqualTo(Duration.ofHours(3));
+            assertThat(properties.getMaxPendingPerUser()).isEqualTo(4);
             assertThat(properties.getMaxRetained()).isEqualTo(10);
             assertThat(properties.getTransformationConnector()).isEqualTo("OpenAI_Embedding");
         });

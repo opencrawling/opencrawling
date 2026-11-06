@@ -149,6 +149,30 @@ public class DynamicJobController {
         return ResponseEntity.accepted().body(service.stop(caller(), jobId));
     }
 
+    /** A rejection's reason, shown in the job's note. */
+    public record RejectBody(String reason) {}
+
+    @Operation(summary = "Approve a dynamic job", description = "For members of the admin groups, when "
+            + "opencrawling.jobs.dynamic.require-approval is on. The job's folder or document is checked again under the "
+            + "requester's identity and the job starts under the same id. A job cannot be approved by the user who asked for it.")
+    @ApiResponse(responseCode = "200", description = "Approved: started, or FAILED with the reason in its note")
+    @ApiResponse(responseCode = "403", description = "Not in the admin groups, or approving one's own job")
+    @ApiResponse(responseCode = "409", description = "The job is not waiting for approval")
+    @ApiResponse(responseCode = "429", description = "A limit is reached; the job stays pending")
+    @PostMapping("/{jobId}/approve")
+    public DynamicJobService.JobStatus approve(@PathVariable String jobId) {
+        return service.approve(caller(), jobId);
+    }
+
+    @Operation(summary = "Reject a dynamic job", description = "For members of the admin groups: the job waiting for approval ends REJECTED.")
+    @ApiResponse(responseCode = "200", description = "Rejected")
+    @ApiResponse(responseCode = "403", description = "Not in the admin groups")
+    @ApiResponse(responseCode = "409", description = "The job is not waiting for approval")
+    @PostMapping("/{jobId}/reject")
+    public DynamicJobService.JobStatus reject(@PathVariable String jobId, @RequestBody(required = false) RejectBody body) {
+        return service.reject(caller(), jobId, body != null ? body.reason() : null);
+    }
+
     @ExceptionHandler(DynamicJobException.class)
     ResponseEntity<Map<String, String>> failed(DynamicJobException e) {
         return ResponseEntity.status(e.status()).body(Map.of("error", e.getMessage()));

@@ -497,6 +497,177 @@ class DynamicJobServiceTest {
                 .isEqualTo(HttpStatus.CONFLICT);
     }
 
+    // ---- Approval ----
+
+    static Caller admin(String principal) {
+        return caller(principal, "oc-admins");
+    }
+
+    DynamicJobService.Accepted pendingFolderJob(Caller caller) {
+        properties.setRequireApproval(true);
+        DynamicJobService.Accepted accepted = service.start(caller, request(null), null, "mcp", null);
+        assertThat(accepted.state()).isEqualTo(DynamicJobService.State.PENDING_APPROVAL);
+        return accepted;
+    }
+
+    @Test
+    void withApprovalsOnAnAgentsJobWaitsAndStartsOnceAnAdminApprovesIt() {
+        DynamicJobService.Accepted accepted = pendingFolderJob(caller("alice"));
+
+        assertThat(runner.starts).isEmpty();
+        assertThat(registry.runs()).isEmpty();
+        assertThat(service.status(caller("alice"), accepted.jobId()).state()).isEqualTo(DynamicJobService.State.PENDING_APPROVAL);
+
+        DynamicJobService.JobStatus approved = service.approve(admin("olga"), accepted.jobId());
+
+        assertThat(approved.jobId()).isEqualTo(accepted.jobId());
+        assertThat(approved.approvedBy()).isEqualTo("olga");
+        DynamicJobService.JobStatus done = awaitEnd(caller("alice"), accepted.jobId());
+        assertThat(done.state()).isEqualTo(DynamicJobService.State.COMPLETED);
+        assertThat(done.executionId()).isEqualTo(accepted.executionId());
+        assertThat(runner.starts).containsExactly("root");
+        assertThat(runner.provenances.get(0).triggeredBy()).as("the requester, not the approver").isEqualTo("alice");
+    }
+
+    @Test
+    void whatTheCallerCannotSeeIsStillRefusedAtOnceNotFiledForApproval() {
+        properties.setRequireApproval(true);
+
+        assertThat(statusOf(() -> service.start(caller("carol"), request("finance-folder"), null, "api", null)))
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(statusOf(() -> service.document(documentCaller("carol"), upsert("finance-report"), null, "api", null)))
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(service.list(admin("olga"))).isEmpty();
+    }
+
+    @Test
+    void onlyAnotherAdminMayApproveOrReject() {
+        DynamicJobService.Accepted mine = pendingFolderJob(admin("olga"));
+
+        assertThat(statusOf(() -> service.approve(admin("olga"), mine.jobId()))).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.approve(caller("bob"), mine.jobId()))).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.reject(caller("bob"), mine.jobId(), null))).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.approve(caller("bob"), "dyn-nothing"))).as("no hint for non-admins").isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(statusOf(() -> service.approve(admin("pete"), "dyn-nothing"))).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(statusOf(() -> service.approve(Caller.asserted("pete", List.of("oc-admins")), mine.jobId())))
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void aJobIsApprovedOrRejectedOnlyOnce() {
+        DynamicJobService.Accepted first = pendingFolderJob(caller("alice"));
+        DynamicJobService.Accepted second = pendingFolderJob(caller("alice"));
+
+        service.approve(admin("olga"), first.jobId());
+        DynamicJobService.JobStatus rejected = service.reject(admin("olga"), second.jobId(), "Out of the audit scope");
+
+        assertThat(rejected.state()).isEqualTo(DynamicJobService.State.REJECTED);
+        assertThat(rejected.note()).isEqualTo("Rejected by olga: Out of the audit scope");
+        assertThat(rejected.finishedAt()).isNotNull();
+        assertThat(statusOf(() -> service.approve(admin("pete"), first.jobId()))).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(statusOf(() -> service.reject(admin("pete"), first.jobId(), null))).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(statusOf(() -> service.approve(admin("pete"), second.jobId()))).isEqualTo(HttpStatus.CONFLICT);
+        awaitEnd(caller("alice"), first.jobId());
+        assertThat(runner.starts).hasSize(1);
+    }
+
+    @Test
+    void aReasonIsChecked() {
+        DynamicJobService.Accepted pending = pendingFolderJob(caller("alice"));
+
+        assertThat(statusOf(() -> service.reject(admin("olga"), pending.jobId(), "x".repeat(501)))).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(statusOf(() -> service.reject(admin("olga"), pending.jobId(), "line\nbreak"))).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(service.reject(admin("olga"), pending.jobId(), null).note()).isEqualTo("Rejected by olga.");
+    }
+
+    @Test
+    void accessIsCheckedAgainOnApprovalAndAFailureEndsTheJob() {
+        DynamicJobService.Accepted pending = pendingFolderJob(caller("alice"));
+        builder = dto -> {
+            FakeDiscoverableConnector connector = new FakeDiscoverableConnector();
+            connector.failure = () -> new IllegalArgumentException("No fake folder 'root' in this connector's scope.");
+            built.add(connector);
+            return connector;
+        };
+
+        DynamicJobService.JobStatus status = service.approve(admin("olga"), pending.jobId());
+
+        assertThat(status.state()).isEqualTo(DynamicJobService.State.FAILED);
+        assertThat(status.note()).isEqualTo("Approved, but not started: No fake folder 'root' in this connector's scope.");
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void anApprovalOverALimitLeavesTheJobPendingToApproveLater() {
+        properties.setMaxRunningPerUser(1);
+        runner.hold = new CountDownLatch(1);
+        DynamicJobService.Accepted pending = pendingFolderJob(caller("alice"));
+        properties.setRequireApproval(false);
+        service.start(caller("alice"), request(null), null, "api", null);
+
+        assertThat(statusOf(() -> service.approve(admin("olga"), pending.jobId()))).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(service.status(caller("alice"), pending.jobId()).state()).isEqualTo(DynamicJobService.State.PENDING_APPROVAL);
+        assertThat(service.status(caller("alice"), pending.jobId()).approvedBy()).isNull();
+        runner.hold.countDown();
+        awaitNoRuns();
+        assertThat(service.approve(admin("olga"), pending.jobId()).state()).isIn(DynamicJobService.State.RUNNING,
+                DynamicJobService.State.COMPLETED);
+    }
+
+    @Test
+    void anUnansweredJobExpiresAndItsOwnerMayCancelOne() {
+        properties.setApprovalTimeout(Duration.ofHours(1));
+        DynamicJobService.Accepted expiring = pendingFolderJob(caller("alice"));
+        DynamicJobService.Accepted cancelled = pendingFolderJob(caller("alice"));
+
+        DynamicJobService.JobStatus stopped = service.stop(caller("alice"), cancelled.jobId());
+        clock.advance(Duration.ofMinutes(61));
+
+        assertThat(stopped.state()).isEqualTo(DynamicJobService.State.STOPPED);
+        assertThat(stopped.note()).contains("Cancelled");
+        DynamicJobService.JobStatus expired = service.status(caller("alice"), expiring.jobId());
+        assertThat(expired.state()).isEqualTo(DynamicJobService.State.EXPIRED);
+        assertThat(expired.note()).contains("Not approved within");
+        assertThat(statusOf(() -> service.approve(admin("olga"), expiring.jobId()))).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(statusOf(() -> service.stop(caller("bob"), expiring.jobId()))).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(runner.starts).isEmpty();
+    }
+
+    @Test
+    void aUserMayHaveOnlySoManyJobsWaitingAndARepeatedKeyReturnsThePendingOne() {
+        properties.setRequireApproval(true);
+        properties.setMaxPendingPerUser(2);
+        DynamicJobService.Accepted keyed = service.start(caller("alice"), request(null), "audit-1", "api", null);
+        service.start(caller("alice"), request(null), null, "api", null);
+
+        assertThat(statusOf(() -> service.start(caller("alice"), request(null), null, "api", null))).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        DynamicJobService.Accepted again = service.start(caller("alice"), request(null), "audit-1", "api", null);
+        assertThat(again.jobId()).isEqualTo(keyed.jobId());
+        assertThat(again.state()).isEqualTo(DynamicJobService.State.PENDING_APPROVAL);
+        assertThat(again.replayed()).isTrue();
+    }
+
+    @Test
+    void aDocumentIngestWaitsAndIsFetchedAgainOnApprovalWhileRemovalsAreNotHeld() {
+        properties.setRequireApproval(true);
+        Object result = service.document(documentCaller("alice", "finance"), upsert("finance-report"), null, "api", null);
+
+        assertThat(((DynamicJobService.Accepted) result).state()).isEqualTo(DynamicJobService.State.PENDING_APPROVAL);
+        assertThat(built).singleElement().satisfies(connector -> assertThat(connector.disconnected).isTrue());
+        String jobId = ((DynamicJobService.Accepted) result).jobId();
+        assertThat(service.status(documentCaller("alice"), jobId).kind()).isEqualTo(DynamicJobService.Kind.DOCUMENT);
+
+        service.approve(admin("olga"), jobId);
+        assertThat(awaitEnd(documentCaller("alice"), jobId).state()).isEqualTo(DynamicJobService.State.COMPLETED);
+        assertThat(built).hasSize(2);
+        assertThat(runner.starts).containsExactly("finance-report");
+
+        assertThat(service.document(documentCaller("alice"), delete("deleted-old"), null, "api", null))
+                .isInstanceOf(DynamicJobService.DeletionAccepted.class);
+        assertThat(runner.starts).containsExactly("finance-report", "fake://deleted-old");
+    }
+
     // ---- Idempotency ----
 
     @Test
