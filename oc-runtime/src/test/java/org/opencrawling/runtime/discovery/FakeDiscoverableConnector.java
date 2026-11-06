@@ -47,9 +47,18 @@ public class FakeDiscoverableConnector implements DiscoverableRepositoryConnecto
     ExploreRequest lastExplore;
     DryRunRequest lastDryRun;
     VisibilityFilter lastFilter;
-    boolean disconnected;
-    Supplier<RuntimeException> failure;
+    public volatile boolean disconnected;
+    public Supplier<RuntimeException> failure;
     CountAccuracy dryRunAccuracy = CountAccuracy.EXACT;
+    String lastCrawlStart;
+    public volatile String scannedFrom;
+    /** When set, {@link #scan} waits for it before completing, so a run stays in progress. */
+    public volatile java.util.concurrent.CountDownLatch scanGate;
+
+    /** The configured root: readable by everyone. */
+    static final DiscoveryNode ROOT = new DiscoveryNode("fake://root", "root", null, "root", "/",
+            DiscoveryNode.NodeType.FOLDER, 0, null, null, null, null,
+            new SecurityConfig(true, List.of(rule("public", "public", "read"))));
 
     static DiscoveryNode node(String name, DiscoveryNode.NodeType type, PermissionRule... rules) {
         SecurityConfig security = rules.length == 0 ? null : new SecurityConfig(true, List.of(rules));
@@ -86,6 +95,22 @@ public class FakeDiscoverableConnector implements DiscoverableRepositoryConnecto
                 : new DryRunResult(visible.size(), dryRunAccuracy, visible, hidden, null);
     }
 
+    @Override
+    public DiscoveryNode crawlStart(String reference, VisibilityFilter filter) {
+        lastCrawlStart = reference;
+        lastFilter = filter;
+        if (failure != null) {
+            throw failure.get();
+        }
+        DiscoveryNode folder = reference == null ? ROOT : NODES.stream()
+                .filter(node -> node.type() == DiscoveryNode.NodeType.FOLDER && node.name().equals(reference))
+                .findFirst().orElse(null);
+        if (folder == null || !VisibilityFilter.decide(filter, List.of(folder))[0]) {
+            throw new IllegalArgumentException("No fake folder '" + reference + "' in this connector's scope.");
+        }
+        return folder;
+    }
+
     private static List<DiscoveryNode> visible(VisibilityFilter filter) {
         boolean[] decisions = VisibilityFilter.decide(filter, NODES);
         List<DiscoveryNode> visible = new ArrayList<>();
@@ -99,7 +124,19 @@ public class FakeDiscoverableConnector implements DiscoverableRepositoryConnecto
 
     @Override
     public Flux<RepositoryDocument> scan(String basePath) {
-        return Flux.empty();
+        scannedFrom = basePath;
+        java.util.concurrent.CountDownLatch gate = scanGate;
+        if (gate == null) {
+            return Flux.empty();
+        }
+        return Flux.defer(() -> {
+            try {
+                gate.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return Flux.<RepositoryDocument>empty();
+        });
     }
 
     @Override

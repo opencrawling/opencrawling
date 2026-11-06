@@ -53,7 +53,7 @@ With `opencrawling.discovery.enabled=true`, three more tools let an agent look a
 
 The same operations are available over REST: `GET /api/discovery/connectors`, `GET /api/discovery/{connector}/tree` and `POST /api/discovery/{connector}/dry-run` (body `{"scope", "sampleSize", "maxScan"}`).
 
-- **Which connectors:** the repository connectors registered in `connectors.json` (the ones the job API runs) whose implementation supports discovery. Today that is CMIS.
+- **Which connectors:** the repository connectors registered in `connectors.json` (the ones the job API runs) whose implementation supports discovery. Today those are CMIS and Alfresco.
 - **Who the caller is:** the caller must be verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`), because discovery reads live repositories with the connector's own credentials. `opencrawling.discovery.allow-asserted-identity=true` also accepts the `userPrincipal`/`userRoles` arguments, for development and tests only.
 - **What the caller sees:** each item is decided with the metadata rules (the same rules as `metadata` mode, including the `user:`/`group:` separation) on the ACL the *source repository* reports for it now, whatever `opencrawling.security.authorization.mode` is. OpenFGA only holds permissions for documents that have been indexed, so it would hide every folder and every document not yet ingested. As a result, group memberships kept only in OpenFGA are not taken into account here: discovery may show a caller less than it may read, never more.
   - A folder the caller cannot read is not opened, so nothing below it is named.
@@ -62,6 +62,28 @@ The same operations are available over REST: `GET /api/discovery/connectors`, `G
   - Results never include ACLs.
 - **Counts:** a folder dry run checks every document, so its count is the caller's (`EXACT`, or `LOWER_BOUND` when it stopped at `maxScan` or the timeout). A query returns no ACLs, so its matches cannot be checked one by one: only its samples are checked, and no count is returned unless `opencrawling.discovery.reveal-hidden-counts=true` (then the total match count, as `ESTIMATE`). The same setting adds `hiddenCount`, the number of items hidden from the caller.
 - **Bounds:** every request is held within the configured `max-depth`, `max-nodes`, `sample-size`, `max-scan` and `timeout`, and results say when and why they were truncated.
+
+## 🚚 Dynamic jobs
+
+With `opencrawling.jobs.dynamic.enabled=true`, an agent can ingest a folder it found through discovery, without an administrator creating a job for it. The agent names a connector and a start folder; it never supplies endpoints, hosts, credentials or connector settings.
+
+| MCP Tool | Description | Parameters |
+|---|---|---|
+| `triggerDynamicJob` | Starts a job that crawls a folder of a registered connector. Returns `jobId`, `executionId` and `statusUrl`. | `connector` (required)<br>`start` (folder id or path; the connector's configured root by default)<br>`name`<br>`validateOnly` (check, start nothing)<br>`idempotencyKey`<br>`correlationId` |
+| `getDynamicJobStatus` | The job's state (`RUNNING`, `COMPLETED`, `FAILED`, `STOPPED`) and, once it has ended, how many documents it handled. | `jobId` (required) |
+| `listDynamicJobs` | The caller's dynamic jobs that are still remembered, newest first. | |
+| `stopDynamicJob` | Stops a running job before its next document. | `jobId` (required) |
+
+The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"connector", "start", "name", "validateOnly"}`, headers `Idempotency-Key` and `X-Correlation-Id`; answers `202` with a `Location`), `GET /api/jobs/dynamic`, `GET /api/jobs/dynamic/{jobId}` and `POST /api/jobs/dynamic/{jobId}/stop`.
+
+- **Who the caller is:** always verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`). There is no asserted-identity option. The token must name a user and carry the scope in `opencrawling.jobs.dynamic.required-scope` (default `oc:jobs:write`, read from the `scope` or `scp` claim).
+- **Which connectors:** only the registered connectors listed in `opencrawling.jobs.dynamic.connectors` (empty by default, so none) that support discovery and crawl a folder tree. A connector set up to crawl a query or a change log is refused. A connector that is not listed reads exactly like one that does not exist.
+- **Which folder:** the start folder must be inside the connector's configured root, not excluded, and readable by the caller under the same source-ACL rules as discovery. Otherwise the answer is the same as for a folder that does not exist. The crawl then takes everything below that folder that the connector's own rules take, including documents the caller cannot read: every document keeps its source permissions, so search still shows each user only what they may read.
+- **Where documents go:** a dynamic job never writes to an output connector directly. Every document goes to the documents topic (`opencrawling-documents`), so it passes through ingestion and the OpenFGA permission sync like any other. Dynamic jobs always run in `RAG` mode.
+- **Who sees a job:** the user it was started for (whichever agent acted for them, in the same tenant) and members of `opencrawling.jobs.dynamic.admin-groups`. To anyone else it does not exist (`404`).
+- **Limits:** `max-running-per-user` (default `2`) dynamic jobs per user at once, plus the runtime's `opencrawling.jobs.max-concurrent-runs` and `max-concurrent-runs-per-caller`. Over a limit, the answer is `429`.
+- **Idempotency:** repeating a request with the same `Idempotency-Key` returns the job the first one started (`"replayed": true`). The same key with a different request is refused (`409`). Keys belong to the user.
+- **Status is kept in memory** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs, and is lost on restart. The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
 
 ---
 

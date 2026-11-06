@@ -51,6 +51,22 @@ public interface DiscoverableRepositoryConnector extends RepositoryConnector {
      */
     DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter);
 
+    /**
+     * The folder a crawl started at {@code reference} would begin from, if the filter shows it. Passing the node's
+     * {@link DiscoveryNode#sourceId() sourceId} to {@link #scan(String)} crawls that folder with the connector's own
+     * rules (exclusions, subfolders, version policy), and nothing outside the connector's configured scope.
+     *
+     * <p>This is how a crawl someone else asks for (an agent's) is held to the connector's scope: {@code scan}
+     * takes any path or query it is given, this does not.
+     *
+     * @param reference a folder id or path, or {@code null} for the connector's configured root
+     * @throws IllegalArgumentException when the folder does not exist, is not a folder, is out of scope or is hidden
+     *                                  by the filter (all reported alike), or when the connector is set up to crawl
+     *                                  something other than a folder tree, such as a query or a change log
+     * @throws DiscoveryException       when the repository cannot be reached or answers with an error
+     */
+    DiscoveryNode crawlStart(String reference, VisibilityFilter filter);
+
     /** {@link #explore(ExploreRequest, VisibilityFilter)} showing everything. */
     default DiscoveryResult explore(ExploreRequest request) {
         return explore(request, VisibilityFilter.ALL);

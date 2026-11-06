@@ -388,6 +388,51 @@ class AlfrescoDiscoveryTest {
                 .containsExactly("a.txt", "b.txt", "image.png");
     }
 
+    // ---- Crawl start ----
+
+    @Test
+    void aCrawlStartIsAVisibleFolderInScopeGivenByItsNodeId() {
+        DiscoveryNode library = connector().crawlStart("/Sites/finance-site/documentLibrary", readableBy("GROUP_finance"));
+        AlfrescoRepositoryConnector siteOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "finance-site", true, Set.of(), 100);
+
+        assertThat(library.sourceId()).isEqualTo("flib");
+        assertThat(library.type()).isEqualTo(DiscoveryNode.NodeType.FOLDER);
+        assertThat(connector().crawlStart("f2", readableBy("GROUP_finance")).sourceId()).isEqualTo("f2");
+        assertThat(siteOnly.crawlStart(null, VisibilityFilter.ALL).sourceId()).isEqualTo("flib");
+    }
+
+    @Test
+    void aCrawlStartTheCallerCannotSeeOrOutOfScopeReadsLikeAMissingFolder() {
+        AlfrescoRepositoryConnector siteOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "finance-site", true, Set.of(), 100);
+
+        assertThatThrownBy(() -> connector().crawlStart("/Sites/finance-site/documentLibrary", readableBy("GROUP_EVERYONE")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("No Alfresco folder '/Sites/finance-site/documentLibrary' in this connector's scope.");
+        assertThatThrownBy(() -> siteOnly.crawlStart("pub", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco folder 'pub' in this connector's scope.");
+        assertThatThrownBy(() -> connector().crawlStart("/Data Dictionary", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco folder '/Data Dictionary' in this connector's scope.");
+        assertThatThrownBy(() -> connector().crawlStart("d1", VisibilityFilter.ALL))
+                .hasMessage("No Alfresco folder 'd1' in this connector's scope.");
+    }
+
+    @Test
+    void aCrawlStartIsNeverAQuery() {
+        assertThatThrownBy(() -> connector().crawlStart("TYPE:'cm:content'", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No Alfresco folder");
+        assertThatThrownBy(() -> connector().crawlStart("afts:TYPE:'cm:content'", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("No Alfresco folder");
+        assertThat(searches).isEmpty();
+    }
+
+    @Test
+    void aQueryConnectorHasNoCrawlStart() {
+        AlfrescoRepositoryConnector query = connector(AlfrescoCrawlMode.QUERY, "/", "", "", true, Set.of(), 100);
+
+        assertThatThrownBy(() -> query.crawlStart("/Public", VisibilityFilter.ALL))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage(AlfrescoRepositoryConnector.NOT_A_FOLDER_CRAWL);
+    }
+
     @Test
     void startsOutsideTheScopeAllReadLikeMissingFolders() {
         AlfrescoRepositoryConnector siteOnly = connector(AlfrescoCrawlMode.FOLDER, "/", "", "finance-site", true, Set.of(), 100);

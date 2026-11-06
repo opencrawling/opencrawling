@@ -52,6 +52,19 @@ class JwtCallerMapperTest {
     }
 
     @Test
+    void scopesComeFromScopeAndScpAndNeverBecomeGroups() {
+        Caller caller = defaults.toCaller(Map.of("preferred_username", "alice", "scope", " openid  oc:jobs:write ",
+                "scp", List.of("oc:events:write", "openid", 7), "groups", List.of("finance")));
+
+        assertThat(JwtCallerMapper.scopes(caller)).containsExactly("openid", "oc:jobs:write", "oc:events:write");
+        assertThat(caller.groups()).containsExactly("finance");
+        assertThat(JwtCallerMapper.scopes(defaults.toCaller(Map.of("sub", "x", "scp", "a b")))).containsExactly("a", "b");
+        assertThat(JwtCallerMapper.scopes(defaults.toCaller(Map.of("sub", "x")))).isEmpty();
+        assertThat(defaults.toCaller(Map.of("sub", "x")).attributes()).doesNotContainKey(JwtCallerMapper.SCOPES);
+        assertThat(JwtCallerMapper.scopes(Caller.asserted("alice", List.of("oc:jobs:write")))).isEmpty();
+    }
+
+    @Test
     void theSubjectIsUsedWhenThereIsNoUsername() {
         Caller caller = defaults.toCaller(Map.of("sub", "service-account-crawler", "preferred_username", "  "));
 
