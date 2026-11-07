@@ -171,6 +171,11 @@ With `opencrawling.jobs.dynamic.enabled=true` (off by default), `DynamicJobMcpTo
 
 With `opencrawling.events.bpm.enabled=true` (off by default), `BpmEventController` (`POST /api/events/bpm/document-transition`) lets a BPM engine trigger a single-document UPSERT or DELETE: the first matching `routes` entry (engine, process, transition) names the connector and action, and `BpmEventService` calls the same `DynamicJobService` path with `VisibilityFilter.ALL` (the route authorizes, not the sender). A sender authenticates by HMAC signature or Basic static token (`BpmEventAuthenticator`, configured `sources`, secrets of at least 32 characters) or by a bearer token with `oc:events:write`. With `protect-api`, `IdentitySecurityConfiguration` lets only signed or Basic requests to that path skip the JWT chain. Event ids are deduplicated per sender.
 
+With `opencrawling.sidecars.enabled=true` (off by default), `SidecarMcpTools` (`listSidecarStores`, `readOisSidecars`) and `SidecarController` (`/api/sidecars/**`) let a verified caller with `oc:sidecars:read` read the `*.ois.json` sidecars of the registered Ozone or S3 output connectors listed in `opencrawling.sidecars.connectors`.
+- **Storage:** `SidecarService` opens the store read-only from the connector's settings (`ConnectorFactory.s3Properties`/`ozoneProperties`, `OzoneStorageClient.listKeys`). It skips tombstones, the key index and anything that is not an `UPSERT`.
+- **Authorization:** the runtime's `DocumentAccessGate` decides on each sidecar's document id and `security`. Answers carry no permissions or hidden counts.
+- **Paging:** the cursor is AES-GCM sealed, because it may name a hidden key.
+
 ### Pre-embedding governance
 
 With `opencrawling.governance.enabled=true` (off by default), `IngestionConsumer` passes each UPSERT's extracted text and metadata through a `GovernanceGate` before chunking it. The gate runs the `hooks` in order: the built-in `pii-masking` (`PiiMaskingGovernanceHook`) or `http` (`HttpGovernanceHook`, HMAC-signed, bounded retries), or any `PreEmbeddingGovernanceHook` bean (SPI in `oc-core`, `core.governance`). Each hook answers APPROVE, SANITIZE or REJECT.

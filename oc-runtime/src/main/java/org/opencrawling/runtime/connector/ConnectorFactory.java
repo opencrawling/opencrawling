@@ -452,6 +452,31 @@ public class ConnectorFactory {
     }
 
     private OutputConnector buildOzone(Map<String, String> config, PipelineMode mode) {
+        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = ozoneProperties(config);
+        String volume = ozoneProps.getVolume();
+        String bucket = ozoneProps.getBucket();
+        String clientType = ozoneProps.getClientType();
+
+        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties(), null);
+        ozoneConnector.setPipelineMode(mode);
+        log.info("Resolving dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
+        return ozoneConnector;
+    }
+
+    private OutputConnector buildS3(Map<String, String> config, PipelineMode mode) {
+        org.opencrawling.s3.config.S3OutputProperties s3Props = s3Properties(config);
+        String bucket = s3Props.getBucket();
+        String region = s3Props.getRegion();
+        String keyStrategy = s3Props.getKeyStrategy();
+
+        org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties(), null);
+        s3Connector.setPipelineMode(mode);
+        log.info("Resolving dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
+        return s3Connector;
+    }
+
+    /** The Apache Ozone settings a registered Ozone output connector's configuration describes. */
+    public static org.opencrawling.ozone.config.OzoneOutputProperties ozoneProperties(Map<String, String> config) {
         String volume = config.getOrDefault("volume", "opencrawling");
         String bucket = config.getOrDefault("bucket", "migration");
         String clientType = config.getOrDefault("clientType", "NATIVE");
@@ -461,7 +486,6 @@ public class ConnectorFactory {
         String s3Endpoint = config.getOrDefault("s3Endpoint", "http://localhost:9878");
         String accessKey = config.getOrDefault("accessKey", "any");
         String secretKey = config.getOrDefault("secretKey", "any");
-
         org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
         ozoneProps.setVolume(volume);
         ozoneProps.setBucket(bucket);
@@ -474,13 +498,11 @@ public class ConnectorFactory {
         ozoneProps.setKeyStrategy(config.getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
         ozoneProps.setTombstoneAction(config.getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
 
-        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties(), null);
-        ozoneConnector.setPipelineMode(mode);
-        log.info("Resolving dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
-        return ozoneConnector;
+        return ozoneProps;
     }
 
-    private OutputConnector buildS3(Map<String, String> config, PipelineMode mode) {
+    /** The AWS S3 settings a registered S3 output connector's configuration describes. */
+    public static org.opencrawling.s3.config.S3OutputProperties s3Properties(Map<String, String> config) {
         String bucket = config.getOrDefault("bucket", "enterprise-migration-lake");
         String region = config.getOrDefault("region", "us-east-1");
         String endpoint = config.getOrDefault("endpointOverride", "");
@@ -538,11 +560,7 @@ public class ConnectorFactory {
                 }
             }
         });
-
-        org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties(), null);
-        s3Connector.setPipelineMode(mode);
-        log.info("Resolving dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
-        return s3Connector;
+        return s3Props;
     }
 
     private OutputConnector buildHylandCicOutput(Map<String, String> config) {

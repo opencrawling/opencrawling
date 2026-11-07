@@ -240,6 +240,24 @@ opencrawling:
       #       connector: Alfresco_Main
       #       action: UPSERT
       routes: []
+  sidecars:
+    # OIS sidecars (REST /api/sidecars/**, MCP tools listSidecarStores and readOisSidecars): read the *.ois.json
+    # metadata the Ozone and S3 migration writers store next to each binary, filtered by the caller's access.
+    enabled: ${OPENCRAWLING_SIDECARS_ENABLED:false}
+    # Registered Ozone or S3 output connectors (names in connectors.json) whose sidecars may be read.
+    connectors: ${OPENCRAWLING_SIDECARS_CONNECTORS:}
+    required-scope: ${OPENCRAWLING_SIDECARS_REQUIRED_SCOPE:oc:sidecars:read}
+    # true also accepts asserted identities (no token): development and tests only.
+    allow-asserted-identity: false
+    # Per request: sidecars returned (hard cap 1000), keys listed (hard cap 50000), largest sidecar read (hard cap 16MB).
+    default-limit: 50
+    max-limit: 200
+    max-scan: 5000
+    max-sidecar-bytes: 1048576
+    # Seals paging cursors. Blank: a random key per instance. Set the same secret (32+ characters) on every instance
+    # behind a load balancer.
+    cursor-secret: ${OPENCRAWLING_SIDECARS_CURSOR_SECRET:}
+    cursor-ttl: 1h
   governance:
     # Pre-embedding governance: every document the ingestion consumer would chunk goes through the hooks first,
     # which approve it, mask parts of it, or reject it. Permissions are never changed. Fails closed: when a hook
