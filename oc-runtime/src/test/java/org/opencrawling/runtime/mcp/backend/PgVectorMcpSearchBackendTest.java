@@ -356,4 +356,126 @@ class PgVectorMcpSearchBackendTest {
         assertThat(request.getValue().getTopK()).isEqualTo(5);
         assertThat(request.getValue().getFilterExpression()).isNotNull();
     }
+
+    // --- Which table a call reads: the writer routes each chunk by its embedding's length ---
+
+    private final VectorStore store384 = mock(VectorStore.class);
+    private final VectorStore store768 = mock(VectorStore.class);
+    private final VectorStore store1024 = mock(VectorStore.class);
+
+    private PgVectorMcpSearchBackend routedBackend(JdbcTemplate jdbc) {
+        return new PgVectorMcpSearchBackend(vectorStore, store384, store768, store1024, jdbc, embeddingModel, null);
+    }
+
+    @Test
+    void withoutDimensionsTheQueryEmbeddingPicksTheTableTheWriterUsed() {
+        when(embeddingModel.embed("forecast")).thenReturn(new float[1024]);
+        Document doc = new Document("c1", "Finance Q3 forecast", Map.of("uri", "doc-1", "acl", "public"));
+        when(store1024.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(doc));
+
+        List<McpVectorServer.DocumentSearchResult> results =
+                routedBackend(null).secureVectorSearch("forecast", "john", List.of(), 5, 0.0, null);
+
+        assertThat(results).extracting(McpVectorServer.DocumentSearchResult::id).containsExactly("c1");
+        verify(vectorStore, never()).similaritySearch(any(SearchRequest.class));
+    }
+
+    @Test
+    void a768DimensionModelReadsThe768Table() {
+        when(embeddingModel.embed("forecast")).thenReturn(new float[768]);
+
+        routedBackend(null).secureVectorSearch("forecast", "john", List.of(), 5, 0.0, null);
+
+        verify(store768).similaritySearch(any(SearchRequest.class));
+        verify(store1024, never()).similaritySearch(any(SearchRequest.class));
+        verify(vectorStore, never()).similaritySearch(any(SearchRequest.class));
+    }
+
+    @Test
+    void dimensionsFromTheCallerStillWin() {
+        when(embeddingModel.embed("forecast")).thenReturn(new float[1024]);
+
+        routedBackend(null).secureVectorSearch("forecast", "john", List.of(), 5, 0.0, 384);
+
+        verify(store384).similaritySearch(any(SearchRequest.class));
+        verify(store1024, never()).similaritySearch(any(SearchRequest.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withoutDimensionsDocumentContentIsFoundInWhicheverTableHoldsIt() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        McpVectorServer.DocumentDetailsResult doc = new McpVectorServer.DocumentDetailsResult(
+                "c1", "doc-1", "Finance Q3 forecast", Map.of("uri", "doc-1", "acl", "public"), "public");
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            if (sql.contains("FROM vector_store_1024 ")) {
+                throw new org.springframework.jdbc.BadSqlGrammarException("query", sql,
+                        new java.sql.SQLException("relation \"vector_store_1024\" does not exist"));
+            }
+            return sql.contains("FROM vector_store_768 ") ? List.of(doc) : List.of();
+        });
+
+        McpVectorServer.DocumentDetailsResult result = routedBackend(jdbc).getDocumentContent("doc-1", "john", List.of(), null);
+
+        assertThat(result.id()).isEqualTo("c1");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void emptyTablesAreSkippedUntilTheOneHoldingTheDocument() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        McpVectorServer.DocumentDetailsResult doc = new McpVectorServer.DocumentDetailsResult(
+                "c3", "doc-3", "Small model chunk", Map.of("uri", "doc-3", "acl", "public"), "public");
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
+                ((String) invocation.getArgument(0)).contains("FROM vector_store_384 ") ? List.of(doc) : List.of());
+
+        assertThat(routedBackend(jdbc).getDocumentContent("doc-3", "john", List.of(), null).id()).isEqualTo("c3");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void documentContentIsStillHiddenWhenNoTableHasAReadableCopy() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        McpVectorServer.DocumentDetailsResult secret = new McpVectorServer.DocumentDetailsResult(
+                "c2", "doc-2", "Board pack", Map.of("uri", "doc-2", "acl", "executive"), "executive");
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of(secret));
+
+        assertThatThrownBy(() -> routedBackend(jdbc).getDocumentContent("doc-2", "john", List.of(), null))
+                .isInstanceOf(NoSuchElementException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aMissingTableIsAnErrorWhenTheCallerAskedForIt() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenThrow(
+                new org.springframework.jdbc.BadSqlGrammarException("query", "SELECT", new java.sql.SQLException("missing")));
+
+        assertThatThrownBy(() -> routedBackend(jdbc).getDocumentContent("doc-1", "john", List.of(), 1024))
+                .isInstanceOf(RuntimeException.class).isNotInstanceOf(NoSuchElementException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withoutDimensionsAccessibleSourcesComeFromEveryTable() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), any(RowMapper.class))).thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            if (sql.contains("FROM vector_store_768 ")) {
+                throw new org.springframework.jdbc.BadSqlGrammarException("query", sql, new java.sql.SQLException("missing"));
+            }
+            String table = sql.contains("FROM vector_store_1024 ") ? "big" : sql.contains("FROM vector_store_384 ") ? "small" : null;
+            if (table == null) {
+                return new ArrayList<>();
+            }
+            Map<String, Object> row = new HashMap<>(Map.of("id", table, "uri", table, "documentId", table));
+            row.put("_meta", Map.of("documentId", table, "acl", "public"));
+            return new ArrayList<>(List.of(row));
+        });
+
+        List<Map<String, Object>> sources = routedBackend(jdbc).listAccessibleSources("john", List.of(), null);
+
+        assertThat(sources).extracting(row -> row.get("id")).containsExactlyInAnyOrder("big", "small");
+    }
 }

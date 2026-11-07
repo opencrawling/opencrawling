@@ -30,9 +30,11 @@ The MCP server exposes three standard tools regardless of which target vector da
 
 | MCP Tool | Description | Parameters |
 |---|---|---|
-| `secureVectorSearch` | Performs semantic or hybrid vector similarity search across indexed chunks, applying caller identity checks. | `query` (string, required)<br>`userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`maxResults` (int, default: 5)<br>`minScore` (double, default: 0.0)<br>`dimensions` (int, optional: 384, 768, 1024) |
+| `secureVectorSearch` | Performs semantic or hybrid vector similarity search across indexed chunks, applying caller identity checks. | `query` (string, required)<br>`userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`maxResults` (int, default: 5)<br>`minScore` (double, default: 0.0)<br>`dimensions` (int, optional: 384, 768, 1024; usually left out, see below) |
 | `getDocumentContent` | Retrieves full text content and metadata for a specific document chunk by URI. | `documentUri` (string, required)<br>`userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
 | `listAccessibleSources` | Lists distinct documents and metadata accessible to the caller currently stored in the index. | `userPrincipal` (string)<br>`userRoles` (string, comma-separated)<br>`dimensions` (int, optional) |
+
+**`dimensions`.** Leave it out unless you need one index in particular. pgvector keeps one table per embedding size and writes each chunk to the table matching its embedding's length. Without `dimensions`, `secureVectorSearch` reads the table matching the query's embedding (so the one the active model writes to), and `getDocumentContent` and `listAccessibleSources` look in every table.
 
 `userPrincipal` and `userRoles` are the caller's identity only in the default `none` identity mode. In `jwt` mode they are ignored and the identity comes from the request's bearer token (see [Caller identity](#-caller-identity) below).
 

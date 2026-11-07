@@ -109,7 +109,7 @@ public class McpVectorServer {
             @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to (e.g. 'finance,engineering')." + IDENTITY_NOTE, required = false) String userRoles,
             @McpToolParam(description = "Maximum number of search results to return", required = false) Integer maxResults,
             @McpToolParam(description = "Minimum similarity threshold score (0.0 to 1.0)", required = false) Double minScore,
-            @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
+            @McpToolParam(description = "Dimensions of the vector index to read (384, 768, 1024). Usually left out: the server then reads the index the documents were embedded into", required = false) Integer dimensions
     ) {
         if (backend == null) {
             throw new IllegalStateException("Vector search is unavailable: no vector database backend is configured for the active output type.");
@@ -125,7 +125,7 @@ public class McpVectorServer {
             @McpToolParam(description = "The URI of the document to retrieve (e.g. file:///path/to/doc.txt)", required = true) String documentUri,
             @McpToolParam(description = "The user principal identity of the caller." + IDENTITY_NOTE, required = false) String userPrincipal,
             @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to." + IDENTITY_NOTE, required = false) String userRoles,
-            @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
+            @McpToolParam(description = "Dimensions of the vector index to read (384, 768, 1024). Usually left out: the server then reads the index the documents were embedded into", required = false) Integer dimensions
     ) {
         if (backend == null) {
             throw new IllegalStateException("Document retrieval is unavailable: no vector database backend is configured for the active output type.");
@@ -138,7 +138,7 @@ public class McpVectorServer {
     public List<Map<String, Object>> listAccessibleSources(
             @McpToolParam(description = "The user principal identity of the caller." + IDENTITY_NOTE, required = false) String userPrincipal,
             @McpToolParam(description = "Comma-separated list of groups/roles the caller belongs to." + IDENTITY_NOTE, required = false) String userRoles,
-            @McpToolParam(description = "Dimensions of the target vector store to query (384, 768, 1024)", required = false) Integer dimensions
+            @McpToolParam(description = "Dimensions of the vector index to read (384, 768, 1024). Usually left out: the server then reads the index the documents were embedded into", required = false) Integer dimensions
     ) {
         Caller caller = callerResolver.resolve(userPrincipal, userRoles);
         if (backend == null) {

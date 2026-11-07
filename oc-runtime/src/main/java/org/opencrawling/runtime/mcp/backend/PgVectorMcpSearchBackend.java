@@ -97,6 +97,14 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         };
     }
 
+    /**
+     * The tables a lookup reads: the one for the caller's dimensions, or, without them, every table the writer may
+     * have used, since it routes each chunk by its embedding's length (VectorStoreWriterConsumer).
+     */
+    private static List<Integer> tablesFor(Integer dimensions) {
+        return dimensions != null ? Collections.singletonList(dimensions) : Arrays.asList(1024, 768, 384, null);
+    }
+
     private String getTableName(Integer dimensions) {
         if (dimensions == null) return "vector_store";
         return switch (dimensions) {
@@ -155,12 +163,18 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         SearchRequest searchRequest = searchBuilder.build();
 
         boolean precomputedSet = false;
+        // Without dimensions from the caller, the query embedding's length picks the table, exactly as the writer
+        // routes each chunk by its embedding's length (VectorStoreWriterConsumer).
+        Integer storeDimensions = dimensions;
         try {
             if (query != null && !query.isBlank() && embeddingModel != null && !(embeddingModel instanceof PrecomputedEmbeddingModel)) {
                 try {
                     float[] vector = embeddingModel.embed(query);
                     if (vector != null && vector.length > 0) {
-                        int targetDims = (dimensions != null) ? dimensions : 1024;
+                        if (storeDimensions == null) {
+                            storeDimensions = vector.length;
+                        }
+                        int targetDims = storeDimensions;
                         if (vector.length != targetDims) {
                             float[] adapted = new float[targetDims];
                             System.arraycopy(vector, 0, adapted, 0, Math.min(vector.length, targetDims));
@@ -175,7 +189,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                 }
             }
 
-            List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
+            List<Document> docs = getVectorStore(storeDimensions).similaritySearch(searchRequest);
             return readable(userPrincipal, userRoles, docs, PgVectorMcpSearchBackend::toResourceRef).stream()
                     .limit(limit)
                     .map(doc -> {
@@ -201,6 +215,50 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         }
     }
 
+    private List<McpVectorServer.DocumentDetailsResult> queryDocumentDetails(String tableName, String documentUri) {
+        boolean hasScope = hasScopeColumns(tableName);
+        String sql;
+        Object[] args;
+        if (hasScope) {
+            sql = "SELECT id, content, metadata, scope_id_, scope_type_ FROM " + tableName +
+                    " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
+                    " OR scope_id_ = ?" +
+                    " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+            args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri, documentUri};
+        } else {
+            sql = "SELECT id, content, metadata FROM " + tableName +
+                    " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
+                    " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+            args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri};
+        }
+
+        return jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> {
+                    String id = rs.getString("id");
+                    String content = rs.getString("content");
+                    Map<String, Object> meta = parseMetadata(rs.getObject("metadata"));
+                    if (hasScope) {
+                        String scopeId = rs.getString("scope_id_");
+                        String scopeType = rs.getString("scope_type_");
+                        if (scopeId != null && !scopeId.isBlank()) {
+                            meta.putIfAbsent("scope_id", scopeId);
+                        }
+                        if (scopeType != null && !scopeType.isBlank()) {
+                            meta.putIfAbsent("scope_type", scopeType);
+                        }
+                    }
+                    String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
+                    String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
+                    String acl = formatAcl(meta.getOrDefault("acl", ""));
+                    return new McpVectorServer.DocumentDetailsResult(id, uri, content, meta, acl);
+                },
+                args
+        );
+    }
+
     @Override
     public McpVectorServer.DocumentDetailsResult getDocumentContent(
             String documentUri,
@@ -212,53 +270,26 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
 
         if (jdbcTemplate != null) {
             try {
-                String tableName = getTableName(dimensions);
-                boolean hasScope = hasScopeColumns(tableName);
-                String sql;
-                Object[] args;
-                if (hasScope) {
-                    sql = "SELECT id, content, metadata, scope_id_, scope_type_ FROM " + tableName +
-                            " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
-                            " OR scope_id_ = ?" +
-                            " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                            " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
-                    args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri, documentUri};
-                } else {
-                    sql = "SELECT id, content, metadata FROM " + tableName +
-                            " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
-                            " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                            " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
-                    args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri};
+                for (Integer tableDimensions : tablesFor(dimensions)) {
+                    String tableName = getTableName(tableDimensions);
+                    List<McpVectorServer.DocumentDetailsResult> found;
+                    try {
+                        found = queryDocumentDetails(tableName, documentUri);
+                    } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+                        if (dimensions != null) {
+                            throw e;
+                        }
+                        // A table that was never created holds nothing.
+                        log.debug("pgvector table {} not available: {}", tableName, e.getMessage());
+                        continue;
+                    }
+                    Optional<McpVectorServer.DocumentDetailsResult> readableDoc = readable(userPrincipal, userRoles,
+                            found, doc -> ResourceRef.fromMetadata(doc.metadata())).stream().findFirst();
+                    if (readableDoc.isPresent()) {
+                        return readableDoc.get();
+                    }
                 }
-
-                List<McpVectorServer.DocumentDetailsResult> found = jdbcTemplate.query(
-                        sql,
-                        (rs, rowNum) -> {
-                            String id = rs.getString("id");
-                            String content = rs.getString("content");
-                            Map<String, Object> meta = parseMetadata(rs.getObject("metadata"));
-                            if (hasScope) {
-                                String scopeId = rs.getString("scope_id_");
-                                String scopeType = rs.getString("scope_type_");
-                                if (scopeId != null && !scopeId.isBlank()) {
-                                    meta.putIfAbsent("scope_id", scopeId);
-                                }
-                                if (scopeType != null && !scopeType.isBlank()) {
-                                    meta.putIfAbsent("scope_type", scopeType);
-                                }
-                            }
-                            String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
-                            String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
-                            String acl = formatAcl(meta.getOrDefault("acl", ""));
-                            return new McpVectorServer.DocumentDetailsResult(id, uri, content, meta, acl);
-                        },
-                        args
-                );
-
-                return readable(userPrincipal, userRoles, found,
-                                doc -> ResourceRef.fromMetadata(doc.metadata())).stream()
-                        .findFirst()
-                        .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
+                throw new NoSuchElementException("Document not found or access denied.");
             } catch (NoSuchElementException e) {
                 throw e;
             } catch (Exception e) {
@@ -362,6 +393,59 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         return String.valueOf(aclObj);
     }
 
+    private List<Map<String, Object>> queryAccessibleRows(String tableName) {
+        boolean hasScope = hasScopeColumns(tableName);
+        String sql = hasScope
+                ? "SELECT id, metadata, scope_id_, scope_type_ FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500"
+                : "SELECT id, metadata FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500";
+
+        return jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> {
+                    String id = rs.getString("id");
+                    Map<String, Object> meta = parseMetadata(rs.getObject("metadata"));
+                    Map<String, Object> summary = new HashMap<>();
+                    String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
+                    String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
+                    summary.put("id", id);
+                    summary.put("uri", uri);
+                    summary.put("documentId", docId != null && !docId.isBlank() ? docId : uri);
+                    summary.put("acl", meta.getOrDefault("acl", ""));
+                    summary.put("security", meta.get("security"));
+                    summary.put("lastModified", meta.getOrDefault("lastModified", ""));
+
+                    // Surface Flowable collocated scope attributes if present
+                    String scopeId = hasScope ? rs.getString("scope_id_") : null;
+                    String scopeType = hasScope ? rs.getString("scope_type_") : null;
+                    if (scopeId == null || scopeId.isBlank()) {
+                        Object s = meta.get("flowable_scope_id");
+                        if (s instanceof List<?> list && !list.isEmpty()) {
+                            scopeId = String.valueOf(list.get(0));
+                        } else if (s != null) {
+                            scopeId = String.valueOf(s);
+                        }
+                    }
+                    if (scopeType == null || scopeType.isBlank()) {
+                        Object s = meta.get("flowable_scope_type");
+                        if (s instanceof List<?> list && !list.isEmpty()) {
+                            scopeType = String.valueOf(list.get(0));
+                        } else if (s != null) {
+                            scopeType = String.valueOf(s);
+                        }
+                    }
+                    if (scopeId != null && !scopeId.isBlank()) {
+                        summary.put("scope_id", scopeId);
+                    }
+                    if (scopeType != null && !scopeType.isBlank()) {
+                        summary.put("scope_type", scopeType);
+                    }
+
+                    summary.put("_meta", meta);
+                    return summary;
+                }
+        );
+    }
+
     @Override
     public List<Map<String, Object>> listAccessibleSources(
             String userPrincipal,
@@ -372,57 +456,18 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
 
         if (jdbcTemplate != null) {
             try {
-                String tableName = getTableName(dimensions);
-                boolean hasScope = hasScopeColumns(tableName);
-                String sql = hasScope
-                        ? "SELECT id, metadata, scope_id_, scope_type_ FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500"
-                        : "SELECT id, metadata FROM " + tableName + " ORDER BY metadata->>'lastModified' DESC NULLS LAST LIMIT 500";
-
-                List<Map<String, Object>> rows = jdbcTemplate.query(
-                        sql,
-                        (rs, rowNum) -> {
-                            String id = rs.getString("id");
-                            Map<String, Object> meta = parseMetadata(rs.getObject("metadata"));
-                            Map<String, Object> summary = new HashMap<>();
-                            String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
-                            String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
-                            summary.put("id", id);
-                            summary.put("uri", uri);
-                            summary.put("documentId", docId != null && !docId.isBlank() ? docId : uri);
-                            summary.put("acl", meta.getOrDefault("acl", ""));
-                            summary.put("security", meta.get("security"));
-                            summary.put("lastModified", meta.getOrDefault("lastModified", ""));
-
-                            // Surface Flowable collocated scope attributes if present
-                            String scopeId = hasScope ? rs.getString("scope_id_") : null;
-                            String scopeType = hasScope ? rs.getString("scope_type_") : null;
-                            if (scopeId == null || scopeId.isBlank()) {
-                                Object s = meta.get("flowable_scope_id");
-                                if (s instanceof List<?> list && !list.isEmpty()) {
-                                    scopeId = String.valueOf(list.get(0));
-                                } else if (s != null) {
-                                    scopeId = String.valueOf(s);
-                                }
-                            }
-                            if (scopeType == null || scopeType.isBlank()) {
-                                Object s = meta.get("flowable_scope_type");
-                                if (s instanceof List<?> list && !list.isEmpty()) {
-                                    scopeType = String.valueOf(list.get(0));
-                                } else if (s != null) {
-                                    scopeType = String.valueOf(s);
-                                }
-                            }
-                            if (scopeId != null && !scopeId.isBlank()) {
-                                summary.put("scope_id", scopeId);
-                            }
-                            if (scopeType != null && !scopeType.isBlank()) {
-                                summary.put("scope_type", scopeType);
-                            }
-
-                            summary.put("_meta", meta);
-                            return summary;
+                List<Map<String, Object>> rows = new ArrayList<>();
+                for (Integer tableDimensions : tablesFor(dimensions)) {
+                    String tableName = getTableName(tableDimensions);
+                    try {
+                        rows.addAll(queryAccessibleRows(tableName));
+                    } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+                        if (dimensions != null) {
+                            throw e;
                         }
-                );
+                        log.debug("pgvector table {} not available: {}", tableName, e.getMessage());
+                    }
+                }
 
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> readableRows = readable(userPrincipal, userRoles, rows,
