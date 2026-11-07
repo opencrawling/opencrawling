@@ -16,8 +16,9 @@
 package org.opencrawling.alfresco;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import org.opencrawling.core.security.PermissionRule;
@@ -39,90 +40,86 @@ public class AlfrescoSecurityMapper {
         boolean isInherited
     ) {}
 
+    private static final Set<String> EVERYONE = Set.of("group_everyone", "everyone", "guest", "role_anonymous");
+
+    /**
+     * Maps a node's permissions block (locally set entries, plus inherited ones when inheritance is on).
+     *
+     * <ul>
+     *   <li>A {@code DENIED} entry becomes a {@code deny} rule, which wins over any grant, so a user Alfresco denies
+     *       is never shown the document because a group they belong to may read it.</li>
+     *   <li>An {@code EVERYONE} grant becomes a {@code public} rule next to the other rules: the denies still
+     *       apply.</li>
+     *   <li>Missing permissions, or entries that grant nothing, are never read as public: the document gets no
+     *       rules and a blank {@code acl}, so nobody may read it (#261).</li>
+     * </ul>
+     *
+     * Discovery decides with the same rules ({@code AlfrescoRepositoryConnector.discoverySecurity}), so search and
+     * discovery agree on what a user may see.
+     */
     public static SecurityResult mapSecurity(JsonNode permissionsNode) {
         if (permissionsNode == null || permissionsNode.isMissingNode() || permissionsNode.isNull()) {
-            return new SecurityResult(SecurityConfig.createPublic(), "public", List.of(), List.of(), true);
+            return new SecurityResult(SecurityConfig.none(), "", List.of(), List.of(), true);
         }
 
         boolean isInheritanceEnabled = permissionsNode.path("isInheritanceEnabled").asBoolean(true);
-        List<PermissionRule> rules = new ArrayList<>();
-        Set<String> users = new HashSet<>();
-        Set<String> groups = new HashSet<>();
-        boolean hasPublicAccess = false;
-
-        // Process locally set permissions
-        JsonNode locallySet = permissionsNode.path("locallySet");
-        if (locallySet.isArray()) {
-            for (JsonNode ace : locallySet) {
-                if (processAce(ace, rules, users, groups)) {
-                    hasPublicAccess = true;
-                }
-            }
-        }
-
-        // Process inherited permissions if inheritance is enabled
+        List<JsonNode> aces = new ArrayList<>();
+        permissionsNode.path("locallySet").forEach(aces::add);
         if (isInheritanceEnabled) {
-            JsonNode inherited = permissionsNode.path("inherited");
-            if (inherited.isArray()) {
-                for (JsonNode ace : inherited) {
-                    if (processAce(ace, rules, users, groups)) {
-                        hasPublicAccess = true;
-                    }
+            permissionsNode.path("inherited").forEach(aces::add);
+        }
+
+        List<PermissionRule> rules = new ArrayList<>();
+        Set<String> users = new LinkedHashSet<>();
+        Set<String> groups = new LinkedHashSet<>();
+        boolean everyone = false;
+        boolean grants = false;
+        for (JsonNode ace : aces) {
+            String authorityId = ace.path("authorityId").asText("").strip();
+            if (authorityId.isEmpty()) {
+                continue;
+            }
+            boolean denied = "DENIED".equalsIgnoreCase(ace.path("accessStatus").asText("ALLOWED"));
+            boolean isEveryone = EVERYONE.contains(authorityId.toLowerCase(Locale.ROOT));
+            boolean isGroup = authorityId.startsWith("GROUP_") || authorityId.startsWith("ROLE_")
+                    || authorityId.toLowerCase(Locale.ROOT).startsWith("group:")
+                    || authorityId.toLowerCase(Locale.ROOT).startsWith("role:");
+            if (denied) {
+                // A denial of everyone denies no one in particular; it cannot be expressed as a rule.
+                if (!isEveryone) {
+                    rules.add(new PermissionRule(authorityId, isGroup ? "group" : "user", authorityId, "deny"));
                 }
+                continue;
+            }
+            String accessLevel = mapAccessLevel(ace.path("name").asText("Consumer"));
+            grants = true;
+            if (isEveryone) {
+                everyone = true;
+                rules.add(new PermissionRule("public", "public", authorityId, accessLevel));
+            } else if (isGroup) {
+                groups.add(authorityId);
+                rules.add(new PermissionRule(authorityId, "group", authorityId, accessLevel));
+            } else {
+                users.add(authorityId);
+                rules.add(new PermissionRule(authorityId, "user", authorityId, accessLevel));
             }
         }
 
-        if (hasPublicAccess || rules.isEmpty()) {
-            return new SecurityResult(
-                SecurityConfig.createPublic(),
-                "public",
-                new ArrayList<>(users),
-                new ArrayList<>(groups),
-                isInheritanceEnabled
-            );
+        if (!grants) {
+            return new SecurityResult(rules.isEmpty() ? SecurityConfig.none() : new SecurityConfig(isInheritanceEnabled, rules),
+                    "", List.of(), List.of(), isInheritanceEnabled);
         }
 
         List<String> allIdentities = new ArrayList<>(users);
         allIdentities.addAll(groups);
-        String aclString = String.join(",", allIdentities);
-
+        String aclString = everyone ? "public" : String.join(",", allIdentities);
         return new SecurityResult(
-            new SecurityConfig(true, rules),
+            new SecurityConfig(isInheritanceEnabled, rules),
             aclString,
             new ArrayList<>(users),
             new ArrayList<>(groups),
             isInheritanceEnabled
         );
-    }
-
-    private static boolean processAce(JsonNode ace, List<PermissionRule> rules, Set<String> users, Set<String> groups) {
-        String status = ace.path("accessStatus").asText("ALLOWED");
-        if (!"ALLOWED".equalsIgnoreCase(status)) {
-            return false;
-        }
-
-        String authorityId = ace.path("authorityId").asText();
-        if (authorityId == null || authorityId.isBlank()) {
-            return false;
-        }
-
-        String roleName = ace.path("name").asText("Consumer");
-        String accessLevel = mapAccessLevel(roleName);
-
-        String lower = authorityId.toLowerCase();
-        if (lower.equals("group_everyone") || lower.equals("guest") || lower.equals("role_anonymous") || lower.equals("everyone")) {
-            return true;
-        }
-
-        if (authorityId.startsWith("GROUP_") || authorityId.startsWith("ROLE_") || lower.startsWith("group:") || lower.startsWith("role:")) {
-            groups.add(authorityId);
-            rules.add(new PermissionRule(authorityId, "group", authorityId, accessLevel));
-        } else {
-            users.add(authorityId);
-            rules.add(new PermissionRule(authorityId, "user", authorityId, accessLevel));
-        }
-
-        return false;
     }
 
     private static String mapAccessLevel(String roleName) {

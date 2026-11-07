@@ -1237,8 +1237,9 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
      * The node's effective permissions (locally set, plus inherited ones when inheritance is on), or {@code null}
      * when Alfresco returned none or none that allow anything.
      *
-     * <p>Unlike the crawler's mapping, missing permissions are never read as public, and a DENIED entry becomes a
-     * {@code deny} rule, so a caller Alfresco denies is not shown the node.
+     * <p>Missing permissions are never read as public, and a DENIED entry becomes a {@code deny} rule, so a caller
+     * Alfresco denies is not shown the node. The crawler maps permissions the same way ({@link AlfrescoSecurityMapper}),
+     * so discovery and search agree.
      */
     static SecurityConfig discoverySecurity(JsonNode permissions) {
         if (permissions == null || permissions.isMissingNode() || permissions.isNull()) {
