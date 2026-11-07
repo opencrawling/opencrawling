@@ -295,4 +295,24 @@ class OzoneOutputConnectorTest {
         RuntimeException ex = assertThrows(RuntimeException.class, () -> strictConnector.send(doc).block());
         assertTrue(ex.getMessage().contains("doc-x"));
     }
+
+    @Test
+    void aDocumentWhoseSourceReportsNoSecurityGetsASidecarWithNoGrants() throws Exception {
+        // A sidecar is read back with the caller's access (OIS sidecar reader, migration imports): "no security"
+        // must not be written as a public grant.
+        connector.setPipelineMode(PipelineMode.MIGRATION);
+        RepositoryDocument doc = new RepositoryDocument("doc-nosec", "file:///data/a.bin",
+                new ByteArrayInputStream("x".getBytes(StandardCharsets.UTF_8)),
+                Map.of("filename", List.of("a.bin")), "", null, Instant.now(), DocumentAction.UPSERT);
+
+        connector.send(doc).block();
+
+        String sidecarKey = client.getStorage().keySet().stream().filter(k -> k.endsWith(".ois.json")).findFirst()
+                .orElseThrow();
+        OisMigrationDocument oisDoc = objectMapper.readValue(client.getStorage().get(sidecarKey), OisMigrationDocument.class);
+        assertNotNull(oisDoc.security());
+        assertTrue(oisDoc.security().permissions().isEmpty());
+        assertEquals("", oisDoc.acl());
+    }
+
 }

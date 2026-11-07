@@ -21,6 +21,14 @@ public record SecurityConfig(
     boolean inheritanceEnabled,
     List<PermissionRule> permissions
 ) {
+    /**
+     * No permission rules: what a document gets when its source reported no security at all. It is never public;
+     * readers decide on the legacy {@code acl} string alone, and a blank {@code acl} grants no one.
+     */
+    public static SecurityConfig none() {
+        return new SecurityConfig(false, List.of());
+    }
+
     public static SecurityConfig createPublic() {
         return new SecurityConfig(false, List.of(
             new PermissionRule("public", "public", "Public Access", "read")

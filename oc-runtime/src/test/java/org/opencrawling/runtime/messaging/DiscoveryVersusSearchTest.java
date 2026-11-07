@@ -44,6 +44,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.security.Caller;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.ReadKeys;
 import org.opencrawling.core.security.ResourceRef;
@@ -239,19 +240,28 @@ class DiscoveryVersusSearchTest {
     }
 
     /**
-     * A message that carries no security object gets the public placeholder ({@code IngestionMessage}, see
-     * {@code EffectiveAcl}), so search treats such a document as public, while discovery, deciding on the source,
-     * hides it. This pins today's behaviour; it changes if the placeholder convention does.
+     * A document whose source reports no security and no acl is hidden both ways: search must not read silence as
+     * public (#261).
      */
     @Test
-    void documentsWhoseSourceReportsNoSecurityFollowThePlaceholderConvention() {
+    void documentsWhoseSourceReportsNoSecurityAreHiddenBothWays() {
         TreeSet<String> withoutSecurity = withoutSecurityIds();
         assertThat(withoutSecurity).isNotEmpty();
         for (Map.Entry<String, List<String>> caller : CALLERS.entrySet()) {
             assertThat(discoveryView(caller.getKey(), caller.getValue())).doesNotContainAnyElementsOf(withoutSecurity);
-            assertThat(searchView(caller.getKey(), caller.getValue())).containsAll(withoutSecurity);
+            assertThat(searchView(caller.getKey(), caller.getValue())).doesNotContainAnyElementsOf(withoutSecurity);
         }
-        assertThat(STORED.get(withoutSecurity.first()).get("security_allowed_read")).isEqualTo(List.of("public"));
+        assertThat(STORED.get(withoutSecurity.first()).get("security_allowed_read")).isEqualTo(List.of());
+    }
+
+    @Test
+    void aJsonMessageWithNoSecurityFieldIsNotPublic() {
+        // Older producers and external ones may leave the field out.
+        IngestionMessage message = JsonMapper.builder().build().readValue(
+                "{\"documentId\":\"doc-1\",\"uri\":\"fake://doc-1\",\"acl\":\"\"}", IngestionMessage.class);
+
+        assertThat(message.security()).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(message.security(), message.acl()).allowedRead()).isEmpty();
     }
 
     @Test

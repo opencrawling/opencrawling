@@ -58,6 +58,18 @@ class AuthorizationSyncConsumerTest {
     }
 
     @Test
+    void aMessageWithoutSecurityGrantsNoOne() throws Exception {
+        consumer.consume(new IngestionMessage("d1", "file:///d1", Map.of(), "", null, "now",
+                null, null, Map.of(), DocumentAction.UPSERT));
+
+        ArgumentCaptor<EffectiveAcl> acl = ArgumentCaptor.forClass(EffectiveAcl.class);
+        verify(writer).sync(eq("d1"), acl.capture());
+        // Missing permissions are never written to OpenFGA as a public grant.
+        assertThat(acl.getValue().allowedRead()).isEmpty();
+        assertThat(acl.getValue().isPublic()).isFalse();
+    }
+
+    @Test
     void tombstonesRemoveAllTuples() throws Exception {
         consumer.consume(message("d1", null, DocumentAction.DELETE));
         verify(writer).delete("d1");

@@ -212,7 +212,7 @@ public class OzoneOutputConnector implements OutputConnector {
                 sha256Hex
         );
 
-        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.createPublic();
+        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.none();
         String acl = document.acl() != null ? document.acl() : "";
 
         OisMigrationDocument oisDocument = new OisMigrationDocument(

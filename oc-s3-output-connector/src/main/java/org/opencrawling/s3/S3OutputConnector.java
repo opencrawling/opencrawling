@@ -272,7 +272,7 @@ public class S3OutputConnector implements OutputConnector {
                 eTag
         );
 
-        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.createPublic();
+        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.none();
         String acl = document.acl() != null ? document.acl() : "";
         String s3Uri = "s3://" + properties.getBucket() + "/" + key;
 
