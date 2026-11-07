@@ -398,4 +398,28 @@ class S3OutputConnectorTest {
             assertEquals(List.of("hr-namespace"), req.overrideConfiguration().get().headers().get("x-emc-namespace"));
         }
     }
+
+    @Test
+    void aDocumentWhoseSourceReportsNoSecurityGetsASidecarWithNoGrants() throws Exception {
+        // A sidecar is read back with the caller's access (OIS sidecar reader, migration imports): "no security"
+        // must not be written as a public grant.
+        connector.setPipelineMode(PipelineMode.MIGRATION);
+        RepositoryDocument doc = new RepositoryDocument("doc-nosec", "file:///data/a.bin",
+                new ByteArrayInputStream("x".getBytes(StandardCharsets.UTF_8)),
+                new java.util.HashMap<>(Map.of("filename", List.of("a.bin"), "relativePath", List.of("data/a.bin"))),
+                "", null, Instant.now(), DocumentAction.UPSERT);
+
+        connector.send(doc).block();
+
+        ArgumentCaptor<PutObjectRequest> putCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+        ArgumentCaptor<RequestBody> bodyCaptor = ArgumentCaptor.forClass(RequestBody.class);
+        verify(s3Client, times(3)).putObject(putCaptor.capture(), bodyCaptor.capture());
+        assertTrue(putCaptor.getAllValues().get(1).key().endsWith(".ois.json"));
+        byte[] sidecar = bodyCaptor.getAllValues().get(1).contentStreamProvider().newStream().readAllBytes();
+        OisMigrationDocument oisDoc = objectMapper.readValue(sidecar, OisMigrationDocument.class);
+        assertNotNull(oisDoc.security());
+        assertTrue(oisDoc.security().permissions().isEmpty());
+        assertEquals("", oisDoc.acl());
+    }
+
 }

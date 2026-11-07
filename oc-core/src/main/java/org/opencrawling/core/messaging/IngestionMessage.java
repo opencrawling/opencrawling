@@ -47,7 +47,9 @@ public record IngestionMessage(
             pipelineMode = PipelineMode.RAG;
         }
         if (security == null) {
-            security = SecurityConfig.createPublic();
+            // The source reported no permissions: never public. The acl string alone decides, and a blank one
+            // grants no one, as discovery does on the source.
+            security = SecurityConfig.none();
         }
         if (action == null) {
             action = DocumentAction.UPSERT;

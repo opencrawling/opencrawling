@@ -52,7 +52,7 @@ Connectors describe a document's permissions as a `SecurityConfig` (a list of ru
 | rules present | they decide; the legacy `acl` string is ignored (it often holds values that are not identities) |
 | only the default placeholder `public` rule, plus an `acl` naming identities | the `acl` decides: a connector that could not read the source permissions must not make the document public |
 | no rules, only an `acl` | the `acl` tokens grant read (`read` itself is a keyword and is dropped) |
-| neither | nobody may read the document |
+| neither, including a message that carries no `security` object at all | nobody may read the document. The pipeline never reads missing permissions as public: search, OpenFGA and the Ozone/S3 sidecars all record no grants |
 
 **Caller matching.** Names are compared case-insensitively, without a leading `user:` on the caller's principal or `group:` on its roles. The permission identity's own prefix decides what it can match:
 
