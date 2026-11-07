@@ -167,7 +167,8 @@ public class VectorStoreWriterConsumer {
         }
     }
 
-    private void ensureSecurityMetadata(Map<String, Object> metadata) {
+    /** The permission fields a chunk is stored with, recomputed from its {@code security} and {@code acl}. */
+    static void ensureSecurityMetadata(Map<String, Object> metadata) {
         // Recomputed from the security object and the legacy acl even when the ingestion step already set the
         // flattened fields: EffectiveAcl is idempotent, and this keeps chunks from older producers consistent.
         EffectiveAcl effectiveAcl = EffectiveAcl.resolve(metadata.get("security"), metadata.get("acl"));

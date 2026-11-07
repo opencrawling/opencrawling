@@ -32,6 +32,14 @@ The caller's principal and roles come from one of two places, set by `opencrawli
 
 The principal and the groups come from separate token claims and are never mixed, which keeps the `user:` / `group:` rule below intact. Setup and claim mapping: [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-identity).
 
+### Beyond search
+
+The tools that let agents work before or around the index follow the same rules:
+- **OIS sidecars** (`readOisSidecars`) go through the same gate as search, on each sidecar's document id and permissions.
+- **Discovery** (`exploreRepositoryTree`, `queryRepositoryDryRun`), and the checks a dynamic job or single-document ingest makes before it starts, apply the metadata rules to the permissions the *source repository* reports now. They do this whatever the mode, because OpenFGA only knows indexed documents. So group memberships held only in OpenFGA are not used there, and a caller may see less than it may search, never more.
+
+`DiscoveryVersusSearchTest` checks that the two paths agree for the same caller across a mixed corpus. See [Enterprise Multi-Agent Integration](Enterprise-Multi-Agent-Integration).
+
 ## Permissions: what gets indexed
 
 Connectors describe a document's permissions as a `SecurityConfig` (a list of rules: `identity`, `identityType`, `access`), plus, for older connectors, a legacy comma-separated `acl` string. One normalizer, `EffectiveAcl`, turns them into what every store indexes (`security_allowed_read`, `security_denied_read`, `security_inheritance`) and into what OpenFGA receives:
@@ -240,6 +248,6 @@ A provider that can allow documents the stored permissions do not show (as a rel
 
 ## Testing
 
-- **Unit tests**: `EffectiveAcl` rules and a 20,000-case consistency check between stores that keep the `security` object and stores that keep only the flattened fields; identifier encoding; tuple diff and fail-closed ordering; the gate, modes and metrics.
+- **Unit tests**: `DiscoveryVersusSearchTest` (discovery and search show each caller the same documents, and the store pre-filter never hides one the gate allows); `EffectiveAcl` rules and a 20,000-case consistency check between stores that keep the `security` object and stores that keep only the flattened fields; identifier encoding; tuple diff and fail-closed ordering; the gate, modes and metrics.
 - **Integration tests** against OpenFGA (Testcontainers; run with `-DskipITs=false`): `OpenFgaAuthorizationIT` (sync, check, large changes, deletes, outage) and `OpenFgaDifferentialIT` (37,500 random decisions, stored ACLs vs OpenFGA).
 - **End to end**: `./scripts/test-openfga-decoupled.sh` builds the decoupled stack with OpenFGA (images tagged `:openfga-45`, MCP on port 18080, its own network and volumes) and checks, through the OIS endpoint and the MCP tools: per-caller search results, a membership change without re-indexing, a permission change, a delete, fail-closed behaviour with OpenFGA stopped, and the metrics.

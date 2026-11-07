@@ -13,6 +13,7 @@ Use the sidebar or the quick links below to navigate the documentation:
 *   **[Configuration Guide](Configuration-Guide)**: Setting up repository, transformation, and output connectors.
 *   **[Model Context Protocol](Model-Context-Protocol)**: Running and query-authorizing the Secure MCP Server.
 *   **[Document Authorization](Document-Authorization)**: How retrieval is authorized, and relationship-based access control with OpenFGA.
+*   **[Enterprise Multi-Agent Integration](Enterprise-Multi-Agent-Integration)**: How AI agents discover, ingest, govern and read content on behalf of users, with verified identities.
 
 ---
 
