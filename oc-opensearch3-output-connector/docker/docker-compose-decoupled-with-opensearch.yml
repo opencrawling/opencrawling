@@ -18,7 +18,7 @@ services:
   # --- Infrastructure Services for OpenSearch ---
   opensearch-standalone:
     container_name: opensearch-standalone
-    image: opensearchproject/opensearch:2.19.0
+    image: opensearchproject/opensearch:3.5.0
     environment:
       - cluster.name=opensearch-cluster
       - node.name=opensearch-node

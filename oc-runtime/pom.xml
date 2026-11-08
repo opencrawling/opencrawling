@@ -156,6 +156,15 @@
             <groupId>org.opencrawling</groupId>
             <artifactId>oc-opensearch2-output-connector</artifactId>
             <version>${project.version}</version>
+            <!-- The jar bundles its own OpenSearch 2.x client, relocated to org.opencrawling.shaded.opensearch2.
+                 Its POM still lists the unrelocated opensearch-java 2.x, which would win over the 3.x client
+                 that oc-opensearch3-output-connector and the MCP backends need. -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.opensearch.client</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
