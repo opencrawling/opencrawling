@@ -33,6 +33,7 @@
 [![Milvus](https://img.shields.io/badge/Milvus-2.4.5-00A1EA.svg?style=flat&logo=milvus&logoColor=white)](https://milvus.io/)
 [![Qdrant](https://img.shields.io/badge/Qdrant-1.12-DC244C.svg?style=flat&logo=qdrant&logoColor=white)](https://qdrant.tech/)
 [![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x%20%7C%203.x-005EB8.svg?style=flat&logo=opensearch&logoColor=white)](https://opensearch.org/)
+[![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8.x%20%7C%209.x-005571.svg?style=flat&logo=elasticsearch&logoColor=white)](https://www.elastic.co/elasticsearch)
 [![Vespa](https://img.shields.io/badge/Vespa-8-4E9BFA.svg?style=flat&logo=vespa&logoColor=white)](https://vespa.ai/)
 [![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
 [![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
@@ -100,7 +101,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir / OpenArch / Apache SeaTunnel]
+        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Elasticsearch / Luxir / OpenArch / Apache SeaTunnel]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
@@ -533,6 +534,7 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Qdrant**: Rust-based vector search engine with payload-indexed ACL pre-filtering and optional scalar/binary quantization.
+- **Elasticsearch 8.x / 9.x**: `dense_vector` HNSW indexing (optionally `int8_hnsw` / `bbq_hnsw` quantized) through the official Elastic Java client, with ACL read-key pre-filtering inside kNN queries.
 - **Vespa**: Hybrid ANN vector search and BM25 lexical ranking engine, combining `nearestNeighbor` and full-text queries in a single rank profile for enterprise-scale RAG retrieval.
 - **Redis Stack**: Lightweight caching and session management.
 - **Ollama & OpenAI**: Dynamic embedding generation via local and cloud-based AI engines.

@@ -145,7 +145,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
   - `opencrawling.consumer.writer.enabled`
   - `opencrawling.mcp.server.enabled`
 - **Output selection:** `spring.opencrawling.output.type` picks the active writer.
-  - Values: `pgvector` (default), `milvus`, `qdrant`, `vespa`, `solr`, `opensearch2`, `opensearch3`, `seatunnel`, `ozone`, `luxir`.
+  - Values: `pgvector` (default), `milvus`, `qdrant`, `vespa`, `solr`, `opensearch2`, `opensearch3`, `elasticsearch`, `seatunnel`, `ozone`, `luxir`.
   - Each writer consumer is gated on this property with `@ConditionalOnProperty` or `@ConditionalOnExpression`. New outputs must follow the same pattern.
 - **Push ingestion:** `OisIngestController` accepts documents without a crawler. It writes each UPSERT's text to the claim-check store.
 

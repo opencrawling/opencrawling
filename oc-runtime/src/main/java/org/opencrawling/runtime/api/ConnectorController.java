@@ -340,6 +340,16 @@ public class ConnectorController {
             "opensearch3IndexName", "enterprise_kb",
             "opensearch3Dimensions", "1024"
         )));
+        defaults.add(new ConnectorDTO("Elasticsearch_Output", "Elasticsearch 8.x/9.x Vector Store", "output", "org.opencrawling.elasticsearch.ElasticsearchOutputConnector", 10, Map.of(
+            "elasticsearchUris", "http://localhost:9200",
+            "elasticsearchUsername", "elastic",
+            "elasticsearchPassword", "",
+            "elasticsearchApiKey", "",
+            "elasticsearchIndexName", "enterprise_kb",
+            "elasticsearchDimensions", "1024",
+            "elasticsearchSimilarity", "cosine",
+            "elasticsearchIndexType", "hnsw"
+        )));
         defaults.add(new ConnectorDTO("Vespa_Output", "Vespa Hybrid Search Store", "output", "org.opencrawling.vespa.VespaOutputConnector", 10, Map.of(
             "vespaEndpoint", "http://localhost:8080",
             "vespaConfigEndpoint", "http://localhost:19071",

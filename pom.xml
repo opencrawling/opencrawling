@@ -110,6 +110,7 @@
         <module>oc-embedding-service</module>
         <module>oc-opensearch2-output-connector</module>
         <module>oc-opensearch3-output-connector</module>
+        <module>oc-elasticsearch-output-connector</module>
         <module>oc-vespa-output-connector</module>
         <module>oc-solr-output-connector</module>
         <module>oc-luxir-output-connector</module>

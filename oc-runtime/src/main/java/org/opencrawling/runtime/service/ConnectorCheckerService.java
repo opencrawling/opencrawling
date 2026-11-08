@@ -76,6 +76,11 @@ public class ConnectorCheckerService {
                 return checkMilvus(config);
             }
 
+            // --- Elasticsearch Output Connector (8.x & 9.x) ---
+            if (className.contains("ElasticsearchOutputConnector") || className.contains("elasticsearch")) {
+                return checkElasticsearch(config);
+            }
+
             // --- OpenSearch Output Connector (2.x & 3.x) ---
             if (className.contains("OpenSearch") || className.contains("opensearch")) {
                 return checkOpenSearch(config);
@@ -317,6 +322,44 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to OpenSearch cluster at " + uris + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkElasticsearch(Map<String, String> config) {
+        String uris = config.getOrDefault("elasticsearchUris", config.getOrDefault("uris", "http://localhost:9200"));
+        String apiKey = config.getOrDefault("elasticsearchApiKey", config.getOrDefault("apiKey", ""));
+        String user = config.getOrDefault("elasticsearchUsername", config.getOrDefault("username", ""));
+        String pass = config.getOrDefault("elasticsearchPassword", config.getOrDefault("password", ""));
+        String firstUri = uris.split(",")[0].trim();
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(firstUri.endsWith("/") ? firstUri : firstUri + "/"))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET();
+
+            if (apiKey != null && !apiKey.isBlank()) {
+                reqBuilder.header("Authorization", "ApiKey " + apiKey.trim());
+            } else if (user != null && !user.isBlank() && pass != null && !pass.isEmpty()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return new ConnectionCheckResult(false, "Elasticsearch returned HTTP status " + response.statusCode() + " from " + firstUri, response.body());
+            }
+            // OpenSearch and Elasticsearch both answer on :9200; only Elasticsearch sends this header.
+            String product = response.headers().firstValue("X-Elastic-Product").orElse("");
+            if (!"Elasticsearch".equalsIgnoreCase(product)) {
+                return new ConnectionCheckResult(false, "The server at " + firstUri
+                        + " is not Elasticsearch (missing X-Elastic-Product header); is this an OpenSearch cluster?", response.body());
+            }
+            return new ConnectionCheckResult(true, "Successfully connected to Elasticsearch cluster at " + firstUri + " (HTTP " + response.statusCode() + ").", response.body());
+        } catch (Exception e) {
+            String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return new ConnectionCheckResult(false, "Failed to connect to Elasticsearch cluster at " + uris + ": " + reason, e.toString());
         }
     }
 

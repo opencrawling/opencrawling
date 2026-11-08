@@ -517,4 +517,89 @@ class ConnectorCheckerServiceTest {
             server.stop(0);
         }
     }
+
+    @Test
+    void testCheckElasticsearchConnectorSuccessWithApiKey() throws Exception {
+        List<String> authHeaders = new CopyOnWriteArrayList<>();
+        HttpServer es = elasticsearchStub("Elasticsearch", authHeaders);
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + es.getAddress().getPort(),
+                    "elasticsearchApiKey", "a2V5OnNlY3JldA==",
+                    "elasticsearchUsername", "elastic",
+                    "elasticsearchPassword", "ignored")));
+
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Successfully connected to Elasticsearch"));
+            assertEquals(List.of("ApiKey a2V5OnNlY3JldA=="), authHeaders);
+        } finally {
+            es.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorUsesBasicAuthWithoutApiKey() throws Exception {
+        List<String> authHeaders = new CopyOnWriteArrayList<>();
+        HttpServer es = elasticsearchStub("Elasticsearch", authHeaders);
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + es.getAddress().getPort(),
+                    "elasticsearchUsername", "elastic",
+                    "elasticsearchPassword", "changeme")));
+
+            assertTrue(result.success(), result.message());
+            assertEquals(List.of("Basic " + java.util.Base64.getEncoder().encodeToString(
+                    "elastic:changeme".getBytes(StandardCharsets.UTF_8))), authHeaders);
+        } finally {
+            es.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorRejectsOpenSearch() throws Exception {
+        HttpServer openSearch = elasticsearchStub(null, new CopyOnWriteArrayList<>());
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + openSearch.getAddress().getPort())));
+
+            assertFalse(result.success());
+            assertTrue(result.message().contains("is not Elasticsearch"), result.message());
+        } finally {
+            openSearch.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorFailure() {
+        ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of("elasticsearchUris", "http://127.0.0.1:1")));
+
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Elasticsearch"), result.message());
+        assertFalse(result.message().endsWith("null"), result.message());
+    }
+
+    private static ConnectorDTO elasticsearchConnector(Map<String, String> config) {
+        return new ConnectorDTO("ES_Test", "Test Elasticsearch", "output",
+                "org.opencrawling.elasticsearch.ElasticsearchOutputConnector", 10, config);
+    }
+
+    private static HttpServer elasticsearchStub(String product, List<String> authHeaders) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if (auth != null) {
+                authHeaders.add(auth);
+            }
+            byte[] bytes = "{\"version\":{\"number\":\"9.4.3\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            if (product != null) {
+                exchange.getResponseHeaders().add("X-Elastic-Product", product);
+            }
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
 }
