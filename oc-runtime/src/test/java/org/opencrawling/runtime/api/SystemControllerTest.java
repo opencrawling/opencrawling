@@ -119,4 +119,46 @@ class SystemControllerTest {
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
         assertTrue(ex.getReason().contains("Invalid JVM heap argument"));
     }
+
+    private static SystemController.SystemSettingsDTO withChunkSize(int chunkSize) {
+        return new SystemController.SystemSettingsDTO(
+                "Ollama", "http://127.0.0.1:11434", "mxbai-embed-large", 1024,
+                "TokenTextSplitter", chunkSize, 100, "ozone", "NATIVE",
+                "http://127.0.0.1:9878", "127.0.0.1", 9862, "s3v", "claims",
+                "4.2.0", "PipesForkParser (Process-Isolated)", true, 30000L,
+                "-Xmx512m", 10000, true, true, 20000000, 1
+        );
+    }
+
+    @Test
+    void theSavedChunkSizeBecomesTheDefaultForJobs() {
+        org.opencrawling.runtime.orchestrator.ChunkingDefaults defaults =
+                new org.opencrawling.runtime.orchestrator.ChunkingDefaults();
+        controller.setChunkingDefaults(defaults);
+
+        try {
+            controller.updateSettings(withChunkSize(400));
+
+            assertEquals(400, defaults.apply(null).chunkSize());
+        } finally {
+            controller.updateSettings(withChunkSize(800));
+        }
+    }
+
+    @Test
+    void aChunkSizeAboveTheLimitIsRejectedAndChangesNothing() {
+        org.opencrawling.runtime.orchestrator.ChunkingDefaults defaults =
+                new org.opencrawling.runtime.orchestrator.ChunkingDefaults();
+        controller.setChunkingDefaults(defaults);
+        SystemController.SystemSettingsDTO before = controller.getSettings();
+        org.opencrawling.core.messaging.ChunkingSpec defaultsBefore = defaults.apply(null);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> controller.updateSettings(withChunkSize(9000)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("Invalid chunk size"));
+        assertSame(before, controller.getSettings());
+        assertEquals(defaultsBefore, defaults.apply(null));
+    }
 }

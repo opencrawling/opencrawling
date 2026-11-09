@@ -80,6 +80,9 @@ public class JobOrchestrator {
     @Autowired(required = false)
     private GovernanceProperties governanceProperties;
 
+    @Autowired(required = false)
+    private ChunkingDefaults chunkingDefaults;
+
     @Value("${opencrawling.pipeline.mode:rag}")
     private String defaultPipelineMode = "rag";
 
@@ -178,8 +181,9 @@ public class JobOrchestrator {
      * NarrativizationConfig, PipelineMode, String, BooleanSupplier, ExecutionProvenance)} does, with the job's own
      * chunking. The chunking travels with each document on the documents topic, so it applies to documents the
      * ingestion consumer chunks; an output connector that is given the documents directly chunks them its own way.
+     * The global chunk size from the settings fills in what the job does not set.
      *
-     * @param chunking how the ingestion consumer splits this job's documents; {@code null} for its defaults
+     * @param chunking how the ingestion consumer splits this job's documents; {@code null} for the defaults
      */
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
@@ -209,7 +213,7 @@ public class JobOrchestrator {
         }
 
         return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId,
-                stopRequested != null ? stopRequested : () -> false, provenance, chunking);
+                stopRequested != null ? stopRequested : () -> false, provenance, withDefaults(chunking));
     }
 
     /** Why a run that would bypass the governance gate is refused. */
@@ -224,6 +228,16 @@ public class JobOrchestrator {
     public boolean bypassesGovernance(OutputConnector outputConnector, PipelineMode mode) {
         return governanceProperties != null && governanceProperties.isEnabled() && outputConnector != null
                 && mode != PipelineMode.MIGRATION;
+    }
+
+    /** The job's chunking with the global chunk size filled in where the job gives none. */
+    private ChunkingSpec withDefaults(ChunkingSpec chunking) {
+        return chunkingDefaults != null ? chunkingDefaults.apply(chunking) : chunking;
+    }
+
+    /** For tests and callers that build the orchestrator themselves. */
+    public void setChunkingDefaults(ChunkingDefaults chunkingDefaults) {
+        this.chunkingDefaults = chunkingDefaults;
     }
 
     /** For tests and callers that build the orchestrator themselves. */
@@ -586,7 +600,7 @@ public class JobOrchestrator {
         Transformation transformation = resolveTransformation(transformationConnector);
         IngestionMessage message = new IngestionMessage(doc.id(), uri, metadata, doc.acl(), doc.security(),
                 doc.lastModified().toString(), transformationConnector, transformation.engine(), transformation.config(),
-                doc.action(), PipelineMode.RAG);
+                doc.action(), PipelineMode.RAG, withDefaults(null));
         kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), message).get();
     }
 

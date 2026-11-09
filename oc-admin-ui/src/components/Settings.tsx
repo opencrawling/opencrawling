@@ -479,31 +479,17 @@ export default function Settings() {
                 <span>1000</span>
                 <span>2000</span>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Used for documents published after you save, by jobs that do not set their own chunking.
+              </p>
             </div>
 
-            {/* Chunk Overlap */}
+            {/* Chunk Overlap: not supported by the splitter */}
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-sm font-medium flex items-center gap-1">
-                  Chunk Overlap 
-                  <span className="text-xs text-muted-foreground font-normal">(Tokens)</span>
-                </label>
-                <span className="font-mono text-sm text-primary font-bold">{settings.chunkOverlap}</span>
-              </div>
-              <input 
-                type="range"
-                min="0"
-                max="500"
-                step="10"
-                value={settings.chunkOverlap}
-                onChange={(e) => setSettings({ ...settings, chunkOverlap: parseInt(e.target.value) })}
-                className="w-full accent-primary bg-secondary h-1.5 rounded-lg appearance-none cursor-pointer"
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-                <span>0</span>
-                <span>250</span>
-                <span>500</span>
-              </div>
+              <label className="text-sm font-medium">Chunk Overlap</label>
+              <p className="text-xs text-muted-foreground">
+                Not available: the TokenTextSplitter cuts chunks at sentence ends and does not overlap them.
+              </p>
             </div>
           </div>
         </div>

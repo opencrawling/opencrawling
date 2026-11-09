@@ -26,8 +26,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  * @param ollamaModel model name used for embedding generation
  * @param vectorDimensions vector embedding dimensions
  * @param chunkerType semantic chunking implementation
- * @param chunkSize token chunk size
- * @param chunkOverlap token chunk overlap
+ * @param chunkSize chunk size in tokens (1 to 8192) for jobs that do not set their own chunking; applies to
+ *     documents published after the change
+ * @param chunkOverlap not used: the runtime's splitter has no chunk overlap; kept for compatibility
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)

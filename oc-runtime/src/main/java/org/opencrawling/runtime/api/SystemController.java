@@ -53,6 +53,7 @@ public class SystemController {
     private final TelemetryTraceStore traceStore;
     private final TextExtractionProperties textExtractionProperties;
     private final TextExtractionService textExtractionService;
+    private org.opencrawling.runtime.orchestrator.ChunkingDefaults chunkingDefaults;
 
     @Autowired
     public SystemController(
@@ -323,6 +324,15 @@ public class SystemController {
         return InMemoryLogAppender.getLogs();
     }
 
+    /** Hands the saved chunk size to the jobs, now and after every settings update. */
+    @Autowired(required = false)
+    public void setChunkingDefaults(org.opencrawling.runtime.orchestrator.ChunkingDefaults chunkingDefaults) {
+        this.chunkingDefaults = chunkingDefaults;
+        if (chunkingDefaults != null && settings != null) {
+            chunkingDefaults.setChunkSize(settings.chunkSize());
+        }
+    }
+
     @Operation(summary = "Get global system settings", description = "Retrieves active configuration for embedding models, chunking parameters, Claim-Check store, and Apache Tika parser engine.")
     @ApiResponse(responseCode = "200", description = "System configuration settings")
     @GetMapping("/settings")
@@ -334,6 +344,11 @@ public class SystemController {
     @ApiResponse(responseCode = "200", description = "Settings updated successfully")
     @PostMapping("/settings")
     public ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
+        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(newSettings.chunkSize())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid chunk size: "
+                    + newSettings.chunkSize() + ". Expected 1 to "
+                    + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens.");
+        }
         this.settings = newSettings;
         if (textExtractionProperties != null) {
             if (newSettings.tikaForkEnabled() != null) {
@@ -364,10 +379,13 @@ public class SystemController {
             }
         }
         PersistenceHelper.save("settings.json", newSettings);
+        if (chunkingDefaults != null) {
+            chunkingDefaults.setChunkSize(newSettings.chunkSize());
+        }
         InMemoryLogAppender.getLogs().add(formatLog("SUCCESS", "System settings updated: Model set to '" 
             + newSettings.ollamaModel() + "' (" + newSettings.vectorDimensions() + "d) via " 
             + newSettings.embeddingProvider() + ". Chunker: " + newSettings.chunkerType() 
-            + " [Size: " + newSettings.chunkSize() + ", Overlap: " + newSettings.chunkOverlap() + "]"
+            + " [Size: " + newSettings.chunkSize() + " tokens, for jobs that set none]"
             + ". Tika Fork: " + newSettings.tikaForkEnabled() + " (Timeout: " + newSettings.tikaTimeoutMs() + "ms, Heap: " + newSettings.tikaJvmHeap() + ", Clients: " + newSettings.tikaNumClients() + ")"));
         InMemoryLogAppender.getLogs().add(formatLog("WARN", "Tika parser settings updated. Note: Reconfiguration of active child processes requires an application restart to take full effect."));
         return ResponseEntity.ok().header("X-Requires-Restart", "true").build();
@@ -386,9 +404,9 @@ public class SystemController {
         int vectorDimensions,
         @Schema(description = "Text splitter / chunker algorithm", example = "TokenTextSplitter")
         String chunkerType,
-        @Schema(description = "Chunk token size limit", example = "800")
+        @Schema(description = "Chunk size in tokens (1 to 8192) for jobs that do not set their own chunking. Applies to documents published after the change.", example = "800")
         int chunkSize,
-        @Schema(description = "Overlap between adjacent chunks in tokens", example = "100")
+        @Schema(description = "Not used: the TokenTextSplitter has no chunk overlap. Kept so existing clients and settings files still work.", example = "100", deprecated = true)
         int chunkOverlap,
         @Schema(description = "Claim-Check binary payload storage backend ('ozone', 'local', 's3')", example = "ozone")
         String claimCheckStore,
