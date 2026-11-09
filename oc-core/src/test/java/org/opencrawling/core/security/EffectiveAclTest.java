@@ -66,7 +66,7 @@ class EffectiveAclTest {
                 "user:alice;group:finance,secured");
 
         assertThat(acl.allowedRead()).containsExactly("user:alice");
-        assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly("user:alice");
+        assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly("alice");
     }
 
     @Test
@@ -149,10 +149,10 @@ class EffectiveAclTest {
         );
         assertThat(acl.deniedRead()).containsExactly("group:contractors");
         assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly(
-                "user:alice",
-                "group:finance",
-                "group:ops",
-                "group:contractors",
+                "alice",
+                "finance",
+                "ops",
+                "contractors",
                 "user:bob",
                 "group:devs",
                 "user:carol",

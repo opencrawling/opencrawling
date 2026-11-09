@@ -87,7 +87,6 @@ public record EffectiveAcl(
         if (hasRules && !placeholderOverridden) {
             Set<String> allowed = new LinkedHashSet<>();
             Set<String> denied = new LinkedHashSet<>();
-            List<PermissionRule> normalizedRules = new ArrayList<>();
             for (PermissionRule rule : rules.permissions()) {
                 if (rule == null || rule.identity() == null || rule.access() == null) {
                     continue;
@@ -97,7 +96,6 @@ public record EffectiveAcl(
                     // A blank identity matches no caller unless its type makes it public.
                     continue;
                 }
-                normalizedRules.add(new PermissionRule(identity, rule.identityType(), rule.displayName(), rule.access()));
                 switch (rule.access().toLowerCase(Locale.ROOT)) {
                     case "read", "write", "admin" -> allowed.add(identity);
                     case "deny" -> denied.add(identity);
@@ -106,8 +104,7 @@ public record EffectiveAcl(
                     }
                 }
             }
-            SecurityConfig stored = new SecurityConfig(rules.inheritanceEnabled(), normalizedRules);
-            return new EffectiveAcl(rules.inheritanceEnabled(), new ArrayList<>(allowed), new ArrayList<>(denied), stored);
+            return new EffectiveAcl(rules.inheritanceEnabled(), new ArrayList<>(allowed), new ArrayList<>(denied), rules);
         }
 
         boolean inheritance = rules != null && rules.inheritanceEnabled();
