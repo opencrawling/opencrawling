@@ -121,8 +121,8 @@ class IngestionConsumerTest {
         verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaConfig.CHUNKS_TOPIC_NAME), anyString(), sent.capture());
         DocumentChunkMessage chunk = (DocumentChunkMessage) sent.getAllValues().get(0);
 
-        assertEquals(List.of("engineering", "finance"), chunk.metadata().get("security_allowed_read"));
-        assertEquals(List.of("contractor"), chunk.metadata().get("security_denied_read"));
+        assertEquals(List.of("group:engineering", "group:finance"), chunk.metadata().get("security_allowed_read"));
+        assertEquals(List.of("group:contractor"), chunk.metadata().get("security_denied_read"));
     }
 
     @Test

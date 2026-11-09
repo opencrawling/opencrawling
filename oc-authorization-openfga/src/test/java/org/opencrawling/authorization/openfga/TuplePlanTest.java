@@ -32,8 +32,8 @@ class TuplePlanTest {
 
     private static EffectiveAcl acl(List<String> allowed, List<String> denied) {
         List<PermissionRule> rules = new ArrayList<>();
-        allowed.forEach(id -> rules.add(new PermissionRule(id, "group", id, "read")));
-        denied.forEach(id -> rules.add(new PermissionRule(id, "group", id, "deny")));
+        allowed.forEach(id -> rules.add(new PermissionRule(id, null, id, "read")));
+        denied.forEach(id -> rules.add(new PermissionRule(id, null, id, "deny")));
         return EffectiveAcl.resolve(new SecurityConfig(false, rules), null);
     }
 
@@ -47,6 +47,22 @@ class TuplePlanTest {
                 new DocumentTuple(doc, "grantee", "user:*"),
                 new DocumentTuple(doc, "blocked", "group:u_bob#member"),
                 new DocumentTuple(doc, "blocked", "group:g_bob#member"));
+    }
+
+    @Test
+    void typedUserAndGroupRulesOnlyGenerateTheirOwnTuples() {
+        String doc = OpenFgaIdentifiers.documentObject("d2");
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(
+                new PermissionRule("alice", "user", "Alice", "read"),
+                new PermissionRule("finance", "group", "Finance", "read"),
+                new PermissionRule("bob", "user", "Bob", "deny")
+        )), null);
+        Set<DocumentTuple> tuples = TuplePlan.desired("d2", acl);
+
+        assertThat(tuples).containsExactly(
+                new DocumentTuple(doc, "grantee", "group:u_alice#member"),
+                new DocumentTuple(doc, "grantee", "group:g_finance#member"),
+                new DocumentTuple(doc, "blocked", "group:u_bob#member"));
     }
 
     @Test

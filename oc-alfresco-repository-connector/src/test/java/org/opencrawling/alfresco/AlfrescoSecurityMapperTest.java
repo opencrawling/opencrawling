@@ -73,7 +73,7 @@ class AlfrescoSecurityMapperTest {
         assertThat(result.identityUsers()).contains("mjackson");
         // The other rules are kept next to the public one.
         assertThat(EffectiveAcl.resolve(result.securityConfig(), result.aclString()).allowedRead())
-                .containsExactlyInAnyOrder("public", "mjackson");
+                .containsExactlyInAnyOrder("public", "user:mjackson");
     }
 
     @Test
@@ -115,7 +115,7 @@ class AlfrescoSecurityMapperTest {
         assertThat(result.aclString()).doesNotContain("charlie");
 
         assertThat(result.securityConfig().permissions()).hasSize(4);
-        assertThat(EffectiveAcl.resolve(result.securityConfig(), result.aclString()).deniedRead()).containsExactly("charlie");
+        assertThat(EffectiveAcl.resolve(result.securityConfig(), result.aclString()).deniedRead()).containsExactly("user:charlie");
 
         PermissionRule aliceRule = result.securityConfig().permissions().stream()
                 .filter(r -> r.identity().equals("alice"))
@@ -139,8 +139,8 @@ class AlfrescoSecurityMapperTest {
             """));
 
         EffectiveAcl acl = EffectiveAcl.resolve(result.securityConfig(), result.aclString());
-        assertThat(acl.allowedRead()).containsExactly("GROUP_finance");
-        assertThat(acl.deniedRead()).containsExactly("carol");
+        assertThat(acl.allowedRead()).containsExactly("group:GROUP_finance");
+        assertThat(acl.deniedRead()).containsExactly("user:carol");
     }
 
     @Test
@@ -153,7 +153,7 @@ class AlfrescoSecurityMapperTest {
 
         EffectiveAcl acl = EffectiveAcl.resolve(result.securityConfig(), result.aclString());
         assertThat(acl.allowedRead()).containsExactly("public");
-        assertThat(acl.deniedRead()).containsExactly("mallory");
+        assertThat(acl.deniedRead()).containsExactly("user:mallory");
         assertThat(acl.isPublic()).isFalse();
     }
 
@@ -177,7 +177,7 @@ class AlfrescoSecurityMapperTest {
              "inherited": [{"authorityId": "GROUP_EVERYONE", "name": "Consumer", "accessStatus": "ALLOWED"}]}
             """));
 
-        assertThat(EffectiveAcl.resolve(result.securityConfig(), result.aclString()).allowedRead()).containsExactly("alice");
+        assertThat(EffectiveAcl.resolve(result.securityConfig(), result.aclString()).allowedRead()).containsExactly("user:alice");
     }
 
     /** Search (this mapping) and discovery ({@code discoverySecurity}) must grant and deny the same identities. */

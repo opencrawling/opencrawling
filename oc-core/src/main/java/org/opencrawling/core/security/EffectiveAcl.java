@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * The one place a document's permissions are turned into the fields every store indexes
@@ -34,6 +35,10 @@ import java.util.Set;
  *       values there that are not identities, such as {@code user:a;group:b} or {@code secured}).</li>
  *   <li>A rule whose identity type is {@code public} (for example a CMIS {@code anonymous} or
  *       {@code GROUP_EVERYONE} entry) grants {@code public}, not the literal repository name.</li>
+ *   <li>A rule with a known user type ({@code user}, case-insensitive) resolves to {@code user:<identity>},
+ *       and a known group type ({@code group}, {@code role}) resolves to {@code group:<identity>}, unless
+ *       the identity already has a prefix. Rules without a type or with an unknown type keep their bare
+ *       identity.</li>
  *   <li>When the rules are only the default public placeholder ({@link SecurityConfig#createPublic()}) and the
  *       legacy {@code acl} names identities, the {@code acl} wins: a connector that could not read the source
  *       permissions but did set an {@code acl} must not make the document public.</li>
@@ -57,6 +62,8 @@ public record EffectiveAcl(
     public static final String PUBLIC = "public";
 
     private static final String LEGACY_ACL_IDENTITY_TYPE = "acl";
+    private static final Pattern USER_PREFIX = Pattern.compile("^(?i)user:");
+    private static final Pattern GROUP_PREFIX = Pattern.compile("^(?i)group:");
 
     public EffectiveAcl {
         allowedRead = List.copyOf(allowedRead);
@@ -80,6 +87,7 @@ public record EffectiveAcl(
         if (hasRules && !placeholderOverridden) {
             Set<String> allowed = new LinkedHashSet<>();
             Set<String> denied = new LinkedHashSet<>();
+            List<PermissionRule> normalizedRules = new ArrayList<>();
             for (PermissionRule rule : rules.permissions()) {
                 if (rule == null || rule.identity() == null || rule.access() == null) {
                     continue;
@@ -89,6 +97,7 @@ public record EffectiveAcl(
                     // A blank identity matches no caller unless its type makes it public.
                     continue;
                 }
+                normalizedRules.add(new PermissionRule(identity, rule.identityType(), rule.displayName(), rule.access()));
                 switch (rule.access().toLowerCase(Locale.ROOT)) {
                     case "read", "write", "admin" -> allowed.add(identity);
                     case "deny" -> denied.add(identity);
@@ -97,7 +106,8 @@ public record EffectiveAcl(
                     }
                 }
             }
-            return new EffectiveAcl(rules.inheritanceEnabled(), new ArrayList<>(allowed), new ArrayList<>(denied), rules);
+            SecurityConfig stored = new SecurityConfig(rules.inheritanceEnabled(), normalizedRules);
+            return new EffectiveAcl(rules.inheritanceEnabled(), new ArrayList<>(allowed), new ArrayList<>(denied), stored);
         }
 
         boolean inheritance = rules != null && rules.inheritanceEnabled();
@@ -139,6 +149,21 @@ public record EffectiveAcl(
         if (PUBLIC.equalsIgnoreCase(identity)
                 || PUBLIC.equalsIgnoreCase(rule.identityType())) {
             return PUBLIC;
+        }
+        if (identity.isEmpty()) {
+            return "";
+        }
+        if (USER_PREFIX.matcher(identity).lookingAt() || GROUP_PREFIX.matcher(identity).lookingAt()) {
+            return identity;
+        }
+        if (rule.identityType() != null) {
+            String type = rule.identityType().trim().toLowerCase(Locale.ROOT);
+            if ("user".equals(type)) {
+                return "user:" + identity;
+            }
+            if ("group".equals(type) || "role".equals(type)) {
+                return "group:" + identity;
+            }
         }
         return identity;
     }
