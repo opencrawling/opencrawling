@@ -33,7 +33,7 @@ public class ElasticsearchStoreConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ElasticsearchStoreConfig.class);
 
-    private static final int INIT_ATTEMPTS = 10;
+    private static final int INIT_ATTEMPTS = 30;
     private static final long INIT_DELAY_MILLIS = 3_000;
 
     @Bean(destroyMethod = "close")

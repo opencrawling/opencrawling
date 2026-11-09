@@ -103,7 +103,7 @@ if [ "$(docker inspect -f '{{.State.ExitCode}}' ollama-model-puller-decoupled-el
   compose logs ollama-model-puller
   exit 1
 fi
-wait_until "Apache Ozone S3 Gateway" 180 curl -sf -o /dev/null "http://localhost:9878/" || { compose logs ozone-s3g; exit 1; }
+wait_until "Apache Ozone S3 Gateway" 180 curl -s -o /dev/null "http://localhost:9878/" || { compose logs ozone-s3g; exit 1; }
 
 # The writer (or any stage with output.type=elasticsearch) creates the index on startup.
 wait_until "index ${INDEX} to be created" 120 curl -sf -o /dev/null "${ES_URL}/${INDEX}" || { compose logs oc-writer-consumer; exit 1; }
