@@ -110,7 +110,7 @@ public class OpenSearch3StoreConfig {
                             + "      \"method\": {"
                             + "        \"name\": \"hnsw\","
                             + "        \"space_type\": \"cosinesimil\","
-                            + "        \"engine\": \"nmslib\","
+                            + "        \"engine\": \"faiss\","
                             + "        \"parameters\": {"
                             + "          \"ef_construction\": 128,"
                             + "          \"m\": 24"

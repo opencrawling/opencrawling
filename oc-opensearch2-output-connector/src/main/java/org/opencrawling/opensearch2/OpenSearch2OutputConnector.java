@@ -97,7 +97,11 @@ public class OpenSearch2OutputConnector implements OutputConnector {
 
                 final OpenSearchTransport transport = ApacheHttpClient5TransportBuilder
                         .builder(host)
-                        .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider))
+                        // The 2.x transport gunzips responses itself. HttpClient 5.6+ would also ask for gzip and
+                        // decompress first, so the transport then fails with "Not in GZIP format".
+                        .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder
+                                .disableContentCompression()
+                                .setDefaultCredentialsProvider(credentialsProvider))
                         .setMapper(new JacksonJsonpMapper())
                         .build();
 

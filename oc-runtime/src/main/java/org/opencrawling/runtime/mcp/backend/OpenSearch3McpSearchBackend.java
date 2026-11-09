@@ -101,7 +101,7 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
                     .query(q -> q
                             .knn(k -> k
                                     .field(OpenSearch3Constants.FIELD_EMBEDDINGS)
-                                    .vector(searchVector)
+                                    .vector(toList(searchVector))
                                     .k(topK)
                             )
                     ),
@@ -223,5 +223,13 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
     private static Map<String, Object> sourceOf(Hit<Map> hit) {
         Map<String, Object> source = hit.source();
         return source != null ? source : Collections.emptyMap();
+    }
+
+    private static List<Float> toList(float[] vector) {
+        List<Float> list = new ArrayList<>(vector.length);
+        for (float value : vector) {
+            list.add(value);
+        }
+        return list;
     }
 }
