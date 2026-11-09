@@ -19,7 +19,10 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,6 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.regex.Pattern;
 import org.apache.tika.Tika;
 import org.apache.tika.config.TimeoutLimits;
 import org.apache.tika.exception.WriteLimitReachedException;
@@ -107,6 +111,12 @@ public class PipesForkTextExtractor implements TextExtractionService {
     private PipesForkParser buildPipesForkParser(TextExtractionProperties conf) throws Exception {
         ensureTikaExtrasClasspath();
 
+        if (!hasValidTikaExtrasDir() && !isPipesServerAvailableOnSystemClasspath()) {
+            throw new IllegalStateException(
+                    "Apache Tika PipesServer is not available on the system classpath and no valid "
+                            + TIKA_EXTRAS_DIR + " directory containing libraries could be resolved.");
+        }
+
         if (conf.getServerStdio() != null && System.getProperty("tika.pipes.server.stdio") == null) {
             System.setProperty("tika.pipes.server.stdio", conf.getServerStdio());
         }
@@ -136,19 +146,15 @@ public class PipesForkTextExtractor implements TextExtractionService {
     }
 
     private void ensureTikaExtrasClasspath() {
-        String currentProp = System.getProperty(TIKA_EXTRAS_DIR);
-        if (currentProp != null && !currentProp.isBlank()) {
-            Path path = Paths.get(currentProp.trim());
-            if (Files.isDirectory(path)) {
-                log.debug("Using configured tika.extras.dir: {}", currentProp);
-                return;
-            }
+        if (hasValidTikaExtrasDir()) {
+            log.debug("Using configured tika.extras.dir: {}", System.getProperty(TIKA_EXTRAS_DIR));
+            return;
         }
 
         String envDir = System.getenv("TIKA_EXTRAS_DIR");
         if (envDir != null && !envDir.isBlank()) {
             Path path = Paths.get(envDir.trim());
-            if (Files.isDirectory(path)) {
+            if (Files.isDirectory(path) && hasJarFiles(path)) {
                 System.setProperty(TIKA_EXTRAS_DIR, path.toAbsolutePath().toString());
                 log.info("Configured tika.extras.dir from TIKA_EXTRAS_DIR environment variable: {}", path.toAbsolutePath());
                 return;
@@ -168,15 +174,22 @@ public class PipesForkTextExtractor implements TextExtractionService {
             }
         }
 
-        // Inspect running code source location
+        // Inspect running code source location for current or sibling lib directory
         try {
             CodeSource codeSource = getClass().getProtectionDomain().getCodeSource();
             if (codeSource != null && codeSource.getLocation() != null) {
-                Path codePath = Paths.get(codeSource.getLocation().toURI());
-                if (Files.isRegularFile(codePath)) {
-                    // Check sibling lib/ directory (typical in unpacked or extracted distributions)
+                Path codePath = resolveOuterJarPath(codeSource.getLocation());
+                if (codePath != null && Files.isRegularFile(codePath)) {
                     Path parent = codePath.getParent();
                     if (parent != null) {
+                        // If codePath itself is inside a lib/ directory (e.g. /app/lib/oc-core.jar)
+                        if (parent.getFileName() != null && "lib".equalsIgnoreCase(parent.getFileName().toString())
+                                && hasJarFiles(parent)) {
+                            System.setProperty(TIKA_EXTRAS_DIR, parent.toAbsolutePath().toString());
+                            log.info("Auto-discovered current lib directory for Tika extras: {}", parent.toAbsolutePath());
+                            return;
+                        }
+                        // Check sibling lib/ directory (typical in unpacked or extracted distributions)
                         Path siblingLib = parent.resolve("lib");
                         if (Files.isDirectory(siblingLib) && hasJarFiles(siblingLib)) {
                             System.setProperty(TIKA_EXTRAS_DIR, siblingLib.toAbsolutePath().toString());
@@ -184,19 +197,188 @@ public class PipesForkTextExtractor implements TextExtractionService {
                             return;
                         }
                     }
-
-                    // Fallback for unextracted Spring Boot uber fat-jars: unpack BOOT-INF/lib to secure private temp cache
-                    Path cacheDir = createSecureTempLibDir();
-                    extractFatJarLibs(codePath, cacheDir);
-                    if (Files.isDirectory(cacheDir) && hasJarFiles(cacheDir)) {
-                        System.setProperty(TIKA_EXTRAS_DIR, cacheDir.toAbsolutePath().toString());
-                        log.info("Configured tika.extras.dir from extracted fat-jar cache: {}", cacheDir.toAbsolutePath());
-                        return;
-                    }
                 }
             }
         } catch (Exception e) {
-            log.debug("Could not inspect code source for Tika extras classpath: {}", e.getMessage());
+            log.debug("Could not inspect code source for sibling lib directory: {}", e.getMessage());
+        }
+
+        // Fallback for unextracted Spring Boot uber fat-jars outside Docker: unpack BOOT-INF/lib to secure private temp cache
+        Path fatJarPath = findFatJar();
+        if (fatJarPath != null && Files.isRegularFile(fatJarPath)) {
+            Path parent = fatJarPath.getParent();
+            if (parent != null) {
+                Path siblingLib = parent.resolve("lib");
+                if (Files.isDirectory(siblingLib) && hasJarFiles(siblingLib)) {
+                    System.setProperty(TIKA_EXTRAS_DIR, siblingLib.toAbsolutePath().toString());
+                    log.info("Auto-discovered sibling lib directory for Tika extras: {}", siblingLib.toAbsolutePath());
+                    return;
+                }
+            }
+
+            try {
+                Path cacheDir = createSecureTempLibDir();
+                extractFatJarLibs(fatJarPath, cacheDir);
+                if (Files.isDirectory(cacheDir) && hasJarFiles(cacheDir)) {
+                    System.setProperty(TIKA_EXTRAS_DIR, cacheDir.toAbsolutePath().toString());
+                    log.info("Configured tika.extras.dir from extracted fat-jar cache: {}", cacheDir.toAbsolutePath());
+                    return;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to extract fat-jar libraries for Tika extras classpath: {}", e.getMessage(), e);
+            }
+        }
+    }
+
+    private static boolean hasValidTikaExtrasDir() {
+        String prop = System.getProperty(TIKA_EXTRAS_DIR);
+        if (prop == null || prop.isBlank()) {
+            return false;
+        }
+        try {
+            Path p = Paths.get(prop.trim());
+            return Files.isDirectory(p) && hasJarFiles(p);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isPipesServerAvailableOnSystemClasspath() {
+        try {
+            ClassLoader.getSystemClassLoader().loadClass("org.apache.tika.pipes.core.server.PipesServer");
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    static Path findFatJar() {
+        // Strategy A: Inspect running code source location of PipesForkTextExtractor
+        try {
+            CodeSource codeSource = PipesForkTextExtractor.class.getProtectionDomain().getCodeSource();
+            if (codeSource != null && codeSource.getLocation() != null) {
+                Path resolved = resolveOuterJarPath(codeSource.getLocation());
+                if (resolved != null && isFatJar(resolved)) {
+                    return resolved;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not inspect code source for fat jar: {}", e.getMessage());
+        }
+
+        // Strategy B: Inspect java.class.path entries
+        String classPath = System.getProperty("java.class.path");
+        if (classPath != null && !classPath.isBlank()) {
+            String[] entries = classPath.split(Pattern.quote(File.pathSeparator));
+            for (String entry : entries) {
+                if (entry == null || entry.isBlank()) continue;
+                try {
+                    Path p = Paths.get(entry.trim()).toAbsolutePath().normalize();
+                    if (Files.isRegularFile(p) && p.getFileName().toString().toLowerCase().endsWith(".jar")) {
+                        if (isFatJar(p)) {
+                            return p;
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        // Strategy C: Inspect sun.java.command (present in standard HotSpot JVMs)
+        String command = System.getProperty("sun.java.command");
+        if (command != null && !command.isBlank()) {
+            String jarToken = command.split("\\s+")[0];
+            if (jarToken.toLowerCase().endsWith(".jar")) {
+                try {
+                    Path p = Paths.get(jarToken.trim()).toAbsolutePath().normalize();
+                    if (Files.isRegularFile(p) && isFatJar(p)) {
+                        return p;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return null;
+    }
+
+    static Path resolveOuterJarPath(URL location) {
+        if (location == null) {
+            return null;
+        }
+        try {
+            if ("file".equalsIgnoreCase(location.getProtocol())) {
+                Path p = Paths.get(location.toURI()).toAbsolutePath().normalize();
+                if (Files.isRegularFile(p)) {
+                    return p;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return parseJarPathFromUrlSpec(location.toExternalForm());
+    }
+
+    static Path parseJarPathFromUrlSpec(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return null;
+        }
+        String s = spec.trim();
+        while (s.startsWith("jar:") || s.startsWith("nested:")) {
+            if (s.startsWith("jar:")) {
+                s = s.substring(4);
+            }
+            if (s.startsWith("nested:")) {
+                s = s.substring(7);
+            }
+        }
+        if (s.startsWith("file:")) {
+            s = s.substring(5);
+        }
+
+        int bangIdx = s.indexOf('!');
+        if (bangIdx >= 0) {
+            s = s.substring(0, bangIdx);
+        }
+
+        while (s.endsWith("/") || s.endsWith("\\")) {
+            s = s.substring(0, s.length() - 1);
+        }
+
+        if (s.isBlank()) {
+            return null;
+        }
+
+        try {
+            s = URLDecoder.decode(s, StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+        }
+
+        if (s.length() >= 3 && s.charAt(0) == '/' && Character.isLetter(s.charAt(1)) && s.charAt(2) == ':') {
+            s = s.substring(1);
+        }
+
+        try {
+            Path p = Paths.get(s).toAbsolutePath().normalize();
+            if (Files.isRegularFile(p)) {
+                return p;
+            }
+        } catch (Exception ignored) {
+        }
+
+        return null;
+    }
+
+    static boolean isFatJar(Path path) {
+        if (path == null || !Files.isRegularFile(path)) {
+            return false;
+        }
+        try (JarFile jar = new JarFile(path.toFile())) {
+            return jar.getEntry("BOOT-INF/lib/") != null
+                    || jar.getEntry("BOOT-INF/classes/") != null
+                    || jar.stream().anyMatch(e -> e.getName().startsWith("BOOT-INF/lib/"));
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -265,7 +447,11 @@ public class PipesForkTextExtractor implements TextExtractionService {
                             try (InputStream is = jarFile.getInputStream(entry)) {
                                 Files.copy(is, tmpFile, StandardCopyOption.REPLACE_EXISTING);
                             }
-                            Files.move(tmpFile, outFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                            try {
+                                Files.move(tmpFile, outFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                            } catch (AtomicMoveNotSupportedException e) {
+                                Files.move(tmpFile, outFile, StandardCopyOption.REPLACE_EXISTING);
+                            }
                         }
                     }
                 }

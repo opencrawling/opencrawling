@@ -240,6 +240,78 @@ class PipesForkTextExtractorTest {
     }
 
     @Test
+    void testResolveOuterJarPathAndUrlParsing(@TempDir Path tempDir) throws Exception {
+        Path jarFile = tempDir.resolve("myapp-fat.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarFile))) {
+            jos.putNextEntry(new JarEntry("BOOT-INF/lib/sample.jar"));
+            jos.write("bytes".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+
+        String absPath = jarFile.toAbsolutePath().toString();
+
+        // 1. Spring Boot 4 / 3.2+ jar:nested format
+        String springBoot4Nested = "jar:nested:" + absPath + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved1 = PipesForkTextExtractor.parseJarPathFromUrlSpec(springBoot4Nested);
+        assertNotNull(resolved1);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved1);
+
+        // 2. Spring Boot nested format without leading jar:
+        String nestedOnly = "nested:" + absPath + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved2 = PipesForkTextExtractor.parseJarPathFromUrlSpec(nestedOnly);
+        assertNotNull(resolved2);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved2);
+
+        // 3. Spring Boot jar:file format
+        String jarFileUrl = "jar:file:" + absPath + "!/BOOT-INF/lib/sample.jar!/";
+        Path resolved3 = PipesForkTextExtractor.parseJarPathFromUrlSpec(jarFileUrl);
+        assertNotNull(resolved3);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved3);
+
+        // 4. Direct file URL
+        Path resolved4 = PipesForkTextExtractor.resolveOuterJarPath(jarFile.toUri().toURL());
+        assertNotNull(resolved4);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved4);
+
+        // 5. URL with percent-encoded spaces
+        Path dirWithSpaces = tempDir.resolve("folder with spaces");
+        Files.createDirectories(dirWithSpaces);
+        Path jarWithSpaces = dirWithSpaces.resolve("app-space.jar");
+        Files.copy(jarFile, jarWithSpaces);
+
+        String encodedUrl = "jar:nested:" + jarWithSpaces.toUri().toURL().getPath() + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved5 = PipesForkTextExtractor.parseJarPathFromUrlSpec(encodedUrl);
+        assertNotNull(resolved5);
+        assertEquals(jarWithSpaces.toAbsolutePath().normalize(), resolved5);
+
+        // 6. Non-existent path or empty spec returns null
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec(null));
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec(""));
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec("jar:file:/non/existent/path.jar!/BOOT-INF/lib/a.jar"));
+    }
+
+    @Test
+    void testIsFatJarDetection(@TempDir Path tempDir) throws IOException {
+        Path fatJar = tempDir.resolve("fat.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(fatJar))) {
+            jos.putNextEntry(new JarEntry("BOOT-INF/lib/lib.jar"));
+            jos.write("data".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+        assertTrue(PipesForkTextExtractor.isFatJar(fatJar), "Jar containing BOOT-INF/lib/ should be detected as fat jar");
+
+        Path thinJar = tempDir.resolve("thin.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(thinJar))) {
+            jos.putNextEntry(new JarEntry("org/example/App.class"));
+            jos.write("class".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+        assertFalse(PipesForkTextExtractor.isFatJar(thinJar), "Plain jar without BOOT-INF should not be detected as fat jar");
+        assertFalse(PipesForkTextExtractor.isFatJar(null));
+        assertFalse(PipesForkTextExtractor.isFatJar(tempDir.resolve("non-existent.jar")));
+    }
+
+    @Test
     void testPipesForkLifecycleFailureFallback() {
         TextExtractionProperties props = new TextExtractionProperties();
         props.setForkEnabled(true);
