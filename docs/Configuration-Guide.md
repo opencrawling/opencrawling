@@ -61,6 +61,27 @@ OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, yo
 *   **Elasticsearch / OpenSearch**: Leverages KNN indexing vector engines.
 *   **Qdrant / Milvus**: Connects to standard cloud-native vector indexes.
 
+#### Elasticsearch output (`spring.opencrawling.output.type=elasticsearch`)
+
+Writes chunks to Elasticsearch 8.x or 9.x with the official Elastic Java client (`co.elastic.clients:elasticsearch-java`, version managed by the Spring Boot BOM). The index is created on startup with a `dense_vector` mapping when it does not exist. Each chunk stores `security_allowed_read`, `security_denied_read` and normalized `security_read_keys`, so the MCP backend can pre-filter kNN candidates by ACL inside Elasticsearch; the access gate still re-checks every hit.
+
+| Property (`spring.opencrawling.output.elasticsearch.*`) | Default | Description |
+|---|---|---|
+| `uris` | `http://localhost:9200` | One node URL or a comma-separated list. |
+| `api-key` | *(empty)* | Base64 API key (Elastic Cloud / Serverless). Takes precedence over basic auth. |
+| `username` / `password` | `elastic` / *(empty)* | Basic auth, used only when `password` is set and no API key is configured. |
+| `index-name` | `enterprise_kb` | Target index. |
+| `dimensions` | `1024` | `dense_vector` dimensions; must match the embedding model. |
+| `similarity` | `cosine` | `cosine`, `dot_product`, `l2_norm` or `max_inner_product`. |
+| `index-type` | `hnsw` | `hnsw`, `int8_hnsw` (scalar quantization, ~75% less vector memory), `int4_hnsw`, `bbq_hnsw`, `flat` or `int8_flat`. |
+| `bulk-batch-size` | `500` | Most chunks per bulk request on the direct (non-Kafka) path. |
+| `create-index` | `true` | Create the index with the expected mapping when it is missing. |
+| `compatible-with` | `8` | REST API major sent as `compatible-with`. `8` works with 8.x and 9.x servers; set `9` on 9.x-only clusters to skip compatibility mode. |
+| `ssl.trust-store-path` / `ssl.trust-store-password` / `ssl.trust-store-type` | *(empty)* / *(empty)* / `PKCS12` | Trust store holding the cluster CA for `https` URIs. |
+| `ssl.ca-fingerprint` | *(empty)* | SHA-256 fingerprint of the cluster CA (Elasticsearch 8 auto-generated certificates); alternative to a trust store. |
+
+Changing `dimensions`, `similarity` or `index-type` only affects newly created indexes; reindex or use a new `index-name` for an existing one.
+
 ---
 
 ## 📈 Horizon Scaling of Consumers

@@ -441,6 +441,7 @@ export default function ConnectorForm() {
       { label: 'Qdrant Vector Store', value: 'org.opencrawling.qdrant.QdrantOutputConnector' },
       { label: 'OpenSearch 2.x Output Connector', value: 'org.opencrawling.opensearch2.OpenSearch2OutputConnector' },
       { label: 'OpenSearch 3.x Output Connector', value: 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' },
+      { label: 'Elasticsearch 8.x/9.x Output Connector', value: 'org.opencrawling.elasticsearch.ElasticsearchOutputConnector' },
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
@@ -4330,6 +4331,105 @@ export default function ConnectorForm() {
                             defaultValue={1024}
                             className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                           />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Elasticsearch 8.x / 9.x Output Store */}
+                  {selectedClass === 'org.opencrawling.elasticsearch.ElasticsearchOutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Elasticsearch URIs</label>
+                          <input
+                            {...register('configuration.elasticsearchUris')}
+                            placeholder="http://localhost:9200"
+                            defaultValue="http://localhost:9200"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">One node or a comma-separated list.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Index Name</label>
+                          <input
+                            {...register('configuration.elasticsearchIndexName')}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">API Key</label>
+                          <input
+                            type="password"
+                            {...register('configuration.elasticsearchApiKey')}
+                            placeholder="Base64 API key (Elastic Cloud)"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">Takes precedence over username/password.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input
+                            {...register('configuration.elasticsearchUsername')}
+                            placeholder="elastic"
+                            defaultValue="elastic"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input
+                            type="password"
+                            {...register('configuration.elasticsearchPassword')}
+                            placeholder="Leave blank when security is disabled"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Dimensions</label>
+                          <input
+                            type="number"
+                            {...register('configuration.elasticsearchDimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Similarity Metric</label>
+                          <select
+                            {...register('configuration.elasticsearchSimilarity')}
+                            defaultValue="cosine"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="cosine">Cosine</option>
+                            <option value="dot_product">Dot Product</option>
+                            <option value="l2_norm">L2 Norm</option>
+                            <option value="max_inner_product">Max Inner Product</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Index Type</label>
+                          <select
+                            {...register('configuration.elasticsearchIndexType')}
+                            defaultValue="hnsw"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="hnsw">HNSW (float32)</option>
+                            <option value="int8_hnsw">INT8 HNSW (~75% less memory)</option>
+                            <option value="int4_hnsw">INT4 HNSW</option>
+                            <option value="bbq_hnsw">BBQ HNSW (binary quantized)</option>
+                            <option value="flat">Flat (exact)</option>
+                            <option value="int8_flat">INT8 Flat</option>
+                          </select>
                         </div>
                       </div>
                     </div>

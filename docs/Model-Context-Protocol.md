@@ -140,7 +140,7 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
 
 ## 🗄️ Supported Target Vector Databases
 
-The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 9 stores:
+The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 10 stores:
 
 | Backend Type | Property `spring.opencrawling.output.type` | Search Mechanism | Query Embedding |
 |---|---|---|---|
@@ -150,6 +150,7 @@ The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSea
 | **Milvus** | `milvus` | `MilvusClientV2` (`SearchReq` with `FloatVec` + `QueryReq` for URIs) | Ollama / Spring AI `EmbeddingModel` |
 | **OpenSearch 2.x** | `opensearch2` | `OpenSearchClient` (k-NN vector query + keyword term filters) | Ollama / Spring AI `EmbeddingModel` |
 | **OpenSearch 3.x** | `opensearch3` | `OpenSearchClient` (k-NN vector query + keyword term filters) | Ollama / Spring AI `EmbeddingModel` |
+| **Elasticsearch 8.x / 9.x** | `elasticsearch` | `ElasticsearchClient` (top-level kNN on `dense_vector`, `security_read_keys` pre-filter inside the kNN query) | Ollama / Spring AI `EmbeddingModel` |
 | **Apache Solr** | `solr` | `SolrClient` (`{!knn f=embeddings topK=...}` dense vector query) | Ollama / Spring AI `EmbeddingModel` |
 | **Luxir** | `luxir` | `LuxirClient` (`POST /collections/{collection}/_search` with KNN payload) | Ollama / Spring AI `EmbeddingModel` |
 | **Hyland OpenArch** | `openarch` | `OpenArchClient` embedding query (federated content), document ACLs read from OpenArch | Spring AI `EmbeddingModel` |
@@ -173,6 +174,9 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.arguments="--spring.opencra
 
 # Example for OpenSearch 3.x:
 mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.arguments="--spring.opencrawling.output.type=opensearch3 --spring.opencrawling.output.opensearch3.uris=http://localhost:9200"
+
+# Example for Elasticsearch 8.x / 9.x:
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.arguments="--spring.opencrawling.output.type=elasticsearch --spring.opencrawling.output.elasticsearch.uris=http://localhost:9200"
 ```
 
 The MCP server speaks **Streamable HTTP** at `http://localhost:8080/mcp` (the default, `SPRING_AI_MCP_SERVER_PROTOCOL=STREAMABLE`). Clients that only support the older HTTP+SSE transport can use `SPRING_AI_MCP_SERVER_PROTOCOL=SSE`, which serves `/sse` (event stream) and `/mcp/message` (client messages) instead.
@@ -190,6 +194,9 @@ docker compose -f oc-qdrant-output-connector/docker/docker-compose-decoupled-wit
 
 # Example: OpenSearch stack
 docker compose -f oc-opensearch3-output-connector/docker/docker-compose-decoupled-with-opensearch.yml up -d
+
+# Example: Elasticsearch stack (ELASTICSEARCH_VERSION=9.4.3 for a 9.x server)
+docker compose -f oc-elasticsearch-output-connector/docker/docker-compose-decoupled-with-elasticsearch.yml up -d
 
 # Example: Vespa stack
 docker compose -f oc-vespa-output-connector/docker/docker-compose-decoupled-with-vespa.yml up -d

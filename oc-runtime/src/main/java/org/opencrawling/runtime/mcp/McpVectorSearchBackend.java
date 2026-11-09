@@ -25,7 +25,7 @@ import java.util.Map;
 public interface McpVectorSearchBackend {
 
     /**
-     * Storage backend type identifier (e.g., "pgvector", "vespa", "qdrant", "milvus", "opensearch2", "opensearch3", "solr", "luxir").
+     * Storage backend type identifier (e.g., "pgvector", "vespa", "qdrant", "milvus", "opensearch2", "opensearch3", "elasticsearch", "solr", "luxir").
      */
     String backendType();
 

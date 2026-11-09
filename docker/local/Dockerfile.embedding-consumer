@@ -34,6 +34,7 @@ COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
 COPY oc-milvus-output-connector/pom.xml oc-milvus-output-connector/
 COPY oc-opensearch2-output-connector/pom.xml oc-opensearch2-output-connector/
 COPY oc-opensearch3-output-connector/pom.xml oc-opensearch3-output-connector/
+COPY oc-elasticsearch-output-connector/pom.xml oc-elasticsearch-output-connector/
 COPY oc-qdrant-output-connector/pom.xml oc-qdrant-output-connector/
 COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
 COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
@@ -83,6 +84,7 @@ COPY oc-vector-output-connector/src/ /app/oc-vector-output-connector/src/
 COPY oc-milvus-output-connector/src/ /app/oc-milvus-output-connector/src/
 COPY oc-opensearch2-output-connector/src/ /app/oc-opensearch2-output-connector/src/
 COPY oc-opensearch3-output-connector/src/ /app/oc-opensearch3-output-connector/src/
+COPY oc-elasticsearch-output-connector/src/ /app/oc-elasticsearch-output-connector/src/
 COPY oc-qdrant-output-connector/src/ /app/oc-qdrant-output-connector/src/
 COPY oc-vespa-output-connector/src/ /app/oc-vespa-output-connector/src/
 COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
