@@ -15,6 +15,8 @@
  */
 package org.opencrawling.push.grpc;
 
+import org.opencrawling.push.v1.IngestionStatus;
+import org.opencrawling.push.v1.PushDocumentResponse;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -39,6 +41,16 @@ public class GrpcPushConnectorAutoConfiguration {
     @ConditionalOnMissingBean
     public OpenTelemetryServerInterceptor openTelemetryServerInterceptor() {
         return new OpenTelemetryServerInterceptor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PushDocumentDispatcher defaultPushDocumentDispatcher() {
+        return request -> PushDocumentResponse.newBuilder()
+                .setStatus(IngestionStatus.ERROR_INTERNAL)
+                .setMessage("No active PushDocumentDispatcher registered in context")
+                .setProcessedAt(System.currentTimeMillis())
+                .build();
     }
 
     @Bean
