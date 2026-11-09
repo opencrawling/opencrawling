@@ -17,7 +17,10 @@ package org.opencrawling.cmis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 
@@ -29,15 +32,74 @@ public class CmisSecurityMapperTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void testNullOrEmptyAclReturnsPublic() {
+    void testNullEmptyOrUnusableAclReturnsNoRules() throws Exception {
         SecurityConfig configNull = CmisSecurityMapper.mapAcl(null);
-        assertThat(configNull.permissions()).hasSize(1);
-        assertThat(configNull.permissions().get(0).identity()).isEqualTo("public");
+        assertThat(configNull).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(configNull, "").allowedRead()).isEmpty();
 
         JsonNode emptyObj = mapper.createObjectNode();
         SecurityConfig configEmpty = CmisSecurityMapper.mapAcl(emptyObj);
-        assertThat(configEmpty.permissions()).hasSize(1);
-        assertThat(configEmpty.permissions().get(0).identity()).isEqualTo("public");
+        assertThat(configEmpty).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(configEmpty, "").allowedRead()).isEmpty();
+
+        JsonNode emptyAces = mapper.readTree("{\"aces\":[]}");
+        SecurityConfig configEmptyAces = CmisSecurityMapper.mapAcl(emptyAces);
+        assertThat(configEmptyAces).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(configEmptyAces, "").allowedRead()).isEmpty();
+
+        JsonNode unusableAces = mapper.readTree("""
+            {
+              "aces": [
+                { "permissions": ["cmis:read"] },
+                { "principal": { "principalId": "   " }, "permissions": ["cmis:all"] }
+              ]
+            }
+            """);
+        SecurityConfig configUnusable = CmisSecurityMapper.mapAcl(unusableAces);
+        assertThat(configUnusable).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(configUnusable, "").allowedRead()).isEmpty();
+    }
+
+    @Test
+    void testAnyonePrincipalGrantsPublic() throws Exception {
+        for (String principal : List.of(
+                "anonymous", "public", "everyone", "GROUP_EVERYONE", "group:everyone", "cmis:anyone", "CMIS:ANYONE")) {
+            JsonNode aclNode = mapper.readTree("""
+                {
+                  "aces": [
+                    {
+                      "principal": { "principalId": "%s" },
+                      "permissions": ["cmis:read"]
+                    }
+                  ]
+                }
+                """.formatted(principal));
+            SecurityConfig config = CmisSecurityMapper.mapAcl(aclNode);
+            assertThat(config.permissions()).singleElement().satisfies(rule -> {
+                assertThat(rule.identity()).isEqualTo(principal);
+                assertThat(rule.identityType()).isEqualTo("public");
+                assertThat(rule.access()).isEqualTo("read");
+            });
+            assertThat(EffectiveAcl.resolve(config, "").isPublic()).isTrue();
+        }
+
+        JsonNode customAnyoneAcl = mapper.readTree("""
+            {
+              "aces": [
+                {
+                  "principal": { "principalId": "repo:everybody" },
+                  "permissions": ["cmis:read"]
+                }
+              ]
+            }
+            """);
+        assertThat(CmisSecurityMapper.mapAcl(customAnyoneAcl).permissions().get(0).identityType()).isEqualTo("user");
+        SecurityConfig withRepoAnyone = CmisSecurityMapper.mapAcl(customAnyoneAcl, "repo:everybody");
+        assertThat(withRepoAnyone.permissions()).singleElement().satisfies(rule -> {
+            assertThat(rule.identity()).isEqualTo("repo:everybody");
+            assertThat(rule.identityType()).isEqualTo("public");
+        });
+        assertThat(EffectiveAcl.resolve(withRepoAnyone, "").isPublic()).isTrue();
     }
 
     @Test

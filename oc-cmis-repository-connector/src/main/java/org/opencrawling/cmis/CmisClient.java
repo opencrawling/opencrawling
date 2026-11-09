@@ -26,8 +26,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -67,7 +67,8 @@ public class CmisClient {
         String rootFolderId,
         String cmisVersionSupported,
         String repositoryUrl,
-        String rootFolderUrl
+        String rootFolderUrl,
+        String principalAnyone
     ) {
         public CmisRepositoryInfo(
                 String repositoryId,
@@ -78,7 +79,23 @@ public class CmisClient {
                 String productVersion,
                 String rootFolderId,
                 String cmisVersionSupported) {
-            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion, rootFolderId, cmisVersionSupported, "", "");
+            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion,
+                 rootFolderId, cmisVersionSupported, "", "", CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
+        }
+
+        public CmisRepositoryInfo(
+                String repositoryId,
+                String repositoryName,
+                String repositoryDescription,
+                String vendorName,
+                String productName,
+                String productVersion,
+                String rootFolderId,
+                String cmisVersionSupported,
+                String repositoryUrl,
+                String rootFolderUrl) {
+            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion,
+                 rootFolderId, cmisVersionSupported, repositoryUrl, rootFolderUrl, CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
         }
     }
 
@@ -160,7 +177,7 @@ public class CmisClient {
         }
 
         JsonNode root = objectMapper.readTree(response.body());
-        Map<String, CmisRepositoryInfo> repositories = new HashMap<>();
+        Map<String, CmisRepositoryInfo> repositories = new LinkedHashMap<>();
 
         if (root.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
@@ -171,6 +188,13 @@ public class CmisClient {
                     String repoId = repoNode.path("repositoryId").asText(field.getKey());
                     String repoUrl = repoNode.path("repositoryUrl").asText("");
                     String rootFolderUrl = repoNode.path("rootFolderUrl").asText("");
+                    String principalAnyone = repoNode.path("principalAnyone").asText("");
+                    if (principalAnyone.isBlank()) {
+                        principalAnyone = repoNode.path("principalIdAnyone").asText("");
+                    }
+                    if (principalAnyone.isBlank()) {
+                        principalAnyone = CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL;
+                    }
                     repositories.put(repoId, new CmisRepositoryInfo(
                         repoId,
                         repoNode.path("repositoryName").asText(repoId),
@@ -181,7 +205,8 @@ public class CmisClient {
                         repoNode.path("rootFolderId").asText(""),
                         repoNode.path("cmisVersionSupported").asText("1.1"),
                         repoUrl,
-                        rootFolderUrl
+                        rootFolderUrl,
+                        principalAnyone
                     ));
                 }
             }

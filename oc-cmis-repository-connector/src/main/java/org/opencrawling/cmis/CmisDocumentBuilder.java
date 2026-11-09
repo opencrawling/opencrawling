@@ -28,6 +28,8 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -37,11 +39,22 @@ import com.fasterxml.jackson.databind.JsonNode;
  */
 public class CmisDocumentBuilder {
 
+    private static final Logger log = LoggerFactory.getLogger(CmisDocumentBuilder.class);
+
     public static RepositoryDocument buildDocument(
             String repositoryId,
             JsonNode objectNode,
             InputStream contentStream,
             boolean includeAcls) {
+        return buildDocument(repositoryId, objectNode, contentStream, includeAcls, CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
+    }
+
+    public static RepositoryDocument buildDocument(
+            String repositoryId,
+            JsonNode objectNode,
+            InputStream contentStream,
+            boolean includeAcls,
+            String anyonePrincipal) {
         
         JsonNode actualNode = objectNode.has("object") ? objectNode.get("object") : objectNode;
 
@@ -113,9 +126,16 @@ public class CmisDocumentBuilder {
         extractCustomProperties(actualNode, metadata);
 
         // Security / ACLs
-        SecurityConfig securityConfig = includeAcls
-                ? CmisSecurityMapper.mapAcl(actualNode.path("acl"))
-                : SecurityConfig.createPublic();
+        SecurityConfig securityConfig;
+        if (includeAcls) {
+            securityConfig = CmisSecurityMapper.mapAcl(actualNode.path("acl"), anyonePrincipal);
+            if (securityConfig.permissions().isEmpty()) {
+                log.warn("CMIS object '{}' in repository '{}' has no usable ACL; indexing with no read grants",
+                        objectId, repositoryId);
+            }
+        } else {
+            securityConfig = SecurityConfig.createPublic();
+        }
 
         if (includeAcls && securityConfig != null && securityConfig.permissions() != null) {
             List<String> allowedUsers = new ArrayList<>();

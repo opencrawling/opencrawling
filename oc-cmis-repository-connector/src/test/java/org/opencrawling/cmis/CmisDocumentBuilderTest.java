@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.security.SecurityConfig;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -122,6 +124,10 @@ public class CmisDocumentBuilderTest {
         assertThat(doc.metadata().get("mimeType")).containsExactly("application/json");
         assertThat(doc.metadata().get("cmis_prop_custom_department")).containsExactly("DataOps");
         assertThat(doc.security().permissions().get(0).identity()).isEqualTo("public");
+
+        RepositoryDocument docWithAclsEnabled = CmisDocumentBuilder.buildDocument("repo-02", objNode, null, true);
+        assertThat(docWithAclsEnabled.security()).isEqualTo(SecurityConfig.none());
+        assertThat(EffectiveAcl.resolve(docWithAclsEnabled.security(), docWithAclsEnabled.acl()).allowedRead()).isEmpty();
     }
 
     @Test

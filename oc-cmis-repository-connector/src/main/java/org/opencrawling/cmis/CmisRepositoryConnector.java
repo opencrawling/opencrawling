@@ -90,6 +90,7 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
 
     private CmisClient cmisClient;
     private String resolvedRepositoryId;
+    private String principalAnyone = CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL;
     private volatile boolean connected = false;
 
     public CmisRepositoryConnector() {
@@ -158,6 +159,9 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
         this.includeContentStream = includeContentStream;
         this.maxContentSizeBytes = maxContentSizeBytes > 0 ? maxContentSizeBytes : 52428800L;
         this.includeAcls = includeAcls;
+        if (!this.includeAcls) {
+            log.warn("CMIS connector has include-acls=false: crawled documents will be marked public (readable by everyone)");
+        }
         this.includeSecondaryTypes = includeSecondaryTypes;
         this.changeLogEnabled = changeLogEnabled;
         this.changeLogToken = changeLogToken;
@@ -202,6 +206,9 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
         this.includeContentStream = includeContentStream;
         this.maxContentSizeBytes = maxContentSizeBytes > 0 ? maxContentSizeBytes : 52428800L;
         this.includeAcls = includeAcls;
+        if (!this.includeAcls) {
+            log.warn("CMIS connector has include-acls=false: crawled documents will be marked public (readable by everyone)");
+        }
         this.includeSecondaryTypes = includeSecondaryTypes;
         this.changeLogEnabled = changeLogEnabled;
         this.changeLogToken = changeLogToken;
@@ -232,6 +239,9 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
         Map<String, CmisClient.CmisRepositoryInfo> repos = cmisClient.getRepositories();
         CmisClient.CmisRepositoryInfo info = repos.get(resolvedRepositoryId);
         if (info != null) {
+            if (info.principalAnyone() != null && !info.principalAnyone().isBlank()) {
+                this.principalAnyone = info.principalAnyone();
+            }
             log.info("Successfully connected to CMIS repository '{}' ({}) - vendor: {}, version: {}",
                 info.repositoryName(), info.repositoryId(), info.vendorName(), info.cmisVersionSupported());
         } else {
@@ -466,7 +476,7 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
             }
         }
 
-        return CmisDocumentBuilder.buildDocument(resolvedRepositoryId, docNode, contentStream, includeAcls);
+        return CmisDocumentBuilder.buildDocument(resolvedRepositoryId, docNode, contentStream, includeAcls, principalAnyone);
     }
 
     private boolean matchesVersionPolicy(JsonNode docNode) {
@@ -960,7 +970,7 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
                 nameOf(folder, objectId), CmisDocumentBuilder.getPropertyValue(folder, "cmis:path"),
                 DiscoveryNode.NodeType.FOLDER, depth, null, null,
                 CmisDocumentBuilder.parseTimestamp(CmisDocumentBuilder.getPropertyValue(folder, "cmis:lastModificationDate")),
-                null, discoverySecurity(folder));
+                null, discoverySecurity(folder, principalAnyone));
     }
 
     private DiscoveryNode documentNode(JsonNode document, String parentId, int depth) {
@@ -983,7 +993,7 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
                 DiscoveryNode.NodeType.DOCUMENT, depth,
                 CmisDocumentBuilder.getPropertyValue(document, "cmis:contentStreamMimeType"), size,
                 CmisDocumentBuilder.parseTimestamp(CmisDocumentBuilder.getPropertyValue(document, "cmis:lastModificationDate")),
-                null, discoverySecurity(document));
+                null, discoverySecurity(document, principalAnyone));
     }
 
     private static String nameOf(JsonNode object, String fallback) {
@@ -992,23 +1002,15 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
     }
 
     /**
-     * The object's ACL, or {@code null} when the repository returned none. Unlike the crawler's mapping, a missing
-     * or empty ACL is never read as public: discovery must not show an item whose permissions it does not know.
+     * The object's ACL, or {@code null} when the repository returned none: discovery must not show an item whose
+     * permissions it does not know.
      */
     static SecurityConfig discoverySecurity(JsonNode object) {
-        JsonNode acl = object.path("acl");
-        JsonNode aces = acl.path("aces");
-        if (!aces.isArray()) {
-            return null;
-        }
-        boolean anyPrincipal = false;
-        for (JsonNode ace : aces) {
-            String principal = CmisSecurityMapper.extractPrincipalId(ace);
-            if (principal != null && !principal.isBlank()) {
-                anyPrincipal = true;
-                break;
-            }
-        }
-        return anyPrincipal ? CmisSecurityMapper.mapAcl(acl) : null;
+        return discoverySecurity(object, CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
+    }
+
+    static SecurityConfig discoverySecurity(JsonNode object, String anyonePrincipal) {
+        SecurityConfig security = CmisSecurityMapper.mapAcl(object.path("acl"), anyonePrincipal);
+        return security.permissions().isEmpty() ? null : security;
     }
 }
