@@ -175,7 +175,9 @@ class AlfrescoRepositoryConnectorTest {
                 .assertNext(doc -> {
                     assertThat(doc.id()).isEqualTo("file-1");
                     assertThat(doc.uri()).isEqualTo("http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/file-1/content");
-                    assertThat(doc.acl()).isEqualTo("public");
+                    // No permissions block (the crawling user may not read them): never public (#261).
+                    assertThat(doc.acl()).isEmpty();
+                    assertThat(doc.security().permissions()).isEmpty();
                     assertThat(doc.metadata().get("name")).containsExactly("file-1.txt");
                     assertThat(doc.metadata().get("cm:title")).containsExactly("File 1 Title");
                     assertThat(doc.metadata().get("cm:description")).containsExactly("File 1 Description");
