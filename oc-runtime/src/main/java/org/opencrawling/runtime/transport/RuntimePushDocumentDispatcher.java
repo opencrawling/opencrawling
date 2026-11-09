@@ -32,6 +32,7 @@ import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
@@ -48,6 +49,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link JobOrchestrator} Kafka event bus dispatch, and {@link JobLedgerAccumulator} audit reporting.
  */
 @Service
+@ConditionalOnProperty(name = "opencrawling.connector.grpc-push.enabled", havingValue = "true", matchIfMissing = true)
 public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
 
     /** Pushed documents carry no caller identity; their executions record only how they arrived. */
@@ -76,12 +78,12 @@ public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
             JobController jobController,
             JobOrchestrator jobOrchestrator,
             ClaimCheckStore claimCheckStore,
-            GrpcPushProperties properties,
+            @Autowired(required = false) GrpcPushProperties properties,
             @Autowired(required = false) JobLedgerAccumulator ledgerAccumulator) {
         this.jobController = jobController;
         this.jobOrchestrator = jobOrchestrator;
         this.claimCheckStore = claimCheckStore;
-        this.properties = properties;
+        this.properties = properties != null ? properties : new GrpcPushProperties();
         this.ledgerAccumulator = ledgerAccumulator;
     }
 
