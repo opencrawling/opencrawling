@@ -167,6 +167,13 @@ class IngestionConsumerGovernanceTest {
         assertThat(tombstone.action()).isEqualTo(DocumentAction.DELETE);
         assertThat(tombstone.documentId()).isEqualTo("doc");
         verify(kafkaTemplate).send(eq(KafkaConfig.CHUNKS_TOPIC_NAME), eq("doc"), any());
+        // The authorization sync learns of the rejection on the documents topic, keyed like the rejected version.
+        ArgumentCaptor<Object> notice = ArgumentCaptor.forClass(Object.class);
+        verify(kafkaTemplate).send(eq(KafkaConfig.TOPIC_NAME), eq("doc"), notice.capture());
+        IngestionMessage rejection = (IngestionMessage) notice.getValue();
+        assertThat(IngestionMessage.isGovernanceRejection(rejection)).isTrue();
+        assertThat(rejection.lastModified()).isEqualTo("2026-01-01T00:00:00Z");
+        assertThat(rejection.pipelineMode()).isEqualTo(PipelineMode.RAG);
         verify(claimCheckStore).delete(URI.create("file:///claims/doc"));
         verify(traceStore).recordSpan(org.mockito.ArgumentMatchers.argThat(span -> span.stage().equals("Governance")
                 && span.status().equals("REJECTED") && "purged".equals(span.attributes().get("earlierVersion"))
@@ -204,6 +211,29 @@ class IngestionConsumerGovernanceTest {
         // The claim stays, so the document can be ingested again once governance is back.
         verify(claimCheckStore, never()).delete(any());
         verify(traceStore).recordError(eq("doc"), eq("ERROR"), eq("Governance"), contains("503"), any());
+    }
+
+    @Test
+    void aGovernanceRejectionNoticeKeepsItsMarkAcrossKafkaSerialization() {
+        tools.jackson.databind.json.JsonMapper json = tools.jackson.databind.json.JsonMapper.builder().build();
+        IngestionMessage notice = IngestionMessage.governanceRejection(message(DocumentAction.UPSERT));
+
+        IngestionMessage read = json.readValue(json.writeValueAsString(notice), IngestionMessage.class);
+
+        assertThat(IngestionMessage.isGovernanceRejection(read)).isTrue();
+        assertThat(read).isEqualTo(notice);
+        assertThat(IngestionMessage.isGovernanceRejection(message(DocumentAction.DELETE))).isFalse();
+    }
+
+    @Test
+    void aGovernanceRejectionNoticeIsNotForwardedToTheChunks() {
+        gate(OnRejectedUpdate.PURGE, hook("policy", GovernanceDecision.reject("no", Map.of())));
+
+        consumer.consume(IngestionMessage.governanceRejection(message(DocumentAction.UPSERT)));
+
+        // The chunks were removed when the document was rejected; a second tombstone could remove a later version's.
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+        assertThat(seen).isEmpty();
     }
 
     @Test

@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -73,6 +74,67 @@ class AuthorizationSyncConsumerTest {
     void tombstonesRemoveAllTuples() throws Exception {
         consumer.consume(message("d1", null, DocumentAction.DELETE));
         verify(writer).delete("d1");
+    }
+
+    private static IngestionMessage version(String id, String lastModified) {
+        return new IngestionMessage(id, "file:///" + id, Map.of(), "finance", SecurityConfig.none(), lastModified,
+                null, null, Map.of(), DocumentAction.UPSERT);
+    }
+
+    @Test
+    void aGovernanceRejectionRemovesTheTuplesWrittenForTheRejectedVersion() throws Exception {
+        IngestionMessage rejected = version("d1", "v1");
+        consumer.consume(rejected);
+        consumer.consume(IngestionMessage.governanceRejection(rejected));
+
+        verify(writer).sync(eq("d1"), any());
+        verify(writer).delete("d1");
+    }
+
+    @Test
+    void aGovernanceRejectionIsIgnoredWhenALaterVersionWasSyncedAfterIt() throws Exception {
+        IngestionMessage rejected = version("d1", "v1");
+        consumer.consume(rejected);
+        consumer.consume(version("d1", "v2"));
+        consumer.consume(IngestionMessage.governanceRejection(rejected));
+
+        verify(writer, never()).delete(any());
+    }
+
+    @Test
+    void aGovernanceRejectionWithoutARecordedVersionRemovesTheTuples() throws Exception {
+        // After a restart nothing is remembered: removing fails closed until the next crawl.
+        consumer.consume(IngestionMessage.governanceRejection(version("d1", "v1")));
+        verify(writer).delete("d1");
+    }
+
+    @Test
+    void aGovernanceRejectionMatchesAVersionWithoutLastModified() throws Exception {
+        IngestionMessage rejected = version("d1", null);
+        consumer.consume(rejected);
+        consumer.consume(IngestionMessage.governanceRejection(rejected));
+        verify(writer).delete("d1");
+    }
+
+    @Test
+    void aRejectionAfterAnotherDocumentsUpdateStillApplies() throws Exception {
+        IngestionMessage rejected = version("d1", "v1");
+        consumer.consume(rejected);
+        consumer.consume(version("d2", "v9"));
+        consumer.consume(IngestionMessage.governanceRejection(rejected));
+        verify(writer).delete("d1");
+        verify(writer, never()).delete("d2");
+    }
+
+    @Test
+    void theRememberedVersionsAreBounded() throws Exception {
+        consumer.consume(version("d0", "v2"));
+        for (int i = 1; i <= AuthorizationSyncConsumer.REMEMBERED_VERSIONS; i++) {
+            consumer.consume(version("d" + i, "v1"));
+        }
+        // d0's later version was evicted, so the stale rejection cannot be compared and removes the tuples (fail closed).
+        consumer.consume(IngestionMessage.governanceRejection(version("d0", "v1")));
+        verify(writer).delete("d0");
     }
 
     @Test

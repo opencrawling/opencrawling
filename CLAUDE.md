@@ -181,7 +181,7 @@ With `opencrawling.sidecars.enabled=true` (off by default), `SidecarMcpTools` (`
 With `opencrawling.governance.enabled=true` (off by default), `IngestionConsumer` passes each UPSERT's extracted text and metadata through a `GovernanceGate` before chunking it. The gate runs the `hooks` in order: the built-in `pii-masking` (`PiiMaskingGovernanceHook`) or `http` (`HttpGovernanceHook`, HMAC-signed, bounded retries), or any `PreEmbeddingGovernanceHook` bean (SPI in `oc-core`, `core.governance`). Each hook answers APPROVE, SANITIZE or REJECT.
 - **Permissions:** hooks can never change the protected metadata keys (`GovernanceGate.isProtectedKey`).
 - **Failures:** a hook that fails means nothing is embedded.
-- **Rejections:** a rejection publishes a tombstone for the earlier version unless `on-rejected-update=keep`.
+- **Rejections:** a rejection publishes a tombstone for the earlier version unless `on-rejected-update=keep`. It also publishes `IngestionMessage.governanceRejection` on the documents topic, so `AuthorizationSyncConsumer` removes the OpenFGA tuples (unless a later version was synced since); `IngestionConsumer` skips that notice.
 - **Direct outputs:** with the gate on, `JobOrchestrator.bypassesGovernance` refuses RAG runs that have an output connector, because their direct `send` would embed without the gate. The job API answers `409`.
 
 ### Security / ACL model

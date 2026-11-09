@@ -116,4 +116,28 @@ public record IngestionMessage(
     ) {
         this(documentId, uri, metadata, acl, SecurityConfig.createPublic(), lastModified, transformationConnector, transformationEngine, transformationConfig, DocumentAction.UPSERT, PipelineMode.RAG);
     }
+
+    /**
+     * Metadata key that marks a DELETE published because the pre-embedding governance gate rejected a version of the
+     * document. Its value is {@code "true"}.
+     */
+    public static final String GOVERNANCE_REJECTED_KEY = "oc:governance-rejected";
+
+    /**
+     * The DELETE that tells the other readers of the documents topic that governance rejected {@code rejected}, so
+     * nothing of the document is indexed. The OpenFGA sync then removes the document's tuples. It carries the
+     * rejected version's {@code lastModified}, so a reader can tell whether a later version was already applied.
+     * It is a RAG message, so the migration writers ignore it.
+     */
+    public static IngestionMessage governanceRejection(IngestionMessage rejected) {
+        return new IngestionMessage(rejected.documentId(), rejected.uri(), Map.of(GOVERNANCE_REJECTED_KEY, List.of("true")),
+                null, SecurityConfig.none(), rejected.lastModified(), null, null, Map.of(), DocumentAction.DELETE,
+                PipelineMode.RAG, null);
+    }
+
+    /** Whether {@code message} is a DELETE published by {@link #governanceRejection}. */
+    public static boolean isGovernanceRejection(IngestionMessage message) {
+        return message != null && message.action() == DocumentAction.DELETE && message.metadata() != null
+                && List.of("true").equals(message.metadata().get(GOVERNANCE_REJECTED_KEY));
+    }
 }
