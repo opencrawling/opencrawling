@@ -179,7 +179,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 
 #### ⚙️ Ingestion & Embedding Mappings
 ![Ingestion & Embedding Settings](images/screenshots/ui-ingestion-and-embedding-settings.png)
-*Configure target models (e.g., Ollama, OpenAI) and tune text chunk sizes/overlap boundaries dynamically.*
+*Configure target models (e.g., Ollama, OpenAI) and tune the default text chunk size dynamically.*
 
 #### 🪵 Real-Time Ingestion Logs
 ![Real-Time Activity Logs](images/screenshots/ui-real-time-activity-logs.png)

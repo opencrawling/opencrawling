@@ -57,7 +57,7 @@ public class DynamicJobMcpTools {
             @McpToolParam(description = "Folder id or path to crawl; the connector's configured root when omitted", required = false) String start,
             @McpToolParam(description = "A label for the job", required = false) String name,
             @McpToolParam(description = "Only check the request; start nothing", required = false) Boolean validateOnly,
-            @McpToolParam(description = "Chunk size in tokens; the runtime's default (800) when omitted. Within the limits the administrator set", required = false) Integer chunkSize,
+            @McpToolParam(description = "Chunk size in tokens; the global chunk size from the settings (800 unless changed) when omitted. Within the limits the administrator set", required = false) Integer chunkSize,
             @McpToolParam(description = "Minimum chunk size in characters before a chunk is cut at a sentence end (default 350)", required = false) Integer minChunkSizeChars,
             @McpToolParam(description = "Chunks shorter than this many characters are dropped (default 5)", required = false) Integer minChunkLengthToEmbed,
             @McpToolParam(description = "Keep line separators in the chunk text (default true)", required = false) Boolean keepSeparator,
@@ -76,7 +76,7 @@ public class DynamicJobMcpTools {
     public Object ingestDocument(
             @McpToolParam(description = "Name of the registered repository connector", required = true) String connector,
             @McpToolParam(description = "The document's id in the repository (sourceId), not a path", required = true) String document,
-            @McpToolParam(description = "Chunk size in tokens; the runtime's default (800) when omitted. Within the limits the administrator set", required = false) Integer chunkSize,
+            @McpToolParam(description = "Chunk size in tokens; the global chunk size from the settings (800 unless changed) when omitted. Within the limits the administrator set", required = false) Integer chunkSize,
             @McpToolParam(description = "Minimum chunk size in characters before a chunk is cut at a sentence end (default 350)", required = false) Integer minChunkSizeChars,
             @McpToolParam(description = "Chunks shorter than this many characters are dropped (default 5)", required = false) Integer minChunkLengthToEmbed,
             @McpToolParam(description = "Keep line separators in the chunk text (default true)", required = false) Boolean keepSeparator,

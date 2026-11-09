@@ -86,6 +86,43 @@ class JobOrchestratorChunkingTest {
         assertThat(sent().chunking()).isNull();
     }
 
+    @Test
+    void jobsWithoutChunkingCarryTheGlobalChunkSize() {
+        ChunkingDefaults defaults = new ChunkingDefaults();
+        defaults.setChunkSize(400);
+        orchestrator.setChunkingDefaults(defaults);
+
+        orchestrator.runJob(connector, null, "/data", null, "job-3", "Job", NarrativizationConfig.disabled(),
+                PipelineMode.RAG, "exec-3", () -> false, null);
+
+        assertThat(sent().chunking()).isEqualTo(new ChunkingSpec(400, null, null, null));
+    }
+
+    @Test
+    void aJobsOwnChunkSizeWinsOverTheGlobalOne() {
+        ChunkingDefaults defaults = new ChunkingDefaults();
+        defaults.setChunkSize(400);
+        orchestrator.setChunkingDefaults(defaults);
+        ChunkingSpec chunking = new ChunkingSpec(300, null, null, false);
+
+        orchestrator.runJob(connector, null, "/data", null, "job-4", "Job", NarrativizationConfig.disabled(),
+                PipelineMode.RAG, "exec-4", () -> false, null, chunking);
+
+        assertThat(sent().chunking()).isEqualTo(chunking);
+    }
+
+    @Test
+    void pushedDocumentsCarryTheGlobalChunkSize() throws Exception {
+        ChunkingDefaults defaults = new ChunkingDefaults();
+        defaults.setChunkSize(400);
+        orchestrator.setChunkingDefaults(defaults);
+
+        orchestrator.publishDocument(new RepositoryDocument("doc-1", "file:///tmp/doc1.txt",
+                new ByteArrayInputStream("text".getBytes(StandardCharsets.UTF_8)), Map.of(), "read:all", Instant.now()), null);
+
+        assertThat(sent().chunking()).isEqualTo(new ChunkingSpec(400, null, null, null));
+    }
+
     private IngestionMessage sent() {
         ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
         verify(kafkaTemplate).send(eq(KafkaConfig.TOPIC_NAME), eq("doc-1"), captor.capture());
