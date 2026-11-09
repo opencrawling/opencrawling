@@ -44,8 +44,8 @@ class QdrantPointMapperTest {
 
         Map<String, Value> payload = point.getPayloadMap();
         assertThat(payload.get(QdrantFields.FIELD_SECURITY_INHERITANCE).getBoolValue()).isTrue();
-        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user1", "group1");
-        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_DENIED_READ))).containsExactly("baduser");
+        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user:user1", "group:group1");
+        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_DENIED_READ))).containsExactly("user:baduser");
         assertThat(payload.get(QdrantFields.FIELD_TEXT).getStringValue()).isEqualTo("hello world");
         assertThat(payload.get(QdrantFields.FIELD_CHUNK_ID).getStringValue()).isEqualTo("doc-1_chunk-0");
     }
@@ -79,7 +79,7 @@ class QdrantPointMapperTest {
                 "now", security, new float[]{0.1f}, Map.of());
 
         assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
-                .containsExactly("site-managers", "public");
+                .containsExactly("group:site-managers", "public");
     }
 
     @Test

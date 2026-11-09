@@ -54,7 +54,7 @@ class ElasticsearchDocumentMapperTest {
         EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(
                 new PermissionRule("user:Alice", "user", "Alice", "read"),
                 new PermissionRule("group:Finance", "group", "Finance", "read"),
-                new PermissionRule("Ops", "group", "Ops", "read"))), null);
+                new PermissionRule("Ops", null, "Ops", "read"))), null);
 
         Map<String, Object> source = mapper.toSource(new ElasticsearchDocumentMapper.Chunk(
                 "c", "d", "t", "u", null, null, acl, new float[]{1f}, null));

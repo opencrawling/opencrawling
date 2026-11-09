@@ -47,8 +47,8 @@ class VespaDocumentMapperTest {
 
         JsonNode fields = json.readTree(document.json()).get("fields");
         assertThat(fields.get(VespaFields.FIELD_SECURITY_INHERITANCE).asBoolean()).isTrue();
-        assertThat(toList(fields.get(VespaFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user1", "group1");
-        assertThat(toList(fields.get(VespaFields.FIELD_SECURITY_DENIED_READ))).containsExactly("baduser");
+        assertThat(toList(fields.get(VespaFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user:user1", "group:group1");
+        assertThat(toList(fields.get(VespaFields.FIELD_SECURITY_DENIED_READ))).containsExactly("user:baduser");
         assertThat(fields.get(VespaFields.FIELD_TEXT).asText()).isEqualTo("hello world");
         assertThat(fields.get(VespaFields.FIELD_CHUNK_ID).asText()).isEqualTo("doc-1_chunk-0");
     }

@@ -152,8 +152,8 @@ class LuxirStoreWriterConsumerTest {
         org.junit.jupiter.api.Assertions.assertFalse(doc.containsKey("security_denied_read_s"));
 
         // Must map to multi-valued _ss in Luxir schema
-        assertEquals(List.of("public", "engineering"), doc.get("security_allowed_read_ss"));
-        assertEquals(List.of("contractor"), doc.get("security_denied_read_ss"));
+        assertEquals(List.of("public", "group:engineering"), doc.get("security_allowed_read_ss"));
+        assertEquals(List.of("group:contractor"), doc.get("security_denied_read_ss"));
         assertEquals("false", doc.get("security_inheritance_s"));
 
         // Custom multi-valued metadata should receive _ss suffix

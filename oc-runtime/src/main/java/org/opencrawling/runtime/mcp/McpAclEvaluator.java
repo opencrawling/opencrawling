@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.mcp;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 
@@ -168,10 +169,11 @@ public final class McpAclEvaluator {
     }
 
     private static boolean matchesRule(String identity, String identityType, String userPrincipal, Collection<String> userRoles) {
-        if (PUBLIC_IDENTITY.equalsIgnoreCase(identity) || PUBLIC_IDENTITY.equalsIgnoreCase(identityType)) {
+        String resolvedIdentity = EffectiveAcl.identityOf(identity, identityType);
+        if (PUBLIC_IDENTITY.equalsIgnoreCase(resolvedIdentity)) {
             return true;
         }
-        return matchesIdentity(identity, userPrincipal, userRoles);
+        return matchesIdentity(resolvedIdentity, userPrincipal, userRoles);
     }
 
     public static boolean matchesAnyIdentity(Collection<String> identities, String userPrincipal, Collection<String> userRoles) {

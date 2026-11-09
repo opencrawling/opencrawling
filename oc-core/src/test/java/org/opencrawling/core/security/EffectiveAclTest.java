@@ -35,8 +35,8 @@ class EffectiveAclTest {
                 rule("admins", "group", "admin"), rule("bob", "user", "deny"),
                 rule("carol", "user", "none"))), null);
 
-        assertThat(acl.allowedRead()).containsExactly("alice", "editors", "admins");
-        assertThat(acl.deniedRead()).containsExactly("bob");
+        assertThat(acl.allowedRead()).containsExactly("user:alice", "group:editors", "group:admins");
+        assertThat(acl.deniedRead()).containsExactly("user:bob");
         assertThat(acl.inheritanceEnabled()).isTrue();
         assertThat(acl.isPublic()).isFalse();
     }
@@ -65,7 +65,7 @@ class EffectiveAclTest {
         EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(false, List.of(rule("alice", "user", "read"))),
                 "user:alice;group:finance,secured");
 
-        assertThat(acl.allowedRead()).containsExactly("alice");
+        assertThat(acl.allowedRead()).containsExactly("user:alice");
         assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly("alice");
     }
 
@@ -115,9 +115,66 @@ class EffectiveAclTest {
 
         EffectiveAcl acl = EffectiveAcl.resolve(security, List.of("ignored"));
 
-        assertThat(acl.allowedRead()).containsExactly("finance", "public");
-        assertThat(acl.deniedRead()).containsExactly("mallory");
+        assertThat(acl.allowedRead()).containsExactly("group:finance", "public");
+        assertThat(acl.deniedRead()).containsExactly("user:mallory");
         assertThat(acl.inheritanceEnabled()).isTrue();
         assertThat(acl.isPublic()).isFalse();
+    }
+
+    @Test
+    void resolvesIdentityTypeToUserAndGroupPrefixes() {
+        EffectiveAcl acl = EffectiveAcl.resolve(new SecurityConfig(true, List.of(
+                rule("alice", "USER", "read"),
+                rule("finance", "GROUP", "read"),
+                rule("ops", "role", "read"),
+                rule("contractors", "ROLE", "deny"),
+                rule("user:bob", "user", "read"),
+                rule("group:devs", "group", "read"),
+                rule("user:carol", "group", "read"),
+                rule("legacy-token", "acl", "read"),
+                rule("bare-identity", null, "read"),
+                rule("custom-type", "other", "read")
+        )), null);
+
+        assertThat(acl.allowedRead()).containsExactly(
+                "user:alice",
+                "group:finance",
+                "group:ops",
+                "user:bob",
+                "group:devs",
+                "user:carol",
+                "legacy-token",
+                "bare-identity",
+                "custom-type"
+        );
+        assertThat(acl.deniedRead()).containsExactly("group:contractors");
+        assertThat(acl.security().permissions()).extracting(PermissionRule::identity).containsExactly(
+                "alice",
+                "finance",
+                "ops",
+                "contractors",
+                "user:bob",
+                "group:devs",
+                "user:carol",
+                "legacy-token",
+                "bare-identity",
+                "custom-type"
+        );
+    }
+
+    @Test
+    void testIdentityOf() {
+        assertThat(EffectiveAcl.identityOf(null, null)).isNull();
+        assertThat(EffectiveAcl.identityOf((PermissionRule) null)).isNull();
+        assertThat(EffectiveAcl.identityOf("  ", "user")).isEmpty();
+        assertThat(EffectiveAcl.identityOf("public", "user")).isEqualTo("public");
+        assertThat(EffectiveAcl.identityOf("EVERYONE", "public")).isEqualTo("public");
+        assertThat(EffectiveAcl.identityOf("alice", "user")).isEqualTo("user:alice");
+        assertThat(EffectiveAcl.identityOf("user:alice", "user")).isEqualTo("user:alice");
+        assertThat(EffectiveAcl.identityOf("finance", "group")).isEqualTo("group:finance");
+        assertThat(EffectiveAcl.identityOf("group:finance", "group")).isEqualTo("group:finance");
+        assertThat(EffectiveAcl.identityOf("admin", "role")).isEqualTo("group:admin");
+        assertThat(EffectiveAcl.identityOf("bare", null)).isEqualTo("bare");
+        assertThat(EffectiveAcl.identityOf("bare", "unknown")).isEqualTo("bare");
     }
 }

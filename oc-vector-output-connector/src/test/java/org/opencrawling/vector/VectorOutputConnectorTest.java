@@ -159,9 +159,9 @@ class VectorOutputConnectorTest {
         List<Document> addedChunks = captor.getValue();
         assertFalse(addedChunks.isEmpty());
         Document chunk = addedChunks.get(0);
-        assertEquals(List.of("user1", "group1"), chunk.getMetadata().get("security_allowed_read"));
-        assertEquals(List.of("u:user1", "g:user1", "u:group1", "g:group1"), chunk.getMetadata().get("security_read_keys"));
-        assertEquals(List.of("bad_user"), chunk.getMetadata().get("security_denied_read"));
+        assertEquals(List.of("user:user1", "group:group1"), chunk.getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("u:user1", "g:group1"), chunk.getMetadata().get("security_read_keys"));
+        assertEquals(List.of("user:bad_user"), chunk.getMetadata().get("security_denied_read"));
         assertEquals(false, chunk.getMetadata().get("security_inheritance"));
         assertEquals(List.of("proc-1234"), chunk.getMetadata().get("flowable_proc_inst_id"));
     }

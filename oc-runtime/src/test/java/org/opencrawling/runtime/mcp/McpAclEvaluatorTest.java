@@ -230,4 +230,47 @@ class McpAclEvaluatorTest {
         assertFalse(McpAclEvaluator.isAccessible(Map.of("security", sc), "finance", List.of()));
         assertTrue(McpAclEvaluator.isAccessible(Map.of("security", sc), "dave", List.of("finance")));
     }
+
+    @Test
+    void userRuleDoesNotGrantOrDenyGroupOfSameNameWhenResolvedViaEffectiveAcl() {
+        // Issue #267: A rule with identityType "user" should resolve to user:alice
+        org.opencrawling.core.security.EffectiveAcl userAcl = org.opencrawling.core.security.EffectiveAcl.resolve(
+                new SecurityConfig(false, List.of(new PermissionRule("alice", "user", "Alice", "read"))), null);
+        Map<String, Object> userMeta = Map.of(
+                "security_allowed_read", userAcl.allowedRead(),
+                "security", userAcl.security()
+        );
+        // User alice has access
+        assertTrue(McpAclEvaluator.isAccessible(userMeta, "alice", List.of()));
+        // Bob who is only in group "alice" does NOT have access
+        assertFalse(McpAclEvaluator.isAccessible(userMeta, "bob", List.of("alice")));
+
+        // Opposite: A rule with identityType "group" should resolve to group:alice
+        org.opencrawling.core.security.EffectiveAcl groupAcl = org.opencrawling.core.security.EffectiveAcl.resolve(
+                new SecurityConfig(false, List.of(new PermissionRule("alice", "group", "Alice Group", "read"))), null);
+        Map<String, Object> groupMeta = Map.of(
+                "security_allowed_read", groupAcl.allowedRead(),
+                "security", groupAcl.security()
+        );
+        // Bob with role/group "alice" has access
+        assertTrue(McpAclEvaluator.isAccessible(groupMeta, "bob", List.of("alice")));
+        // User alice without group "alice" does NOT have access
+        assertFalse(McpAclEvaluator.isAccessible(groupMeta, "alice", List.of("other")));
+
+        // Deny rule: user deny on alice does not deny bob who has group alice
+        org.opencrawling.core.security.EffectiveAcl denyAcl = org.opencrawling.core.security.EffectiveAcl.resolve(
+                new SecurityConfig(false, List.of(
+                        new PermissionRule("public", "public", "Public", "read"),
+                        new PermissionRule("alice", "user", "Alice", "deny")
+                )), null);
+        Map<String, Object> denyMeta = Map.of(
+                "security_allowed_read", denyAcl.allowedRead(),
+                "security_denied_read", denyAcl.deniedRead(),
+                "security", denyAcl.security()
+        );
+        // Alice is denied
+        assertFalse(McpAclEvaluator.isAccessible(denyMeta, "alice", List.of()));
+        // Bob in group alice is allowed (deny does not affect group)
+        assertTrue(McpAclEvaluator.isAccessible(denyMeta, "bob", List.of("alice")));
+    }
 }

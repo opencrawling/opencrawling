@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * The one place a document's permissions are turned into the fields every store indexes
@@ -34,6 +35,10 @@ import java.util.Set;
  *       values there that are not identities, such as {@code user:a;group:b} or {@code secured}).</li>
  *   <li>A rule whose identity type is {@code public} (for example a CMIS {@code anonymous} or
  *       {@code GROUP_EVERYONE} entry) grants {@code public}, not the literal repository name.</li>
+ *   <li>A rule with a known user type ({@code user}, case-insensitive) resolves to {@code user:<identity>},
+ *       and a known group type ({@code group}, {@code role}) resolves to {@code group:<identity>}, unless
+ *       the identity already has a prefix. Rules without a type or with an unknown type keep their bare
+ *       identity.</li>
  *   <li>When the rules are only the default public placeholder ({@link SecurityConfig#createPublic()}) and the
  *       legacy {@code acl} names identities, the {@code acl} wins: a connector that could not read the source
  *       permissions but did set an {@code acl} must not make the document public.</li>
@@ -57,6 +62,8 @@ public record EffectiveAcl(
     public static final String PUBLIC = "public";
 
     private static final String LEGACY_ACL_IDENTITY_TYPE = "acl";
+    private static final Pattern USER_PREFIX = Pattern.compile("^(?i)user:");
+    private static final Pattern GROUP_PREFIX = Pattern.compile("^(?i)group:");
 
     public EffectiveAcl {
         allowedRead = List.copyOf(allowedRead);
@@ -134,13 +141,38 @@ public record EffectiveAcl(
                 && "read".equalsIgnoreCase(rule.access()));
     }
 
-    private static String identityOf(PermissionRule rule) {
-        String identity = rule.identity().trim();
-        if (PUBLIC.equalsIgnoreCase(identity)
-                || PUBLIC.equalsIgnoreCase(rule.identityType())) {
+    public static String identityOf(String identity, String identityType) {
+        if (identity == null) {
+            return null;
+        }
+        String trimmed = identity.trim();
+        if (PUBLIC.equalsIgnoreCase(trimmed)
+                || PUBLIC.equalsIgnoreCase(identityType)) {
             return PUBLIC;
         }
-        return identity;
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        if (USER_PREFIX.matcher(trimmed).lookingAt() || GROUP_PREFIX.matcher(trimmed).lookingAt()) {
+            return trimmed;
+        }
+        if (identityType != null) {
+            String type = identityType.trim().toLowerCase(Locale.ROOT);
+            if ("user".equals(type)) {
+                return "user:" + trimmed;
+            }
+            if ("group".equals(type) || "role".equals(type)) {
+                return "group:" + trimmed;
+            }
+        }
+        return trimmed;
+    }
+
+    public static String identityOf(PermissionRule rule) {
+        if (rule == null) {
+            return null;
+        }
+        return identityOf(rule.identity(), rule.identityType());
     }
 
     private static List<String> legacyTokens(Object legacyAcl) {

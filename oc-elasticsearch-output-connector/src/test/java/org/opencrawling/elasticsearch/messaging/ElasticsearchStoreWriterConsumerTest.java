@@ -86,8 +86,8 @@ class ElasticsearchStoreWriterConsumerTest {
                 .containsEntry(ElasticsearchConstants.FIELD_SECURITY_INHERITANCE, false)
                 .containsEntry("title", "Doc A")
                 .doesNotContainKey("security");
-        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_ALLOWED_READ)).contains("alice");
-        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("mallory");
+        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_ALLOWED_READ)).contains("user:alice");
+        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("user:mallory");
         assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_READ_KEYS)).contains("u:alice");
     }
 
