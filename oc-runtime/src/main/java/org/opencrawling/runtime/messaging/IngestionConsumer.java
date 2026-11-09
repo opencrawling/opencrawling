@@ -148,6 +148,12 @@ public class IngestionConsumer {
         String jobId = message.documentId();
 
         try {
+            if (IngestionMessage.isGovernanceRejection(message)) {
+                // Published by this consumer when governance rejected the document; its chunks were already removed
+                // then. Forwarding it again could remove a later version's chunks, so it is meant for the other readers.
+                log.debug("Skipping the governance rejection notice for document {}.", message.documentId());
+                return;
+            }
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for document: {}. Forwarding tombstone to chunks topic.", message.documentId());
                 publishTombstone(message);
@@ -316,7 +322,8 @@ public class IngestionConsumer {
 
     /**
      * Runs the governance gate. A rejected document is not embedded and, unless the gate keeps rejected updates, its
-     * earlier chunks are removed with a tombstone. When the gate cannot decide, nothing is embedded or removed.
+     * earlier chunks are removed with a tombstone and a {@link IngestionMessage#governanceRejection governance
+     * rejection} goes to the documents topic, so the authorization sync removes its permissions too. When the gate cannot decide, nothing is embedded or removed.
      */
     private GovernanceGate.Result govern(IngestionMessage message, String text, Map<String, List<String>> metadata,
                                          String traceId, String jobId) throws Exception {
@@ -338,6 +345,10 @@ public class IngestionConsumer {
                         message.documentId(), result.reason(), purge ? "are removed" : "are kept");
                 if (purge) {
                     publishTombstone(message);
+                    // Tell the other readers of the documents topic, so the OpenFGA sync removes the permissions it
+                    // wrote for this version. Same key, so it follows that version on its partition.
+                    kafkaTemplate.send(KafkaConfig.TOPIC_NAME, message.documentId(),
+                            IngestionMessage.governanceRejection(message)).get();
                 }
             }
             case UNAVAILABLE -> {
