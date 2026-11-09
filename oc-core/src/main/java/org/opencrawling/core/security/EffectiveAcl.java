@@ -144,28 +144,38 @@ public record EffectiveAcl(
                 && "read".equalsIgnoreCase(rule.access()));
     }
 
-    private static String identityOf(PermissionRule rule) {
-        String identity = rule.identity().trim();
-        if (PUBLIC.equalsIgnoreCase(identity)
-                || PUBLIC.equalsIgnoreCase(rule.identityType())) {
+    public static String identityOf(String identity, String identityType) {
+        if (identity == null) {
+            return null;
+        }
+        String trimmed = identity.trim();
+        if (PUBLIC.equalsIgnoreCase(trimmed)
+                || PUBLIC.equalsIgnoreCase(identityType)) {
             return PUBLIC;
         }
-        if (identity.isEmpty()) {
+        if (trimmed.isEmpty()) {
             return "";
         }
-        if (USER_PREFIX.matcher(identity).lookingAt() || GROUP_PREFIX.matcher(identity).lookingAt()) {
-            return identity;
+        if (USER_PREFIX.matcher(trimmed).lookingAt() || GROUP_PREFIX.matcher(trimmed).lookingAt()) {
+            return trimmed;
         }
-        if (rule.identityType() != null) {
-            String type = rule.identityType().trim().toLowerCase(Locale.ROOT);
+        if (identityType != null) {
+            String type = identityType.trim().toLowerCase(Locale.ROOT);
             if ("user".equals(type)) {
-                return "user:" + identity;
+                return "user:" + trimmed;
             }
             if ("group".equals(type) || "role".equals(type)) {
-                return "group:" + identity;
+                return "group:" + trimmed;
             }
         }
-        return identity;
+        return trimmed;
+    }
+
+    public static String identityOf(PermissionRule rule) {
+        if (rule == null) {
+            return null;
+        }
+        return identityOf(rule.identity(), rule.identityType());
     }
 
     private static List<String> legacyTokens(Object legacyAcl) {

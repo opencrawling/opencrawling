@@ -93,9 +93,9 @@ class ElasticsearchOutputConnectorTest {
                 .containsKey(ElasticsearchConstants.FIELD_LAST_MODIFIED)
                 .containsEntry("title", List.of("Test Title"));
         assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_ALLOWED_READ))
-                .contains("user1", "group1")
-                .doesNotContain("baduser");
-        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("baduser");
+                .contains("user:user1", "group:group1")
+                .doesNotContain("user:baduser");
+        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("user:baduser");
         assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_READ_KEYS)).contains("u:user1", "g:group1");
         assertThat((float[]) source.get(ElasticsearchConstants.FIELD_EMBEDDINGS)).containsExactly(0.1f, 0.2f, 0.3f, 0.4f);
     }

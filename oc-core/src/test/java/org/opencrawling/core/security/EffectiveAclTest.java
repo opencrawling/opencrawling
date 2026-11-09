@@ -161,4 +161,20 @@ class EffectiveAclTest {
                 "custom-type"
         );
     }
+
+    @Test
+    void testIdentityOf() {
+        assertThat(EffectiveAcl.identityOf(null, null)).isNull();
+        assertThat(EffectiveAcl.identityOf((PermissionRule) null)).isNull();
+        assertThat(EffectiveAcl.identityOf("  ", "user")).isEmpty();
+        assertThat(EffectiveAcl.identityOf("public", "user")).isEqualTo("public");
+        assertThat(EffectiveAcl.identityOf("EVERYONE", "public")).isEqualTo("public");
+        assertThat(EffectiveAcl.identityOf("alice", "user")).isEqualTo("user:alice");
+        assertThat(EffectiveAcl.identityOf("user:alice", "user")).isEqualTo("user:alice");
+        assertThat(EffectiveAcl.identityOf("finance", "group")).isEqualTo("group:finance");
+        assertThat(EffectiveAcl.identityOf("group:finance", "group")).isEqualTo("group:finance");
+        assertThat(EffectiveAcl.identityOf("admin", "role")).isEqualTo("group:admin");
+        assertThat(EffectiveAcl.identityOf("bare", null)).isEqualTo("bare");
+        assertThat(EffectiveAcl.identityOf("bare", "unknown")).isEqualTo("bare");
+    }
 }
