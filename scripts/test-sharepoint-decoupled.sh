@@ -309,7 +309,7 @@ search_as() {
     | grep -o 'items/[0-9A-Z]*' | sort -u || true
 }
 ADELE=$(search_as "adele.vance@contoso.com" "${ENG_GROUP}")
-MEGAN=$(search_as "megan.bowen@contoso.com" "${MEGAN_OID}")  # an MCP client passes the user's object id with the groups
+MEGAN=$(search_as "${MEGAN_OID}" "")
 OUTSIDER=$(search_as "someone@fabrikam.com" "")
 NOBODY_CONTENT=$(tool getDocumentContent "$(jq -nc --arg u "$(doc_id "$NOBODY_DRIVE" "$NOBODY_FILE")" '{documentUri:$u, userPrincipal:"someone@fabrikam.com", userRoles:"", dimensions:1024}')")
 NOBODY_LISTED=$(tool listAccessibleSources '{"userPrincipal":"someone@fabrikam.com","userRoles":"","dimensions":1024}')

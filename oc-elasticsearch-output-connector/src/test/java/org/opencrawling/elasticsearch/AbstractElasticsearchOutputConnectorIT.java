@@ -134,7 +134,7 @@ abstract class AbstractElasticsearchOutputConnectorIT {
         assertThat(source)
                 .containsEntry(ElasticsearchConstants.FIELD_DOCUMENT_ID, "doc-acl")
                 .containsEntry(ElasticsearchConstants.FIELD_URI, "file:///kb/doc-acl.txt");
-        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("mallory");
+        assertThat((List<String>) source.get(ElasticsearchConstants.FIELD_SECURITY_DENIED_READ)).contains("user:mallory");
     }
 
     @Test
