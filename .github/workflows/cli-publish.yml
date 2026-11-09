@@ -188,7 +188,7 @@ jobs:
           COSIGN_YES: "true"
 
       - name: Upload Assets & Signatures to GitHub Release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: ${{ needs.build-and-test-cli.outputs.tag_name }}
           files: |

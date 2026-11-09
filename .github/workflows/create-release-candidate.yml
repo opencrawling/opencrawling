@@ -118,7 +118,7 @@ jobs:
           git push origin "${TAG_NAME}" --force
 
       - name: Create GitHub Pre-Release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: ${{ steps.set-release.outputs.tag_name }}
           name: OpenCrawling ${{ steps.set-release.outputs.tag_name }}

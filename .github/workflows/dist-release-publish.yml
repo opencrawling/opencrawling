@@ -165,7 +165,7 @@ jobs:
           COSIGN_YES: "true"
 
       - name: Attach Distribution ZIPs, Checksums & Signatures to GitHub Release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: ${{ needs.build-vm-distributions.outputs.tag_name }}
           files: |

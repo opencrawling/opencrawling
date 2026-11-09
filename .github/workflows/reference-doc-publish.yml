@@ -117,7 +117,7 @@ jobs:
           path: release-docs/
 
       - name: Attach Reference Documentation PDF & Checksum to GitHub Release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: ${{ needs.build-reference-doc-pdf.outputs.tag_name }}
           files: |
