@@ -17,6 +17,7 @@ package org.opencrawling.cmis;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
@@ -29,14 +30,20 @@ import com.fasterxml.jackson.databind.JsonNode;
  */
 public class CmisSecurityMapper {
 
+    public static final String DEFAULT_ANYONE_PRINCIPAL = "cmis:anyone";
+
     public static SecurityConfig mapAcl(JsonNode aclNode) {
+        return mapAcl(aclNode, DEFAULT_ANYONE_PRINCIPAL);
+    }
+
+    public static SecurityConfig mapAcl(JsonNode aclNode, String anyonePrincipal) {
         if (aclNode == null || aclNode.isNull() || aclNode.isEmpty()) {
-            return SecurityConfig.createPublic();
+            return SecurityConfig.none();
         }
 
         JsonNode acesNode = aclNode.path("aces");
         if (!acesNode.isArray() || acesNode.isEmpty()) {
-            return SecurityConfig.createPublic();
+            return SecurityConfig.none();
         }
 
         List<PermissionRule> rules = new ArrayList<>();
@@ -48,7 +55,7 @@ public class CmisSecurityMapper {
                 continue;
             }
 
-            String identityType = determineIdentityType(principalId);
+            String identityType = determineIdentityType(principalId, anyonePrincipal);
             String access = determineAccessLevel(ace.path("permissions"));
 
             rules.add(new PermissionRule(
@@ -60,7 +67,7 @@ public class CmisSecurityMapper {
         }
 
         if (rules.isEmpty()) {
-            return SecurityConfig.createPublic();
+            return SecurityConfig.none();
         }
 
         return new SecurityConfig(isExact, rules);
@@ -78,9 +85,16 @@ public class CmisSecurityMapper {
         return null;
     }
 
-    private static String determineIdentityType(String principalId) {
-        String lower = principalId.toLowerCase();
-        if (lower.equals("anonymous") || lower.equals("public") || lower.equals("everyone") || lower.equals("group_everyone") || lower.equals("group:everyone")) {
+    private static String determineIdentityType(String principalId, String anyonePrincipal) {
+        String trimmed = principalId.trim();
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        if (lower.equals("anonymous")
+                || lower.equals("public")
+                || lower.equals("everyone")
+                || lower.equals("group_everyone")
+                || lower.equals("group:everyone")
+                || lower.equals(DEFAULT_ANYONE_PRINCIPAL)
+                || (anyonePrincipal != null && !anyonePrincipal.isBlank() && trimmed.equalsIgnoreCase(anyonePrincipal.trim()))) {
             return "public";
         }
         if (lower.startsWith("group:") || lower.startsWith("group_") || lower.contains("group") || lower.startsWith("role:")) {

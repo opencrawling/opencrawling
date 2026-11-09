@@ -48,7 +48,7 @@ Connectors describe a document's permissions as a `SecurityConfig` (a list of ru
 |---|---|
 | `access` = `read`, `write` or `admin` | grants read |
 | `access` = `deny` | denies read; a deny always wins over any grant |
-| `identityType` = `public` (for example CMIS `anonymous`, `GROUP_EVERYONE`) | indexed as `public`: everyone may read |
+| `identityType` = `public` (for example CMIS `cmis:anyone`, `anonymous`, `GROUP_EVERYONE`) | indexed as `public`: everyone may read |
 | rules present | they decide; the legacy `acl` string is ignored (it often holds values that are not identities) |
 | only the default placeholder `public` rule, plus an `acl` naming identities | the `acl` decides: a connector that could not read the source permissions must not make the document public |
 | no rules, only an `acl` | the `acl` tokens grant read (`read` itself is a keyword and is dropped) |
