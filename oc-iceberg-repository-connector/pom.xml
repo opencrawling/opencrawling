@@ -34,7 +34,7 @@
     <properties>
         <iceberg.version>1.11.0</iceberg.version>
         <hadoop.version>3.5.0</hadoop.version>
-        <parquet.version>1.17.1</parquet.version>
+        <parquet.version>1.18.1</parquet.version>
     </properties>
 
     <dependencies>
