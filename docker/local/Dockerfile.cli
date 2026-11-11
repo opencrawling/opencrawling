@@ -61,6 +61,7 @@ COPY oc-doxis-client/pom.xml oc-doxis-client/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
 COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
+COPY oc-iceberg-output-connector/pom.xml oc-iceberg-output-connector/
 COPY oc-alfresco-output-connector/pom.xml oc-alfresco-output-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
