@@ -105,4 +105,31 @@ public class IcebergTableManagerTest {
         assertThat(table.schema().findField("tax_code")).isNotNull();
         assertThat(table.schema().findField("payment_method")).isNotNull();
     }
+
+    @Test
+    public void testPartitionSpecYearMonth() {
+        properties.setTableName("monthly_docs");
+        properties.setPartitionBy(IcebergOutputProperties.PartitionStrategy.YEAR_MONTH);
+        RepositoryDocument doc = new RepositoryDocument("doc-month", "uri-m", null, Map.of(), null, Instant.now());
+        Table table = tableManager.resolveAndEnsureTable(doc);
+
+        assertThat(table).isNotNull();
+        assertThat(table.spec().isPartitioned()).isTrue();
+        assertThat(table.spec().fields()).hasSize(1);
+        assertThat(table.spec().fields().get(0).name()).isEqualTo("crawled_at_month");
+    }
+
+    @Test
+    public void testPartitionSpecSourceAndDate() {
+        properties.setTableName("source_date_docs");
+        properties.setPartitionBy(IcebergOutputProperties.PartitionStrategy.SOURCE_AND_DATE);
+        RepositoryDocument doc = new RepositoryDocument("doc-source", "uri-s", null, Map.of(), null, Instant.now());
+        Table table = tableManager.resolveAndEnsureTable(doc);
+
+        assertThat(table).isNotNull();
+        assertThat(table.spec().isPartitioned()).isTrue();
+        assertThat(table.spec().fields()).hasSize(2);
+        assertThat(table.spec().fields().get(0).name()).isEqualTo("source_type");
+        assertThat(table.spec().fields().get(1).name()).isEqualTo("crawled_at_month");
+    }
 }

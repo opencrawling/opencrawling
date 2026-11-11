@@ -132,12 +132,11 @@ public class IcebergTableManager {
         PartitionSpec.Builder builder = PartitionSpec.builderFor(schema);
         switch (strategy) {
             case YEAR_MONTH -> {
-                builder.year("crawled_at");
                 builder.month("crawled_at");
             }
             case SOURCE_AND_DATE -> {
                 builder.identity("source_type");
-                builder.year("crawled_at");
+                builder.month("crawled_at");
             }
             case NONE -> {
                 return PartitionSpec.unpartitioned();
