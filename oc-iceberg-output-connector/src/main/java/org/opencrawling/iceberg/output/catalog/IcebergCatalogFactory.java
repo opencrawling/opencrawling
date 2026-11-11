@@ -50,6 +50,8 @@ public class IcebergCatalogFactory {
         }
         if (properties.getIoImpl() != null && !properties.getIoImpl().isBlank()) {
             catalogProperties.put(CatalogProperties.FILE_IO_IMPL, properties.getIoImpl());
+        } else if (warehouse != null && warehouse.startsWith("s3://")) {
+            catalogProperties.put(CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO");
         }
 
         // S3 storage options
