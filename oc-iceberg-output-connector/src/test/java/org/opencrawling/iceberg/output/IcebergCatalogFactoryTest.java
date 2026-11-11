@@ -52,6 +52,19 @@ public class IcebergCatalogFactoryTest {
     }
 
     @Test
+    public void testS3FileIOClassLoadAndInitialize() {
+        org.apache.iceberg.aws.s3.S3FileIO fileIO = new org.apache.iceberg.aws.s3.S3FileIO();
+        java.util.Map<String, String> properties = new java.util.HashMap<>();
+        properties.put("s3.endpoint", "http://localhost:9000");
+        properties.put("s3.region", "us-east-1");
+        properties.put("s3.access-key-id", "admin");
+        properties.put("s3.secret-access-key", "password");
+        properties.put("s3.path-style-access", "true");
+        fileIO.initialize(properties);
+        assertThat(fileIO).isNotNull();
+    }
+
+    @Test
     public void testUnsupportedCatalogTypeThrowsException() {
         IcebergOutputProperties props = new IcebergOutputProperties();
         props.setCatalogType("unknown-catalog");
