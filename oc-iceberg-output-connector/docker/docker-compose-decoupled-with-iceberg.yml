@@ -108,6 +108,12 @@ services:
     container_name: oc-crawler-service-iceberg
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/data
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
@@ -130,10 +136,12 @@ services:
       - ../../oc-runtime/data:/data
       - opencrawling-reportsdata-iceberg:/data/reports
     depends_on:
-      - kafka
-      - iceberg-rest
-    networks:
-      - opencrawling-network
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_started
     restart: on-failure
 
   oc-ingestion-consumer:
@@ -144,13 +152,24 @@ services:
     container_name: oc-ingestion-consumer-service-iceberg
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=iceberg
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
       - OPENCRAWLING_TIKA_FORK_ENABLED=false
     volumes:
       - ../../oc-runtime/data:/data
     depends_on:
-      - kafka
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - opencrawling-network
     restart: unless-stopped
@@ -163,6 +182,14 @@ services:
     container_name: oc-writer-service-iceberg
     environment:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=iceberg
       - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_TYPE=rest
       - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_NAME=opencrawling_lakehouse
@@ -177,10 +204,13 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_PATH_STYLE_ACCESS=true
       - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_AUTO_SCHEMA_EVOLUTION=true
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
-      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
     depends_on:
-      - kafka
-      - iceberg-rest
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_started
     networks:
       - opencrawling-network
     restart: unless-stopped
