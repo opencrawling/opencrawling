@@ -1,0 +1,236 @@
+#
+# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- S3 Storage Backend (MinIO) ---
+  minio:
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: minio-decoupled-iceberg
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - opencrawling-miniodata-iceberg:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- Apache Iceberg REST Catalog Fixture ---
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:latest
+    container_name: iceberg-rest-decoupled
+    ports:
+      - "8181:8181"
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+
+  # --- Redis State Store ---
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-iceberg
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-iceberg:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- Kafka Event Broker ---
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-iceberg
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-iceberg:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-iceberg
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=iceberg
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_TYPE=rest
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_NAME=opencrawling_lakehouse
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_URI=http://iceberg-rest:8181
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_WAREHOUSE=s3://warehouse
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_IO_IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_NAMESPACE=enterprise_data
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_TABLE_NAME=documents
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_ENDPOINT=http://minio:9000
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_ACCESS_KEY_ID=admin
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_SECRET_ACCESS_KEY=password
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_REGION=us-east-1
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_PATH_STYLE_ACCESS=true
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_AUTO_SCHEMA_EVOLUTION=true
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - ../../oc-runtime/data:/data
+      - opencrawling-reportsdata-iceberg:/data/reports
+    depends_on:
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_started
+    networks:
+      - opencrawling-network
+    restart: on-failure
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-iceberg
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=iceberg
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_TIKA_FORK_ENABLED=false
+    volumes:
+      - ../../oc-runtime/data:/data
+    depends_on:
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-iceberg
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=iceberg
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_TYPE=rest
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_NAME=opencrawling_lakehouse
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_CATALOG_URI=http://iceberg-rest:8181
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_WAREHOUSE=s3://warehouse
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_IO_IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_NAMESPACE=enterprise_data
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_TABLE_NAME=documents
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_ENDPOINT=http://minio:9000
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_ACCESS_KEY_ID=admin
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_SECRET_ACCESS_KEY=password
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_REGION=us-east-1
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_S3_PATH_STYLE_ACCESS=true
+      - SPRING_OPENCRAWLING_OUTPUT_ICEBERG_AUTO_SCHEMA_EVOLUTION=true
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_started
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+volumes:
+  opencrawling-miniodata-iceberg:
+  opencrawling-redisdata-iceberg:
+  opencrawling-kafkadata-iceberg:
+  opencrawling-reportsdata-iceberg:
+
+networks:
+  opencrawling-network:
+    driver: bridge

@@ -77,6 +77,8 @@ class ConnectorKindTest {
             "custom.ozoneSink, OZONE",
             "org.opencrawling.s3.S3OutputConnector, S3",
             "custom.s3sink, S3",
+            "org.opencrawling.iceberg.output.IcebergOutputConnector, ICEBERG",
+            "custom.icebergSink, ICEBERG",
             "org.opencrawling.hyland.cic.output.HylandCicOutputConnector, HYLAND_CIC",
             // the S3 rule never catches OpenSearch
             "org.opencrawling.opensearch3.OpenSearch3OutputConnector, ACTIVE",
