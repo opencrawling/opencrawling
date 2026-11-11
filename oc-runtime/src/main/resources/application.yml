@@ -303,6 +303,14 @@ opencrawling:
         # Values of all these claims are the caller's groups/roles; dots name nested claims.
         group-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_GROUP_CLAIMS:realm_access.roles,groups}
         tenant-claim: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_TENANT_CLAIM:}
+    management:
+      # Who may do what on the management plane (jobs, connectors, settings, reports, traces). Needs identity
+      # mode jwt with protect-api; the runtime refuses to start otherwise. Off: every caller may do everything.
+      enabled: ${OPENCRAWLING_SECURITY_MANAGEMENT_ENABLED:false}
+      # Members may do everything, including jobs created before authorization was on.
+      admin-groups: ${OPENCRAWLING_SECURITY_MANAGEMENT_ADMIN_GROUPS:opencrawling-admin}
+      # Members may also create jobs, which they then own. Empty: only admins create jobs.
+      job-creator-groups: ${OPENCRAWLING_SECURITY_MANAGEMENT_JOB_CREATOR_GROUPS:}
     authorization:
       # metadata (default): the ACLs stored with each document decide.
       # shadow: metadata decides, OpenFGA is asked too and disagreements are logged.

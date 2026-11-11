@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 
+import org.opencrawling.runtime.security.ManagementAuthorization;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -41,6 +42,10 @@ public class ConnectorController {
 
     private final List<ConnectorDTO> storage;
     private final ConnectorCheckerService checkerService;
+
+    /** Absent when a test builds the controller itself; then connectors are shown in full. */
+    @Autowired(required = false)
+    private ManagementAuthorization authorization;
 
     @Autowired
     public ConnectorController(ConnectorCheckerService checkerService) {
@@ -503,7 +508,7 @@ public class ConnectorController {
     @ApiResponse(responseCode = "200", description = "List of all configured connectors successfully retrieved")
     @GetMapping
     public List<ConnectorDTO> getAllConnectors() {
-        return storage;
+        return visible(storage);
     }
 
     @Operation(summary = "List connectors by type", description = "Retrieves all configured connectors filtered by category ('repository', 'output', or 'transformation').")
@@ -511,8 +516,21 @@ public class ConnectorController {
     @GetMapping("/{type}")
     public List<ConnectorDTO> getConnectors(
             @Parameter(description = "Connector category type ('repository', 'output', or 'transformation')", example = "repository") @PathVariable String type) {
-        return storage.stream()
+        return visible(storage.stream()
                 .filter(c -> c.type().equalsIgnoreCase(type))
+                .toList());
+    }
+
+    /**
+     * Connectors as the caller may see them: complete for admins (and with authorization off), without their
+     * configuration, which holds endpoints and credentials, for job creators who pick connectors for their jobs.
+     */
+    private List<ConnectorDTO> visible(List<ConnectorDTO> connectors) {
+        if (authorization == null || authorization.isAdmin()) {
+            return connectors;
+        }
+        return connectors.stream()
+                .map(c -> new ConnectorDTO(c.name(), c.description(), c.type(), c.className(), c.maxConnections(), null))
                 .toList();
     }
 
