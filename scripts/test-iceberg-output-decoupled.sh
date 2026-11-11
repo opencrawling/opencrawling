@@ -231,8 +231,14 @@ until [ "$TABLE_SNAPSHOTS" -gt 0 ] 2>/dev/null || [ $ELAPSED -ge $TIMEOUT ]; do
   sleep 3
   ELAPSED=$((ELAPSED + 3))
 
-  TABLE_INFO=$(curl -s "http://localhost:8181/v1/namespaces/${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_NAMESPACE}/tables/${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_TABLE_NAME}" 2>/dev/null || echo "{}")
-  TABLE_SNAPSHOTS=$(echo "$TABLE_INFO" | jq '.metadata.snapshots | length // 0' 2>/dev/null || echo "0")
+  TABLE_EXISTS=$(curl -s "http://localhost:8181/v1/namespaces/${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_NAMESPACE}/tables" 2>/dev/null | jq -r '.identifiers[]?.name // empty' 2>/dev/null | grep -w "${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_TABLE_NAME}" || true)
+
+  if [ -n "$TABLE_EXISTS" ]; then
+    TABLE_INFO=$(curl -s "http://localhost:8181/v1/namespaces/${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_NAMESPACE}/tables/${SPRING_OPENCRAWLING_OUTPUT_ICEBERG_TABLE_NAME}" 2>/dev/null || echo "{}")
+    TABLE_SNAPSHOTS=$(echo "$TABLE_INFO" | jq '.metadata.snapshots | length // 0' 2>/dev/null || echo "0")
+  else
+    TABLE_SNAPSHOTS=0
+  fi
 
   if [ -z "$TABLE_SNAPSHOTS" ] || [ "$TABLE_SNAPSHOTS" == "null" ]; then
     TABLE_SNAPSHOTS=0
