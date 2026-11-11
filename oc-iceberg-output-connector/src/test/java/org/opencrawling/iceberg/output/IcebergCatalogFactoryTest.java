@@ -56,12 +56,15 @@ public class IcebergCatalogFactoryTest {
         org.apache.iceberg.aws.s3.S3FileIO fileIO = new org.apache.iceberg.aws.s3.S3FileIO();
         java.util.Map<String, String> properties = new java.util.HashMap<>();
         properties.put("s3.endpoint", "http://localhost:9000");
+        properties.put("client.region", "us-east-1");
         properties.put("s3.region", "us-east-1");
         properties.put("s3.access-key-id", "admin");
         properties.put("s3.secret-access-key", "password");
         properties.put("s3.path-style-access", "true");
         fileIO.initialize(properties);
         assertThat(fileIO).isNotNull();
+        org.apache.iceberg.io.OutputFile outputFile = fileIO.newOutputFile("s3://warehouse/test.parquet");
+        assertThat(outputFile).isNotNull();
     }
 
     @Test

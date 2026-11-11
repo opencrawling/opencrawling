@@ -71,6 +71,7 @@ public class IcebergCatalogFactory {
             }
             if (s3.getRegion() != null && !s3.getRegion().isBlank()) {
                 catalogProperties.put("s3.region", s3.getRegion());
+                catalogProperties.put("client.region", s3.getRegion());
             }
         }
 
