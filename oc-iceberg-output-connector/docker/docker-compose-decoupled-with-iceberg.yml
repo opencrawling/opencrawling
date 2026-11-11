@@ -145,6 +145,8 @@ services:
         condition: service_healthy
       iceberg-rest:
         condition: service_started
+    networks:
+      - opencrawling-network
     restart: on-failure
 
   oc-ingestion-consumer:
