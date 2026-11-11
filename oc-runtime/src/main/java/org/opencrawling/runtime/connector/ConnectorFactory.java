@@ -131,6 +131,7 @@ public class ConnectorFactory {
                 case SEATUNNEL -> buildSeaTunnel(config, mode);
                 case OZONE -> buildOzone(config, mode);
                 case S3 -> buildS3(config, mode);
+                case ICEBERG -> buildIcebergOutput(config);
                 case HYLAND_CIC -> buildHylandCicOutput(config);
                 default -> throw new IllegalStateException("Unhandled output kind " + kind);
             };
@@ -569,5 +570,36 @@ public class ConnectorFactory {
         log.info("Resolving dynamic Hyland CIC output connector for base URL '{}' (target folder '{}')",
                 cicSettings.getBaseUrl(), cicSettings.getTargetFolderPath());
         return new org.opencrawling.hyland.cic.output.HylandCicOutputConnector(cicSettings);
+    }
+
+    private OutputConnector buildIcebergOutput(Map<String, String> config) {
+        org.opencrawling.iceberg.output.config.IcebergOutputProperties properties = icebergProperties(config);
+        log.info("Resolving dynamic Iceberg output connector for catalog '{}' (table strategy: {})",
+                properties.getCatalogName(), properties.getTableStrategy());
+        return new org.opencrawling.iceberg.output.IcebergOutputConnector(properties);
+    }
+
+    public static org.opencrawling.iceberg.output.config.IcebergOutputProperties icebergProperties(Map<String, String> config) {
+        org.opencrawling.iceberg.output.config.IcebergOutputProperties props = new org.opencrawling.iceberg.output.config.IcebergOutputProperties();
+        props.setCatalogType(config.getOrDefault("catalogType", "rest"));
+        props.setCatalogName(config.getOrDefault("catalogName", "opencrawling_catalog"));
+        props.setCatalogUri(config.getOrDefault("catalogUri", "http://localhost:8181"));
+        props.setWarehouse(config.getOrDefault("warehouse", "s3://warehouse"));
+        props.setNamespace(config.getOrDefault("namespace", "enterprise_data"));
+        props.setTableName(config.getOrDefault("tableName", "documents"));
+        if (config.containsKey("tableStrategy")) {
+            try {
+                props.setTableStrategy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.TableStrategy.valueOf(config.get("tableStrategy").toUpperCase()));
+            } catch (Exception ignored) {}
+        }
+        if (config.containsKey("partitionStrategy")) {
+            try {
+                props.setPartitionBy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.PartitionStrategy.valueOf(config.get("partitionStrategy").toUpperCase()));
+            } catch (Exception ignored) {}
+        }
+        if (config.containsKey("autoSchemaEvolution")) {
+            props.setAutoSchemaEvolution(Boolean.parseBoolean(config.get("autoSchemaEvolution")));
+        }
+        return props;
     }
 }

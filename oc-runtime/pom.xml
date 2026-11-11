@@ -225,6 +225,11 @@
         </dependency>
         <dependency>
             <groupId>org.opencrawling</groupId>
+            <artifactId>oc-iceberg-output-connector</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.opencrawling</groupId>
             <artifactId>oc-alfresco-output-connector</artifactId>
             <version>${project.version}</version>
         </dependency>

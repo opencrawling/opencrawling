@@ -27,6 +27,7 @@ public enum OutputKind {
     SEATUNNEL,
     OZONE,
     S3,
+    ICEBERG,
     HYLAND_CIC,
     /** The runtime's configured output connector ({@code spring.opencrawling.output.type}). */
     ACTIVE;
@@ -46,6 +47,8 @@ public enum OutputKind {
         } else if (className.contains("S3")
                 || (className.contains("s3") && !className.contains("opensearch") && !className.contains("OpenSearch"))) {
             return S3;
+        } else if (className.contains("Iceberg") || className.contains("iceberg")) {
+            return ICEBERG;
         } else if (className.contains("HylandCic") || className.contains("HylandCIC") || className.contains("hyland-cic")) {
             return HYLAND_CIC;
         }
