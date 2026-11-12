@@ -74,7 +74,8 @@ class LuxirOutputConnectorTest {
                 "doc-luxir-1",
                 "file:///tmp/test.txt",
                 new ByteArrayInputStream("Sample text content for Luxir indexing.".getBytes()),
-                Map.of("mimeType", List.of("text/plain"), "title", List.of("Sample Title")),
+                Map.of("mimeType", List.of("text/plain"), "title", List.of("Sample Title"),
+                        "ois:provenance.jobId", List.of("job-7")),
                 "ROLE_ENGINEERING,user:alice",
                 Instant.now()
         );
@@ -96,6 +97,11 @@ class LuxirOutputConnectorTest {
         assertEquals(2, acls.size());
         assertTrue(acls.contains("ROLE_ENGINEERING"));
         assertTrue(acls.contains("user:alice"));
+
+        // Luxir rejects ':' and '.' in field names, and with them the whole document
+        assertEquals(List.of("job-7"), indexedDoc.get("ois_provenance_jobId_ss"));
+        assertTrue(indexedDoc.keySet().stream().noneMatch(k -> k.contains(":") || k.contains(".")),
+                "every field name must be valid in Luxir: " + indexedDoc.keySet());
 
         List<Float> embedding = (List<Float>) indexedDoc.get("embedding_v");
         assertEquals(384, embedding.size());

@@ -510,4 +510,10 @@ class AlfrescoRepositoryConnectorTest {
                 })
                 .verifyComplete();
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        assertThat(connector.sourceInstance())
+                .isEqualTo("http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
+    }
 }

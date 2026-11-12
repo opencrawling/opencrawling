@@ -113,7 +113,7 @@ class RuntimePushDocumentDispatcherTest {
         assertEquals("contract-2026.pdf", response.getDocumentId());
 
         ArgumentCaptor<RepositoryDocument> captor = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(captor.capture(), eq("Ollama_Embedding_Default"));
+        verify(jobOrchestrator).publishDocument(captor.capture(), eq("Ollama_Embedding_Default"), any(), any(), any(), any());
 
         RepositoryDocument published = captor.getValue();
         assertEquals("contract-2026.pdf", published.id());
@@ -138,7 +138,7 @@ class RuntimePushDocumentDispatcherTest {
         assertEquals(IngestionStatus.ACCEPTED, response.getStatus());
 
         ArgumentCaptor<RepositoryDocument> captor = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(captor.capture(), eq("Ollama_Embedding_Default"));
+        verify(jobOrchestrator).publishDocument(captor.capture(), eq("Ollama_Embedding_Default"), any(), any(), any(), any());
 
         RepositoryDocument published = captor.getValue();
         assertEquals("contract-2026.pdf", published.id());
@@ -150,7 +150,7 @@ class RuntimePushDocumentDispatcherTest {
     void testDispatchReturnsInternalErrorWhenPublishFails() throws Exception {
         when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.RAG);
-        doThrow(new RuntimeException("Kafka producer unavailable")).when(jobOrchestrator).publishDocument(any(), any());
+        doThrow(new RuntimeException("Kafka producer unavailable")).when(jobOrchestrator).publishDocument(any(), any(), any(), any(), any(), any());
 
         PushDocumentRequest request = PushDocumentRequest.newBuilder()
                 .setJobId("job-1")

@@ -123,6 +123,11 @@ public class FileNetRepositoryConnector implements RepositoryConnector {
         return "FileNetRepositoryConnector";
     }
 
+    @Override
+    public String sourceInstance() {
+        return settings != null ? settings.url() : null;
+    }
+
     public FileNetProperties settings() {
         return settings;
     }

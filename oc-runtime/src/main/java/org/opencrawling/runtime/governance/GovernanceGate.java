@@ -19,6 +19,7 @@ import org.opencrawling.core.governance.GovernanceDecision;
 import org.opencrawling.core.governance.GovernanceSubject;
 import org.opencrawling.core.governance.GovernanceUnavailableException;
 import org.opencrawling.core.governance.PreEmbeddingGovernanceHook;
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,14 +39,16 @@ import java.util.Set;
  * that is blank is a rejection, since embedding nothing would leave the previous version searchable.
  *
  * <p>Metadata keys that carry permissions or identity ({@link #isProtectedKey}) always keep the values the source
- * gave them: a hook can neither change, add nor remove them.
+ * gave them: a hook can neither change, add nor remove them. That includes the OIS {@code ois:source},
+ * {@code ois:provenance} and {@code ois:governance} blocks, so a hook cannot forge who ingested a document or what
+ * governance decided.
  */
 public final class GovernanceGate {
 
     private static final Logger log = LoggerFactory.getLogger(GovernanceGate.class);
 
     private static final Set<String> PROTECTED_KEYS = Set.of("acl", "security", "sys_acl", "documentId", "uri",
-            "lastModified");
+            "lastModified", OisMetadata.SOURCE, OisMetadata.PROVENANCE, OisMetadata.GOVERNANCE);
     private static final int MAX_REASON_LENGTH = 200;
     private static final int MAX_AUDIT_ENTRIES = 32;
     private static final int MAX_AUDIT_VALUE_LENGTH = 200;
@@ -102,7 +105,8 @@ public final class GovernanceGate {
 
     /** Whether a metadata key carries permissions or identity, so that no hook may touch it. */
     public static boolean isProtectedKey(String key) {
-        return key != null && (PROTECTED_KEYS.contains(key) || key.startsWith("security_") || key.startsWith("acl_"));
+        return key != null && (PROTECTED_KEYS.contains(key) || key.startsWith("security_") || key.startsWith("acl_")
+                || OisMetadata.isOisBlockKey(key));
     }
 
     public Result evaluate(String documentId, String uri, String text, Map<String, List<String>> metadata,

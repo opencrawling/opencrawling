@@ -222,6 +222,11 @@ public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnec
     }
 
     @Override
+    public String sourceInstance() {
+        return endpointUrl;
+    }
+
+    @Override
     public synchronized void connect() throws Exception {
         log.info("Connecting to CMIS endpoint at URL: {} (binding: {})", endpointUrl, bindingType);
         if (this.cmisClient == null) {

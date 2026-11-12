@@ -106,6 +106,11 @@ public class OpenArchRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        return properties.getEndpointUrl();
+    }
+
+    @Override
     public void connect() throws Exception {
         log.info("Connecting to Hyland OpenArch Repository at: {} (Repo: {})", properties.getEndpointUrl(), properties.getRepositoryId());
         boolean ping = client.ping(properties.getRepositoryId());

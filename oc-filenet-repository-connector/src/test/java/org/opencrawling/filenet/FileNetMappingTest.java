@@ -299,4 +299,11 @@ class FileNetMappingTest {
                 "{'markings':[{'id':'ActiveMarkings','objectListValue':null}]}")));
         assertEquals(FileNetSecurityMapper.Markings.UNKNOWN, FileNetSecurityMapper.markings(json("{'id':'x'}")));
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredGraphQlEndpoint() {
+        FileNetRepositoryConnector connector = new FileNetRepositoryConnector(FileNetProperties.fromConfiguration(
+                Map.of("url", "https://cpe.example.com/content-services-graphql/graphql", "objectStore", "OS1")));
+        assertEquals("https://cpe.example.com/content-services-graphql/graphql", connector.sourceInstance());
+    }
 }

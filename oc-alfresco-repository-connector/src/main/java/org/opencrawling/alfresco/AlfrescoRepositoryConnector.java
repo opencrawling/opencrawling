@@ -218,6 +218,11 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
     }
 
     @Override
+    public String sourceInstance() {
+        return url;
+    }
+
+    @Override
     public void connect() throws Exception {
         log.info("Connecting to Alfresco Content Services at URL: {}", url);
         if (this.httpClient == null) {

@@ -111,6 +111,11 @@ public class DoxisRepositoryConnector implements RepositoryConnector {
         return "DoxisRepositoryConnector";
     }
 
+    @Override
+    public String sourceInstance() {
+        return settings != null ? settings.url() : null;
+    }
+
     public DoxisProperties settings() {
         return settings;
     }

@@ -30,6 +30,7 @@ import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,7 @@ import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
+import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.StructuredTaskScope;
@@ -291,6 +293,8 @@ public class JobOrchestrator {
                                     log.warn("Mustache transformation failed for doc {}: {}", initialDoc.id(), ex.getMessage());
                                 }
                             }
+
+                            doc = withOisBlocks(doc, repositoryConnector, currentJobId, provenance);
 
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
@@ -582,6 +586,28 @@ public class JobOrchestrator {
      * @throws Exception if the content cannot be stored or Kafka does not acknowledge the message
      */
     public void publishDocument(RepositoryDocument doc, String transformationConnector) throws Exception {
+        publishDocument(doc, transformationConnector, null, null, null, null);
+    }
+
+    /**
+     * Publishes one pushed document as {@link #publishDocument(RepositoryDocument, String)} does, stamped with the
+     * OIS {@code ois:source} and {@code ois:provenance} blocks. Whatever the document brought under those keys, or
+     * under {@code ois:governance}, is replaced or removed.
+     *
+     * @param jobId          the job the document was pushed for
+     * @param provenance     how it arrived
+     * @param sourceType     the repository type the producer named; {@code null} for {@code push}
+     * @param sourceInstance the repository instance URI the producer named; {@code null} to name the job by URN
+     */
+    public void publishDocument(RepositoryDocument doc, String transformationConnector, String jobId,
+                                ExecutionProvenance provenance, String sourceType, String sourceInstance) throws Exception {
+        String instance = OisMetadata.instanceUri(sourceInstance);
+        doc = new RepositoryDocument(doc.id(), doc.uri(), doc.contentStream(),
+                OisMetadata.withSourceAndProvenance(OisMetadata.withoutOisBlocks(doc.metadata()),
+                        sourceType != null && !sourceType.isBlank() ? sourceType : "push",
+                        instance != null ? instance : OisMetadata.connectorUrn(jobId != null ? "job:" + jobId : "push"),
+                        null, jobId, provenance, Instant.now()),
+                doc.acl(), doc.security(), doc.lastModified(), doc.action());
         String uri = doc.uri();
         Map<String, List<String>> metadata = doc.metadata();
         if (doc.action() != DocumentAction.DELETE) {
@@ -602,6 +628,26 @@ public class JobOrchestrator {
                 doc.lastModified().toString(), transformationConnector, transformation.engine(), transformation.config(),
                 doc.action(), PipelineMode.RAG, withDefaults(null));
         kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), message).get();
+    }
+
+    /**
+     * The document with OpenCrawling's {@code ois:source} and {@code ois:provenance} blocks, replacing anything the
+     * source put under those keys or under {@code ois:governance}: only the pipeline writes them.
+     */
+    public static RepositoryDocument withOisBlocks(RepositoryDocument doc, RepositoryConnector connector, String jobId,
+                                                   ExecutionProvenance provenance) {
+        String name = connector != null ? connector.getName() : null;
+        Map<String, List<String>> source = doc.metadata() != null ? doc.metadata() : Map.of();
+        String type = source.getOrDefault("source_type", List.of()).stream()
+                .filter(value -> value != null && !value.isBlank()).findFirst()
+                .orElseGet(() -> OisMetadata.sourceType(name));
+        String instance = connector != null ? OisMetadata.instanceUri(connector.sourceInstance()) : null;
+        String version = connector != null ? connector.connectorVersion() : null;
+        Map<String, List<String>> metadata = OisMetadata.withSourceAndProvenance(OisMetadata.withoutOisBlocks(source),
+                type, instance != null ? instance : OisMetadata.connectorUrn(name), version, jobId, provenance,
+                Instant.now());
+        return new RepositoryDocument(doc.id(), doc.uri(), doc.contentStream(), metadata, doc.acl(), doc.security(),
+                doc.lastModified(), doc.action());
     }
 
     /**

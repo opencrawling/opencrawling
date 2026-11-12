@@ -185,15 +185,7 @@ public class LuxirOutputConnector implements OutputConnector {
                     // Add other metadata attributes
                     metadata.forEach((key, val) -> {
                         if (!RESERVED_KEYS.contains(key) && !key.equals(properties.vectorField())) {
-                            String targetKey;
-                            if (key.endsWith("_s") || key.endsWith("_t") || key.endsWith("_ss")) {
-                                targetKey = key;
-                            } else if (val instanceof Collection<?> || (val != null && val.getClass().isArray())) {
-                                targetKey = key + "_ss";
-                            } else {
-                                targetKey = key + "_s";
-                            }
-                            doc.put(targetKey, val);
+                            doc.put(LuxirFieldNames.forMetadata(key, val), val);
                         }
                     });
 

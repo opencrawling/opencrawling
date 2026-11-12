@@ -171,8 +171,10 @@ class GovernanceGateTest {
     @Test
     void theProtectedKeys() {
         assertThat(List.of("acl", "security", "sys_acl", "documentId", "uri", "lastModified", "security_allowed_read",
-                "security_read_keys", "acl_ss")).allMatch(GovernanceGate::isProtectedKey);
-        assertThat(List.of("title", "owner", "aclNote", "mimeType")).noneMatch(GovernanceGate::isProtectedKey);
+                "security_read_keys", "acl_ss", "ois:provenance", "ois:governance", "ois:source",
+                "ois:provenance.onBehalfOf", "ois:governance.decision", "ois:source.instance"))
+                .allMatch(GovernanceGate::isProtectedKey);
+        assertThat(List.of("title", "owner", "aclNote", "mimeType", "ois:other")).noneMatch(GovernanceGate::isProtectedKey);
     }
 
     @Test

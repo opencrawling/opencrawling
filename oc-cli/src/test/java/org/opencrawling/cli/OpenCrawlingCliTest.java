@@ -118,6 +118,34 @@ class OpenCrawlingCliTest {
     }
 
     @Test
+    void testSchemaValidateAcceptsTheOisSidecarFormat() throws Exception {
+        String json = """
+            {"$schema":"https://opencrawling.org/schemas/ois-document-schema.json","id":"DOC-4","action":"UPSERT",
+             "source":{"type":"cmis","instance":"https://ecm.example.com/alfresco"},
+             "content":{"mimeType":"application/pdf","sizeBytes":1048576,
+               "sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","key":"legal/report.pdf"},
+             "security":{"evaluationPolicy":"FAIL_CLOSED","inheritanceEnabled":true,"permissions":[
+               {"identity":"ROLE_LEGAL","identityType":"cmis-group","access":"read"}]}}
+            """;
+        assertEquals(0, validate(json));
+        assertTrue(outContent.toString().contains("content with sha256"));
+    }
+
+    @Test
+    void testSchemaValidateRejectsABrokenOisSidecar() throws Exception {
+        String json = """
+            {"id":"DOC-5","action":"UPSERT","source":{"type":"cmis"},
+             "content":{"mimeType":"","sizeBytes":-1,"sha256":"abc"}}
+            """;
+        assertEquals(1, validate(json));
+        String out = outContent.toString();
+        assertTrue(out.contains("content.sha256"));
+        assertTrue(out.contains("content.sizeBytes"));
+        assertTrue(out.contains("content.mimeType"));
+        assertTrue(out.contains("source.instance"));
+    }
+
+    @Test
     void testSchemaValidateRejectsTombstoneWithContentRef() throws Exception {
         String json = """
             {"id":"DOC-3","action":"DELETE","contentRef":{"key":"x"}}

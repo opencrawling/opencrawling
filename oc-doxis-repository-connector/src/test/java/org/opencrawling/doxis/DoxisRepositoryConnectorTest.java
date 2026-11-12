@@ -563,4 +563,11 @@ class DoxisRepositoryConnectorTest {
         assertEquals(List.of("doxis://DX4/DB1/documents/d4"), docs.stream().map(RepositoryDocument::id).toList());
         assertEquals(0, count("GET " + RECORDS + "e1?initializeNodeHierarchy=true"));
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        DoxisRepositoryConnector connector = new DoxisRepositoryConnector(DoxisProperties.fromConfiguration(
+                Map.of("url", "https://csb.example.com/restws/publicws/rest/api/v1", "customerName", "DX4")));
+        assertEquals("https://csb.example.com/restws/publicws/rest/api/v1", connector.sourceInstance());
+    }
 }

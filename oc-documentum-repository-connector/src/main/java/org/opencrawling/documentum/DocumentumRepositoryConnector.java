@@ -144,6 +144,11 @@ public class DocumentumRepositoryConnector implements RepositoryConnector {
         return "DocumentumRepositoryConnector";
     }
 
+    @Override
+    public String sourceInstance() {
+        return settings != null ? settings.url() : null;
+    }
+
     public DocumentumProperties settings() {
         return settings;
     }

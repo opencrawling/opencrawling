@@ -23,6 +23,7 @@ import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
@@ -104,6 +105,43 @@ class JobOrchestratorMigrationTest {
 
         // Verify outputConnector was called with the document
         verify(outputConnector).send(any(RepositoryDocument.class));
+    }
+
+    @Test
+    void everyCrawledDocumentIsStampedWithItsSourceAndProvenance() throws Exception {
+        RepositoryConnector repoConnector = mock(RepositoryConnector.class);
+        when(repoConnector.getName()).thenReturn("CmisRepositoryConnector");
+        when(repoConnector.sourceInstance()).thenReturn("https://u:p@ecm.example.com/cmis?t=1");
+        when(repoConnector.connectorVersion()).thenReturn("2.0");
+        OutputConnector outputConnector = mock(OutputConnector.class);
+        when(outputConnector.getName()).thenReturn("MockOutput");
+        when(outputConnector.send(any())).thenReturn(Mono.empty());
+        RepositoryDocument doc = new RepositoryDocument("doc-stamp", "file:///tmp/doc.txt",
+                new ByteArrayInputStream("x".getBytes(StandardCharsets.UTF_8)),
+                Map.of("title", List.of("Doc"), "ois:provenance.onBehalfOf", List.of("mallory"),
+                        "ois:governance.decision", List.of("ALLOW")), "read:all", Instant.now());
+        when(repoConnector.scan(anyString())).thenReturn(Flux.just(doc));
+        when(claimCheckStore.supports(any())).thenReturn(true);
+
+        assertTrue(orchestrator.runJob(repoConnector, outputConnector, "/data", null, "job-stamp", "Stamp", null,
+                PipelineMode.MIGRATION, null, () -> false,
+                org.opencrawling.core.reporting.ExecutionProvenance.verified("alice", null, List.of(), null,
+                        org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_API, null)));
+
+        ArgumentCaptor<IngestionMessage> published = ArgumentCaptor.forClass(IngestionMessage.class);
+        verify(kafkaTemplate).send(eq(KafkaConfig.TOPIC_NAME), eq("doc-stamp"), published.capture());
+        ArgumentCaptor<RepositoryDocument> direct = ArgumentCaptor.forClass(RepositoryDocument.class);
+        verify(outputConnector).send(direct.capture());
+        for (Map<String, List<String>> metadata : List.of(published.getValue().metadata(), direct.getValue().metadata())) {
+            assertEquals(List.of("cmis"), metadata.get(OisMetadata.SOURCE_TYPE));
+            assertEquals(List.of("https://ecm.example.com/cmis"), metadata.get(OisMetadata.SOURCE_INSTANCE));
+            assertEquals(List.of("2.0"), metadata.get(OisMetadata.SOURCE_CONNECTOR_VERSION));
+            assertEquals(List.of("job-stamp"), metadata.get(OisMetadata.PROVENANCE_JOB_ID));
+            assertEquals(List.of("manual"), metadata.get(OisMetadata.PROVENANCE_TRIGGERED_BY));
+            assertEquals(List.of("alice"), metadata.get(OisMetadata.PROVENANCE_ON_BEHALF_OF));
+            assertFalse(metadata.containsKey(OisMetadata.GOVERNANCE_DECISION));
+            assertEquals(List.of("Doc"), metadata.get("title"));
+        }
     }
 
     @Test

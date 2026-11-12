@@ -215,6 +215,11 @@ public class CamundaRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        return url;
+    }
+
+    @Override
     public void connect() throws Exception {
         log.info("Connecting to Camunda at URL: {}", url);
         if (this.httpClient == null) {

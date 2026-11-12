@@ -476,4 +476,10 @@ class CamundaRepositoryConnectorTest {
                 })
                 .verifyComplete();
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        assertEquals("http://localhost:8080/engine-rest", legacyConnector.sourceInstance());
+        assertEquals("http://localhost:8080/v2", camunda8Connector.sourceInstance());
+    }
 }

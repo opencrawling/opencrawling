@@ -390,4 +390,11 @@ class MFilesRepositoryConnectorTest {
         Throwable error = assertThrows(RuntimeException.class, () -> connector.scan("default").collectList().block());
         assertTrue(mentionsVault.apply(error.getCause() != null ? error.getCause() : error), error.getMessage());
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        MFilesRepositoryConnector connector = new MFilesRepositoryConnector(MFilesProperties.fromConfiguration(
+                Map.of("url", "https://mfiles.example.com/REST", "vaultGuid", MockMFiles.VAULT)));
+        assertEquals("https://mfiles.example.com/REST", connector.sourceInstance());
+    }
 }
