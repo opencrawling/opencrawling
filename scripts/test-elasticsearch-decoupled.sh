@@ -136,6 +136,13 @@ es_count() {
   curl -s "${ES_URL}/${INDEX}/_count" | jq -r '.count // 0' 2>/dev/null || echo 0
 }
 
+# Chunks of the test document. The crawler also indexes the other files in the data directory, so the index can
+# hold chunks before the test document's own arrive.
+es_test_doc_count() {
+  curl -s "${ES_URL}/${INDEX}/_count" -H 'Content-Type: application/json' \
+    -d '{"query":{"wildcard":{"uri":"*elasticsearch-decoupled-integration-test.txt"}}}' | jq -r '.count // 0' 2>/dev/null || echo 0
+}
+
 echo -e "${YELLOW}Cleaning up previous Elasticsearch decoupled containers...${NC}"
 compose down --remove-orphans || true
 
@@ -191,22 +198,24 @@ wait_until "oc-crawler to finish scanning" 180 container_stopped oc-crawler-serv
 
 echo -e "${YELLOW}Waiting for Kafka consumers to store vectors in Elasticsearch...${NC}"
 RECORD_COUNT=0
+TEST_DOC_COUNT=0
 ELAPSED=0
 TIMEOUT=180
-until [ "$RECORD_COUNT" -gt 0 ] 2>/dev/null || [ $ELAPSED -ge $TIMEOUT ]; do
+until [ "$TEST_DOC_COUNT" -gt 0 ] 2>/dev/null || [ $ELAPSED -ge $TIMEOUT ]; do
   sleep 2
   ELAPSED=$((ELAPSED + 2))
   curl -s -o /dev/null -X POST "${ES_URL}/${INDEX}/_refresh" || true
   RECORD_COUNT=$(es_count)
-  printf "  Elapsed: %ds, chunks in %s: %s\r" "$ELAPSED" "$INDEX" "$RECORD_COUNT"
+  TEST_DOC_COUNT=$(es_test_doc_count)
+  printf "  Elapsed: %ds, chunks in %s: %s (test document: %s)\r" "$ELAPSED" "$INDEX" "$RECORD_COUNT" "$TEST_DOC_COUNT"
 done
 echo ""
-if [ "$RECORD_COUNT" -eq 0 ] 2>/dev/null || [ -z "$RECORD_COUNT" ]; then
-  echo -e "${RED}Elasticsearch decoupled integration test failed: no chunks in index ${INDEX}!${NC}"
+if [ "$TEST_DOC_COUNT" -eq 0 ] 2>/dev/null || [ -z "$TEST_DOC_COUNT" ]; then
+  echo -e "${RED}Elasticsearch decoupled integration test failed: no chunks of the test document in index ${INDEX} (${RECORD_COUNT} chunks in total)!${NC}"
   compose logs oc-writer-consumer
   exit 1
 fi
-echo -e "Elasticsearch chunk count: ${GREEN}$RECORD_COUNT${NC}"
+echo -e "Elasticsearch chunk count: ${GREEN}$RECORD_COUNT${NC} (test document: ${TEST_DOC_COUNT})"
 
 # Every stored chunk must carry the vector and the flattened ACL fields the MCP pre-filter relies on.
 SAMPLE=$(curl -s "${ES_URL}/${INDEX}/_search?size=1" -H 'Content-Type: application/json' \
