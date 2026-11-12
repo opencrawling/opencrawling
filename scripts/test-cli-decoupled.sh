@@ -18,6 +18,55 @@
 # via docker-compose-decoupled.yml and runs live CLI assertions against the cluster with detailed logging.
 set -e
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -59,8 +108,15 @@ command -v docker >/dev/null 2>&1 || { log_fail "Docker is required but not inst
 command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || { log_fail "Docker Compose is required. Aborting."; exit 1; }
 
 # Helper function for docker compose commands
+COMPOSE_FILE="docker-compose-decoupled.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
+
 compose() {
-  docker compose -f docker-compose-decoupled.yml "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 # Teardown cleanup handler
@@ -89,7 +145,12 @@ log_pass "Built oc-cli executable JAR successfully: $CLI_JAR"
 # ------------------------------------------------------------------------------
 log_step "2" "Booting decoupled container cluster (PostgreSQL, Redis, Ollama, Kafka, oc-runtime, oc-embedding-service)..."
 compose down --remove-orphans || true
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW:-}SKIP_BUILD=true: Skipping compose build and using existing images.${NC:-}"
+else
+  echo -e "${YELLOW:-}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC:-}"
+  compose build
+fi
 compose up -d
 
 # ------------------------------------------------------------------------------

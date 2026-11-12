@@ -291,6 +291,12 @@ Every connector requires two test suites:
    - `scripts/test-<name>-connector.sh`: Verifies the connector against an embedded or local Docker container.
    - `scripts/test-<name>-decoupled.sh`: Verifies the full decoupled pipeline from source to Kafka, Ingestion Consumer, Ollama embeddings, pgvector writing, and MCP server queries.
 
+All decoupled integration test scripts support standardized Bash 3.2+ compatible CLI parameters and environment variables:
+- `-s, --skip-build` / `SKIP_BUILD=true`: Skips `compose build` entirely and reuses existing local Docker images.
+- `-l, --local, --local-build` / `LOCAL_BUILD=true`: Overlays `.local.yml` referencing `docker/local/Dockerfile.*` with BuildKit shared `~/.m2` cache mounts (`id=opencrawling-m2-cache,sharing=shared`) and skips `mvn dependency:go-offline`.
+- `-k, --keep, --keep-containers` / `KEEP_CONTAINERS=true`: Preserves running containers and volumes on exit/failure for local debugging and log inspection.
+- `-h, --help`: Displays usage guide and available options. All flags default to `false` ensuring zero impact on CI fresh image builds.
+
 ---
 
 ### 5. Connector Quality Checklist

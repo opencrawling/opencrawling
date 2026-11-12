@@ -160,6 +160,16 @@ ${BOLD}3. DEVELOPER CONVENIENCE & PRODUCTIVITY COMMANDS:${NC}
   ${GREEN}clean${NC}                      Clean Maven target directories (pass ${CYAN}--prune${NC} to also prune Docker build cache)
   ${GREEN}help${NC}, ${GREEN}-h${NC}, ${GREEN}--help${NC}           Display this help guide
 
+${BOLD}4. INTEGRATION TEST CLI FLAGS & CACHING (scripts/test-*-decoupled.sh):${NC}
+  All 34 decoupled integration test scripts standardize flags and environment variables:
+  ${CYAN}-s, --skip-build${NC} / ${CYAN}SKIP_BUILD=true${NC}
+                              Skip compose build entirely and reuse existing local images
+  ${CYAN}-l, --local, --local-build${NC} / ${CYAN}LOCAL_BUILD=true${NC}
+                              Use local Dockerfiles with BuildKit shared ~/.m2 cache mounts
+  ${CYAN}-k, --keep, --keep-containers${NC} / ${CYAN}KEEP_CONTAINERS=true${NC}
+                              Preserve running containers and volumes on exit/failure for debugging
+  ${CYAN}-h, --help${NC}              Display script-specific usage guide
+
 ${BOLD}EXAMPLES:${NC}
   ${DIM}# Compile all modules in container using host ~/.m2 cache${NC}
   ./run.sh build
@@ -169,6 +179,12 @@ ${BOLD}EXAMPLES:${NC}
 
   ${DIM}# Run unit tests for a single module inside oc-maven-builder${NC}
   ./run.sh mvn test -pl oc-runtime
+
+  ${DIM}# Run an integration test with local BuildKit cache mounts (~/.m2)${NC}
+  ./scripts/test-iceberg-output-decoupled.sh --local
+
+  ${DIM}# Fast local re-test skipping Docker builds and preserving containers on exit${NC}
+  ./scripts/test-iceberg-output-decoupled.sh -s -k
 
   ${DIM}# Run MCP integration tests using local fast Dockerfiles${NC}
   ./run.sh test:it mcp"
@@ -323,7 +339,7 @@ case "$COMMAND" in
   test:it)
     check_docker
     log_header "Running integration tests with local BuildKit cache overlay..."
-    COMPOSE_FILE="docker-compose-decoupled.yml:docker-compose-decoupled.local.yml" ./run-integration-tests.sh "$@"
+    LOCAL_BUILD="${LOCAL_BUILD:-true}" COMPOSE_FILE="docker-compose-decoupled.yml:docker-compose-decoupled.local.yml" ./run-integration-tests.sh "$@"
     ;;
 
   test:local-dev)

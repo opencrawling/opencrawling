@@ -34,6 +34,55 @@
 
 set -e
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # ANSI Color codes
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -75,7 +124,6 @@ cd "$SCRIPT_DIR/.."
 log_info "Switched working directory to project root: $(pwd)"
 
 # Execution configuration flags
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
 REBUILD_IMAGES="${REBUILD_IMAGES:-false}"
 MCP_BASE_URL="${MCP_BASE_URL:-http://localhost:8080}"
@@ -86,9 +134,14 @@ OIS_AUTH_TOKEN="${OPENCRAWLING_INGEST_OIS_TOKEN:-mcp-test-token-$(date +%s)}"
 export OPENCRAWLING_INGEST_OIS_TOKEN="${OIS_AUTH_TOKEN}"
 
 COMPOSE_FILE="docker-compose-decoupled.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 cleanup() {
