@@ -339,7 +339,7 @@ case "$COMMAND" in
   test:it)
     check_docker
     log_header "Running integration tests with local BuildKit cache overlay..."
-    COMPOSE_FILE="docker-compose-decoupled.yml:docker-compose-decoupled.local.yml" ./run-integration-tests.sh "$@"
+    LOCAL_BUILD="${LOCAL_BUILD:-true}" COMPOSE_FILE="docker-compose-decoupled.yml:docker-compose-decoupled.local.yml" ./run-integration-tests.sh "$@"
     ;;
 
   test:local-dev)

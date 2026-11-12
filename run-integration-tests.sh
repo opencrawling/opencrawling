@@ -75,6 +75,9 @@ FAIL_FAST=false
 TAIL_LINES=40
 LIST_ONLY=false
 DRY_RUN=false
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+SKIP_BUILD="${SKIP_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 USER_FILTERS=()
 EXPLICIT_TESTS=()
 export FORCE_CLEANUP="${FORCE_CLEANUP:-true}"
@@ -94,12 +97,20 @@ ${BOLD}USAGE:${NC}
 ${BOLD}OPTIONS:${NC}
   ${CYAN}-h, --help${NC}             Show this help message and exit
   ${CYAN}-l, --list${NC}             List all discovered integration test scripts without executing
+  ${CYAN}--local, --local-build${NC} Use local Dockerfiles with BuildKit ~/.m2 cache mounts and local Docker cache
+  ${CYAN}-s, --skip-build${NC}       Skip docker compose build entirely and reuse existing local Docker images
+  ${CYAN}-k, --keep${NC}             Preserve running containers and volumes on exit/failure for debugging
   ${CYAN}-v, --verbose${NC}          Stream real-time script output to terminal in addition to saving logs
   ${CYAN}-f, --filter <regex>${NC}   Filter tests whose script filename matches pattern (case-insensitive)
   ${CYAN}--fail-fast${NC}            Stop immediately upon encountering the first failed test
   ${CYAN}--tail <N>${NC}             Number of log lines to show upon test failure (default: 40)
   ${CYAN}--logs-dir <DIR>${NC}       Directory to store test execution logs (default: logs/integration-tests)
   ${CYAN}--dry-run${NC}              Display the ordered list of tests that would be executed
+
+${BOLD}ENVIRONMENT VARIABLES:${NC}
+  ${CYAN}LOCAL_BUILD=true${NC}        Equivalent to --local / --local-build
+  ${CYAN}SKIP_BUILD=true${NC}         Equivalent to -s / --skip-build
+  ${CYAN}KEEP_CONTAINERS=true${NC}    Equivalent to -k / --keep / --keep-containers
 
 ${BOLD}POSITIONAL ARGUMENTS:${NC}
   Any positional argument can be:
@@ -109,6 +120,15 @@ ${BOLD}POSITIONAL ARGUMENTS:${NC}
 ${BOLD}EXAMPLES:${NC}
   ${DIM}# Run all integration tests${NC}
   ./run-integration-tests.sh
+
+  ${DIM}# Run integration tests using local BuildKit shared ~/.m2 cache mounts and local Docker cache${NC}
+  ./run-integration-tests.sh --local
+
+  ${DIM}# Run only Iceberg tests with local BuildKit caching${NC}
+  ./run-integration-tests.sh --local iceberg
+
+  ${DIM}# Fast re-test skipping Docker builds and preserving containers on exit${NC}
+  ./run-integration-tests.sh -s -k iceberg
 
   ${DIM}# Run only Model Context Protocol (MCP) server tests (matching *mcp*)${NC}
   ./run-integration-tests.sh mcp
@@ -223,6 +243,18 @@ while [ $# -gt 0 ]; do
         exit 1
       fi
       ;;
+    --local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
     -*)
       echo -e "${RED}[ERROR] Unknown option: $1${NC}" >&2
       print_usage
@@ -245,6 +277,14 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+export LOCAL_BUILD
+export SKIP_BUILD
+export KEEP_CONTAINERS
+if [ "$LOCAL_BUILD" = true ]; then
+  export DOCKER_BUILDKIT=1
+  export COMPOSE_DOCKER_CLI_BUILD=1
+fi
 
 # ------------------------------------------------------------------------------
 # Test Discovery & Selection
@@ -405,6 +445,9 @@ echo -e "  ${BOLD}Total Tests Selected:${NC} ${TOTAL_SELECTED}"
 echo -e "  ${BOLD}Logs Directory:${NC}       ${LOGS_DIR}"
 echo -e "  ${BOLD}Fail-Fast:${NC}            ${FAIL_FAST}"
 echo -e "  ${BOLD}Verbose Streaming:${NC}    ${VERBOSE}"
+echo -e "  ${BOLD}Local Build:${NC}          ${LOCAL_BUILD}"
+echo -e "  ${BOLD}Skip Build:${NC}           ${SKIP_BUILD}"
+echo -e "  ${BOLD}Keep Containers:${NC}      ${KEEP_CONTAINERS}"
 echo -e "${BOLD}${CYAN}================================================================================${NC}\n"
 
 # ------------------------------------------------------------------------------
