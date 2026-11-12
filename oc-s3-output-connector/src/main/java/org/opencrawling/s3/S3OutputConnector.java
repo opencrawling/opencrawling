@@ -20,13 +20,14 @@ import jakarta.annotation.PostConstruct;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.ois.OisMetadata;
+import org.opencrawling.core.ois.OisSidecar;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.core.s3.S3MultipartUploader;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.s3.client.S3ClientFactory;
 import org.opencrawling.s3.config.S3OutputProperties;
-import org.opencrawling.s3.model.OisMigrationDocument;
 import org.opencrawling.s3.template.HeaderTemplateResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -253,40 +254,31 @@ public class S3OutputConnector implements OutputConnector {
         String sourceUri = document.uri() != null ? document.uri() : "";
         String originalPath = resolveOriginalPath(document, sourceUri);
 
-        OisMigrationDocument.SourceRef sourceRef = new OisMigrationDocument.SourceRef(
-                defaultIfNull(firstMetadataValue(document, "source_type", "sourceType"), "repository"),
-                sourceUri,
-                originalPath
-        );
-
-        OisMigrationDocument.ContentRef contentRef = new OisMigrationDocument.ContentRef(
-                key,
-                properties.getBucket(),
-                properties.getRegion(),
-                sourceUri,
-                filename,
-                mimeType,
-                contentLength,
-                sha256Hex,
-                properties.getStorageClass(),
-                eTag
-        );
-
-        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.none();
-        String acl = document.acl() != null ? document.acl() : "";
         String s3Uri = "s3://" + properties.getBucket() + "/" + key;
+        OisSidecar.Content content = new OisSidecar.Content(
+                mimeType,
+                blankToNull(sourceUri),
+                s3Uri + properties.getSidecarSuffix(),
+                sha256Hex,
+                contentLength,
+                key,
+                null,
+                properties.getBucket(),
+                blankToNull(properties.getRegion()),
+                filename,
+                blankToNull(properties.getStorageClass()),
+                blankToNull(eTag)
+        );
 
-        OisMigrationDocument oisDocument = new OisMigrationDocument(
-                OisMigrationDocument.DEFAULT_SCHEMA,
+        OisSidecar oisDocument = OisSidecar.upsert(
                 document.id(),
-                "UPSERT",
                 s3Uri,
                 lastMod,
-                sourceRef,
-                contentRef,
+                oisSource(document, sourceUri, originalPath),
+                content,
                 document.metadata() != null ? document.metadata() : Map.of(),
-                security,
-                acl
+                document.security() != null ? document.security() : SecurityConfig.none(),
+                document.acl()
         );
 
         // 3. Upload companion OIS JSON sidecar directly adjacent to the binary
@@ -350,7 +342,8 @@ public class S3OutputConnector implements OutputConnector {
         if ("ARCHIVE_TOMBSTONE".equalsIgnoreCase(properties.getTombstoneAction())) {
             String tombstoneKey = TOMBSTONE_PREFIX + key + properties.getSidecarSuffix();
             String lastMod = document.lastModified() != null ? document.lastModified().toString() : Instant.now().toString();
-            OisMigrationDocument tombstone = OisMigrationDocument.createTombstone(document.id(), document.uri(), lastMod);
+            OisSidecar tombstone = OisSidecar.tombstone(document.id(), document.uri(), lastMod,
+                    oisSource(document, document.uri(), null));
             String jsonPayload = objectMapper.writeValueAsString(tombstone);
             PutObjectRequest.Builder tombstoneBuilder = PutObjectRequest.builder()
                     .bucket(properties.getBucket())
@@ -519,6 +512,19 @@ public class S3OutputConnector implements OutputConnector {
             mimeType = URLConnection.guessContentTypeFromName(filename);
         }
         return mimeType != null ? mimeType : "application/octet-stream";
+    }
+
+    /**
+     * The OIS source block: what the pipeline stamped on the document ({@code ois:source.*}), else the document's
+     * {@code source_type} and a URN naming that type.
+     */
+    private static OisSidecar.Source oisSource(RepositoryDocument document, String originalUri, String originalPath) {
+        String type = defaultIfNull(firstMetadataValue(document, "source_type", "sourceType"), "repository");
+        return OisSidecar.source(document.metadata(), type, OisMetadata.connectorUrn(type), originalUri, originalPath);
+    }
+
+    private static String blankToNull(String value) {
+        return value != null && !value.isBlank() ? value : null;
     }
 
     private static String firstMetadataValue(RepositoryDocument document, String... keys) {

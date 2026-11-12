@@ -132,4 +132,9 @@ public class OpenArchRepositoryConnectorTest {
                 .expectNextMatches(doc -> doc.id().equals("d1") || doc.id().equals("d2"))
                 .verifyComplete();
     }
+
+    @Test
+    public void sourceInstanceIsTheConfiguredEndpointUrl() {
+        assertEquals("http://localhost:8080", connector.sourceInstance());
+    }
 }

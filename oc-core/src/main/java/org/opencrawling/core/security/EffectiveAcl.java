@@ -35,10 +35,11 @@ import java.util.regex.Pattern;
  *       values there that are not identities, such as {@code user:a;group:b} or {@code secured}).</li>
  *   <li>A rule whose identity type is {@code public} (for example a CMIS {@code anonymous} or
  *       {@code GROUP_EVERYONE} entry) grants {@code public}, not the literal repository name.</li>
- *   <li>A rule with a known user type ({@code user}, case-insensitive) resolves to {@code user:<identity>},
- *       and a known group type ({@code group}, {@code role}) resolves to {@code group:<identity>}, unless
- *       the identity already has a prefix. Rules without a type or with an unknown type keep their bare
- *       identity.</li>
+ *   <li>A rule with a user type ({@code user}, or a namespaced OIS type ending in {@code -user} such as
+ *       {@code cmis-user}; case-insensitive) resolves to {@code user:<identity>}, and a group type ({@code group},
+ *       {@code role}, or one ending in {@code -group} such as {@code cmis-group}) resolves to
+ *       {@code group:<identity>}, unless the identity already has a prefix. The stored rule keeps its raw type.
+ *       Rules without a type or with another type keep their bare identity.</li>
  *   <li>When the rules are only the default public placeholder ({@link SecurityConfig#createPublic()}) and the
  *       legacy {@code acl} names identities, the {@code acl} wins: a connector that could not read the source
  *       permissions but did set an {@code acl} must not make the document public.</li>
@@ -158,10 +159,10 @@ public record EffectiveAcl(
         }
         if (identityType != null) {
             String type = identityType.trim().toLowerCase(Locale.ROOT);
-            if ("user".equals(type)) {
+            if ("user".equals(type) || (type.length() > 5 && type.endsWith("-user"))) {
                 return "user:" + trimmed;
             }
-            if ("group".equals(type) || "role".equals(type)) {
+            if ("group".equals(type) || "role".equals(type) || (type.length() > 6 && type.endsWith("-group"))) {
                 return "group:" + trimmed;
             }
         }

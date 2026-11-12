@@ -163,6 +163,11 @@ public class FlowableRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        return url;
+    }
+
+    @Override
     public void connect() throws Exception {
         log.info("Connecting to Flowable REST API at URL: {}", url);
         if (this.httpClient == null) {

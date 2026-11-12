@@ -186,6 +186,51 @@ class SidecarServiceTest {
                 .extracting(SidecarService.SidecarView::documentId).containsExactly("b", "c");
     }
 
+    /** A sidecar in the OIS format the writers use now, built with their model. */
+    static String oisSidecar(String id, String readers) throws Exception {
+        Map<String, List<String>> metadata = new java.util.LinkedHashMap<>();
+        metadata.put("title", List.of(id));
+        metadata.put("author", List.of("a", "b"));
+        metadata.put("acl", List.of(readers));
+        metadata.put(org.opencrawling.core.ois.OisMetadata.PROVENANCE_JOB_ID, List.of("job-1"));
+        metadata.put(org.opencrawling.core.ois.OisMetadata.SOURCE_INSTANCE, List.of("https://ecm"));
+        org.opencrawling.core.ois.OisSidecar sidecar = org.opencrawling.core.ois.OisSidecar.upsert(id, "s3://lake/" + id,
+                "2026-01-01T00:00:00Z",
+                new org.opencrawling.core.ois.OisSidecar.Source("cmis", "https://ecm", "1.0", "cmis://repo/" + id,
+                        "/Finance/" + id),
+                new org.opencrawling.core.ois.OisSidecar.Content("application/pdf", null, null, "ab".repeat(32), 2000L,
+                        id, null, "lake", "eu", id + ".pdf", null, null),
+                metadata, new org.opencrawling.core.security.SecurityConfig(false, List.of(
+                        new org.opencrawling.core.security.PermissionRule(readers, "cmis-group", null, "read"))),
+                null);
+        return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(sidecar);
+    }
+
+    @Test
+    void sidecarsInTheOisFormatAndTheEarlierFormatAreBothRead() throws Exception {
+        s3.put("migration/v1/old.pdf.ois.json", sidecar("old", "finance"));
+        s3.put("migration/v1/new.pdf.ois.json", oisSidecar("new", "finance"));
+        s3.put("migration/v1/hidden.pdf.ois.json", oisSidecar("hidden", "hr"));
+
+        SidecarService.SidecarPage page = service().read(ALICE, "Lake_S3", null, null, null);
+
+        assertThat(page.sidecars()).extracting(SidecarService.SidecarView::documentId).containsExactly("new", "old");
+        SidecarService.SidecarView fresh = page.sidecars().getFirst();
+        assertThat(fresh.contentLength()).isEqualTo(2000L);
+        assertThat(fresh.checksumSha256()).isEqualTo("ab".repeat(32));
+        assertThat(fresh.filename()).isEqualTo("new.pdf");
+        assertThat(fresh.mimeType()).isEqualTo("application/pdf");
+        assertThat(fresh.sourceType()).isEqualTo("cmis");
+        assertThat(fresh.originalPath()).isEqualTo("/Finance/new");
+        assertThat(fresh.metadata()).containsOnlyKeys("title", "author", "ois:provenance.jobId");
+        assertThat(fresh.metadata().get("title")).containsExactly("new");
+        assertThat(fresh.metadata().get("author")).containsExactly("a", "b");
+        SidecarService.SidecarView earlier = page.sidecars().get(1);
+        assertThat(earlier.contentLength()).isEqualTo(1000L);
+        assertThat(earlier.checksumSha256()).isEqualTo("abc");
+        assertThat(page.aggregates().contentBytes()).isEqualTo(3000L);
+    }
+
     @Test
     void tombstonesTheIndexAndSidecarsThatCannotBeReturnedAreSkipped() {
         properties.setMaxSidecarBytes(2048);

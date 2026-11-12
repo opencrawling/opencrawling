@@ -91,6 +91,12 @@ public class HylandCicRepositoryConnector implements DocumentFetchingRepositoryC
     }
 
     @Override
+    public String sourceInstance() {
+        String baseUrl = properties.getBaseUrl();
+        return baseUrl == null || baseUrl.isBlank() ? null : baseUrl;
+    }
+
+    @Override
     public synchronized void connect() throws Exception {
         log.info("Connecting Hyland CIC connector to {} (tenant: '{}')...",
                 properties.getBaseUrl(), properties.getTenantId());

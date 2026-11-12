@@ -109,6 +109,12 @@ public class SharePointRepositoryConnector implements RepositoryConnector {
         return "SharePointRepositoryConnector";
     }
 
+    @Override
+    public String sourceInstance() {
+        // configured by site-id only: the site's web URL is known once connect() resolved it
+        return settings.siteUrl() != null ? settings.siteUrl() : siteWebUrl;
+    }
+
     public SharePointProperties settings() {
         return settings;
     }

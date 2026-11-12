@@ -44,6 +44,7 @@ import org.opencrawling.core.governance.GovernanceUnavailableException;
 import org.opencrawling.core.governance.PreEmbeddingGovernanceHook;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
@@ -154,6 +155,69 @@ class IngestionConsumerGovernanceTest {
         assertThat(chunk.metadata().get("acl")).isEqualTo("finance-acl");
         assertThat(chunk.metadata().get("security_allowed_read")).asString().contains("finance").doesNotContain("public");
         assertThat(chunk.metadata().get("security")).isNotInstanceOf(List.class);
+    }
+
+    @Test
+    void theDecisionIsRecordedAsOisGovernance() {
+        gate(OnRejectedUpdate.PURGE, new PiiMaskingGovernanceHook(java.util.EnumSet.allOf(Type.class), true));
+
+        consumer.consume(message(DocumentAction.UPSERT));
+
+        Map<String, Object> metadata = chunks().getFirst().metadata();
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_DECISION)).isEqualTo(List.of("REDACT"));
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_REDACTED)).isEqualTo(List.of("true"));
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_REDACTION_CATEGORIES)).isEqualTo(List.of("EMAIL"));
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_POLICY_ID)).isEqualTo(List.of("pii-masking"));
+        assertThat(metadata).containsKey(OisMetadata.GOVERNANCE_EVALUATED_AT);
+    }
+
+    @Test
+    void anApprovedDocumentIsRecordedAsAllowed() {
+        gate(OnRejectedUpdate.PURGE, hook("check", GovernanceDecision.approve()), hook("http", GovernanceDecision.approve()));
+
+        consumer.consume(message(DocumentAction.UPSERT));
+
+        Map<String, Object> metadata = chunks().getFirst().metadata();
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_DECISION)).isEqualTo(List.of("ALLOW"));
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_REDACTED)).isEqualTo(List.of("false"));
+        assertThat(metadata).doesNotContainKey(OisMetadata.GOVERNANCE_REDACTION_CATEGORIES);
+        assertThat(metadata.get(OisMetadata.GOVERNANCE_POLICY_ID)).isEqualTo(List.of("check,http"));
+    }
+
+    private static IngestionMessage claimingGovernance() {
+        Map<String, List<String>> claimed = Map.of("owner", List.of("alice@example.com"),
+                OisMetadata.PROVENANCE_ON_BEHALF_OF, List.of("alice"),
+                OisMetadata.GOVERNANCE_DECISION, List.of("ALLOW"));
+        return new IngestionMessage("doc", "file:///claims/doc", claimed, "finance-acl", FINANCE,
+                "2026-01-01T00:00:00Z", null, null, Map.of(), DocumentAction.UPSERT, null, null);
+    }
+
+    @Test
+    void aClaimedGovernanceDecisionIsDroppedWhenNoGateRan() {
+        consumer.consume(claimingGovernance());
+
+        Map<String, Object> ungoverned = chunks().getFirst().metadata();
+        assertThat(ungoverned).doesNotContainKey(OisMetadata.GOVERNANCE_DECISION);
+        assertThat(ungoverned.get(OisMetadata.PROVENANCE_ON_BEHALF_OF)).isEqualTo(List.of("alice"));
+    }
+
+    @Test
+    void aHookCannotForgeTheOisBlocks() {
+        IngestionMessage forged = claimingGovernance();
+        Map<String, List<String>> rewritten = Map.of("owner", List.of("x"),
+                OisMetadata.PROVENANCE_ON_BEHALF_OF, List.of("mallory"), OisMetadata.GOVERNANCE_DECISION, List.of("ALLOW"),
+                OisMetadata.GOVERNANCE_POLICY_ID, List.of("forged"));
+        gate(OnRejectedUpdate.PURGE, hook("rewrite", GovernanceDecision.sanitize("clean text", rewritten, Map.of())));
+
+        consumer.consume(forged);
+
+        assertThat(seen.getLast().metadata()).as("the hook never sees a claimed decision")
+                .doesNotContainKey(OisMetadata.GOVERNANCE_DECISION);
+        Map<String, Object> governed = chunks().getFirst().metadata();
+        assertThat(governed.get(OisMetadata.PROVENANCE_ON_BEHALF_OF)).isEqualTo(List.of("alice"));
+        assertThat(governed.get(OisMetadata.GOVERNANCE_DECISION)).isEqualTo(List.of("REDACT"));
+        assertThat(governed.get(OisMetadata.GOVERNANCE_POLICY_ID)).isEqualTo(List.of("rewrite"));
+        assertThat(governed.get("owner")).isEqualTo(List.of("x"));
     }
 
     @Test

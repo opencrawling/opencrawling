@@ -26,7 +26,7 @@ import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.ozone.client.OzoneNativeStorageClient;
 import org.opencrawling.ozone.config.OzoneOutputProperties;
-import org.opencrawling.ozone.model.OisMigrationDocument;
+import org.opencrawling.core.ois.OisSidecar;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -128,21 +128,21 @@ class OzoneOutputConnectorTest {
         assertNotNull(sidecarBytes);
 
         // 3. Parse and validate companion OIS JSON payload
-        OisMigrationDocument oisDoc = objectMapper.readValue(sidecarBytes, OisMigrationDocument.class);
+        OisSidecar oisDoc = objectMapper.readValue(sidecarBytes, OisSidecar.class);
         assertEquals("contract-101", oisDoc.id());
         assertEquals("UPSERT", oisDoc.action());
         assertEquals("ofs://test-vol/test-bucket/" + expectedBinaryKey, oisDoc.uri());
         assertEquals("2026-10-05T20:00:00Z", oisDoc.lastModified());
 
         // Validate contentRef integrity
-        assertNotNull(oisDoc.contentRef());
-        assertEquals(expectedBinaryKey, oisDoc.contentRef().key());
-        assertEquals("test-vol", oisDoc.contentRef().volume());
-        assertEquals("test-bucket", oisDoc.contentRef().bucket());
-        assertEquals("application/pdf", oisDoc.contentRef().mimeType());
-        assertEquals(rawBytes.length, oisDoc.contentRef().contentLength());
-        assertNotNull(oisDoc.contentRef().checksumSha256());
-        assertFalse(oisDoc.contentRef().checksumSha256().isBlank());
+        assertNotNull(oisDoc.content());
+        assertEquals(expectedBinaryKey, oisDoc.content().key());
+        assertEquals("test-vol", oisDoc.content().volume());
+        assertEquals("test-bucket", oisDoc.content().bucket());
+        assertEquals("application/pdf", oisDoc.content().mimeType());
+        assertEquals(rawBytes.length, oisDoc.content().sizeBytes().longValue());
+        assertNotNull(oisDoc.content().sha256());
+        assertFalse(oisDoc.content().sha256().isBlank());
 
         // Validate metadata properties
         assertEquals(List.of("contract-101.pdf"), oisDoc.metadata().get("filename"));
@@ -199,10 +199,14 @@ class OzoneOutputConnectorTest {
 
         byte[] archived = client.getStorage().get(".tombstones/doc-arch_a.bin.ois.json");
         assertNotNull(archived);
-        OisMigrationDocument tombstone = objectMapper.readValue(archived, OisMigrationDocument.class);
+        OisSidecar tombstone = objectMapper.readValue(archived, OisSidecar.class);
         assertEquals("DELETE", tombstone.action());
         assertEquals("doc-arch", tombstone.id());
-        assertNull(tombstone.contentRef());
+        assertNull(tombstone.content());
+        assertNotNull(tombstone.source(), "OIS requires a source on tombstones too");
+        assertNotNull(tombstone.source().instance());
+        assertTrue(tombstone.security().permissions().isEmpty(), "a tombstone grants nobody anything");
+        assertEquals(OisSidecar.FAIL_CLOSED, tombstone.security().evaluationPolicy());
         assertFalse(client.exists("doc-arch_a.bin"));
     }
 
@@ -220,12 +224,12 @@ class OzoneOutputConnectorTest {
 
         String key = "bin-1_photo.png";
         assertArrayEquals(raw, client.getStorage().get(key));
-        OisMigrationDocument ois = objectMapper.readValue(client.getStorage().get(key + ".ois.json"), OisMigrationDocument.class);
-        assertEquals(expectedSha, ois.contentRef().checksumSha256());
-        assertEquals(raw.length, ois.contentRef().contentLength());
-        assertEquals("photo.png", ois.contentRef().filename());
-        assertEquals("image/png", ois.contentRef().mimeType(), "MIME type is inferred from the file name when absent");
-        assertEquals("s3://claims/bin-1", ois.contentRef().claimCheckUri());
+        OisSidecar ois = objectMapper.readValue(client.getStorage().get(key + ".ois.json"), OisSidecar.class);
+        assertEquals(expectedSha, ois.content().sha256());
+        assertEquals(raw.length, ois.content().sizeBytes().longValue());
+        assertEquals("photo.png", ois.content().filename());
+        assertEquals("image/png", ois.content().mimeType(), "MIME type is inferred from the file name when absent");
+        assertEquals("s3://claims/bin-1", ois.content().claimCheckUri());
     }
 
     @Test
@@ -263,12 +267,12 @@ class OzoneOutputConnectorTest {
         connector.send(doc).block();
         assertTrue(client.exists("large/large-24mb.bin"));
         assertTrue(client.exists("large/large-24mb.bin.ois.json"));
-        OisMigrationDocument ois = objectMapper.readValue(
+        OisSidecar ois = objectMapper.readValue(
                 client.getStorage().get("large/large-24mb.bin.ois.json"),
-                OisMigrationDocument.class
+                OisSidecar.class
         );
-        assertEquals("large/large-24mb.bin", ois.contentRef().key());
-        assertEquals("large-24mb.bin", ois.contentRef().filename());
+        assertEquals("large/large-24mb.bin", ois.content().key());
+        assertEquals("large-24mb.bin", ois.content().filename());
         assertEquals("large/large-24mb.bin", ois.source().originalPath());
     }
 
@@ -309,10 +313,11 @@ class OzoneOutputConnectorTest {
 
         String sidecarKey = client.getStorage().keySet().stream().filter(k -> k.endsWith(".ois.json")).findFirst()
                 .orElseThrow();
-        OisMigrationDocument oisDoc = objectMapper.readValue(client.getStorage().get(sidecarKey), OisMigrationDocument.class);
+        OisSidecar oisDoc = objectMapper.readValue(client.getStorage().get(sidecarKey), OisSidecar.class);
         assertNotNull(oisDoc.security());
         assertTrue(oisDoc.security().permissions().isEmpty());
-        assertEquals("", oisDoc.acl());
+        assertEquals(OisSidecar.FAIL_CLOSED, oisDoc.security().evaluationPolicy());
+        assertNull(oisDoc.acl(), "a blank acl is left out");
     }
 
 }

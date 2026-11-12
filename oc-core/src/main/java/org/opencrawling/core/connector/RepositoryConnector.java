@@ -38,4 +38,22 @@ public non-sealed interface RepositoryConnector extends Connector {
     default boolean supportsConcurrentProcessing() {
         return false;
     }
+
+    /**
+     * The base URI of the repository instance this connector reads, for the OIS {@code source.instance} field, e.g.
+     * {@code https://ecm.example.com/alfresco}. It must not carry credentials; {@code OisMetadata.instanceUri} strips
+     * them. {@code null} (the default) when the connector cannot tell; the job then names the connector by URN.
+     */
+    default String sourceInstance() {
+        return null;
+    }
+
+    /**
+     * The connector's version, for the OIS {@code source.connectorVersion} field: by default the
+     * {@code Implementation-Version} of the jar the connector class comes from, {@code null} when there is none.
+     */
+    default String connectorVersion() {
+        Package pkg = getClass().getPackage();
+        return pkg != null ? pkg.getImplementationVersion() : null;
+    }
 }

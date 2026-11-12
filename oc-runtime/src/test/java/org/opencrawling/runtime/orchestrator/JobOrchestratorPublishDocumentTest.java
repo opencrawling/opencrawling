@@ -22,6 +22,8 @@ import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.ois.OisMetadata;
+import org.opencrawling.core.reporting.ExecutionProvenance;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
@@ -112,6 +114,43 @@ class JobOrchestratorPublishDocumentTest {
         IngestionMessage message = sentMessage(URL);
         assertEquals(DocumentAction.DELETE, message.action());
         assertEquals(URL, message.uri());
+    }
+
+    @Test
+    void pushedDocumentsAreStampedWithSourceAndProvenanceAndLoseWhatTheyClaimed() throws Exception {
+        when(claimCheckStore.put(anyString(), any(InputStream.class), anyLong(), anyString())).thenReturn(URI.create("file:///claims/x"));
+        Map<String, List<String>> claimed = Map.of("title", List.of("Page"),
+                "ois:provenance", List.of("{onBehalfOf=mallory}"), "ois:provenance.onBehalfOf", List.of("mallory"),
+                "ois:governance.decision", List.of("ALLOW"));
+        RepositoryDocument page = new RepositoryDocument(URL, URL,
+                new ByteArrayInputStream("t".getBytes(StandardCharsets.UTF_8)), claimed, "ROLE_USER", Instant.now());
+
+        orchestrator.publishDocument(page, null, "job-7",
+                ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_OIS, null), "sharepoint",
+                "https://user:pw@contoso.sharepoint.com/sites/legal?x=1");
+
+        Map<String, List<String>> metadata = sentMessage(URL).metadata();
+        assertEquals(List.of("sharepoint"), metadata.get(OisMetadata.SOURCE_TYPE));
+        assertEquals(List.of("https://contoso.sharepoint.com/sites/legal"), metadata.get(OisMetadata.SOURCE_INSTANCE));
+        assertEquals(List.of("job-7"), metadata.get(OisMetadata.PROVENANCE_JOB_ID));
+        assertEquals(List.of("ois"), metadata.get(OisMetadata.PROVENANCE_TRIGGERED_BY));
+        assertFalse(metadata.containsKey(OisMetadata.PROVENANCE_ON_BEHALF_OF), "an unverified push names nobody");
+        assertFalse(metadata.containsKey("ois:provenance"));
+        assertFalse(metadata.containsKey(OisMetadata.GOVERNANCE_DECISION));
+        assertEquals(List.of("Page"), metadata.get("title"));
+    }
+
+    @Test
+    void withoutANamedInstanceThePushIsNamedByItsJob() throws Exception {
+        RepositoryDocument gone = new RepositoryDocument(URL, URL, null, Map.of(), "ROLE_USER",
+                SecurityConfig.createPublic(), Instant.now(), DocumentAction.DELETE);
+
+        orchestrator.publishDocument(gone, null, "job-7",
+                ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_GRPC_PUSH, null), "grpc-push", "not a uri");
+
+        Map<String, List<String>> metadata = sentMessage(URL).metadata();
+        assertEquals(List.of("urn:opencrawling:connector:job%3Ajob-7"), metadata.get(OisMetadata.SOURCE_INSTANCE));
+        assertEquals(List.of("grpc-push"), metadata.get(OisMetadata.SOURCE_TYPE));
     }
 
     @Test

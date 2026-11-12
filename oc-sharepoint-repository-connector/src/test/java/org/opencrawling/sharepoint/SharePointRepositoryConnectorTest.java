@@ -345,4 +345,9 @@ class SharePointRepositoryConnectorTest {
         assertTrue(message.contains("tenant-id") && message.contains("client-secret") && message.contains("site-url"), message);
         assertEquals(Map.of(), graph.requests.stream().collect(Collectors.groupingBy(r -> r)), "nothing was called");
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredSiteUrl() {
+        assertEquals("https://contoso.sharepoint.com/sites/engineering", connector(Map.of()).sourceInstance());
+    }
 }

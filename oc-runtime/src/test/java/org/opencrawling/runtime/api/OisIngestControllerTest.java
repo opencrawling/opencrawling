@@ -70,7 +70,7 @@ class OisIngestControllerTest {
 
         assertEquals(202, response.getStatusCode().value());
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(published.capture(), eq("Ollama_Embedding_Default"));
+        verify(jobOrchestrator).publishDocument(published.capture(), eq("Ollama_Embedding_Default"), any(), any(), any(), any());
         RepositoryDocument doc = published.getValue();
         assertEquals(URL, doc.id());
         assertEquals(URL, doc.uri());
@@ -82,12 +82,22 @@ class OisIngestControllerTest {
     }
 
     @Test
+    void thePushedSourceAndTheJobGoWithTheDocument() throws Exception {
+        controller(TOKEN).ingest("7", BEARER, UPSERT);
+
+        verify(jobOrchestrator).publishDocument(any(), any(), eq("7"),
+                org.mockito.ArgumentMatchers.argThat(provenance -> !provenance.callerVerified()
+                        && "ois".equals(provenance.triggerSource())),
+                eq("stormcrawler"), eq("test"));
+    }
+
+    @Test
     void deleteIsPublishedWithoutContent() throws Exception {
         ResponseEntity<String> response = controller(TOKEN).ingest("7", BEARER, DELETE);
 
         assertEquals(202, response.getStatusCode().value());
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(published.capture(), eq("Ollama_Embedding_Default"));
+        verify(jobOrchestrator).publishDocument(published.capture(), eq("Ollama_Embedding_Default"), any(), any(), any(), any());
         assertEquals(DocumentAction.DELETE, published.getValue().action());
         assertNull(published.getValue().contentStream());
     }
@@ -147,7 +157,7 @@ class OisIngestControllerTest {
         assertEquals(202, controller(TOKEN).ingest("7", BEARER, editorsOnly).getStatusCode().value());
 
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(published.capture(), any());
+        verify(jobOrchestrator).publishDocument(published.capture(), any(), any(), any(), any(), any());
         assertEquals("editors", published.getValue().acl());
     }
 
@@ -162,7 +172,7 @@ class OisIngestControllerTest {
         assertEquals(202, controller(TOKEN).ingest("7", BEARER, multiReaderDoc).getStatusCode().value());
 
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(published.capture(), any());
+        verify(jobOrchestrator).publishDocument(published.capture(), any(), any(), any(), any(), any());
         assertEquals("engineering,finance", published.getValue().acl());
     }
 
@@ -177,7 +187,7 @@ class OisIngestControllerTest {
         assertEquals(202, controller(TOKEN).ingest("7", BEARER, docWithEmptyPerms).getStatusCode().value());
 
         ArgumentCaptor<RepositoryDocument> published = ArgumentCaptor.forClass(RepositoryDocument.class);
-        verify(jobOrchestrator).publishDocument(published.capture(), any());
+        verify(jobOrchestrator).publishDocument(published.capture(), any(), any(), any(), any(), any());
         RepositoryDocument doc = published.getValue();
         assertEquals("", doc.acl());
         assertTrue(doc.security().permissions().isEmpty());
@@ -205,7 +215,7 @@ class OisIngestControllerTest {
 
     @Test
     void publishFailureIsServiceUnavailable() throws Exception {
-        doThrow(new IllegalStateException("broker down")).when(jobOrchestrator).publishDocument(any(), any());
+        doThrow(new IllegalStateException("broker down")).when(jobOrchestrator).publishDocument(any(), any(), any(), any(), any(), any());
 
         assertEquals(503, controller(TOKEN).ingest("7", BEARER, UPSERT).getStatusCode().value());
     }

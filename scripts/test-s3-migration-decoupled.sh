@@ -401,7 +401,7 @@ echo -e "${CYAN}----------------------------------------------------${NC}"
 
 # Validate schema version
 OIS_SCHEMA=$(echo "$OIS_JSON" | jq -r '."$schema" // ""')
-if [ "$OIS_SCHEMA" != "https://opencrawling.org/schemas/v1/ois-document.json" ]; then
+if [ "$OIS_SCHEMA" != "https://opencrawling.org/schemas/ois-document-schema.json" ]; then
   echo -e "${RED}FAIL: Invalid OIS schema URI: $OIS_SCHEMA${NC}"
   exit 1
 fi
@@ -425,7 +425,7 @@ fi
 echo -e "OIS URI:                ${GREEN}$OIS_URI${NC}"
 
 # Validate SHA-256 checksum in ContentRef
-OIS_SHA256=$(echo "$OIS_JSON" | jq -r '.contentRef.checksumSha256 // ""')
+OIS_SHA256=$(echo "$OIS_JSON" | jq -r '.content.sha256 // ""')
 if [ "$OIS_SHA256" != "$SOURCE_SHA256" ]; then
   echo -e "${RED}FAIL: OIS SHA-256 checksum ($OIS_SHA256) does not match source ($SOURCE_SHA256)!${NC}"
   exit 1
@@ -433,18 +433,18 @@ fi
 echo -e "OIS SHA-256:            ${GREEN}$OIS_SHA256${NC}"
 
 # Validate Size in ContentRef
-OIS_SIZE=$(echo "$OIS_JSON" | jq -r '.contentRef.contentLength // 0')
+OIS_SIZE=$(echo "$OIS_JSON" | jq -r '.content.sizeBytes // 0')
 if [ "$OIS_SIZE" -ne "$SOURCE_SIZE" ]; then
-  echo -e "${RED}FAIL: OIS contentRef.contentLength ($OIS_SIZE) does not match source size ($SOURCE_SIZE)!${NC}"
+  echo -e "${RED}FAIL: OIS content.sizeBytes ($OIS_SIZE) does not match source size ($SOURCE_SIZE)!${NC}"
   exit 1
 fi
 echo -e "OIS Content Size:       ${GREEN}$OIS_SIZE bytes${NC}"
 
 # Validate filename and binary locator in ContentRef
-OIS_FILENAME=$(echo "$OIS_JSON" | jq -r '.contentRef.filename // ""')
-OIS_KEY=$(echo "$OIS_JSON" | jq -r '.contentRef.key // ""')
+OIS_FILENAME=$(echo "$OIS_JSON" | jq -r '.content.filename // ""')
+OIS_KEY=$(echo "$OIS_JSON" | jq -r '.content.key // ""')
 if [ "$OIS_FILENAME" != "$TEST_FILENAME" ] || [ "$OIS_KEY" != "$BINARY_KEY" ]; then
-  echo -e "${RED}FAIL: OIS contentRef filename/key mismatch (filename='$OIS_FILENAME', key='$OIS_KEY', expected '$TEST_FILENAME' / '$BINARY_KEY')${NC}"
+  echo -e "${RED}FAIL: OIS content filename/key mismatch (filename='$OIS_FILENAME', key='$OIS_KEY', expected '$TEST_FILENAME' / '$BINARY_KEY')${NC}"
   exit 1
 fi
 echo -e "OIS Filename / Key:     ${GREEN}$OIS_FILENAME / $OIS_KEY${NC}"
@@ -457,6 +457,22 @@ fi
 SECURITY_INHERITANCE=$(echo "$OIS_JSON" | jq -r '.security.inheritanceEnabled')
 SECURITY_RULES=$(echo "$OIS_JSON" | jq -r '.security.permissions | length')
 echo -e "Zero-Trust Inheritance: ${GREEN}$SECURITY_INHERITANCE${NC} (${SECURITY_RULES} permission rules)"
+
+# Validate the OIS source and provenance blocks the pipeline stamps (#292)
+if ! echo "$OIS_JSON" | jq -e '(.source.type | type == "string") and (.source.instance | type == "string" and length > 0)' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar must carry source.type and source.instance${NC}"
+  exit 1
+fi
+if ! echo "$OIS_JSON" | jq -e '(.metadata["ois:provenance"].jobId | type == "string") and (.metadata["ois:provenance"].ingestedAt | type == "string")' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar must carry metadata.ois:provenance (jobId, ingestedAt)${NC}"
+  exit 1
+fi
+if ! echo "$OIS_JSON" | jq -e '.security.evaluationPolicy == "FAIL_CLOSED"' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar security must declare evaluationPolicy FAIL_CLOSED${NC}"
+  exit 1
+fi
+echo -e "OIS Source Instance:    ${GREEN}$(echo "$OIS_JSON" | jq -r '.source.instance')${NC}"
+echo -e "OIS Provenance Job:     ${GREEN}$(echo "$OIS_JSON" | jq -r '.metadata["ois:provenance"].jobId')${NC}"
 
 echo -e "${GREEN}PASSED: Companion OIS JSON metadata sidecar and Zero-Trust ACLs verified!${NC}"
 
@@ -553,7 +569,7 @@ if [ "$LARGE_FILE_MB" -gt 0 ]; then
   if [ -z "$LARGE_KEY" ]; then echo -e "${RED}FAIL: ${LARGE_NAME} not found in target S3 bucket${NC}"; exit 1; fi
   TARGET_SHA256=$(aws_s3 s3 cp "s3://$SPRING_OPENCRAWLING_OUTPUT_S3_BUCKET/$LARGE_KEY" - 2>/dev/null | sha256_stdin)
   SIDECAR_SHA256=$(aws_s3 s3 cp "s3://$SPRING_OPENCRAWLING_OUTPUT_S3_BUCKET/${LARGE_KEY}.ois.json" - 2>/dev/null \
-    | jq -r '.contentRef.checksumSha256 // empty')
+    | jq -r '.content.sha256 // empty')
   if [ "$TARGET_SHA256" != "$LARGE_SHA256" ] || [ "$SIDECAR_SHA256" != "$LARGE_SHA256" ]; then
     echo -e "${RED}FAIL: large binary checksum mismatch${NC}"
     echo -e "  source:  $LARGE_SHA256\n  target:  $TARGET_SHA256\n  sidecar: $SIDECAR_SHA256"; exit 1

@@ -25,6 +25,7 @@ import org.opencrawling.runtime.security.JwtCallerMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -90,13 +91,21 @@ public class SidecarService {
     public record SidecarPage(String connector, String prefix, List<SidecarView> sidecars, Aggregates aggregates,
                               String nextCursor, boolean scanLimitReached) {}
 
-    /** The sidecar JSON, as the Ozone and S3 migration writers store it; other fields are ignored. */
-    record Sidecar(String id, String action, String uri, String lastModified, Source source, Content contentRef,
-                   Map<String, List<String>> metadata, SecurityConfig security, String acl) {
+    /**
+     * The sidecar JSON, as the Ozone and S3 migration writers store it; other fields are ignored. Both formats are
+     * read: the OIS one ({@code content} with {@code sizeBytes} and {@code sha256}, typed metadata) and the one
+     * written before it ({@code contentRef} with {@code contentLength} and {@code checksumSha256}, metadata as
+     * string lists), so stores migrated earlier stay readable.
+     */
+    record Sidecar(String id, String action, String uri, String lastModified, Source source,
+                   @JsonAlias({"content", "contentRef"}) Content content,
+                   Map<String, Object> metadata, SecurityConfig security, String acl) {
 
         record Source(String type, String originalUri, String originalPath) {}
 
-        record Content(String key, String filename, String mimeType, Long contentLength, String checksumSha256) {}
+        record Content(String key, String filename, String mimeType,
+                       @JsonAlias({"sizeBytes", "contentLength"}) Long sizeBytes,
+                       @JsonAlias({"sha256", "checksumSha256"}) String sha256) {}
     }
 
     private record Candidate(String key, Sidecar sidecar, int bytes) {}
@@ -285,20 +294,38 @@ public class SidecarService {
     private static SidecarView view(Candidate candidate) {
         Sidecar sidecar = candidate.sidecar();
         Sidecar.Source source = sidecar.source();
-        Sidecar.Content content = sidecar.contentRef();
+        Sidecar.Content content = sidecar.content();
         Map<String, List<String>> metadata = new LinkedHashMap<>();
         if (sidecar.metadata() != null) {
-            sidecar.metadata().forEach((key, values) -> {
-                if (key != null && values != null && !isPermissionKey(key)) {
-                    metadata.put(key, values);
+            sidecar.metadata().forEach((key, value) -> {
+                if (key != null && value != null && !isPermissionKey(key)) {
+                    putFlat(metadata, key, value);
                 }
             });
         }
         return new SidecarView(candidate.key(), sidecar.id(), sidecar.uri(), sidecar.lastModified(),
                 source != null ? source.type() : null, source != null ? source.originalUri() : null,
                 source != null ? source.originalPath() : null, content != null ? content.filename() : null,
-                content != null ? content.mimeType() : null, content != null ? content.contentLength() : null,
-                content != null ? content.checksumSha256() : null, metadata);
+                content != null ? content.mimeType() : null, content != null ? content.sizeBytes() : null,
+                content != null ? content.sha256() : null, metadata);
+    }
+
+    /**
+     * Adds a sidecar metadata value as string lists: a list as its items, a scalar as one item, and a nested object
+     * (such as {@code ois:provenance}) as one {@code <key>.<field>} entry per field, the way the pipeline carries it.
+     */
+    private static void putFlat(Map<String, List<String>> metadata, String key, Object value) {
+        if (value instanceof Map<?, ?> fields) {
+            fields.forEach((field, fieldValue) -> {
+                if (field != null && fieldValue != null) {
+                    putFlat(metadata, key + "." + field, fieldValue);
+                }
+            });
+        } else if (value instanceof List<?> items) {
+            metadata.put(key, items.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList());
+        } else {
+            metadata.put(key, List.of(String.valueOf(value)));
+        }
     }
 
     /** Metadata keys that carry permissions; they are not returned. */

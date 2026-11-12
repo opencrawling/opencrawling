@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.messaging;
 
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
@@ -233,7 +234,8 @@ public class IngestionConsumer {
 
                 log.info("Extracted {} characters from document: {}", text.length(), message.documentId());
 
-                Map<String, List<String>> sourceMetadata = message.metadata() != null ? message.metadata() : Map.of();
+                // Only the gate below writes ois:governance; whatever the document brought under it is dropped.
+                Map<String, List<String>> sourceMetadata = OisMetadata.withoutGovernance(message.metadata());
                 if (governanceGate != null) {
                     GovernanceGate.Result governed = govern(message, text, sourceMetadata, traceId, jobId);
                     if (!governed.embeds()) {
@@ -243,7 +245,7 @@ public class IngestionConsumer {
                         return;
                     }
                     text = governed.text();
-                    sourceMetadata = governed.metadata();
+                    sourceMetadata = governanceRecord(governed, governed.metadata());
                 }
 
                 // Map repository metadata to Vector Document metadata
@@ -318,6 +320,25 @@ public class IngestionConsumer {
                 traceStore.recordError(jobId, "ERROR", "IngestionConsumer", "Failed to process Kafka ingestion message: " + e.getMessage(), e.toString());
             }
         }
+    }
+
+    /**
+     * The metadata with the OIS {@code ois:governance} block for the gate's decision: {@code ALLOW} for an approved
+     * document, {@code REDACT} for a sanitized one, with the categories the hooks reported masking
+     * ({@code <hook>.masked.<category>} audit facts) and the hooks that ran as the policy.
+     */
+    Map<String, List<String>> governanceRecord(GovernanceGate.Result governed, Map<String, List<String>> metadata) {
+        OisMetadata.Decision decision = governed.status() == GovernanceGate.Status.SANITIZED
+                ? OisMetadata.Decision.REDACT : OisMetadata.Decision.ALLOW;
+        java.util.Set<String> categories = new java.util.TreeSet<>();
+        governed.audit().forEach((key, value) -> {
+            int at = key.indexOf(".masked.");
+            if (at > 0 && !"0".equals(value)) {
+                categories.add(key.substring(at + ".masked.".length()).toUpperCase(java.util.Locale.ROOT));
+            }
+        });
+        return OisMetadata.withGovernance(metadata, decision, categories,
+                String.join(",", governanceGate.hookNames()), java.time.Instant.now());
     }
 
     /**

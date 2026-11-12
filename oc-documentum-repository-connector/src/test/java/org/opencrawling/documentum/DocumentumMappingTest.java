@@ -326,4 +326,11 @@ class DocumentumMappingTest {
         assertEquals(2, a.vstamp());
         assertEquals("dmadmin", a.domain());
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredRestContext() {
+        DocumentumRepositoryConnector connector = new DocumentumRepositoryConnector(DocumentumProperties.fromConfiguration(
+                Map.of("url", "https://dctm.example.com/dctm-rest", "repositoryName", "docbase1")));
+        assertEquals("https://dctm.example.com/dctm-rest", connector.sourceInstance());
+    }
 }

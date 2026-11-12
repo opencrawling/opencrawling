@@ -334,4 +334,18 @@ public class CmisRepositoryConnectorTest {
         assertThat(schema.fields().stream().map(ConnectorSchema.SchemaField::name))
                 .contains("cmis.objectId", "cmis.name", "cmis.baseTypeId", "cmis.lastModificationDate");
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredEndpointUrl() {
+        CmisRepositoryConnector connector = new CmisRepositoryConnector(
+            "https://ecm.example.com/alfresco/api/-default-/public/cmis/versions/1.1/browser", "-default-", "admin", "admin",
+            CmisBindingType.BROWSER, CmisCrawlMode.FOLDER,
+            "/", "", true, Set.of(),
+            "SELECT * FROM cmis:document", CmisVersionsMode.LATEST_MAJOR,
+            true, 52428800L, true, true, false, "", 50, 5
+        );
+
+        assertThat(connector.sourceInstance())
+            .isEqualTo("https://ecm.example.com/alfresco/api/-default-/public/cmis/versions/1.1/browser");
+    }
 }

@@ -178,7 +178,8 @@ public class RuntimePushDocumentDispatcher implements PushDocumentDispatcher {
                     thresholdKb
             );
 
-            jobOrchestrator.publishDocument(doc, job.transformationConnector());
+            jobOrchestrator.publishDocument(doc, job.transformationConnector(), job.id(), PUSH_PROVENANCE,
+                    "grpc-push", null);
 
             long durationMs = Math.max(1L, System.currentTimeMillis() - docStartTime);
             if (ledgerAccumulator != null) {

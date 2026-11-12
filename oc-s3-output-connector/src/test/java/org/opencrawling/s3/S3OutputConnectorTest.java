@@ -26,7 +26,7 @@ import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.s3.config.S3OutputProperties;
-import org.opencrawling.s3.model.OisMigrationDocument;
+import org.opencrawling.core.ois.OisSidecar;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
@@ -416,10 +416,11 @@ class S3OutputConnectorTest {
         verify(s3Client, times(3)).putObject(putCaptor.capture(), bodyCaptor.capture());
         assertTrue(putCaptor.getAllValues().get(1).key().endsWith(".ois.json"));
         byte[] sidecar = bodyCaptor.getAllValues().get(1).contentStreamProvider().newStream().readAllBytes();
-        OisMigrationDocument oisDoc = objectMapper.readValue(sidecar, OisMigrationDocument.class);
+        OisSidecar oisDoc = objectMapper.readValue(sidecar, OisSidecar.class);
         assertNotNull(oisDoc.security());
         assertTrue(oisDoc.security().permissions().isEmpty());
-        assertEquals("", oisDoc.acl());
+        assertEquals(OisSidecar.FAIL_CLOSED, oisDoc.security().evaluationPolicy());
+        assertNull(oisDoc.acl(), "a blank acl is left out");
     }
 
 }

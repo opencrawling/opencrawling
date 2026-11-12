@@ -68,6 +68,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RequestMapping("/api/v1/ingest/ois")
 public class OisIngestController {
 
+    private static final org.opencrawling.core.reporting.ExecutionProvenance OIS_PROVENANCE =
+            org.opencrawling.core.reporting.ExecutionProvenance.anonymous(
+                    org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_OIS, null);
+
     private static final Logger log = LoggerFactory.getLogger(OisIngestController.class);
 
     private static final JsonMapper MAPPER = JsonMapper.builder()
@@ -155,12 +159,13 @@ public class OisIngestController {
                 : "mxbai-embed-large";
         if (ledgerAccumulator != null) {
             ledgerAccumulator.startExecution(job.id(), execId, jobName, org.opencrawling.core.pipeline.PipelineMode.RAG, repoName, outName,
-                    org.opencrawling.core.reporting.ExecutionProvenance.anonymous(
-                            org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_OIS, null));
+                    OIS_PROVENANCE);
         }
 
         try {
-            jobOrchestrator.publishDocument(doc, job.transformationConnector());
+            jobOrchestrator.publishDocument(doc, job.transformationConnector(), job.id(), OIS_PROVENANCE,
+                    ois.source() != null ? ois.source().type() : null,
+                    ois.source() != null ? ois.source().instance() : null);
             long durationMs = Math.max(1L, System.currentTimeMillis() - startTime);
             if (ledgerAccumulator != null) {
                 int tokenCount = (doc.action() == DocumentAction.DELETE || ois.content() == null || ois.content().text() == null)
@@ -272,7 +277,17 @@ public class OisIngestController {
             @Schema(description = "Arbitrary metadata key-value mappings")
             Map<String, Object> metadata,
             @Schema(description = "Access Control List and security configuration")
-            SecurityConfig security) {
+            SecurityConfig security,
+            @Schema(description = "The repository the document comes from")
+            Source source) {
+
+        @Schema(description = "The repository a pushed document comes from")
+        record Source(
+                @Schema(description = "Repository type", example = "sharepoint")
+                String type,
+                @Schema(description = "Base URI of the repository instance", example = "https://contoso.sharepoint.com")
+                String instance) {
+        }
 
         @Schema(description = "Textual content payload of the document")
         record Content(

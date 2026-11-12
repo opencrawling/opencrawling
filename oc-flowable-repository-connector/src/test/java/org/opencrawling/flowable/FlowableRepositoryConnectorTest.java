@@ -377,4 +377,9 @@ class FlowableRepositoryConnectorTest {
             assertFalse(uri.contains("/history/"), "Expected URI not to contain /history/: " + uri);
         }
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        assertEquals("http://localhost:8080/flowable-rest/service", connector.sourceInstance());
+    }
 }

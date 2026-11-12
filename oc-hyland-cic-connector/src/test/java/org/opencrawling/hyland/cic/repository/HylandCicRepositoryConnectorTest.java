@@ -255,4 +255,12 @@ class HylandCicRepositoryConnectorTest {
                 })
                 .verifyComplete();
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredBaseUrl() {
+        properties.setBaseUrl("https://api.content.example.com");
+        assertThat(connector.sourceInstance()).isEqualTo("https://api.content.example.com");
+        properties.setBaseUrl("");
+        assertThat(connector.sourceInstance()).isNull();
+    }
 }

@@ -128,6 +128,11 @@ public class MFilesRepositoryConnector implements RepositoryConnector {
         return "MFilesRepositoryConnector";
     }
 
+    @Override
+    public String sourceInstance() {
+        return settings != null ? settings.url() : null;
+    }
+
     public MFilesProperties settings() {
         return settings;
     }

@@ -50,6 +50,16 @@ final class SingleDocumentConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        return source != null ? source.sourceInstance() : null;
+    }
+
+    @Override
+    public String connectorVersion() {
+        return source != null ? source.connectorVersion() : null;
+    }
+
+    @Override
     public void connect() {
     }
 

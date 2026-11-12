@@ -14,7 +14,7 @@ Unlike vector and search connectors designed for semantic search and RAG indexin
 
 - **Strict Migration Mode Enforcement**: Rejects non-migration mode executions fail-fast (`IllegalStateException` and HTTP 409 in `JobController`), preventing accidental execution under RAG pipelines and eliminating unnecessary text extraction, chunking, and vector embedding overhead.
 - **Bit-for-Bit Binary Parity**: Streams pristine content binaries directly from Claim Check storage into target S3 buckets while computing SHA-256 hashes on the fly.
-- **Companion OIS JSON Sidecars**: Produces companion `<key>.ois.json` sidecar documents conforming to the Open Ingestion Standard (`https://opencrawling.org/schemas/v1/ois-document.json`), preserving source repository metadata, content references, digests, and Zero-Trust access control lists (`security.inheritanceEnabled`, `permissions[]`).
+- **Companion OIS JSON Sidecars**: Produces companion `<key>.ois.json` sidecar documents conforming to the Open Ingestion Standard (valid against the [OIS document schema](https://github.com/opencrawling/open-ingestion-standard/blob/master/schemas/document.schema.json)), preserving the source (`source.type`, `source.instance`), typed metadata with `ois:provenance`, the content digest (`content.sha256`, `content.sizeBytes`) and fail-closed access control lists (`security.evaluationPolicy`, `inheritanceEnabled`, `permissions[]`). The format is described in the [Ozone output connector README](../oc-ozone-output-connector/README.md#ois-sidecar-format).
 - **Flexible Key Strategies**: Supports `HIERARCHICAL` (preserving original folder hierarchy), `FLAT`, and `DATE_PARTITIONED` (`yyyy/MM/dd`) S3 object key layouts.
 - **Enterprise Authentication**:
   - `DEFAULT_CHAIN`: standard AWS Default Credentials Provider Chain (IAM roles, IRSA in Kubernetes/EKS, environment variables, EC2 instance profiles).
@@ -129,7 +129,7 @@ For each migrated document (`UPSERT`), the connector stores:
 | `.opencrawling/index/<sha256(docId)>` | Index entry mapping document ID to S3 key for O(1) tombstone lookups. |
 
 When `tombstone-action` is `ARCHIVE_TOMBSTONE`, a deleted document writes:
-- `.tombstones/<key>.ois.json`: Tombstone metadata envelope recording document deletion event and timestamp.
+- `.tombstones/<key>.ois.json`: OIS `DELETE` envelope recording the deletion, with the document's `source` and no permissions (fail closed).
 
 ---
 
