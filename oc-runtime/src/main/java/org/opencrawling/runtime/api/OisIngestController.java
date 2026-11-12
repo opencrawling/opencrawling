@@ -119,7 +119,7 @@ public class OisIngestController {
                 ("Bearer " + token).getBytes(StandardCharsets.UTF_8), authorization.getBytes(StandardCharsets.UTF_8))) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        JobDTO job = jobController.getJob(jobId).getBody();
+        JobDTO job = jobController.findJobById(jobId);
         if (job == null) {
             return ResponseEntity.notFound().build();
         }

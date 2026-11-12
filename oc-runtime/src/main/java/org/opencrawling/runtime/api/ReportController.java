@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.api;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.opencrawling.core.reporting.JobReportSummary;
 import org.opencrawling.runtime.reporting.JobReportService;
 import org.slf4j.Logger;
@@ -55,8 +56,31 @@ public class ReportController {
 
     private final JobReportService reportService;
 
+    /** Absent when a test builds the controller itself; then every report is visible, as with authorization off. */
+    @Autowired(required = false)
+    private JobVisibility visibility;
+
     public ReportController(JobReportService reportService) {
         this.reportService = reportService;
+    }
+
+    void setVisibility(JobVisibility visibility) {
+        this.visibility = visibility;
+    }
+
+    private boolean visible(JobReportSummary summary) {
+        return visibility == null || visibility.canReadReport(summary);
+    }
+
+    /**
+     * Whether the caller may read this execution's ledger and exports. They are looked up by execution id, so the job
+     * id in the path decides nothing: the execution's own summary does. Without a summary, only admins may read it.
+     */
+    private boolean executionVisible(String executionId) {
+        if (visibility == null) {
+            return true;
+        }
+        return reportService.getSummary(executionId).map(this::visible).orElseGet(visibility::isAdmin);
     }
 
     private static boolean isValidId(String id) {
@@ -67,7 +91,11 @@ public class ReportController {
     @ApiResponse(responseCode = "200", description = "List of report summaries successfully retrieved")
     @GetMapping
     public ResponseEntity<List<JobReportSummary>> getAllReports() {
-        return ResponseEntity.ok(reportService.getAllSummaries());
+        List<JobReportSummary> summaries = reportService.getAllSummaries();
+        if (visibility != null) {
+            summaries = summaries.stream().filter(visibility::canReadReport).toList();
+        }
+        return ResponseEntity.ok(summaries);
     }
 
     @Operation(summary = "Get execution report summary", description = "Retrieves the execution summary and key performance indicators for a specific job run.")
@@ -84,6 +112,7 @@ public class ReportController {
             return ResponseEntity.badRequest().build();
         }
         return reportService.getSummary(executionId)
+                .filter(this::visible)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -104,6 +133,9 @@ public class ReportController {
         if (!isValidId(jobId) || !isValidId(executionId)) {
             return ResponseEntity.badRequest().build();
         }
+        if (!executionVisible(executionId)) {
+            return ResponseEntity.notFound().build();
+        }
         int safePage = Math.max(0, Math.min(page, 100_000));
         int safeSize = Math.max(1, Math.min(size, 1_000));
         return ResponseEntity.ok(reportService.getDocumentEntries(executionId, status, query, safePage, safeSize));
@@ -122,6 +154,9 @@ public class ReportController {
             @Parameter(description = "Export file format (csv, parquet, avro, json)", example = "parquet") @RequestParam(defaultValue = "json") String format) {
         if (!isValidId(jobId) || !isValidId(executionId)) {
             return ResponseEntity.badRequest().build();
+        }
+        if (!executionVisible(executionId)) {
+            return ResponseEntity.notFound().build();
         }
         String fmt = format != null ? format.trim().toLowerCase() : "json";
         if (!ALLOWED_EXPORT_FORMATS.contains(fmt)) {

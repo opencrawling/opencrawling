@@ -62,7 +62,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testDispatchRejectedWhenJobNotFound() {
-        when(jobController.getJob("unknown-job")).thenReturn(ResponseEntity.notFound().build());
+        when(jobController.findJobById("unknown-job")).thenReturn(null);
 
         PushDocumentRequest request = PushDocumentRequest.newBuilder()
                 .setJobId("unknown-job")
@@ -77,7 +77,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testDispatchRejectedInMigrationMode() {
-        when(jobController.getJob("job-1")).thenReturn(ResponseEntity.ok(activeJob));
+        when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.MIGRATION);
 
         PushDocumentRequest request = PushDocumentRequest.newBuilder()
@@ -93,7 +93,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testDispatchAcceptedForUpsert() throws Exception {
-        when(jobController.getJob("job-1")).thenReturn(ResponseEntity.ok(activeJob));
+        when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.RAG);
 
         PushDocumentRequest request = PushDocumentRequest.newBuilder()
@@ -123,7 +123,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testDispatchAcceptedForDeleteTombstone() throws Exception {
-        when(jobController.getJob("job-1")).thenReturn(ResponseEntity.ok(activeJob));
+        when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.RAG);
 
         PushDocumentRequest request = PushDocumentRequest.newBuilder()
@@ -148,7 +148,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testDispatchReturnsInternalErrorWhenPublishFails() throws Exception {
-        when(jobController.getJob("job-1")).thenReturn(ResponseEntity.ok(activeJob));
+        when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.RAG);
         doThrow(new RuntimeException("Kafka producer unavailable")).when(jobOrchestrator).publishDocument(any(), any());
 
@@ -168,7 +168,7 @@ class RuntimePushDocumentDispatcherTest {
 
     @Test
     void testUnaryAndStreamingPushGenerateAuditReports(@org.junit.jupiter.api.io.TempDir java.io.File tempDir) throws Exception {
-        when(jobController.getJob("job-1")).thenReturn(ResponseEntity.ok(activeJob));
+        when(jobController.findJobById("job-1")).thenReturn(activeJob);
         when(jobController.resolvePipelineMode(activeJob)).thenReturn(PipelineMode.RAG);
 
         org.opencrawling.runtime.reporting.JobReportProperties reportProps = new org.opencrawling.runtime.reporting.JobReportProperties();

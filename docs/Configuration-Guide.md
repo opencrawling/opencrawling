@@ -142,6 +142,51 @@ See [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-ide
 
 ---
 
+## 🛂 Management Authorization
+
+Who may do what with jobs, connectors, settings, reports and traces (#187). Off by default: with it off, any caller that reaches the API may do everything, as before.
+
+*   **`OPENCRAWLING_SECURITY_MANAGEMENT_ENABLED`** (`opencrawling.security.management.enabled`): turns it on. It needs `opencrawling.security.identity.mode=jwt` with `protect-api=true`, because every decision is made on the verified caller of the request. The runtime refuses to start otherwise. A request without a valid token may do nothing.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_SECURITY_MANAGEMENT_ADMIN_GROUPS`** (`opencrawling.security.management.admin-groups`): members (from the token's group claims) may do everything.
+    *   *Default*: `opencrawling-admin`
+*   **`OPENCRAWLING_SECURITY_MANAGEMENT_JOB_CREATOR_GROUPS`** (`opencrawling.security.management.job-creator-groups`): members may also create jobs, and own the jobs they create.
+    *   *Default*: empty (only admins create jobs)
+
+Group names match case-insensitively. Each job carries an `access` block (in `jobs.json` and in the job API):
+
+```json
+"access": {
+  "owner": "hr.lead",
+  "tenantId": "acme",
+  "allowedUsers": ["payroll.clerk"],
+  "allowedGroups": ["hr-team"],
+  "viewerUsers": [],
+  "viewerGroups": ["auditors"]
+}
+```
+
+| Caller | See the job, its runs, reports, traces and errors | Start, stop, pause | Edit, delete, change `access` |
+|---|---|---|---|
+| Admin | yes | yes | yes |
+| `owner` | yes | yes | yes, except `owner` and `tenantId` |
+| `allowedUsers`, `allowedGroups` | yes | yes | no |
+| `viewerUsers`, `viewerGroups` | yes | no | no |
+| Anyone else | no (`404`) | no | no |
+
+*   **New jobs:** the creator becomes the owner and the job belongs to the creator's tenant (`tenant-claim`), whatever the request says. An admin may name another owner or tenant.
+*   **Tenants:** a job with a `tenantId` is invisible to callers of other tenants, whatever its lists say.
+*   **Jobs created before authorization was on** have no `access` block. Only admins see them, until an admin assigns them by saving the job with an `access` block.
+*   **Job lists are filtered:** `GET /api/jobs`, `GET /api/jobs/runs` and `GET /api/reports` return only what the caller may see. A job the caller may not see answers `404`, never `403`, so its existence is not revealed.
+*   **Reports and traces of other jobs:** for a job not in the job list (a dynamic job started by an agent, or a job deleted since), admins and the user it ran for may read its reports. The traces and errors of a dynamic job are visible to the user it was started for while its status is remembered.
+*   **Admin-only routes:** connectors (except listing them, which job creators may do, without their configuration), `/api/system/settings/**`, transport settings, `/api/system/logs`, `/api/mcf-migration/**`, `/api/vespa/**`, `/api/observability/metrics` and `/api/reports/query`. Job creators may also use the narrativization copilot. The MCP tool `queryThroughputMetrics` is admin-only too.
+*   **Unchanged:** discovery, dynamic jobs, sidecars, BPM events and OIS ingest keep their own caller checks.
+
+The admin UI cannot send tokens yet, so it does not work while `protect-api` is on.
+
+---
+
 ## 🔐 Document Authorization
 
 Who may read a retrieved document is decided by one provider for every store, selected with:

@@ -624,6 +624,22 @@ public class DynamicJobService {
         return visible(caller, jobId).view();
     }
 
+    /**
+     * Whether this dynamic job is still remembered and was started for the caller (whichever agent acted for them).
+     * No scope check: used to decide who may read the job's traces and reports.
+     */
+    public boolean isStartedFor(Caller caller, String jobId) {
+        if (caller == null || jobId == null) {
+            return false;
+        }
+        Entry entry;
+        synchronized (this) {
+            evict();
+            entry = jobs.get(jobId);
+        }
+        return entry != null && entry.owner.equals(owner(caller));
+    }
+
     /** The jobs the caller may see, newest first. */
     public List<JobStatus> list(Caller caller) {
         requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());

@@ -59,8 +59,8 @@ class OisIngestControllerTest {
         jobOrchestrator = mock(JobOrchestrator.class);
         job = new JobDTO("7", "Web", "StormCrawler_Web_Engine", "PGVector_Output", "", "", "Ready", "Idle", 0, "N/A",
                 "Ollama_Embedding_Default", null);
-        when(jobController.getJob("7")).thenReturn(ResponseEntity.ok(job));
-        when(jobController.getJob("missing")).thenReturn(ResponseEntity.notFound().build());
+        when(jobController.findJobById("7")).thenReturn(job);
+        when(jobController.findJobById("missing")).thenReturn(null);
         when(jobController.resolvePipelineMode(job)).thenReturn(PipelineMode.RAG);
     }
 
@@ -185,7 +185,7 @@ class OisIngestControllerTest {
 
     @Test
     void errorAnswersAreFixedPlainTextThatEchoesNoInput() {
-        when(jobController.getJob("<script>")).thenReturn(ResponseEntity.ok(job));
+        when(jobController.findJobById("<script>")).thenReturn(job);
         when(jobController.resolvePipelineMode(job)).thenReturn(PipelineMode.MIGRATION);
         ResponseEntity<String> conflict = controller(TOKEN).ingest("<script>", BEARER, UPSERT);
         assertEquals(409, conflict.getStatusCode().value());

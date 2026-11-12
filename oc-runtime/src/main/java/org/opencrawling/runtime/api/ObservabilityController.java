@@ -18,6 +18,7 @@ package org.opencrawling.runtime.api;
 import org.opencrawling.runtime.observability.AIOpsDiagnosticService;
 import org.opencrawling.runtime.observability.ObservabilityMcpTools;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.slf4j.Logger;
@@ -48,6 +49,10 @@ public class ObservabilityController {
     private final TelemetryTraceStore traceStore;
     private final JobController jobController;
 
+    /** Absent when a test builds the controller itself; then every job can be diagnosed, as with authorization off. */
+    @Autowired(required = false)
+    private JobVisibility visibility;
+
     public ObservabilityController(
             AIOpsDiagnosticService diagnosticService,
             ObservabilityMcpTools mcpTools,
@@ -59,12 +64,19 @@ public class ObservabilityController {
         this.jobController = jobController;
     }
 
+    void setVisibility(JobVisibility visibility) {
+        this.visibility = visibility;
+    }
+
     @Operation(summary = "Diagnose job with AIOps", description = "Triggers an AI-powered diagnostic analysis on a crawling pipeline job, evaluating traces and logs to provide automated root-cause recommendations.")
     @ApiResponse(responseCode = "200", description = "Diagnostic report successfully generated")
     @GetMapping("/diagnose/{jobId}")
     public ResponseEntity<AIOpsDiagnosticService.DiagnosticReport> diagnoseJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String jobId) {
         log.info("Request received to run AI Diagnosis for Job ID: {}", jobId);
+        if (visibility != null && !visibility.canReadJob(jobId)) {
+            return ResponseEntity.notFound().build();
+        }
         
         JobController.JobDTO job = jobController.getAllJobs().stream()
                 .filter(j -> j.id().equals(jobId))

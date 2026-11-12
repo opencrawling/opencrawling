@@ -44,6 +44,8 @@ import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import org.opencrawling.runtime.security.CallerResolver;
+import org.opencrawling.runtime.security.ManagementAuthorization;
+import org.opencrawling.runtime.security.ManagementAuthorization.JobAction;
 import org.opencrawling.runtime.security.JwtCallerMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -79,6 +81,10 @@ public class JobController {
     @Autowired(required = false)
     private CallerResolver callerResolver;
 
+    /** Absent when a test builds the controller itself; then every request is allowed, as with authorization off. */
+    @Autowired(required = false)
+    private ManagementAuthorization authorization;
+
     @Autowired
     public JobController(
             JobOrchestrator jobOrchestrator,
@@ -102,7 +108,10 @@ public class JobController {
     @ApiResponse(responseCode = "200", description = "List of configured jobs successfully retrieved")
     @GetMapping
     public List<JobDTO> getAllJobs() {
-        return jobs;
+        if (!authorizationOn()) {
+            return jobs;
+        }
+        return jobs.stream().filter(job -> allowed(job, JobAction.READ)).toList();
     }
 
     @Operation(summary = "Get pipeline job by ID", description = "Retrieves details and status of a specific crawling job by its identifier.")
@@ -113,11 +122,24 @@ public class JobController {
     @GetMapping("/{id}")
     public ResponseEntity<JobDTO> getJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
-        return jobs.stream()
-                .filter(j -> j.id().equals(id))
-                .findFirst()
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        JobDTO job = findJobById(id);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(job);
+    }
+
+    /**
+     * The job with this exact id, whoever asks: for callers inside the runtime that authenticate on their own (OIS
+     * ingest token, gRPC push). Request handlers use {@link #getJob}, which applies the caller's access.
+     */
+    public JobDTO findJobById(String id) {
+        return jobs.stream().filter(j -> j.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /** Whether the current caller may see this job, its runs, reports and traces. */
+    public boolean canRead(JobDTO job) {
+        return job != null && allowed(job, JobAction.READ);
     }
 
     @Operation(summary = "Create or update a pipeline job", description = "Creates a new crawling job or updates an existing job definition.")
@@ -141,6 +163,10 @@ public class JobController {
             return ResponseEntity.badRequest().body(Map.of("error", validationError));
         }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
+            if (authorization != null && !authorization.canCreateJobs()) {
+                log.warn("Rejecting job '{}': the caller may not create jobs.", job.name());
+                return ResponseEntity.status(403).build();
+            }
             // Timestamp-based id, moved forward while taken: jobs saved in the same millisecond used to share one.
             String newId = newJobId();
             JobDTO newJob = new JobDTO(
@@ -157,11 +183,20 @@ public class JobController {
                 job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
                 job.narrativization(),
                 job.pipelineMode(),
-                job.crawlSpec()
+                job.crawlSpec(),
+                accessForNewJob(job.access())
             );
             jobs.add(newJob);
         } else {
             // Edit/Update existing job
+            JobDTO target = findJobById(job.id());
+            if (target != null && !allowed(target, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (target != null && !allowed(target, JobAction.MANAGE)) {
+                log.warn("Rejecting update of job {}: only its owner or an admin may edit it.", target.id());
+                return ResponseEntity.status(403).build();
+            }
             for (int i = 0; i < jobs.size(); i++) {
                 if (jobs.get(i).id().equals(job.id())) {
                     JobDTO existing = jobs.get(i);
@@ -179,7 +214,8 @@ public class JobController {
                         job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
                         job.narrativization() != null ? job.narrativization() : existing.narrativization(),
                         job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode(),
-                        job.crawlSpec() != null ? job.crawlSpec() : existing.crawlSpec()
+                        job.crawlSpec() != null ? job.crawlSpec() : existing.crawlSpec(),
+                        accessForUpdate(existing.access(), job.access())
                     ));
                     break;
                 }
@@ -195,6 +231,16 @@ public class JobController {
     public ResponseEntity<Void> deleteJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Deleting job: {}", id);
+        if (authorizationOn()) {
+            JobDTO job = findJobById(id);
+            if (job == null || !allowed(job, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (!allowed(job, JobAction.MANAGE)) {
+                log.warn("Rejecting deletion of job {}: only its owner or an admin may delete it.", id);
+                return ResponseEntity.status(403).build();
+            }
+        }
         jobs.removeIf(j -> j.id().equals(id));
         PersistenceHelper.save("jobs.json", jobs);
         return ResponseEntity.ok().build();
@@ -224,9 +270,12 @@ public class JobController {
             .findFirst()
             .orElse(null);
             
-        if (activeJob == null) {
+        if (activeJob == null || !allowed(activeJob, JobAction.READ)) {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
             return ResponseEntity.notFound().build();
+        } else if (!allowed(activeJob, JobAction.EXECUTE)) {
+            log.warn("Job {} not started: the caller may see it but not run it.", activeJob.id());
+            return ResponseEntity.status(403).build();
         } else {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
             String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
@@ -349,8 +398,11 @@ public class JobController {
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Stopping job {}", id);
         JobDTO job = findJob(id);
-        if (job == null) {
+        if (job == null || !allowed(job, JobAction.READ)) {
             return ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
         }
         if (runRegistry.stop(job.id())) {
             return ResponseEntity.accepted().build();
@@ -363,7 +415,14 @@ public class JobController {
     @ApiResponse(responseCode = "200", description = "Runs in progress")
     @GetMapping("/runs")
     public List<JobRunRegistry.RunInfo> getRuns() {
-        return runRegistry.runs();
+        if (!authorizationOn()) {
+            return runRegistry.runs();
+        }
+        // Runs of jobs outside the job list (dynamic jobs) are listed for admins; their callers use the dynamic job API.
+        return runRegistry.runs().stream().filter(run -> {
+            JobDTO job = findJob(run.jobId());
+            return job != null ? allowed(job, JobAction.READ) : authorization.isAdmin();
+        }).toList();
     }
 
     @Operation(summary = "Get a job's run", description = "The job's run in progress in this runtime: execution id, start time and whether a stop was requested.")
@@ -375,10 +434,57 @@ public class JobController {
     public ResponseEntity<JobRunRegistry.RunInfo> getRun(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         JobDTO job = findJob(id);
-        if (job == null) {
+        if (job == null || !allowed(job, JobAction.READ)) {
             return ResponseEntity.notFound().build();
         }
         return runRegistry.run(job.id()).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    }
+
+    private boolean authorizationOn() {
+        return authorization != null && authorization.isEnabled();
+    }
+
+    private boolean allowed(JobDTO job, JobAction action) {
+        return authorization == null || authorization.can(job.access(), action);
+    }
+
+    /**
+     * The access a new job gets. With authorization on, the caller owns it and it belongs to the caller's tenant; an
+     * admin may name another owner or tenant. The allowed users and groups are taken as sent.
+     */
+    private JobAccess accessForNewJob(JobAccess requested) {
+        if (!authorizationOn()) {
+            return requested;
+        }
+        Caller caller = authorization.currentCaller().orElseThrow();
+        JobAccess base = requested != null ? requested : new JobAccess(null, null, null, null);
+        if (authorization.isAdmin(caller)) {
+            return base.withOwnerAndTenant(base.owner() != null ? base.owner() : caller.principal(),
+                    base.tenantId() != null ? base.tenantId() : caller.tenant());
+        }
+        return base.withOwnerAndTenant(caller.principal(), caller.tenant());
+    }
+
+    /**
+     * The access after an edit. Without an access block in the request it stays as it was. An owner may change the
+     * allowed users and groups but not the owner or tenant; an admin may change everything, for example to assign a
+     * job created before authorization was on.
+     */
+    private JobAccess accessForUpdate(JobAccess existing, JobAccess requested) {
+        if (requested == null) {
+            return existing;
+        }
+        if (!authorizationOn()) {
+            return requested;
+        }
+        Caller caller = authorization.currentCaller().orElseThrow();
+        if (authorization.isAdmin(caller)) {
+            return requested.withOwnerAndTenant(
+                    requested.owner() != null ? requested.owner() : existing != null ? existing.owner() : null,
+                    requested.tenantId() != null ? requested.tenantId() : existing != null ? existing.tenantId() : null);
+        }
+        return requested.withOwnerAndTenant(existing != null ? existing.owner() : null,
+                existing != null ? existing.tenantId() : null);
     }
 
     private String newJobId() {
@@ -403,6 +509,15 @@ public class JobController {
     public ResponseEntity<Void> pauseJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Pausing job {}", id);
+        if (authorizationOn()) {
+            JobDTO job = findJobById(id);
+            if (job == null || !allowed(job, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (!allowed(job, JobAction.EXECUTE)) {
+                return ResponseEntity.status(403).build();
+            }
+        }
         updateJobStatus(id, "Paused");
         return ResponseEntity.ok().build();
     }
@@ -463,7 +578,8 @@ public class JobController {
                     job.transformationConnector(),
                     job.narrativization(),
                     job.pipelineMode(),
-                    job.crawlSpec()
+                    job.crawlSpec(),
+                    job.access()
                 ));
                 break;
             }
@@ -489,7 +605,8 @@ public class JobController {
                     job.transformationConnector(),
                     job.narrativization(),
                     job.pipelineMode(),
-                    job.crawlSpec()
+                    job.crawlSpec(),
+                    job.access()
                 ));
                 break;
             }
@@ -517,7 +634,8 @@ public class JobController {
                     job.transformationConnector(),
                     job.narrativization(),
                     job.pipelineMode(),
-                    job.crawlSpec()
+                    job.crawlSpec(),
+                    job.access()
                 ));
                 PersistenceHelper.save("jobs.json", jobs);
                 break;
@@ -572,6 +690,10 @@ public class JobController {
 
     void setCallerResolver(CallerResolver callerResolver) {
         this.callerResolver = callerResolver;
+    }
+
+    void setAuthorization(ManagementAuthorization authorization) {
+        this.authorization = authorization;
     }
 
     /**
@@ -666,7 +788,9 @@ public class JobController {
         @Schema(description = "Execution pipeline mode (RAG or MIGRATION)", example = "RAG")
         String pipelineMode,
         @Schema(description = "Connector-specific job settings, such as the web crawler's seeds and limits")
-        Map<String, Object> crawlSpec
+        Map<String, Object> crawlSpec,
+        @Schema(description = "Who may see and run the job when management authorization is on; null for jobs created before it")
+        JobAccess access
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
@@ -686,7 +810,7 @@ public class JobController {
             String transformationConnector,
             NarrativizationConfig narrativization
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null, null);
         }
 
         public JobDTO(
@@ -704,11 +828,35 @@ public class JobController {
             NarrativizationConfig narrativization,
             String pipelineMode
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null, null);
+        }
+
+        /** The fourteen-field form used before jobs carried an access block. */
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization,
+            String pipelineMode,
+            Map<String, Object> crawlSpec
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, null);
         }
 
         public JobDTO withPipelineMode(String mode) {
-            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec);
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec, access);
+        }
+
+        public JobDTO withAccess(JobAccess newAccess) {
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, newAccess);
         }
     }
 }
