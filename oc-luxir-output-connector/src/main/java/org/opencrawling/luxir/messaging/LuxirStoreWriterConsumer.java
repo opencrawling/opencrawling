@@ -20,6 +20,7 @@ import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.luxir.LuxirConstants;
+import org.opencrawling.luxir.LuxirFieldNames;
 import org.opencrawling.luxir.client.LuxirClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -158,15 +159,7 @@ public class LuxirStoreWriterConsumer {
             // Extra metadata
             message.metadata().forEach((key, val) -> {
                 if (!RESERVED_KEYS.contains(key) && !key.equals(vectorFieldName)) {
-                    String targetKey;
-                    if (key.endsWith("_s") || key.endsWith("_t") || key.endsWith("_ss")) {
-                        targetKey = key;
-                    } else if (val instanceof Collection<?> || (val != null && val.getClass().isArray())) {
-                        targetKey = key + "_ss";
-                    } else {
-                        targetKey = key + "_s";
-                    }
-                    doc.put(targetKey, val);
+                    doc.put(LuxirFieldNames.forMetadata(key, val), val);
                 }
             });
 

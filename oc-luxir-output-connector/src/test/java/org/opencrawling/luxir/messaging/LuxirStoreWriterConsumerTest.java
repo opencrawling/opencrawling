@@ -133,7 +133,9 @@ class LuxirStoreWriterConsumerTest {
                                 Map.of("identity", "public", "identityType", "public", "access", "read"),
                                 Map.of("identity", "engineering", "identityType", "group", "access", "read"),
                                 Map.of("identity", "contractor", "identityType", "group", "access", "deny"))),
-                        "custom_tags", List.of("tag1", "tag2")
+                        "custom_tags", List.of("tag1", "tag2"),
+                        "ois:provenance.jobId", List.of("job-7"),
+                        "cmis:objectId", "abc"
                 ),
                 new float[]{0.5f},
                 DocumentAction.UPSERT
@@ -158,5 +160,11 @@ class LuxirStoreWriterConsumerTest {
 
         // Custom multi-valued metadata should receive _ss suffix
         assertEquals(List.of("tag1", "tag2"), doc.get("custom_tags_ss"));
+
+        // Luxir rejects ':' and '.' in field names, and with them the whole document
+        assertEquals(List.of("job-7"), doc.get("ois_provenance_jobId_ss"));
+        assertEquals("abc", doc.get("cmis_objectId_s"));
+        org.junit.jupiter.api.Assertions.assertTrue(doc.keySet().stream().noneMatch(k -> k.contains(":") || k.contains(".")),
+                "every field name must be valid in Luxir: " + doc.keySet());
     }
 }
