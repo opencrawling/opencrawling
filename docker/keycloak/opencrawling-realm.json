@@ -64,6 +64,60 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "opencrawling-cli",
+      "name": "OpenCrawling CLI",
+      "description": "Public client for oc auth login: device authorization grant, no client secret",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "opencrawling-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "opencrawling-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "opencrawling-automation",
+      "name": "OpenCrawling automation (demo)",
+      "description": "Confidential client for the client credentials grant (SDK, CI). Keycloak generates its secret on import; read it in the admin console.",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "opencrawling-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "opencrawling-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -98,6 +152,14 @@
       "enabled": true,
       "realmRoles": [
         "opencrawling-admin"
+      ]
+    },
+    {
+      "username": "service-account-opencrawling-automation",
+      "enabled": true,
+      "serviceAccountClientId": "opencrawling-automation",
+      "realmRoles": [
+        "hr-team"
       ]
     }
   ]

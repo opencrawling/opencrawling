@@ -38,6 +38,7 @@ import java.util.concurrent.Callable;
         CopilotCommand.class,
         AIOpsCommand.class,
         ConfigCommand.class,
+        AuthCommand.class,
         SystemCommand.class,
         SchemaCommand.class,
         McfCommand.class,

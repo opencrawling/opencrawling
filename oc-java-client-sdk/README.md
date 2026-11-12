@@ -51,9 +51,34 @@ OpenCrawlingClient client = OpenCrawlingClient.builder()
         .build();
 ```
 
+### Authentication
+
+A runtime with `opencrawling.security.identity.protect-api` needs a bearer token on every request. Pick one:
+
+```java
+// A token you already have (it is sent as is and never renewed)
+OpenCrawlingClient.builder().baseUrl(url).bearerToken(token).build();
+
+// Services and automation: the OAuth 2.0 client credentials grant. The client gets its own token, reuses it,
+// and renews it shortly before it expires or when the runtime refuses it.
+OpenCrawlingClient.builder()
+        .baseUrl(url)
+        .clientCredentials("https://idp.example.com/realms/opencrawling/protocol/openid-connect/token",
+                "reporting-service", System.getenv("OPENCRAWLING_CLIENT_SECRET"), null)
+        .build();
+
+// Anything else: your own TokenProvider (accessToken(), and invalidate() to get a new one after a 401)
+OpenCrawlingClient.builder().baseUrl(url).tokenProvider(myTokenProvider).build();
+```
+
+On a `401` the client repeats the request once if its token provider could get a new token. A refused client credentials request raises `OAuth2Exception` with the provider's error code (`invalid_client`, ...); the message never contains tokens.
+
+`client.auth().me()` returns the caller as the runtime sees it (principal, groups, `admin`, `canCreateJobs`), and `client.auth().jobPermissions()` what it may do with each job.
+
 ### 2. Creating and Starting an Ingestion Job
 
 ```java
+import org.opencrawling.sdk.models.JobAccess;
 import org.opencrawling.sdk.models.JobRequest;
 import org.opencrawling.sdk.models.JobResponse;
 import org.opencrawling.sdk.models.NarrativizationConfig;
@@ -74,6 +99,13 @@ JobResponse job = client.jobs().create(
 );
 
 System.out.println("Created Job ID: " + job.id());
+
+// With management authorization on, the creator becomes the owner. Add who else may run or see the job:
+client.jobs().create(JobRequest.builder()
+        .name("HR contracts")
+        .access(JobAccess.forGroups(List.of("hr-team"), List.of("auditors")))
+        .build());
+// Leave access unset on an update to keep the access the job has.
 
 // Trigger execution
 client.jobs().start(job.id());
@@ -144,6 +176,12 @@ opencrawling:
     api-key: your-api-key
     connect-timeout: 10s
     read-timeout: 30s
+    # Optional: get tokens with the client credentials grant instead of a fixed bearer-token
+    oauth2:
+      token-uri: https://idp.example.com/realms/opencrawling/protocol/openid-connect/token
+      client-id: reporting-service
+      client-secret: ${OPENCRAWLING_CLIENT_SECRET}   # from the environment or a secret store
+      scope:                                           # optional
 ```
 
 Inject the client anywhere in your Spring components:
