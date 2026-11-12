@@ -451,6 +451,7 @@ export default function ConnectorForm() {
       { label: 'Alfresco Content Services (Migration Mode only)', value: 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' },
       { label: 'Hyland OpenArch Federated Ingestion & Parquet Vector Bridge', value: 'org.opencrawling.openarch.output.OpenArchOutputConnector' },
       { label: 'Hyland Content Innovation Cloud (HXP Output)', value: 'org.opencrawling.hyland.cic.output.HylandCicOutputConnector' },
+      { label: 'Apache Iceberg Lakehouse Output Connector', value: 'org.opencrawling.iceberg.output.IcebergOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -5625,6 +5626,221 @@ export default function ConnectorForm() {
                           >
                             {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
                             Test HXP Output Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache Iceberg Lakehouse Output Connector */}
+                  {selectedClass === 'org.opencrawling.iceberg.output.IcebergOutputConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog Type</label>
+                          <select 
+                            {...register('configuration.catalogType', { required: true })}
+                            defaultValue="rest"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="rest">REST Catalog</option>
+                            <option value="hive">Hive Metastore (Thrift)</option>
+                            <option value="hadoop">Hadoop Catalog (Local/HDFS)</option>
+                            <option value="glue">AWS Glue</option>
+                            <option value="jdbc">JDBC Catalog</option>
+                            <option value="in-memory">In-Memory (Local Testing)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog URI</label>
+                          <input 
+                            {...register('configuration.catalogUri')}
+                            placeholder="e.g. http://localhost:8181 or thrift://localhost:9083"
+                            defaultValue="http://localhost:8181"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog Name</label>
+                          <input 
+                            {...register('configuration.catalogName')}
+                            placeholder="opencrawling_catalog"
+                            defaultValue="opencrawling_catalog"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Warehouse Location</label>
+                          <input 
+                            {...register('configuration.warehouse', { required: true })}
+                            placeholder="s3://warehouse or local path"
+                            defaultValue="s3://warehouse"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Namespace / Database</label>
+                          <input 
+                            {...register('configuration.namespace')}
+                            placeholder="enterprise_data"
+                            defaultValue="enterprise_data"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Name</label>
+                          <input 
+                            {...register('configuration.tableName')}
+                            placeholder="documents"
+                            defaultValue="documents"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Strategy</label>
+                          <select 
+                            {...register('configuration.tableStrategy')}
+                            defaultValue="UNIFIED"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="UNIFIED">UNIFIED (Single Table for All Documents)</option>
+                            <option value="PER_DOCUMENT_TYPE">PER_DOCUMENT_TYPE (Partitioned Tables per Document Type)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Partition Strategy</label>
+                          <select 
+                            {...register('configuration.partitionStrategy')}
+                            defaultValue="YEAR_MONTH"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="YEAR_MONTH">YEAR_MONTH (Partition by Ingestion Year &amp; Month)</option>
+                            <option value="SOURCE_AND_DATE">SOURCE_AND_DATE (Partition by Repository Source &amp; Date)</option>
+                            <option value="NONE">NONE (Unpartitioned Table)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Write Format</label>
+                          <select 
+                            {...register('configuration.writeFormat')}
+                            defaultValue="parquet"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="parquet">Apache Parquet (.parquet)</option>
+                            <option value="orc">Apache ORC (.orc)</option>
+                            <option value="avro">Apache Avro (.avro)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Compression Codec</label>
+                          <select 
+                            {...register('configuration.compressionCodec')}
+                            defaultValue="zstd"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="zstd">Zstandard (zstd)</option>
+                            <option value="snappy">Snappy</option>
+                            <option value="gzip">Gzip</option>
+                            <option value="none">Uncompressed</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.autoSchemaEvolution')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Automatic Schema Evolution
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.autoCreateTable')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Auto Create Table If Not Exists
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 border-t border-border/50 pt-3 mt-1">
+                          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">S3 / MinIO / Object Storage Options</h4>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Endpoint URL (Optional)</label>
+                          <input 
+                            {...register('configuration.s3Endpoint')}
+                            placeholder="http://localhost:9000"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Region</label>
+                          <input 
+                            {...register('configuration.s3Region')}
+                            placeholder="us-east-1"
+                            defaultValue="us-east-1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Access Key ID</label>
+                          <input 
+                            {...register('configuration.s3AccessKeyId')}
+                            placeholder="admin"
+                            autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Secret Access Key</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.s3SecretAccessKey')}
+                            placeholder="••••••••••••"
+                            autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Database className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Apache Iceberg Lakehouse Table Sink</p>
+                            <p className="mt-0.5 opacity-90">
+                              Streams enriched content documents and metadata directly into Apache Iceberg ACID tables formatted as columnar Apache Parquet. Supports partition pruning, time-travel audits, schema evolution, and zero-copy queries from query engines like Trino, StarRocks, and Apache Spark.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test Iceberg Catalog Connectivity
                           </button>
                         </div>
                       </div>

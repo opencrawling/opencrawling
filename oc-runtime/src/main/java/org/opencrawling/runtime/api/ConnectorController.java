@@ -450,6 +450,17 @@ public class ConnectorController {
             Map.entry("defaultContentType", "ArchivedDocument"),
             Map.entry("conflictResolution", "create-version")
         )));
+        defaults.add(new ConnectorDTO("Iceberg_Lakehouse_Output", "Apache Iceberg Lakehouse Output Connector", "output", "org.opencrawling.iceberg.output.IcebergOutputConnector", 10, Map.of(
+            "catalogType", "rest",
+            "catalogUri", "http://localhost:8181",
+            "catalogName", "opencrawling_catalog",
+            "warehouse", "s3://warehouse",
+            "namespace", "enterprise_data",
+            "tableName", "documents",
+            "tableStrategy", "UNIFIED",
+            "partitionStrategy", "YEAR_MONTH",
+            "autoSchemaEvolution", "true"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
