@@ -52,6 +52,7 @@ COPY oc-doxis-client/pom.xml oc-doxis-client/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
 COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
+COPY oc-iceberg-output-connector/pom.xml oc-iceberg-output-connector/
 COPY oc-alfresco-output-connector/pom.xml oc-alfresco-output-connector/
 COPY oc-admin-ui/pom.xml oc-admin-ui/
 COPY oc-runtime/pom.xml oc-runtime/
@@ -70,7 +71,7 @@ COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
 COPY oc-hyland-cic-connector/pom.xml oc-hyland-cic-connector/
 
 # Download maven dependencies first (saves time on rebuilds if code changes but dependencies do not)
-RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-sharepoint-repository-connector,oc-mfiles-repository-connector,oc-filenet-repository-connector,oc-documentum-repository-connector,oc-openarch-output-connector,oc-openarch-repository-connector,oc-hyland-cic-connector,oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-web-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-doxis-repository-connector,oc-jdbc-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-grpc-push-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-elasticsearch-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-doxis-client,oc-seatunnel-output-connector,oc-ozone-output-connector,oc-s3-output-connector,oc-alfresco-output-connector,oc-authorization-openfga,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
+RUN mvn dependency:go-offline -B -DexcludeArtifactIds=oc-sharepoint-repository-connector,oc-mfiles-repository-connector,oc-filenet-repository-connector,oc-documentum-repository-connector,oc-openarch-output-connector,oc-openarch-repository-connector,oc-hyland-cic-connector,oc-grpc-api,oc-core,oc-observability,oc-filesystem-repository-connector,oc-alfresco-repository-connector,oc-iceberg-repository-connector,oc-flowable-repository-connector,oc-camunda-repository-connector,oc-web-repository-connector,oc-aps-repository-connector,oc-cmis-repository-connector,oc-doxis-repository-connector,oc-jdbc-repository-connector,oc-stormcrawler-bolt,oc-stormcrawler-repository-connector,oc-grpc-push-connector,oc-vector-output-connector,oc-milvus-output-connector,oc-admin-ui,oc-runtime,oc-embedding-service,oc-opensearch2-output-connector,oc-opensearch3-output-connector,oc-elasticsearch-output-connector,oc-qdrant-output-connector,oc-vespa-output-connector,oc-solr-output-connector,oc-luxir-output-connector,oc-doxis-client,oc-seatunnel-output-connector,oc-ozone-output-connector,oc-s3-output-connector,oc-iceberg-output-connector,oc-alfresco-output-connector,oc-authorization-openfga,opencrawling-connector-archetypes,opencrawling-archetype-repository-connector,opencrawling-archetype-output-connector,opencrawling-archetype-transformation-connector,oc-java-client-sdk,oc-cli,oc-mcf-migrator
 
 # Copy all source files
 COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
@@ -107,6 +108,7 @@ COPY oc-doxis-client/src/ /app/oc-doxis-client/src/
 COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
 COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
 COPY oc-s3-output-connector/src/ /app/oc-s3-output-connector/src/
+COPY oc-iceberg-output-connector/src/ /app/oc-iceberg-output-connector/src/
 COPY oc-alfresco-output-connector/src/ /app/oc-alfresco-output-connector/src/
 COPY oc-openarch-output-connector/src/ /app/oc-openarch-output-connector/src/
 COPY oc-authorization-openfga/src/ /app/oc-authorization-openfga/src/
