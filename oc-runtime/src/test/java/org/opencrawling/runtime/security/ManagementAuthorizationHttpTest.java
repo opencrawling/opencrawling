@@ -61,6 +61,8 @@ import static org.opencrawling.runtime.security.IdentityTestApplication.validTok
                 "opencrawling.security.identity.protect-api=true",
                 "opencrawling.security.management.enabled=true",
                 "opencrawling.security.management.job-creator-groups=hr-team",
+                "opencrawling.security.identity.admin-ui.client-id=opencrawling-admin-ui",
+                "opencrawling.security.identity.admin-ui.issuer=https://idp.test/realms/corp",
                 "spring.security.oauth2.resourceserver.jwt.audiences=" + IdentityTestApplication.AUDIENCE,
                 "spring.ai.mcp.server.protocol=STREAMABLE"
         })
@@ -68,7 +70,7 @@ class ManagementAuthorizationHttpTest {
 
     @Configuration
     @Import({JobController.class, ConnectorController.class, ManagementAuthorization.class, JobVisibility.class,
-            ManagementAuthorizationWebConfig.class})
+            ManagementAuthorizationWebConfig.class, AuthController.class})
     static class ManagementApi {
         @Bean
         JobOrchestrator jobOrchestrator() {
@@ -183,5 +185,37 @@ class ManagementAuthorizationHttpTest {
         assertThat(listed.statusCode()).isEqualTo(200);
         assertThat(listed.body()).contains("\"name\"").doesNotContain("\"configuration\":{");
         assertThat(send("GET", "/api/connectors", ADMIN, null).body()).contains("\"configuration\":{");
+    }
+
+    @Test
+    void theSignInSettingsArePublicAndTheCallerSeesWhatTheyMayDo() {
+        HttpResponse<String> config = send("GET", "/api/auth/config", null, null);
+        assertThat(config.statusCode()).isEqualTo(200);
+        assertThat(config.body()).contains("\"mode\":\"jwt\"").contains("\"protectApi\":true")
+                .contains("\"issuer\":\"https://idp.test/realms/corp\"").contains("\"clientId\":\"opencrawling-admin-ui\"");
+        assertThat(send("POST", "/api/auth/config", null, "{}").statusCode()).as("only GET is public").isEqualTo(401);
+
+        assertThat(send("GET", "/api/auth/me", null, null).statusCode()).isEqualTo(401);
+        assertThat(send("GET", "/api/auth/me", HR, null).body()).contains("\"principal\":\"hr.lead\"")
+                .contains("\"groups\":[\"hr-team\"]").contains("\"admin\":false").contains("\"canCreateJobs\":true");
+        assertThat(send("GET", "/api/auth/me", FINANCE, null).body()).contains("\"admin\":false").contains("\"canCreateJobs\":false");
+        assertThat(send("GET", "/api/auth/me", ADMIN, null).body()).contains("\"admin\":true").contains("\"managementAuthorization\":true");
+    }
+
+    @Test
+    void jobPermissionsFollowTheJobsAccess() {
+        String job = "{\"id\":\"new\",\"name\":\"" + name + "\",\"repositoryConnector\":\"r\",\"outputConnector\":\"o\","
+                + "\"path\":\"/tmp\",\"pipelineMode\":\"rag\",\"access\":{\"allowedGroups\":[\"ops-team\"],\"viewerGroups\":[\"auditors\"]}}";
+        assertThat(send("POST", "/api/jobs", HR, job).statusCode()).isEqualTo(201);
+        String id = jobIdOrNull();
+        String operator = validToken(Map.of("preferred_username", "op", "groups", List.of("ops-team")));
+        String auditor = validToken(Map.of("preferred_username", "aud", "groups", List.of("auditors")));
+
+        assertThat(send("GET", "/api/jobs/permissions", null, null).statusCode()).isEqualTo(401);
+        assertThat(send("GET", "/api/jobs/permissions", HR, null).body()).contains("\"" + id + "\":[\"READ\",\"EXECUTE\",\"MANAGE\"]");
+        assertThat(send("GET", "/api/jobs/permissions", operator, null).body()).contains("\"" + id + "\":[\"READ\",\"EXECUTE\"]");
+        assertThat(send("GET", "/api/jobs/permissions", auditor, null).body()).contains("\"" + id + "\":[\"READ\"]");
+        assertThat(send("GET", "/api/jobs/permissions", FINANCE, null).body()).doesNotContain(id);
+        assertThat(send("GET", "/api/jobs/permissions", ADMIN, null).body()).contains("\"" + id + "\":[\"READ\",\"EXECUTE\",\"MANAGE\"]");
     }
 }

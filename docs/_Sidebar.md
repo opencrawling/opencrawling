@@ -7,6 +7,7 @@
 * **[Model Context Protocol](Model-Context-Protocol)**
 * **[Web Crawler Specification](Web-Crawler-Specification)**
 * **[Document Authorization](Document-Authorization)**
+* **[Security and Identity Management](Security-and-Identity-Management)**
 * **[Enterprise Multi-Agent Integration](Enterprise-Multi-Agent-Integration)**
 * **[gRPC Push Connector](gRPC-Push-Connector)**
 * **[Migration Guide](Migration-Guide)**

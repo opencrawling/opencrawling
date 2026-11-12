@@ -1,0 +1,104 @@
+{
+  "realm": "opencrawling",
+  "displayName": "OpenCrawling (demo)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "roles": {
+    "realm": [
+      {
+        "name": "opencrawling-admin",
+        "description": "May do everything on the OpenCrawling management plane"
+      },
+      {
+        "name": "hr-team",
+        "description": "Demo department: may create jobs, sees its own"
+      },
+      {
+        "name": "finance-team",
+        "description": "Demo department: may create jobs, sees its own"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "opencrawling-admin-ui",
+      "name": "OpenCrawling admin UI",
+      "description": "Public client: authorization code flow with PKCE, no client secret",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:3000/auth/callback",
+        "http://localhost:5173/auth/callback",
+        "http://localhost:8080/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/##http://localhost:5173/##http://localhost:8080/"
+      },
+      "protocolMappers": [
+        {
+          "name": "opencrawling-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "opencrawling-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "hr_admin",
+      "firstName": "HR",
+      "lastName": "Admin",
+      "email": "hr_admin@opencrawling.test",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "hr-team"
+      ]
+    },
+    {
+      "username": "finance_admin",
+      "firstName": "Finance",
+      "lastName": "Admin",
+      "email": "finance_admin@opencrawling.test",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "finance-team"
+      ]
+    },
+    {
+      "username": "global_admin",
+      "firstName": "Global",
+      "lastName": "Admin",
+      "email": "global_admin@opencrawling.test",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "opencrawling-admin"
+      ]
+    }
+  ]
+}

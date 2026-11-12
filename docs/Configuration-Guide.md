@@ -133,12 +133,18 @@ Who an MCP tool call is made for:
     *   *Type*: `string`
     *   *Default*: `none`
 *   **`SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI`** (or **`..._JWKSETURI`**) and **`SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_AUDIENCES`**: the token issuer and the accepted audiences, required and recommended respectively in `jwt` mode.
-*   **`OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API`** (`opencrawling.security.identity.protect-api`): in `jwt` mode, also require a token on `/api/**` (OIS ingest keeps its own token). The admin UI cannot send tokens yet.
+*   **`OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API`** (`opencrawling.security.identity.protect-api`): in `jwt` mode, also require a token on `/api/**` (OIS ingest keeps its own token). The admin UI then signs users in, which needs `admin-ui.client-id` below.
     *   *Type*: `boolean`
     *   *Default*: `false`
+*   **`OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_CLIENT_ID`** (`opencrawling.security.identity.admin-ui.client-id`): the identity provider's public client for the admin UI. When set (in `jwt` mode), the UI signs users in with the OpenID Connect authorization code flow with PKCE and sends their access token. The UI reads it from the public `GET /api/auth/config`.
+    *   *Default*: empty (the UI does not sign in)
+*   **`OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_SCOPE`** (`opencrawling.security.identity.admin-ui.scope`): the scopes the UI asks for. Add your API's scope where the provider needs one to issue a token for it (Microsoft Entra ID).
+    *   *Default*: `openid profile`
+*   **`OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_ISSUER`** (`opencrawling.security.identity.admin-ui.issuer`): the issuer as the browser reaches it, if that differs from `issuer-uri`.
+    *   *Default*: empty (`spring.security.oauth2.resourceserver.jwt.issuer-uri`)
 *   **`OPENCRAWLING_SECURITY_IDENTITY_JWT_PRINCIPAL_CLAIMS`**, **`..._GROUP_CLAIMS`**, **`..._TENANT_CLAIM`**: which claims give the principal (default `preferred_username,sub`, first non-blank wins), the groups (default `realm_access.roles,groups`) and the tenant (default none).
 
-See [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-identity) for an example and the claim rules.
+See [Model Context Protocol, Caller identity](Model-Context-Protocol#-caller-identity) for an example and the claim rules, and [Security and Identity Management](Security-and-Identity-Management) for setting up Keycloak, Microsoft Entra ID or Okta.
 
 ---
 
@@ -183,7 +189,7 @@ Group names match case-insensitively. Each job carries an `access` block (in `jo
 *   **Admin-only routes:** connectors (except listing them, which job creators may do, without their configuration), `/api/system/settings/**`, transport settings, `/api/system/logs`, `/api/mcf-migration/**`, `/api/vespa/**`, `/api/observability/metrics` and `/api/reports/query`. Job creators may also use the narrativization copilot. The MCP tool `queryThroughputMetrics` is admin-only too.
 *   **Unchanged:** discovery, dynamic jobs, sidecars, BPM events and OIS ingest keep their own caller checks.
 
-The admin UI cannot send tokens yet, so it does not work while `protect-api` is on.
+The admin UI shows each user only what they may use: admin-only pages are hidden, and job actions follow `GET /api/jobs/permissions`. The runtime enforces the same rules either way.
 
 ---
 

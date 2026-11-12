@@ -311,4 +311,4 @@ How the token maps to the caller (all configurable under `opencrawling.security.
 
 If Keycloak's group mapper sends full group paths (`/finance`), either turn off "Full group path" or write the ACL grants with the full path.
 
-The rest of the runtime is unchanged: the REST API and the admin UI stay open unless `opencrawling.security.identity.protect-api=true`, which requires a token on `/api/**` too. The OIS ingest endpoint keeps its own token either way. The admin UI cannot send tokens yet, so leave `protect-api` off where the UI is used.
+The rest of the runtime is unchanged: the REST API and the admin UI stay open unless `opencrawling.security.identity.protect-api=true`, which requires a token on `/api/**` too. The OIS ingest endpoint keeps its own token either way. With `protect-api`, set `opencrawling.security.identity.admin-ui.client-id` so the admin UI signs users in (see [Security and Identity Management](Security-and-Identity-Management)).

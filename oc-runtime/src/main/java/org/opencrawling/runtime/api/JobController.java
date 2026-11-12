@@ -19,6 +19,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
@@ -112,6 +114,20 @@ public class JobController {
             return jobs;
         }
         return jobs.stream().filter(job -> allowed(job, JobAction.READ)).toList();
+    }
+
+    @Operation(summary = "What the caller may do with each job", description = "For every job the caller may see: READ, EXECUTE (start, stop, pause) and MANAGE (edit, delete). Every job allows all three when management authorization is off.")
+    @ApiResponse(responseCode = "200", description = "Allowed actions by job id")
+    @GetMapping("/permissions")
+    public Map<String, List<JobAction>> getJobPermissions() {
+        Map<String, List<JobAction>> permissions = new LinkedHashMap<>();
+        for (JobDTO job : jobs) {
+            List<JobAction> allowedActions = Arrays.stream(JobAction.values()).filter(action -> allowed(job, action)).toList();
+            if (allowedActions.contains(JobAction.READ)) {
+                permissions.put(job.id(), allowedActions);
+            }
+        }
+        return permissions;
     }
 
     @Operation(summary = "Get pipeline job by ID", description = "Retrieves details and status of a specific crawling job by its identifier.")

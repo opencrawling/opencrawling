@@ -53,12 +53,14 @@ public class IdentityProperties {
     private Mode mode = Mode.NONE;
 
     /**
-     * In {@code jwt} mode, also require a token on the REST API ({@code /api/**}). Off by default because the admin
-     * UI cannot send tokens yet. The OIS ingest endpoint keeps its own token either way.
+     * In {@code jwt} mode, also require a token on the REST API ({@code /api/**}). Off by default; the admin UI
+     * sends tokens once {@code admin-ui.client-id} is set. The OIS ingest endpoint keeps its own token either way.
      */
     private boolean protectApi = false;
 
     private final Jwt jwt = new Jwt();
+
+    private final AdminUi adminUi = new AdminUi();
 
     public Mode getMode() {
         return mode;
@@ -78,6 +80,10 @@ public class IdentityProperties {
 
     public void setProtectApi(boolean protectApi) {
         this.protectApi = protectApi;
+    }
+
+    public AdminUi getAdminUi() {
+        return adminUi;
     }
 
     public Jwt getJwt() {
@@ -121,6 +127,49 @@ public class IdentityProperties {
 
         public void setTenantClaim(String tenantClaim) {
             this.tenantClaim = tenantClaim == null ? "" : tenantClaim;
+        }
+    }
+
+    /**
+     * How the admin UI signs users in ({@code opencrawling.security.identity.admin-ui.*}). The UI reads these from
+     * {@code GET /api/auth/config} and runs the OpenID Connect authorization code flow with PKCE against the issuer.
+     */
+    public static class AdminUi {
+
+        /** The identity provider's public client for the admin UI. Blank: the UI does not sign users in. */
+        private String clientId = "";
+
+        /** Scopes the UI asks for. */
+        private String scope = "openid profile";
+
+        /**
+         * The issuer the UI signs in with, as the browser reaches it. Blank: the resource server's
+         * {@code spring.security.oauth2.resourceserver.jwt.issuer-uri}.
+         */
+        private String issuer = "";
+
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId == null ? "" : clientId.trim();
+        }
+
+        public String getScope() {
+            return scope;
+        }
+
+        public void setScope(String scope) {
+            this.scope = scope == null || scope.isBlank() ? "openid profile" : scope.trim();
+        }
+
+        public String getIssuer() {
+            return issuer;
+        }
+
+        public void setIssuer(String issuer) {
+            this.issuer = issuer == null ? "" : issuer.trim();
         }
     }
 }
