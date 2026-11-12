@@ -43,6 +43,55 @@
 
 set -euo pipefail
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # Configuration
 OPENARCH_HOST="${OPENARCH_HOST:-localhost}"
 OPENARCH_PORT="${OPENARCH_PORT:-8081}"
@@ -52,9 +101,9 @@ OPENARCH_URL="${OPENARCH_URL:-http://${OPENARCH_HOST}:${OPENARCH_PORT}}"
 OPENARCH_REPOSITORY_ID="${OPENARCH_REPOSITORY_ID:-default}"
 OPENARCH_ROOT_FOLDER_ID="${OPENARCH_ROOT_FOLDER_ID:-00000000-0000-0000-0000-000000000000}"
 COMPOSE_FILE="oc-openarch-output-connector/docker/docker-compose-decoupled-with-openarch.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 TIMEOUT="${TIMEOUT:-300}"
 MCP_PORT="${MCP_PORT:-8080}"
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 
 # Formatting
 RED='\033[0;31m'
@@ -95,7 +144,11 @@ log_info "Working directory set to: $(pwd)"
 
 # Helper function for docker compose commands
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 # Basic auth header for OpenArch REST API calls

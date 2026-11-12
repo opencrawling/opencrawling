@@ -37,13 +37,60 @@
 
 set -euo pipefail
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 export MCP_PORT="${MCP_PORT:-18080}"
 export OPENFGA_HTTP_PORT="${OPENFGA_HTTP_PORT:-8089}"
 export OC_IMAGE_TAG="${OC_IMAGE_TAG:-openfga-45}"
 export OPENFGA_PRESHARED_KEY="${OPENFGA_PRESHARED_KEY:-openfga-e2e-$(date +%s)-key}"
 export OPENCRAWLING_INGEST_OIS_TOKEN="${OPENCRAWLING_INGEST_OIS_TOKEN:-openfga-e2e-ois-token}"
-SKIP_BUILD="${SKIP_BUILD:-false}"
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 TIMEOUT="${TIMEOUT:-300}"
 
 BASE="http://localhost:${MCP_PORT}"
@@ -64,8 +111,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 compose() {
-  COMPOSE_BAKE=false docker compose -p openfga-e2e -f docker-compose-decoupled.yml -f docker-compose-openfga.yml \
-    -f scripts/docker-compose-openfga-decoupled.test.yml "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f docker-compose-decoupled.local.yml ]; then
+    COMPOSE_BAKE=false docker compose -p openfga-e2e -f docker-compose-decoupled.yml -f docker-compose-decoupled.local.yml -f docker-compose-openfga.yml \
+      -f scripts/docker-compose-openfga-decoupled.test.yml "$@"
+  else
+    COMPOSE_BAKE=false docker compose -p openfga-e2e -f docker-compose-decoupled.yml -f docker-compose-openfga.yml \
+      -f scripts/docker-compose-openfga-decoupled.test.yml "$@"
+  fi
 }
 
 cleanup() {

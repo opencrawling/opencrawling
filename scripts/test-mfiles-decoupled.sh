@@ -39,14 +39,62 @@
 
 set -euo pipefail
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # Configuration
 COMPOSE_FILE="oc-mfiles-repository-connector/docker/docker-compose-decoupled-with-mfiles.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 MOCK_URL="${MOCK_URL:-http://localhost:8090}"
 MCP_PORT="${MCP_PORT:-8080}"
 TIMEOUT="${TIMEOUT:-300}"
 INGEST_TIMEOUT="${INGEST_TIMEOUT:-300}"
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
-SKIP_BUILD="${SKIP_BUILD:-false}"
 VAULT_KEY="C0B3B52E-6512-4BD8-8F2B-2A8E9A349201"
 PG="postgres-vector-decoupled-mfiles"
 
@@ -93,7 +141,11 @@ cd "$SCRIPT_DIR/.."
 log_info "Working directory set to: $(pwd)"
 
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 # psql helper: one value, whitespace stripped; a SQL error is reported instead of ending the script silently

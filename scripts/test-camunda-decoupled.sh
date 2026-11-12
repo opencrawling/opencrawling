@@ -19,6 +19,54 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
 # Color variables
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -38,15 +86,28 @@ command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl is required but not installed. Aborting.${NC}" >&2; exit 1; }
 
 COMPOSE_FILE="oc-camunda-repository-connector/docker/docker-compose-decoupled-with-camunda.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 
 # Helper function for docker compose commands
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 cleanup() {
-  echo -e "\n${YELLOW}Tearing down Camunda decoupled test environment...${NC}"
-  compose down --remove-orphans >/dev/null 2>&1 || true
+  local exit_code=$?
+  if [ "$exit_code" -ne 0 ]; then
+    echo -e "${RED}Test execution interrupted or failed with exit code $exit_code.${NC}"
+  fi
+  if [ "${KEEP_CONTAINERS}" = false ]; then
+    echo -e "\n${YELLOW}Tearing down Camunda decoupled test environment...${NC}"
+    compose down --remove-orphans >/dev/null 2>&1 || true
+  else
+    echo -e "\n${YELLOW}KEEP_CONTAINERS=true set. Skipping docker compose teardown.${NC}"
+  fi
 }
 trap cleanup EXIT
 
@@ -55,8 +116,12 @@ echo -e "${YELLOW}Cleaning up previous Camunda decoupled containers...${NC}"
 compose down --remove-orphans || true
 
 # Build microservices images
-echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source...${NC}"
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW}SKIP_BUILD=true: Skipping compose build and using existing images.${NC}"
+else
+  echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC}"
+  compose build
+fi
 
 # Start services
 echo -e "${YELLOW}Starting complete decoupled Camunda-based multi-service infrastructure...${NC}"
