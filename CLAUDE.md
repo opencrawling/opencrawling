@@ -138,6 +138,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
   - Claims are deleted on consume (`cleanup-on-consume`). `ClaimCheckGarbageCollector` sweeps orphans every hour by default.
   - In decoupled deployments every stage must be able to reach the store: use a shared volume or Ozone.
 - **Tombstones:** `DocumentAction.DELETE` skips claim-check storage, Tika, chunking and embedding. The writer then purges that document's chunks.
+- **Failures:** listeners must rethrow, never log and swallow. Each service's `KafkaConfig` sets a `DefaultErrorHandler` that retries with exponential back-off (`opencrawling.kafka.retry.*`) and then publishes the record to `<topic>.DLT`; a payload that cannot be deserialized goes there at once. Messages are keyed by document id (`partitionKey()`), so a document's chunks and its DELETE stay in order.
 - **Pipeline mode:** `opencrawling.pipeline.mode` is `RAG` (default) or `MIGRATION`, and a job can override it.
 - **Stage toggles:** each of these defaults to `true`. Turning them off is how the decoupled containers split one codebase into separate stages.
   - `opencrawling.consumer.ingestion.enabled`

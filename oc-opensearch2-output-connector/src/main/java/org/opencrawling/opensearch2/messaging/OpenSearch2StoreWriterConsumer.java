@@ -62,15 +62,12 @@ public class OpenSearch2StoreWriterConsumer {
                         ? message.documentId()
                         : message.chunkId();
                 log.info("Received DELETE tombstone for OpenSearch 2.x: documentId={}, chunkId={}", docId, message.chunkId());
-                try {
-                    client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
-                            .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_DOCUMENT_ID).value(FieldValue.of(docId))))
-                            .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(docId))))
-                            .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(message.chunkId()))))
-                    )));
-                } catch (Exception e) {
-                    log.debug("deleteByQuery failed or not supported in OpenSearch 2.x: {}", e.getMessage());
-                }
+                // The delete that purges the document's chunks; a failure propagates, so the tombstone is retried.
+                client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
+                        .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_DOCUMENT_ID).value(FieldValue.of(docId))))
+                        .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(docId))))
+                        .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(message.chunkId()))))
+                )));
                 try {
                     client.delete(d -> d.index(indexName).id(message.chunkId()));
                 } catch (Exception ignored) {
@@ -120,6 +117,9 @@ public class OpenSearch2StoreWriterConsumer {
             log.info("Successfully saved chunk {} to OpenSearch index '{}'.", message.chunkId(), indexName);
         } catch (Exception e) {
             log.error("Failed to store embedded chunk in OpenSearch: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Chunks are indexed
+            // under their own ids and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("OpenSearch 2.x write failed for chunk " + message.chunkId(), e);
         }
     }
 }

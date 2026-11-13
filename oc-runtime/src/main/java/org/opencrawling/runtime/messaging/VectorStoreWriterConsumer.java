@@ -164,6 +164,9 @@ public class VectorStoreWriterConsumer {
             if (traceStore != null) {
                 traceStore.recordError(jobId, "ERROR", "VectorStoreWriterConsumer", "Failed to store embedded chunk: " + message.chunkId() + " - " + e.getMessage(), e.toString());
             }
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Chunks are upserted
+            // under their own ids and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("pgvector write failed for chunk " + message.chunkId(), e);
         }
     }
 

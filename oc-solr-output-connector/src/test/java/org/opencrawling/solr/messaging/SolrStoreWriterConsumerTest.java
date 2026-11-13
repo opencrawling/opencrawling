@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class SolrStoreWriterConsumerTest {
@@ -52,6 +53,21 @@ class SolrStoreWriterConsumerTest {
         consumer.consume(tombstone);
 
         verify(solrClient).deleteByQuery(eq("enterprise_kb"), eq("id:\"doc-solr-1\" OR documentId:\"doc-solr-1\" OR chunk_id:\"chunk-solr-1\""), eq(1000));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() throws Exception {
+        SolrClient solrClient = mock(SolrClient.class);
+        when(solrClient.deleteByQuery(anyString(), anyString(), anyInt())).thenThrow(new java.io.IOException("solr unavailable"));
+        SolrStoreWriterConsumer consumer = new SolrStoreWriterConsumer(solrClient);
+        ReflectionTestUtils.setField(consumer, "collectionName", "enterprise_kb");
+        ReflectionTestUtils.setField(consumer, "commitWithinMs", 1000);
+
+        assertThatThrownBy(() -> consumer.consume(new DocumentEmbeddedMessage("doc-solr-1", "chunk-solr-1", "",
+                Map.of(), new float[0], DocumentAction.DELETE)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("chunk-solr-1")
+                .hasRootCauseMessage("solr unavailable");
     }
 
     @Test

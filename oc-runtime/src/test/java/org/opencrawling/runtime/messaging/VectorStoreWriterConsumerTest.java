@@ -145,6 +145,23 @@ class VectorStoreWriterConsumerTest {
     }
 
     @Test
+    void aFailedWriteIsRethrownSoKafkaRetriesIt() {
+        doThrow(new RuntimeException("database unavailable")).when(store1024).add(anyList());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-1", "chunk-1", "text", Map.of(), new float[1024])));
+        assertTrue(thrown.getMessage().contains("chunk-1"));
+    }
+
+    @Test
+    void aFailedPurgeIsRethrownSoKafkaRetriesTheTombstone() {
+        doThrow(new RuntimeException("database unavailable")).when(store768).delete(any(Filter.Expression.class));
+
+        assertThrows(IllegalStateException.class, () -> consumer.consume(new DocumentEmbeddedMessage("doc-1", "doc-1",
+                "", Map.of(), new float[0], org.opencrawling.core.document.DocumentAction.DELETE)));
+    }
+
+    @Test
     void testFirstChunkPurgesTheChunksBeyondTheDocumentsNewLength() {
         String documentId = "http://example.com/shrunk.html";
         DocumentEmbeddedMessage firstChunk = new DocumentEmbeddedMessage(

@@ -160,6 +160,10 @@ public class IngestionConsumer {
                 publishTombstone(message);
                 return;
             }
+            if (message.uri() == null || message.uri().isBlank()) {
+                log.info("Document {} has no content URI (metadata-only), skipping chunking.", message.documentId());
+                return;
+            }
 
             URI fileUri = URI.create(message.uri());
             
@@ -172,6 +176,12 @@ public class IngestionConsumer {
                     log.warn("Failed to read HTTP stream directly for {}: {}", fileUri, e.getMessage());
                     contentBytes = new byte[0];
                 }
+            } else if (!claimCheckStore.supports(fileUri)) {
+                // Contentless / metadata-only documents keep their repository URI (e.g. documentum://..., filenet://...)
+                // for ACL and metadata consumers; no claim-check object exists to extract.
+                log.info("Document {} URI '{}' has no claim-check store content (metadata-only), skipping chunking.",
+                        message.documentId(), message.uri());
+                return;
             } else {
                 try (InputStream contentStream = claimCheckStore.get(fileUri)) {
                     contentBytes = contentStream.readAllBytes();
@@ -314,12 +324,19 @@ public class IngestionConsumer {
 
             cleanupClaim(fileUri);
         } catch (java.nio.file.NoSuchFileException e) {
+            // Retrying cannot bring the content back, so this one is skipped rather than retried.
             log.warn("Ingestion file no longer exists (possibly a temporary test file): {}", message.uri());
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to process Kafka ingestion message: {}", message.documentId(), e);
             if (traceStore != null) {
                 traceStore.recordError(jobId, "ERROR", "IngestionConsumer", "Failed to process Kafka ingestion message: " + e.getMessage(), e.toString());
             }
+            // Rethrown so the container's error handler retries the message, then dead-letters it. A retry republishes
+            // the same chunk ids, and the claim is only cleaned up after a successful run, so retrying is safe.
+            throw new IllegalStateException("Ingestion failed for document " + message.documentId(), e);
         }
     }
 

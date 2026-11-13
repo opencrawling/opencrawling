@@ -126,7 +126,13 @@ public class MilvusStoreWriterConsumer {
             client.upsert(upsertReq);
             log.info("Successfully saved chunk {} to Milvus collection '{}'.", message.chunkId(), collectionName);
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Milvus: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Rows are upserted
+            // by id and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Milvus write failed for chunk " + message.chunkId(), e);
         }
     }
 

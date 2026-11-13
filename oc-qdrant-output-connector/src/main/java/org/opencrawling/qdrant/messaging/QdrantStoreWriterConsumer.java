@@ -109,7 +109,13 @@ public class QdrantStoreWriterConsumer {
             client.upsertAsync(properties.collectionName(), List.of(point)).get();
             log.info("Successfully saved chunk {} to Qdrant collection '{}'.", message.chunkId(), properties.collectionName());
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Qdrant: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Points are upserted
+            // by id and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Qdrant write failed for chunk " + message.chunkId(), e);
         }
     }
 }

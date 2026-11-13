@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -98,5 +100,19 @@ class QdrantStoreWriterConsumerTest {
         assertEquals(1, points.size());
         assertEquals("doc-qdrant-1", points.get(0).getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue());
         assertEquals("chunk-qdrant-1", points.get(0).getPayloadMap().get(QdrantFields.FIELD_CHUNK_ID).getStringValue());
+    }
+
+    @Test
+    void aFailedWriteIsRethrownSoKafkaRetriesIt() {
+        QdrantClient client = mock(QdrantClient.class);
+        QdrantOutputProperties properties = new QdrantOutputProperties("localhost", 6334, null, "enterprise_kb", 384, QdrantOutputProperties.Distance.COSINE, QdrantOutputProperties.Quantization.NONE, false, 64);
+        when(client.upsertAsync(eq("enterprise_kb"), any(List.class)))
+                .thenReturn(Futures.immediateFailedFuture(new RuntimeException("connection refused")));
+        QdrantStoreWriterConsumer consumer = new QdrantStoreWriterConsumer(client, properties, new QdrantPointMapper());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-qdrant-1", "chunk-qdrant-1", "text", Map.of(),
+                        new float[]{0.1f, 0.2f, 0.3f, 0.4f}, DocumentAction.UPSERT)));
+        assertTrue(thrown.getMessage().contains("chunk-qdrant-1"));
     }
 }

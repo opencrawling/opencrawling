@@ -92,6 +92,25 @@ For high ingestion jobs, adjust Kafka topic partition numbers:
 
 ---
 
+## ♻️ Failed Messages: Retries and Dead-Letter Topics
+
+A pipeline stage that cannot process a Kafka message (the ingestion consumer, the embedding service, or a store writer) retries it with exponential back-off. If it still fails, the message goes to `<topic>.DLT`: `opencrawling-documents.DLT`, `opencrawling-chunks.DLT` or `opencrawling-embedded.DLT`. A message is never dropped.
+
+| Property | Default | Description |
+|---|---|---|
+| `opencrawling.kafka.retry.max-retries` | `6` | Retries before the message is dead-lettered. |
+| `opencrawling.kafka.retry.initial-interval-ms` | `1000` | Wait before the first retry. |
+| `opencrawling.kafka.retry.multiplier` | `2.0` | Factor applied to the wait after each retry. |
+| `opencrawling.kafka.retry.max-interval-ms` | `30000` | Longest wait between two retries. |
+
+- **Defaults:** about a minute of retries (1, 2, 4, 8, 16 and 30 seconds). Each retry polls the message again, so keep a single wait below the consumer's `max.poll.interval.ms` (5 minutes by default). The same properties apply to `oc-runtime` and `oc-embedding-service`.
+- **While a message is retried, its partition waits.** Messages are keyed by document id, so the order within a document is kept; other documents on that partition are delayed until the retries end.
+- **No retries for messages that can never succeed:** a payload that cannot be deserialized goes to the dead-letter topic at once, with its original bytes.
+- **Diagnostics:** each dead letter carries Spring Kafka's headers: `kafka_dlt-original-topic`, `-partition` and `-offset`, and `kafka_dlt-exception-fqcn` and `-message`. Once the cause is fixed, a dead letter can be republished to its original topic: writes are idempotent (chunks are stored under their own ids).
+- **Not retried:** an ingestion message whose claim-check content no longer exists or that has no claim-check content (metadata-only documents) is skipped, since a retry cannot bring content back. A governance hook that cannot decide still means the document is not embedded (see [Pre-Embedding Governance](#️-pre-embedding-governance)).
+
+---
+
 ## 🏃 Job Runs
 
 Jobs started through the job API (`POST /api/jobs/{id}/start`, the admin UI, the CLI and the SDK) run in the runtime that received the request:

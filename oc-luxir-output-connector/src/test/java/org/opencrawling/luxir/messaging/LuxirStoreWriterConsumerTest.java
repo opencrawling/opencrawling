@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
@@ -52,6 +53,20 @@ class LuxirStoreWriterConsumerTest {
         consumer.consume(tombstone);
 
         verify(luxirClient).deleteDocuments(eq("opencrawling"), eq(List.of("doc-luxir-1", "chunk-luxir-1")), eq(true));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() throws Exception {
+        LuxirClient luxirClient = mock(LuxirClient.class);
+        doThrow(new RuntimeException("luxir unavailable")).when(luxirClient).deleteDocuments(anyString(), anyList(), anyBoolean());
+        LuxirStoreWriterConsumer consumer = new LuxirStoreWriterConsumer(luxirClient);
+        ReflectionTestUtils.setField(consumer, "collectionName", "opencrawling");
+        ReflectionTestUtils.setField(consumer, "autoCommit", true);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-luxir-1", "chunk-luxir-1", "", Map.of(), new float[0],
+                        DocumentAction.DELETE)));
+        assertTrue(thrown.getMessage().contains("chunk-luxir-1"));
     }
 
     @Test
