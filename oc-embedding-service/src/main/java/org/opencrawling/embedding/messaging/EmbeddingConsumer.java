@@ -81,7 +81,12 @@ public class EmbeddingConsumer {
             kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMessage.partitionKey(), embeddedMessage).get();
             log.info("Successfully generated embedding and published chunk: {}", message.chunkId());
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to generate embedding for chunk: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it, instead of losing it.
+            throw new IllegalStateException("Embedding failed for chunk " + message.chunkId(), e);
         }
     }
 }

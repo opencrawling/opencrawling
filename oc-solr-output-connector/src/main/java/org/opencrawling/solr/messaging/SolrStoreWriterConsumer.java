@@ -124,7 +124,13 @@ public class SolrStoreWriterConsumer {
             solrClient.add(collectionName, doc, commitWithinMs);
             log.info("Successfully saved chunk {} to Solr collection '{}'.", message.chunkId(), collectionName);
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Solr: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Documents are added
+            // under their unique key and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Solr write failed for chunk " + message.chunkId(), e);
         }
     }
 }

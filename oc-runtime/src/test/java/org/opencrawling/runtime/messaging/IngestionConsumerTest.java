@@ -49,6 +49,7 @@ class IngestionConsumerTest {
             .collect(Collectors.joining(" "));
 
     private KafkaTemplate<String, Object> kafkaTemplate;
+    private ClaimCheckStore claimCheckStore;
     private IngestionConsumer consumer;
 
     @BeforeEach
@@ -57,7 +58,7 @@ class IngestionConsumerTest {
         kafkaTemplate = mock(KafkaTemplate.class);
         doReturn(CompletableFuture.completedFuture(null)).when(kafkaTemplate).send(anyString(), anyString(), any());
 
-        ClaimCheckStore claimCheckStore = mock(ClaimCheckStore.class);
+        claimCheckStore = mock(ClaimCheckStore.class);
         when(claimCheckStore.get(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[] {1}));
 
         TextExtractionService textExtractionService = mock(TextExtractionService.class);
@@ -181,6 +182,28 @@ class IngestionConsumerTest {
         String json = JsonMapper.builder().build().writeValueAsString(chunk);
 
         assertFalse(json.contains("partitionKey"), json);
+    }
+
+    @Test
+    void aFailedPublishIsRethrownAndKeepsTheClaimForTheRetry() throws Exception {
+        doReturn(CompletableFuture.failedFuture(new RuntimeException("broker unavailable")))
+                .when(kafkaTemplate).send(anyString(), anyString(), any());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new IngestionMessage("doc-1", "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
+
+        assertTrue(thrown.getMessage().contains("doc-1"));
+        // The retry reads the content again, so the claim must still be there.
+        verify(claimCheckStore, never()).delete(any());
+    }
+
+    @Test
+    void aMissingClaimIsSkippedRatherThanRetried() throws Exception {
+        when(claimCheckStore.get(any())).thenThrow(new java.nio.file.NoSuchFileException("/claims/doc"));
+
+        assertDoesNotThrow(() -> consumer.consume(
+                new IngestionMessage("doc-1", "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
     }
 
     /** Consumes one UPSERT message for {@code documentId} and returns the chunk ids it published, in order. */

@@ -25,7 +25,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class MilvusStoreWriterConsumerTest {
@@ -51,5 +53,18 @@ class MilvusStoreWriterConsumerTest {
         verify(client).delete(captor.capture());
         DeleteReq req = captor.getValue();
         assertTrue(req.getFilter().contains("documentId == 'doc-milvus-1'"));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() {
+        MilvusClientV2 client = mock(MilvusClientV2.class);
+        when(client.delete(any(DeleteReq.class))).thenThrow(new RuntimeException("milvus unavailable"));
+        MilvusStoreWriterConsumer consumer = new MilvusStoreWriterConsumer(client);
+        ReflectionTestUtils.setField(consumer, "collectionName", "enterprise_kb");
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-milvus-1", "chunk-milvus-1", "", Map.of(), new float[0],
+                        DocumentAction.DELETE)));
+        assertTrue(thrown.getMessage().contains("chunk-milvus-1"));
     }
 }

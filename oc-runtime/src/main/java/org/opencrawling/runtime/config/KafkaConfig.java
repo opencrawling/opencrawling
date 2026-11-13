@@ -16,12 +16,16 @@
 package org.opencrawling.runtime.config;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,10 +38,16 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaAdmin;
+import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
+import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
+import org.springframework.util.backoff.BackOff;
 
 @Configuration
 @EnableKafka
@@ -47,11 +57,31 @@ public class KafkaConfig {
     public static final String CHUNKS_TOPIC_NAME = "opencrawling-chunks";
     public static final String EMBEDDED_TOPIC_NAME = "opencrawling-embedded";
 
+    /** Suffix of the dead-letter topic a record goes to once its retries are exhausted (Spring Kafka's default). */
+    public static final String DLT_SUFFIX = ".DLT";
+
     @Value("${spring.kafka.bootstrap-servers:127.0.0.1:9092}")
     private String bootstrapServers;
 
     @Value("${spring.kafka.consumer.group-id:opencrawling-vector-group}")
     private String groupId;
+
+    /**
+     * Retries of a record whose listener fails, with exponential back-off, before it goes to its dead-letter topic.
+     * The defaults retry for about a minute (1, 2, 4, 8, 16 and 30 seconds), well within the consumer's
+     * {@code max.poll.interval.ms} (5 minutes), since every retry polls the record again.
+     */
+    @Value("${opencrawling.kafka.retry.max-retries:6}")
+    private int retryMaxRetries = 6;
+
+    @Value("${opencrawling.kafka.retry.initial-interval-ms:1000}")
+    private long retryInitialIntervalMs = 1000;
+
+    @Value("${opencrawling.kafka.retry.multiplier:2.0}")
+    private double retryMultiplier = 2.0;
+
+    @Value("${opencrawling.kafka.retry.max-interval-ms:30000}")
+    private long retryMaxIntervalMs = 30000;
 
     /**
      * Partitions of the documents topic: the upper bound for parallel consumers per consumer group
@@ -99,6 +129,25 @@ public class KafkaConfig {
                 .build();
     }
 
+    /**
+     * The dead-letter topics of the topics above. Dead letters are published with no partition, so Kafka picks one
+     * from the key and a dead-letter topic never needs as many partitions as its source.
+     */
+    @Bean
+    public NewTopic opencrawlingDocumentsDeadLetterTopic() {
+        return TopicBuilder.name(TOPIC_NAME + DLT_SUFFIX).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic opencrawlingChunksDeadLetterTopic() {
+        return TopicBuilder.name(CHUNKS_TOPIC_NAME + DLT_SUFFIX).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic opencrawlingEmbeddedDeadLetterTopic() {
+        return TopicBuilder.name(EMBEDDED_TOPIC_NAME + DLT_SUFFIX).partitions(1).replicas(1).build();
+    }
+
     @Bean
     public ProducerFactory<String, Object> producerFactory() {
         Map<String, Object> configProps = new HashMap<>();
@@ -113,6 +162,56 @@ public class KafkaConfig {
         return new KafkaTemplate<>(producerFactory);
     }
 
+    /**
+     * Publishes the dead letters of records that could not be deserialized: their original bytes, unchanged. Typed
+     * {@code <String, byte[]>}, so it is never injected where a {@code <String, Object>} template is expected.
+     */
+    @Bean
+    public ProducerFactory<String, byte[]> deadLetterBytesProducerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+        return new DefaultKafkaProducerFactory<>(configProps);
+    }
+
+    @Bean
+    public KafkaTemplate<String, byte[]> deadLetterBytesTemplate(ProducerFactory<String, byte[]> deadLetterBytesProducerFactory) {
+        return new KafkaTemplate<>(deadLetterBytesProducerFactory);
+    }
+
+    /**
+     * Retries a record whose listener throws, with exponential back-off, then publishes it to {@code <topic>.DLT}
+     * with Spring Kafka's diagnostic headers (original topic, partition, offset and exception). A record that can
+     * never succeed (it cannot be deserialized or converted) goes there at once. A record is never dropped: if the
+     * dead letter cannot be published either, the record is retried again.
+     */
+    @Bean
+    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, Object> kafkaTemplate,
+                                                 KafkaTemplate<String, byte[]> deadLetterBytesTemplate) {
+        ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(retryMaxRetries);
+        backOff.setInitialInterval(retryInitialIntervalMs);
+        backOff.setMultiplier(retryMultiplier);
+        backOff.setMaxInterval(retryMaxIntervalMs);
+        return errorHandler(kafkaTemplate, deadLetterBytesTemplate, backOff);
+    }
+
+    /** The error handler, with the templates and back-off given; separate so tests can drive it directly. */
+    static DefaultErrorHandler errorHandler(KafkaOperations<?, ?> objectTemplate, KafkaOperations<?, ?> bytesTemplate,
+                                            BackOff backOff) {
+        // Ordered: a record that failed deserialization carries its raw bytes and must use the bytes template.
+        Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
+        templates.put(byte[].class, bytesTemplate);
+        templates.put(Object.class, objectTemplate);
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(templates, KafkaConfig::deadLetterPartition);
+        return new DefaultErrorHandler(recoverer, backOff);
+    }
+
+    /** {@code <topic>.DLT}, with no partition, so Kafka picks one from the key. */
+    static TopicPartition deadLetterPartition(ConsumerRecord<?, ?> record, Exception exception) {
+        return new TopicPartition(record.topic() + DLT_SUFFIX, -1);
+    }
+
     @Bean
     public ConsumerFactory<String, Object> consumerFactory() {
         Map<String, Object> configProps = new HashMap<>();
@@ -125,14 +224,18 @@ public class KafkaConfig {
         JacksonJsonDeserializer<Object> valueDeserializer = new JacksonJsonDeserializer<>(Object.class);
         valueDeserializer.addTrustedPackages("org.opencrawling.core.messaging");
 
-        return new DefaultKafkaConsumerFactory<>(configProps, new StringDeserializer(), valueDeserializer);
+        // A record that cannot be deserialized reaches the error handler, which dead-letters it, instead of failing
+        // every poll of its partition.
+        return new DefaultKafkaConsumerFactory<>(configProps, new StringDeserializer(),
+                new ErrorHandlingDeserializer<>(valueDeserializer));
     }
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
-            ConsumerFactory<String, Object> consumerFactory) {
+            ConsumerFactory<String, Object> consumerFactory, DefaultErrorHandler kafkaErrorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(kafkaErrorHandler);
         return factory;
     }
 }

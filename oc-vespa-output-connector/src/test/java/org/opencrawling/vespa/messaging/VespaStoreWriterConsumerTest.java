@@ -28,6 +28,8 @@ import org.opencrawling.vespa.config.VespaOutputProperties;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -57,5 +59,19 @@ class VespaStoreWriterConsumerTest {
         consumer.consume(tombstone);
 
         verify(client).remove(eq(DocumentId.of("opencrawling", "opencrawling_chunk", "chunk-vespa-1")), any(OperationParameters.class));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() {
+        FeedClient client = mock(FeedClient.class);
+        VespaOutputProperties properties = new VespaOutputProperties("http://localhost:8080", "opencrawling", "opencrawling_chunk", 384, 10, false, null, null, null);
+        when(client.remove(any(DocumentId.class), any(OperationParameters.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("vespa unavailable")));
+        VespaStoreWriterConsumer consumer = new VespaStoreWriterConsumer(client, properties, new VespaDocumentMapper());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-vespa-1", "chunk-vespa-1", "", Map.of(), new float[0],
+                        DocumentAction.DELETE)));
+        assertTrue(thrown.getMessage().contains("chunk-vespa-1"));
     }
 }
