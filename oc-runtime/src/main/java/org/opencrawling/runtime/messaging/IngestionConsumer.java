@@ -160,6 +160,10 @@ public class IngestionConsumer {
                 publishTombstone(message);
                 return;
             }
+            if (message.uri() == null || message.uri().isBlank()) {
+                log.info("Document {} has no content URI (metadata-only), skipping chunking.", message.documentId());
+                return;
+            }
 
             URI fileUri = URI.create(message.uri());
             
@@ -172,6 +176,12 @@ public class IngestionConsumer {
                     log.warn("Failed to read HTTP stream directly for {}: {}", fileUri, e.getMessage());
                     contentBytes = new byte[0];
                 }
+            } else if (!claimCheckStore.supports(fileUri)) {
+                // Contentless / metadata-only documents keep their repository URI (e.g. documentum://..., filenet://...)
+                // for ACL and metadata consumers; no claim-check object exists to extract.
+                log.info("Document {} URI '{}' has no claim-check store content (metadata-only), skipping chunking.",
+                        message.documentId(), message.uri());
+                return;
             } else {
                 try (InputStream contentStream = claimCheckStore.get(fileUri)) {
                     contentBytes = contentStream.readAllBytes();

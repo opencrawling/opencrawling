@@ -110,6 +110,7 @@ class DiscoveryVersusSearchTest {
         KafkaTemplate<String, Object> kafka = mock(KafkaTemplate.class);
         doReturn(CompletableFuture.completedFuture(null)).when(kafka).send(anyString(), anyString(), any());
         ClaimCheckStore claims = mock(ClaimCheckStore.class);
+        when(claims.supports(any())).thenReturn(true);
         when(claims.get(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[] {1}));
         TextExtractionService extraction = mock(TextExtractionService.class);
         when(extraction.extractText(any(byte[].class), any())).thenReturn(TextExtractionResult.success("Some text.", Map.of(), false));

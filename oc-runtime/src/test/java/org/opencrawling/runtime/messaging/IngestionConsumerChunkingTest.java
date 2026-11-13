@@ -66,6 +66,7 @@ class IngestionConsumerChunkingTest {
         kafkaTemplate = mock(KafkaTemplate.class);
         doReturn(CompletableFuture.completedFuture(null)).when(kafkaTemplate).send(anyString(), anyString(), any());
         ClaimCheckStore claimCheckStore = mock(ClaimCheckStore.class);
+        when(claimCheckStore.supports(any())).thenReturn(true);
         when(claimCheckStore.get(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[] {1}));
         TextExtractionService textExtractionService = mock(TextExtractionService.class);
         when(textExtractionService.extractText(any(byte[].class), any()))

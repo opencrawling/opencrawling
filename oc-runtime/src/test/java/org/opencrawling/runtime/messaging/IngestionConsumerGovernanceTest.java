@@ -77,6 +77,7 @@ class IngestionConsumerGovernanceTest {
         kafkaTemplate = mock(KafkaTemplate.class);
         doReturn(CompletableFuture.completedFuture(null)).when(kafkaTemplate).send(anyString(), anyString(), any());
         claimCheckStore = mock(ClaimCheckStore.class);
+        when(claimCheckStore.supports(any())).thenReturn(true);
         when(claimCheckStore.get(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[] {1}));
         TextExtractionService extraction = mock(TextExtractionService.class);
         when(extraction.extractText(any(byte[].class), any())).thenReturn(TextExtractionResult.success(TEXT, Map.of(), false));

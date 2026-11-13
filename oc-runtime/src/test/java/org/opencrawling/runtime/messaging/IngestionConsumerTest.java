@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.claimcheck.ClaimCheckProperties;
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.claimcheck.CompositeClaimCheckStore;
+import org.opencrawling.core.claimcheck.LocalFileClaimCheckStore;
+import org.opencrawling.core.claimcheck.OzoneClaimCheckStore;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.IngestionMessage;
@@ -59,6 +62,7 @@ class IngestionConsumerTest {
         doReturn(CompletableFuture.completedFuture(null)).when(kafkaTemplate).send(anyString(), anyString(), any());
 
         claimCheckStore = mock(ClaimCheckStore.class);
+        when(claimCheckStore.supports(any())).thenReturn(true);
         when(claimCheckStore.get(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[] {1}));
 
         TextExtractionService textExtractionService = mock(TextExtractionService.class);
@@ -204,6 +208,49 @@ class IngestionConsumerTest {
         assertDoesNotThrow(() -> consumer.consume(
                 new IngestionMessage("doc-1", "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
         verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+    }
+
+    @Test
+    void aMetadataOnlyRepositoryUriIsSkippedRatherThanRetried(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) {
+        LocalFileClaimCheckStore localStore = new LocalFileClaimCheckStore(tempDir);
+        OzoneClaimCheckStore ozoneStore = new OzoneClaimCheckStore(null, "claims", false);
+        IngestionMessage metadataOnly = new IngestionMessage(
+                "documentum://corp/documents/090277b680000137",
+                "documentum://corp/documents/090277b680000137",
+                Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of());
+
+        for (ClaimCheckStore primary : List.of(localStore, ozoneStore)) {
+            CompositeClaimCheckStore composite = new CompositeClaimCheckStore(primary, List.of(localStore, ozoneStore));
+            IngestionConsumer realStoreConsumer = new IngestionConsumer(
+                    kafkaTemplate, composite, new ClaimCheckProperties(), null,
+                    mock(TextExtractionService.class));
+
+            clearInvocations(kafkaTemplate);
+            assertDoesNotThrow(() -> realStoreConsumer.consume(metadataOnly));
+            verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+        }
+    }
+
+    @Test
+    void aMetadataOnlyMessageWithoutUriIsSkippedRatherThanRetried() {
+        clearInvocations(kafkaTemplate);
+
+        assertDoesNotThrow(() -> consumer.consume(
+                new IngestionMessage("doc-no-uri", null, Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
+        assertDoesNotThrow(() -> consumer.consume(
+                new IngestionMessage("doc-blank-uri", "   ", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+    }
+
+    @Test
+    void aClaimReadErrorIsRethrownForRetry() throws Exception {
+        when(claimCheckStore.get(any())).thenThrow(new java.io.IOException("storage unavailable"));
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new IngestionMessage("doc-1", "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of())));
+
+        assertTrue(thrown.getMessage().contains("doc-1"));
+        verify(claimCheckStore, never()).delete(any());
     }
 
     /** Consumes one UPSERT message for {@code documentId} and returns the chunk ids it published, in order. */

@@ -107,7 +107,7 @@ A pipeline stage that cannot process a Kafka message (the ingestion consumer, th
 - **While a message is retried, its partition waits.** Messages are keyed by document id, so the order within a document is kept; other documents on that partition are delayed until the retries end.
 - **No retries for messages that can never succeed:** a payload that cannot be deserialized goes to the dead-letter topic at once, with its original bytes.
 - **Diagnostics:** each dead letter carries Spring Kafka's headers: `kafka_dlt-original-topic`, `-partition` and `-offset`, and `kafka_dlt-exception-fqcn` and `-message`. Once the cause is fixed, a dead letter can be republished to its original topic: writes are idempotent (chunks are stored under their own ids).
-- **Not retried:** an ingestion message whose claim-check content no longer exists is skipped, since a retry cannot bring it back. A governance hook that cannot decide still means the document is not embedded (see [Pre-Embedding Governance](#️-pre-embedding-governance)).
+- **Not retried:** an ingestion message whose claim-check content no longer exists or that has no claim-check content (metadata-only documents) is skipped, since a retry cannot bring content back. A governance hook that cannot decide still means the document is not embedded (see [Pre-Embedding Governance](#️-pre-embedding-governance)).
 
 ---
 
