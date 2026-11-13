@@ -44,7 +44,10 @@ import static org.assertj.core.api.Assertions.fail;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
     "spring.kafka.consumer.group-id=${it.kafka.group:test-group-${random.uuid}}",
-    "opencrawling.ingest.ois.token=" + OisIngestIT.TOKEN
+    "opencrawling.ingest.ois.token=" + OisIngestIT.TOKEN,
+    // Free ports: every IT's cached context keeps its gRPC push listener bound, so fixed ports collide.
+    "opencrawling.connector.grpc-push.port=0",
+    "spring.grpc.server.port=0"
 })
 @ActiveProfiles("test")
 class OisIngestIT {

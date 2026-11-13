@@ -58,7 +58,10 @@ import static org.assertj.core.api.Assertions.fail;
     // KafkaConfig forces auto.offset.reset=earliest, so a new group replays every message ever
     // published to the topics. -Dit.kafka.group lets a local run use a group already moved to
     // the end of the topics.
-    "spring.kafka.consumer.group-id=${it.kafka.group:test-group-${random.uuid}}"
+    "spring.kafka.consumer.group-id=${it.kafka.group:test-group-${random.uuid}}",
+    // Free ports: every IT's cached context keeps its gRPC push listener bound, so fixed ports collide.
+    "opencrawling.connector.grpc-push.port=0",
+    "spring.grpc.server.port=0"
 })
 @ActiveProfiles("test")
 class RecrawlAndDeleteIT {
