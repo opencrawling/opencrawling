@@ -21,10 +21,14 @@ This directory contains self-contained resources for hands-on OpenCrawling tutor
 ```
 
 Wait until all services report healthy:
-* Alfresco Content Services: `http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1`
+* Alfresco Share UI: `http://localhost:8081/share/` (`admin` / `admin`)
+* Alfresco Content App / Digital Workspace (Community): `http://localhost:8081/workspace/` (alias `http://localhost:8081/content-app/`)
+* Alfresco REST API v1: `http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1`
 * OpenCrawling Admin UI: `http://localhost:3000`
 * OpenCrawling MCP Server (Streamable HTTP): `http://localhost:8080/mcp`
 * PGVector: `localhost:5432` (database `opencrawling`, user `opencrawling`)
+
+> **Note**: In ACS Community Edition, `alfresco/alfresco-content-app` provides the open-source Community counterpart to Enterprise Digital Workspace (`quay.io/alfresco/alfresco-digital-workspace`, which requires Enterprise registry credentials). All Alfresco services sit behind the bundled Traefik reverse proxy on host port `8081`.
 
 ### 2. Provision Alfresco Test Data & Permissions
 
@@ -32,11 +36,17 @@ Wait until all services report healthy:
 ./tutorials/scripts/provision-alfresco-data.sh
 ```
 
-This creates three users (`alice`, `bob`, `charlie`), two groups (`GROUP_engineering`, `GROUP_finance`), and four documents under `/opencrawling-tutorial`:
+This creates three users (`alice`, `bob`, `charlie`, password `Password123!`), two groups (`GROUP_engineering`, `GROUP_finance`), and four documents under `/opencrawling-tutorial`:
 * `public/company-handbook.txt` -> `GROUP_EVERYONE` (`ALLOWED`)
 * `finance/q4-financial-forecast.txt` -> `GROUP_finance` (`ALLOWED`, inheritance off)
 * `engineering/zero-trust-architecture.txt` -> `GROUP_engineering` (`ALLOWED`), `bob` (explicit `DENIED`)
 * `executive/board-resolution-2026.txt` -> `alice` only (`ALLOWED`, inheritance off)
+
+#### Inspecting the Permission Schema Visually (Share & Content App)
+Before crawling, sign into **Alfresco Share (`http://localhost:8081/share/`)** or **Alfresco Content App / Workspace (`http://localhost:8081/workspace/`)**:
+1. As **`admin` / `admin`**, open **Repository -> `opencrawling-tutorial`** to inspect permission inheritance and folder/document ACLs via **Manage Permissions** (Share) or **More actions (`...`) -> Permissions** (Content App). *(Note: Share's legacy Manage Permissions dialog omits explicit `DENIED` ACEs; inspect `bob`'s deny via `GET /nodes/{id}?include=permissions` or by signing in as `bob`.)*
+2. Sign in as **`alice`**, **`bob`**, or **`charlie`** (password `Password123!`) and browse **Repository -> `opencrawling-tutorial`** to verify effective visibility: `alice` sees all 4 documents, `charlie` sees `public` and `finance`, and `bob` sees `public` and `engineering/` as an empty folder because the explicit `DENIED` ACE blocks `zero-trust-architecture.txt`.
+3. Folder browsing in **Repository** works directly against PostgreSQL even with `-Dindex.subsystem.name=noindex` (global UI search requires Solr/Elasticsearch, while semantic search in this tutorial runs through OpenCrawling + PGVector).
 
 ### 3. Configure Connector & Ingestion Job (Admin UI or Script)
 
