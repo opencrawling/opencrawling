@@ -45,14 +45,14 @@ public class SidecarMcpTools {
         }
     }
 
-    @McpTool(description = "List the object stores (registered Apache Ozone or AWS S3 output connectors) whose OIS sidecars can be read.")
+    @McpTool(description = "List the configured storage backends (registered Apache Ozone, AWS S3, or Apache Iceberg output connectors) whose OIS sidecars can be read.")
     public List<SidecarService.StoreInfo> listSidecarStores(
             @McpToolParam(description = "The caller's user principal." + IDENTITY_NOTE, required = false) String userPrincipal,
             @McpToolParam(description = "Comma-separated groups/roles of the caller." + IDENTITY_NOTE, required = false) String userRoles) {
         return service.listStores(SidecarController.caller(callerResolver, userPrincipal, userRoles));
     }
 
-    @McpTool(description = "Read the OIS metadata sidecars (*.ois.json) of migrated content in an object store, without downloading the binaries: each document's id, source, file name, type, size, checksum and business metadata. Only sidecars the caller may read are returned, in key order, with totals over the page (count, bytes, by MIME type, by source type). Pass nextCursor back to get the next page.")
+    @McpTool(description = "Read the OIS metadata sidecars (*.ois.json in object storage or rows in Apache Iceberg tables) of migrated content, without downloading the binaries: each document's id, source, file name, type, size, checksum and business metadata. Only sidecars the caller may read are returned, in key order, with totals over the page (count, bytes, by MIME type, by source type). Pass nextCursor back to get the next page.")
     public SidecarService.SidecarPage readOisSidecars(
             @McpToolParam(description = "Name of the store (see listSidecarStores)", required = true) String connector,
             @McpToolParam(description = "Key prefix, relative to where the store's connector writes, e.g. 'finance/2024/'", required = false) String prefix,

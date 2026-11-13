@@ -67,21 +67,38 @@ The same operations are available over REST: `GET /api/discovery/connectors`, `G
 
 ## 🗂️ OIS sidecars
 
-With `opencrawling.sidecars.enabled=true`, two tools read the OIS metadata sidecars (`<key>.ois.json`) that the Ozone and S3 migration writers store next to each migrated binary. An agent gets each document's metadata without downloading the binary.
+With `opencrawling.sidecars.enabled=true`, two tools read the OIS metadata sidecars stored by Apache Ozone (`<key>.ois.json`), AWS S3 (`<key>.ois.json`), and Apache Iceberg (`IcebergSidecarStore` querying existing Iceberg tables without downloading binaries or Parquet payloads directly over S3/Hadoop unless scanned via the Table API).
 
 | MCP Tool | Description | Parameters |
 |---|---|---|
-| `listSidecarStores` | Lists the stores whose sidecars may be read: their names, descriptions and kinds (`ozone` or `s3`), never their configuration. | `userPrincipal`, `userRoles` |
-| `readOisSidecars` | Returns a page of the sidecars under a key prefix that the caller may read, in key order. Each one gives the document's id, source, file name, MIME type, size, checksum and metadata, and the page carries totals: count, bytes, by MIME type, by source type. | `connector` (required)<br>`prefix` (relative to where the connector writes)<br>`limit`<br>`cursor` (the previous page's `nextCursor`)<br>`userPrincipal`, `userRoles` |
+| `listSidecarStores` | Lists the stores whose sidecars may be read: their names, descriptions and kinds (`ozone`, `s3`, or `iceberg`), never their configuration. | `userPrincipal`, `userRoles` |
+| `readOisSidecars` | Returns a page of the sidecars under a key/partition prefix that the caller may read, in key order. Each one gives the document's id, source, file name, MIME type, size, checksum and metadata, and the page carries totals: count, bytes, by MIME type, by source type. | `connector` (required)<br>`prefix` (relative to where the connector writes; `source_type/` or `source_type/YYYY-MM/` for Iceberg partition/prefix pruning)<br>`limit`<br>`cursor` (the previous page's `nextCursor`)<br>`userPrincipal`, `userRoles` |
 
 The same operations are available over REST: `GET /api/sidecars` and `GET /api/sidecars/{connector}?prefix=&limit=&cursor=`.
 
 - **Who the caller is:** the caller must be verified by token (`opencrawling.security.identity.mode=jwt`; for REST also `protect-api`), must name a user, and must carry the scope in `opencrawling.sidecars.required-scope` (default `oc:sidecars:read`). `allow-asserted-identity=true` also accepts the `userPrincipal`/`userRoles` arguments, for development and tests only.
-- **Which stores:** only the registered Ozone and S3 output connectors listed in `opencrawling.sidecars.connectors` (empty by default, so none). A store that is not listed reads exactly like one that does not exist (`404`). The store is opened with the connector's own settings, read-only, and its bucket is never created.
-- **Which keys:**
+- **Which stores:** only the registered Ozone, S3, and Apache Iceberg output connectors listed in `opencrawling.sidecars.connectors` (empty by default, so none). A store that is not listed reads exactly like one that does not exist (`404`). The store is opened with the connector's own settings, read-only, and its bucket or Iceberg table is never created (`autoCreateTable=false`).
+- **Which keys / partitions:**
   - For S3, the prefix is relative to the connector's `keyPrefix`, so nothing outside it is read. For Ozone, it is relative to the bucket.
-  - Only `*.ois.json` objects are read. The writers' `.tombstones/` and `.opencrawling/` keys are skipped.
+  - For Apache Iceberg (`IcebergSidecarStore`), optional `prefix` segments (`source_type/YYYY-MM/`) translate to Iceberg pushdown predicates (`source_type`, `crawled_at`) for partition/manifest pruning, deduplicate rows by snapshot recency, and re-verify against current records so `DELETE` tombstones suppress deleted documents.
+  - Only `*.ois.json` objects are read on object stores. The writers' `.tombstones/` and `.opencrawling/` keys are skipped.
   - A sidecar that is not an `UPSERT`, is not valid JSON of the expected form, or is larger than `max-sidecar-bytes` is skipped.
+
+---
+
+## 🧊 Apache Iceberg Lakehouse MCP Tools (`IcebergMcpTools`)
+
+When `opencrawling.mcp.server.enabled=true` and either `opencrawling.mcp.iceberg.enabled=true`, `opencrawling.iceberg.mcp.enabled=true`, or `spring.opencrawling.output.type=iceberg`, four lakehouse analytical and time-travel tools are exposed:
+
+| MCP Tool | Description | Parameters |
+|---|---|---|
+| `listIcebergSnapshots` | Lists snapshot lineage newest-first with snapshot IDs, parent IDs, commit timestamps, operations, and summary metrics (`totalSnapshots`, `truncated`). | `connector`, `tableName`, `maxSnapshots`, `userPrincipal`, `userRoles` |
+| `getIcebergDocumentAsOf` | Point-in-time document retrieval by `document_uri` or `document_id` via Iceberg `useSnapshot` / `asOfTime`, verifying the Zero-Trust ACLs recorded at that snapshot and rejecting deleted or unauthorized documents. | `documentUri` (required)<br>`snapshotId` or `asOfTimestamp` (ISO-8601 UTC; mutually exclusive)<br>`connector`, `tableName`, `userPrincipal`, `userRoles` |
+| `queryIcebergEntities` | Queries dynamically evolved scalar entity columns and `extracted_entities` map entries using Iceberg filter pushdowns and optional `timeWindow` bounds (`1h`, `24h`, `7d`, or ISO range), excluding deleted documents and checking `DocumentAccessGate`. | `entityKey`, `entityValue`, `timeWindow`, `maxResults`, `connector`, `tableName`, `userPrincipal`, `userRoles` |
+| `getIcebergIngestionStats` | Aggregates active document counts, `UPSERT` vs. `DELETE` tombstone counts, content byte totals, and MIME/source-type breakdowns across snapshots, strictly scoped to documents authorized for the caller. | `connector`, `snapshotId`, `tableName`, `userPrincipal`, `userRoles` |
+
+- **Connector & table resolution:** if `connector` is specified, the named Apache Iceberg connector in `connectors.json` is opened read-only (`autoCreateTable=false`). When `connector` is omitted or `default`/`active`, the active `IcebergOutputProperties` bean is used. Both `UNIFIED` and `PER_DOCUMENT_TYPE` table strategies are supported.
+- **Identity & Zero-Trust bounds:** in `jwt` identity mode (or when `opencrawling.mcp.iceberg.require-verified-caller=true`), forged `userPrincipal`/`userRoles` arguments are rejected/ignored and bearer claims (including RFC 8693 `act` delegation) are enforced. Query limits are clamped to configured caps (hard limits: `500` results, `100000` scanned rows, `500` snapshots).
 - **What the caller sees:**
   - Each sidecar is decided by the runtime's authorization gate, the same one search uses, in batches. The gate decides on the sidecar's document id and the `security` the sidecar carries, so in `openfga` mode the document's OpenFGA permissions decide.
   - A sidecar with no permissions at all is never returned.
@@ -140,7 +157,7 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
 
 ## 🗄️ Supported Target Vector Databases
 
-The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 10 stores:
+The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSearchBackend`) with native implementations for 11 backends (10 vector/search engines plus Apache Iceberg Lakehouse):
 
 | Backend Type | Property `spring.opencrawling.output.type` | Search Mechanism | Query Embedding |
 |---|---|---|---|
@@ -154,6 +171,7 @@ The MCP tool surface is powered by a pluggable strategy interface (`McpVectorSea
 | **Apache Solr** | `solr` | `SolrClient` (`{!knn f=embeddings topK=...}` dense vector query) | Ollama / Spring AI `EmbeddingModel` |
 | **Luxir** | `luxir` | `LuxirClient` (`POST /collections/{collection}/_search` with KNN payload) | Ollama / Spring AI `EmbeddingModel` |
 | **Hyland OpenArch** | `openarch` | `OpenArchClient` embedding query (federated content), document ACLs read from OpenArch | Spring AI `EmbeddingModel` |
+| **Apache Iceberg** | `iceberg` | `IcebergMcpSearchBackend` (`getDocumentContent`, `listAccessibleSources` via Iceberg pushdowns + `DocumentAccessGate`; `secureVectorSearch` fails fast directing callers to `IcebergMcpTools` / `SidecarMcpTools`) | N/A (Columnar metadata & extracted text) |
 
 ---
 
@@ -200,16 +218,22 @@ docker compose -f oc-elasticsearch-output-connector/docker/docker-compose-decoup
 
 # Example: Vespa stack
 docker compose -f oc-vespa-output-connector/docker/docker-compose-decoupled-with-vespa.yml up -d
+
+# Example: Apache Iceberg Lakehouse stack (REST catalog + MinIO + Kafka + oc-mcp-server)
+docker compose -f oc-iceberg-output-connector/docker/docker-compose-decoupled-with-iceberg.yml up -d
 ```
 
 ---
 
 ## 🧪 Running the Decoupled Integration Test Suite
 
-OpenCrawling includes an end-to-end integration test specifically for validating the entire MCP server capabilities in a decoupled multi-container deployment:
+OpenCrawling includes end-to-end integration tests specifically for validating the MCP server in decoupled multi-container deployments:
 
 ```bash
 ./scripts/test-mcp-decoupled.sh
+
+# Apache Iceberg Lakehouse MCP suite (snapshots, time-travel, entities, stats & sidecars)
+./scripts/test-mcp-iceberg.sh --local-build
 ```
 
 This dedicated test suite automatically validates:

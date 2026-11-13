@@ -57,7 +57,7 @@ public class SidecarController {
         }
     }
 
-    @Operation(summary = "List the sidecar stores", description = "The registered Ozone and S3 output connectors whose sidecars may be read.")
+    @Operation(summary = "List the sidecar stores", description = "The registered Ozone, S3, and Apache Iceberg output connectors whose sidecars may be read.")
     @GetMapping
     public List<SidecarService.StoreInfo> stores(@RequestParam(required = false) String userPrincipal,
                                                  @RequestParam(required = false) String userRoles) {

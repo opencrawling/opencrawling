@@ -580,26 +580,92 @@ public class ConnectorFactory {
     }
 
     public static org.opencrawling.iceberg.output.config.IcebergOutputProperties icebergProperties(Map<String, String> config) {
+        Map<String, String> safe = config != null ? config : Map.of();
         org.opencrawling.iceberg.output.config.IcebergOutputProperties props = new org.opencrawling.iceberg.output.config.IcebergOutputProperties();
-        props.setCatalogType(config.getOrDefault("catalogType", "rest"));
-        props.setCatalogName(config.getOrDefault("catalogName", "opencrawling_catalog"));
-        props.setCatalogUri(config.getOrDefault("catalogUri", "http://localhost:8181"));
-        props.setWarehouse(config.getOrDefault("warehouse", "s3://warehouse"));
-        props.setNamespace(config.getOrDefault("namespace", "enterprise_data"));
-        props.setTableName(config.getOrDefault("tableName", "documents"));
-        if (config.containsKey("tableStrategy")) {
+        String catalogType = firstNonBlank(safe, "catalogType", "catalog.type");
+        if (catalogType != null) {
+            props.setCatalogType(catalogType);
+        } else {
+            props.setCatalogType("rest");
+        }
+        String catalogName = firstNonBlank(safe, "catalogName", "catalog.name");
+        props.setCatalogName(catalogName != null ? catalogName : "opencrawling_catalog");
+        String catalogUri = firstNonBlank(safe, "catalogUri", "catalog.uri");
+        if (catalogUri != null) {
+            props.setCatalogUri(catalogUri);
+        } else if ("rest".equalsIgnoreCase(props.getCatalogType())) {
+            props.setCatalogUri("http://localhost:8181");
+        }
+        String warehouse = firstNonBlank(safe, "warehouse");
+        props.setWarehouse(warehouse != null ? warehouse : "s3://warehouse");
+        String namespace = firstNonBlank(safe, "namespace");
+        props.setNamespace(namespace != null ? namespace : "enterprise_data");
+        String tableName = firstNonBlank(safe, "tableName", "table.name");
+        props.setTableName(tableName != null ? tableName : "documents");
+        String tableStrategy = firstNonBlank(safe, "tableStrategy", "table.strategy");
+        if (tableStrategy != null) {
             try {
-                props.setTableStrategy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.TableStrategy.valueOf(config.get("tableStrategy").toUpperCase()));
+                props.setTableStrategy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.TableStrategy.valueOf(tableStrategy.toUpperCase()));
             } catch (Exception ignored) {}
         }
-        if (config.containsKey("partitionStrategy")) {
+        String partitionStrategy = firstNonBlank(safe, "partitionStrategy", "partitionBy", "partition.strategy");
+        if (partitionStrategy != null) {
             try {
-                props.setPartitionBy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.PartitionStrategy.valueOf(config.get("partitionStrategy").toUpperCase()));
+                props.setPartitionBy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.PartitionStrategy.valueOf(partitionStrategy.toUpperCase()));
             } catch (Exception ignored) {}
         }
-        if (config.containsKey("autoSchemaEvolution")) {
-            props.setAutoSchemaEvolution(Boolean.parseBoolean(config.get("autoSchemaEvolution")));
+        String autoCreate = firstNonBlank(safe, "autoCreateTable", "auto.create.table");
+        if (autoCreate != null) {
+            props.setAutoCreateTable(Boolean.parseBoolean(autoCreate));
+        }
+        String autoSchemaEvolution = firstNonBlank(safe, "autoSchemaEvolution", "auto.schema.evolution");
+        if (autoSchemaEvolution != null) {
+            props.setAutoSchemaEvolution(Boolean.parseBoolean(autoSchemaEvolution));
+        }
+        String writeFormat = firstNonBlank(safe, "writeFormat", "write.format");
+        if (writeFormat != null) {
+            props.setWriteFormat(writeFormat);
+        }
+        String compressionCodec = firstNonBlank(safe, "compressionCodec", "compression.codec");
+        if (compressionCodec != null) {
+            props.setCompressionCodec(compressionCodec);
+        }
+        String ioImpl = firstNonBlank(safe, "ioImpl", "io.impl", "fileIoImpl");
+        if (ioImpl != null) {
+            props.setIoImpl(ioImpl);
+        }
+
+        org.opencrawling.iceberg.output.config.IcebergOutputProperties.S3Properties s3 = props.getS3();
+        String s3Endpoint = firstNonBlank(safe, "s3Endpoint", "s3.endpoint");
+        if (s3Endpoint != null) {
+            s3.setEndpoint(s3Endpoint);
+        }
+        String s3Region = firstNonBlank(safe, "s3Region", "s3.region");
+        if (s3Region != null) {
+            s3.setRegion(s3Region);
+        }
+        String s3AccessKeyId = firstNonBlank(safe, "s3AccessKeyId", "s3.access-key-id", "s3AccessKey");
+        if (s3AccessKeyId != null) {
+            s3.setAccessKeyId(s3AccessKeyId);
+        }
+        String s3SecretAccessKey = firstNonBlank(safe, "s3SecretAccessKey", "s3.secret-access-key", "s3SecretKey");
+        if (s3SecretAccessKey != null) {
+            s3.setSecretAccessKey(s3SecretAccessKey);
+        }
+        String s3PathStyle = firstNonBlank(safe, "s3PathStyleAccess", "s3.path-style-access", "pathStyleAccess");
+        if (s3PathStyle != null) {
+            s3.setPathStyleAccess(Boolean.parseBoolean(s3PathStyle));
         }
         return props;
+    }
+
+    private static String firstNonBlank(Map<String, String> config, String... keys) {
+        for (String key : keys) {
+            String value = config.get(key);
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 }

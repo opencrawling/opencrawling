@@ -153,8 +153,8 @@ public class IcebergOutputConnector implements OutputConnector {
             records.add(IcebergRecordWriter.convertToRecord(table, doc, bytes));
         }
 
-        DataFile dataFile = IcebergRecordWriter.writeRecords(table, records);
-        IcebergRecordWriter.commitDataFile(table, dataFile);
+        List<DataFile> dataFiles = IcebergRecordWriter.writePartitionedRecords(table, records);
+        IcebergRecordWriter.commitDataFiles(table, dataFiles);
         log.info("Committed batch of {} documents to Iceberg table '{}'", batch.size(), table.name());
     }
 

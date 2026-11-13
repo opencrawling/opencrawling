@@ -20,11 +20,11 @@ A stateless microservice that pulls text chunks from Kafka, requests vector embe
 docker compose scale oc-embedding-service=3
 ```
 
-### 4. Vector Store Writer (`VectorStoreWriterConsumer` / `VespaStoreWriterConsumer`)
-Consumes embedded chunks and writes them directly to database outputs (such as PostgreSQL with `pgvector`, Elasticsearch, Qdrant, Milvus, OpenSearch, Vespa, or Solr). It uses a stateless model to write raw vectors directly, bypassing model inference.
+### 4. Vector & Lakehouse Store Writers (`VectorStoreWriterConsumer` / `VespaStoreWriterConsumer` / `IcebergStoreWriterConsumer`)
+Consumes embedded chunks and writes them directly to database outputs (such as PostgreSQL with `pgvector`, Elasticsearch, Qdrant, Milvus, OpenSearch, Vespa, or Solr), or consumes raw `IngestionMessage` records directly into Apache Iceberg Parquet tables (`IcebergStoreWriterConsumer`) with OIS ACLs and dynamic schema evolution.
 
-### 5. Secure Model Context Protocol Server (`McpVectorServer`)
-Exposes knowledge retrieval tools to AI models and agents using the Model Context Protocol (MCP) over Streamable HTTP. Every candidate a store returns passes through one `DocumentAccessGate` before it reaches the model; the decision comes from the ACLs stored with each document or, optionally, from OpenFGA (see [Document Authorization](Document-Authorization)).
+### 5. Secure Model Context Protocol Server (`McpVectorServer` / `IcebergMcpTools` / `SidecarMcpTools`)
+Exposes knowledge retrieval, OIS sidecar inspection (`Ozone`, `S3`, and `IcebergSidecarStore`), and Apache Iceberg time-travel & entity analytics tools to AI models and agents using the Model Context Protocol (MCP) over Streamable HTTP. Every candidate a store or lakehouse table returns passes through one `DocumentAccessGate` before it reaches the model; the decision comes from the ACLs stored with each document or, optionally, from OpenFGA (see [Document Authorization](Document-Authorization)).
 
 ### 6. Optional gRPC Transport Layer (`oc-grpc-api` / `InternalTransportManager`)
 Provides binary Protobuf payload streaming over HTTP/2 (default port `9095`) for high-speed inter-node communication between `oc-repository-connectors`, `oc-core`, `oc-worker`, and `oc-output-connectors`. Features dynamic mode switching (`AUTO`, `GRPC`, `REST`), defaulting to `AUTO` mode with automatic fallback to HTTP/REST, TLS/mTLS encryption, and real-time connectivity testing from the Admin Dashboard.
@@ -65,7 +65,7 @@ flowchart TD
 OpenCrawling supports the **Open Ingestion Standard (OIS)** specification for document lifecycle management (`action: "UPSERT" | "DELETE"`). When a tombstone deletion (`action: "DELETE"`) is published:
 - **Claim Check Bypass**: `JobOrchestrator` skips binary storage persistence.
 - **Pipeline Short-Circuiting**: `IngestionConsumer` and `oc-embedding-service` bypass Tika parsing, chunking, and AI embedding generation, directly forwarding tombstone deletion messages downstream.
-- **Vector Store Purge**: Output store consumers (pgvector, Solr, Qdrant, Milvus, Vespa, OpenSearch) execute targeted deletion queries to purge documents and vector chunks.
+- **Vector & Lakehouse Store Purge**: Output store consumers (pgvector, Solr, Qdrant, Milvus, Vespa, OpenSearch) execute targeted deletion queries to purge documents and vector chunks, while `IcebergStoreWriterConsumer` commits immutable `DELETE` tombstone snapshots enforced by `IcebergMcpTools`, `IcebergSidecarStore`, and `IcebergMcpSearchBackend`.
 
 ---
 

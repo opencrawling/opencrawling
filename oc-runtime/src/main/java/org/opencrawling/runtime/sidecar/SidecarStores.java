@@ -44,15 +44,16 @@ final class SidecarStores {
     private SidecarStores() {
     }
 
-    /** Whether the connector is an Ozone or S3 output connector. */
+    /** Whether the connector is an Ozone, S3, or Apache Iceberg output connector. */
     static boolean supports(ConnectorDTO connector) {
         OutputKind kind = OutputKind.of(connector.className());
-        return kind == OutputKind.OZONE || kind == OutputKind.S3;
+        return kind == OutputKind.OZONE || kind == OutputKind.S3 || kind == OutputKind.ICEBERG;
     }
 
     static Layout layout(ConnectorDTO connector) {
         Map<String, String> config = config(connector);
-        if (OutputKind.of(connector.className()) == OutputKind.S3) {
+        OutputKind kind = OutputKind.of(connector.className());
+        if (kind == OutputKind.S3) {
             S3OutputProperties properties = ConnectorFactory.s3Properties(config);
             String prefix = properties.getKeyPrefix() != null ? properties.getKeyPrefix().trim().replaceAll("^/+", "") : "";
             if (!prefix.isEmpty() && !prefix.endsWith("/")) {
@@ -60,16 +61,28 @@ final class SidecarStores {
             }
             return new Layout(prefix, properties.getSidecarSuffix());
         }
+        if (kind == OutputKind.ICEBERG) {
+            String suffix = config.getOrDefault("sidecarSuffix", ".ois.json");
+            return new Layout("", suffix);
+        }
         return new Layout("", ConnectorFactory.ozoneProperties(config).getSidecarSuffix());
     }
 
-    /** A read-only store on the connector's bucket. */
+    /** A read-only store on the connector's bucket or Iceberg Lakehouse table. */
     static SidecarStore open(ConnectorDTO connector) throws Exception {
         Map<String, String> config = config(connector);
-        if (OutputKind.of(connector.className()) == OutputKind.S3) {
+        OutputKind kind = OutputKind.of(connector.className());
+        if (kind == OutputKind.S3) {
             S3OutputProperties properties = ConnectorFactory.s3Properties(config);
             properties.setAutoCreateBucket(false);
             return new S3SidecarStore(new S3ClientFactory(properties).createS3Client(), properties.getBucket());
+        }
+        if (kind == OutputKind.ICEBERG) {
+            org.opencrawling.iceberg.output.config.IcebergOutputProperties properties =
+                    ConnectorFactory.icebergProperties(config);
+            properties.setAutoCreateTable(false);
+            String suffix = config.getOrDefault("sidecarSuffix", ".ois.json");
+            return IcebergSidecarStore.open(properties, suffix);
         }
         OzoneOutputProperties properties = ConnectorFactory.ozoneProperties(config);
         properties.setAutoCreateBucket(false);
