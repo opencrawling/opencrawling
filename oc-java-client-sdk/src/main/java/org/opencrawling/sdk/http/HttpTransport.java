@@ -19,6 +19,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.opencrawling.sdk.auth.TokenProvider;
 import org.opencrawling.sdk.exceptions.OpenCrawlingApiException;
 import org.opencrawling.sdk.exceptions.OpenCrawlingNetworkException;
 import org.slf4j.Logger;
@@ -41,7 +42,7 @@ public class HttpTransport {
     private final HttpClient httpClient;
     private final String baseUrl;
     private final String apiKey;
-    private final String bearerToken;
+    private final TokenProvider tokenProvider;
     private final Duration requestTimeout;
     private final ObjectMapper objectMapper;
 
@@ -52,10 +53,24 @@ public class HttpTransport {
             String bearerToken,
             Duration requestTimeout,
             ObjectMapper objectMapper) {
+        this(httpClient, baseUrl, apiKey, TokenProvider.of(bearerToken), requestTimeout, objectMapper);
+    }
+
+    /**
+     * @param tokenProvider supplies the bearer token for each request; on a {@code 401} the request is repeated once
+     *                      if the provider could get a new token
+     */
+    public HttpTransport(
+            HttpClient httpClient,
+            String baseUrl,
+            String apiKey,
+            TokenProvider tokenProvider,
+            Duration requestTimeout,
+            ObjectMapper objectMapper) {
         this.httpClient = httpClient != null ? httpClient : HttpClient.newBuilder().build();
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.apiKey = apiKey;
-        this.bearerToken = bearerToken;
+        this.tokenProvider = tokenProvider != null ? tokenProvider : TokenProvider.of(null);
         this.requestTimeout = requestTimeout != null ? requestTimeout : Duration.ofSeconds(30);
         if (objectMapper != null) {
             this.objectMapper = objectMapper;
@@ -102,9 +117,6 @@ public class HttpTransport {
         if (apiKey != null && !apiKey.isBlank()) {
             builder.header("X-API-Key", apiKey);
         }
-        if (bearerToken != null && !bearerToken.isBlank()) {
-            builder.header("Authorization", "Bearer " + bearerToken);
-        }
 
         switch (method.toUpperCase()) {
             case "GET" -> builder.GET();
@@ -114,7 +126,7 @@ public class HttpTransport {
 
         try {
             log.debug("Executing HTTP {} (binary) to {}", method, fullUrl);
-            HttpResponse<byte[]> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> response = sendWithToken(builder, HttpResponse.BodyHandlers.ofByteArray());
             log.debug("Received HTTP {} from {}", response.statusCode(), fullUrl);
 
             if (response.statusCode() >= 400) {
@@ -129,6 +141,25 @@ public class HttpTransport {
             }
             throw new OpenCrawlingNetworkException("Network error while communicating with OpenCrawling endpoint: " + fullUrl, e);
         }
+    }
+
+    /** Sends with the current token; after a {@code 401}, once more with a new one if the provider could get it. */
+    private <T> HttpResponse<T> sendWithToken(HttpRequest.Builder builder, HttpResponse.BodyHandler<T> handler)
+            throws IOException, InterruptedException {
+        HttpResponse<T> response = httpClient.send(withToken(builder).build(), handler);
+        if (response.statusCode() == 401 && tokenProvider.invalidate()) {
+            log.debug("Token refused; retrying once with a new one");
+            response = httpClient.send(withToken(builder).build(), handler);
+        }
+        return response;
+    }
+
+    private HttpRequest.Builder withToken(HttpRequest.Builder builder) {
+        String token = tokenProvider.accessToken();
+        if (token != null && !token.isBlank()) {
+            builder.setHeader("Authorization", "Bearer " + token);
+        }
+        return builder;
     }
 
     private String serializeBody(Object body) {
@@ -158,9 +189,6 @@ public class HttpTransport {
         if (apiKey != null && !apiKey.isBlank()) {
             builder.header("X-API-Key", apiKey);
         }
-        if (bearerToken != null && !bearerToken.isBlank()) {
-            builder.header("Authorization", "Bearer " + bearerToken);
-        }
 
         HttpRequest.BodyPublisher publisher = jsonBody != null 
                 ? HttpRequest.BodyPublishers.ofString(jsonBody) 
@@ -180,7 +208,7 @@ public class HttpTransport {
 
         try {
             log.debug("Executing HTTP {} to {}", method, fullUrl);
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = sendWithToken(builder, HttpResponse.BodyHandlers.ofString());
             log.debug("Received HTTP {} from {}", response.statusCode(), fullUrl);
 
             if (response.statusCode() >= 400) {

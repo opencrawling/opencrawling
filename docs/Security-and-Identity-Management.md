@@ -51,6 +51,8 @@ The repository has a ready Keycloak 26 for local evaluation: `docker/docker-comp
 
 ### What the realm contains
 
+- **Client `opencrawling-cli`:** public, device authorization grant only, for `oc auth login`.
+- **Client `opencrawling-automation`:** confidential, client credentials grant only, for the SDK and CI. Its service account has the realm role `hr-team`. The realm ships without its secret: Keycloak generates one on import, which you read in the admin console (Clients, `opencrawling-automation`, Credentials).
 - **Client `opencrawling-admin-ui`:** public, standard flow only, PKCE `S256` required, redirect URIs `http://localhost:3000/auth/callback` (the UI container), `http://localhost:8080/auth/callback` (the UI served by the runtime) and `http://localhost:5173/auth/callback` (`npm run dev`). An audience mapper adds `opencrawling-api` to its access tokens.
 - **Realm roles:** `opencrawling-admin`, `hr-team`, `finance-team`. Keycloak puts them in `realm_access.roles`, which the runtime reads by default.
 - **Demo users without passwords:** `hr_admin` (`hr-team`), `finance_admin` (`finance-team`), `global_admin` (`opencrawling-admin`).
@@ -92,6 +94,36 @@ Open `http://localhost:3000` and sign in:
 | `finance_admin` | the same for their own jobs | the same; never sees HR's jobs |
 
 Jobs that existed before authorization was turned on have no owner. Only `global_admin` sees them, until it assigns them by editing their `access` block.
+
+---
+
+## The CLI and the Java SDK
+
+### Signing in with the CLI
+
+```bash
+oc auth login            # the runtime from `oc config set`, or --server-url
+oc auth status           # who you are to the runtime: user, groups, admin, may create jobs
+oc auth logout           # revokes the session at the identity provider and forgets it
+```
+
+`oc auth login` uses the OAuth 2.0 device authorization grant: it shows a URL and a code, you confirm them in any browser, and the CLI receives a token. The CLI never sees your password. It finds the identity provider through the runtime (`GET /api/auth/config`); `--issuer` names another, and `--client-id` (default `opencrawling-cli`) the public client, which must allow the device grant.
+
+The sign-in is kept in `~/.oc/credentials.json` (or `$OC_CONFIG_DIR`), readable only by you, and renewed with the refresh token as needed. It is sent only to the server it was made for. Commands authenticate with, first match wins: `--token`, client credentials from the environment, the stored sign-in, the bearer token from `oc config set`.
+
+### Automation (client credentials)
+
+In CI or scripts, give the CLI a confidential client through the environment, never on the command line:
+
+```bash
+export OPENCRAWLING_CLIENT_ID=opencrawling-automation
+export OPENCRAWLING_CLIENT_SECRET=...           # from your CI's secret store
+export OPENCRAWLING_TOKEN_URL=...               # optional: found through the runtime's issuer otherwise
+export OPENCRAWLING_CLIENT_SCOPE=...            # optional
+oc job list
+```
+
+The Java SDK does the same with `OpenCrawlingClient.builder().clientCredentials(tokenUrl, clientId, clientSecret, scope)`, or with the Spring Boot properties `opencrawling.client.oauth2.token-uri`, `client-id`, `client-secret` and `scope`. The token is cached and renewed before it expires. A service account acts as itself: give it the groups it needs (`job-creator-groups`, or a job's `allowedGroups`), like any user.
 
 ---
 
@@ -145,4 +177,4 @@ Okta access tokens name the user in `sub` (the login), which the default `princi
 - **Audience set:** `spring.security.oauth2.resourceserver.jwt.audiences`.
 - **Short-lived access tokens:** the UI renews them with the refresh token before they expire; a failed renewal sends the user back to sign in.
 - **Group names agreed:** `admin-groups` and `job-creator-groups` exist in the provider, and job `access` blocks use the same names.
-- **Other clients:** the Java client SDK and the CLI accept a bearer token today; fetching one themselves (client credentials, device login) is still to come under #187.
+- **Automation secrets:** client secrets come from a secret store or the environment, never from committed files or command lines.

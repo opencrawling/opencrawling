@@ -34,7 +34,8 @@ public record JobRequest(
     String lastRun,
     String transformationConnector,
     NarrativizationConfig narrativization,
-    String pipelineMode
+    String pipelineMode,
+    JobAccess access
 ) {
 
     public JobRequest {
@@ -57,7 +58,25 @@ public record JobRequest(
         String transformationConnector,
         NarrativizationConfig narrativization
     ) {
-        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null);
+    }
+
+    public JobRequest(
+        String id,
+        String name,
+        String repositoryConnector,
+        String outputConnector,
+        String authorityConnector,
+        String path,
+        String status,
+        String currentStage,
+        long documents,
+        String lastRun,
+        String transformationConnector,
+        NarrativizationConfig narrativization,
+        String pipelineMode
+    ) {
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null);
     }
 
     public static Builder builder() {
@@ -78,6 +97,7 @@ public record JobRequest(
         private String transformationConnector = "Ollama_Embedding_Default";
         private NarrativizationConfig narrativization;
         private String pipelineMode; // null = inherit the server-side opencrawling.pipeline.mode default
+        private JobAccess access; // null = on update, keep the job's current access
 
         public Builder id(String id) {
             this.id = id;
@@ -149,6 +169,12 @@ public record JobRequest(
             return this;
         }
 
+        /** Who may see and run the job when management authorization is on; leave unset to keep it on update. */
+        public Builder access(JobAccess access) {
+            this.access = access;
+            return this;
+        }
+
         public JobRequest build() {
             return new JobRequest(
                 id,
@@ -164,6 +190,8 @@ public record JobRequest(
                 transformationConnector,
                 narrativization != null ? narrativization : NarrativizationConfig.disabled(),
                 pipelineMode
+            ,
+                access
             );
         }
     }
