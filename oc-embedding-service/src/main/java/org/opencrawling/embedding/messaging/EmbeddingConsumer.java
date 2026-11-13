@@ -57,7 +57,7 @@ public class EmbeddingConsumer {
                     new float[0],
                     DocumentAction.DELETE
                 );
-                kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMessage).get();
+                kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMessage.partitionKey(), embeddedMessage).get();
                 return;
             }
             // Resolve the dynamic embedding model client from factory
@@ -77,8 +77,8 @@ public class EmbeddingConsumer {
                 embedding
             );
 
-            // Publish to embedded topic
-            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMessage).get();
+            // Publish to embedded topic, keyed by document id so the writer applies a document's messages in order
+            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMessage.partitionKey(), embeddedMessage).get();
             log.info("Successfully generated embedding and published chunk: {}", message.chunkId());
         } catch (Exception e) {
             log.error("Failed to generate embedding for chunk: {}", message.chunkId(), e);

@@ -206,7 +206,7 @@ public class SeaTunnelOutputConnector implements OutputConnector {
 
     private void publishToKafkaOrBuffer(DocumentEmbeddedMessage message) {
         if (kafkaTemplate != null) {
-            kafkaTemplate.send(properties.kafkaTopic(), message.chunkId(), message);
+            kafkaTemplate.send(properties.kafkaTopic(), message.partitionKey(), message);
         } else {
             log.debug("KafkaTemplate not injected, buffered message {} for SeaTunnel topic {}", message.chunkId(), properties.kafkaTopic());
         }

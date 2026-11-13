@@ -292,6 +292,7 @@ public class IngestionConsumer {
                 // Chunk ids derive from the document id and the chunk position, so a re-crawl rewrites the same rows.
                 // The position equals the splitter's chunk_index, which the writer uses to drop the rows past a
                 // shorter document's new length. A document that becomes empty publishes no chunk and keeps its rows.
+                // Chunks are keyed by document id, like the document's DELETE, so the writers apply them in order.
                 for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
                     Document chunk = chunks.get(chunkIndex);
                     String chunkId = UUID.nameUUIDFromBytes(
@@ -305,7 +306,7 @@ public class IngestionConsumer {
                         message.transformationEngine(),
                         message.transformationConfig()
                     );
-                    kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, chunkId, chunkMsg).get();
+                    kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, chunkMsg.partitionKey(), chunkMsg).get();
                 }
                 log.info("Successfully published all chunks for document: {}", message.documentId());
 
@@ -380,7 +381,7 @@ public class IngestionConsumer {
             message.transformationConfig(),
             DocumentAction.DELETE
         );
-        kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, message.documentId(), deleteChunkMsg).get();
+        kafkaTemplate.send(KafkaConfig.CHUNKS_TOPIC_NAME, deleteChunkMsg.partitionKey(), deleteChunkMsg).get();
     }
 
     private void cleanupClaim(URI fileUri) {
