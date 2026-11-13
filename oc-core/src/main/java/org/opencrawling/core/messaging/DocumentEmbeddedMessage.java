@@ -35,4 +35,12 @@ public record DocumentEmbeddedMessage(
     ) {
         this(documentId, chunkId, text, metadata, embedding, DocumentAction.UPSERT);
     }
+
+    /**
+     * The Kafka record key: the document id, so every chunk of a document and its DELETE land on the same partition
+     * and are applied in the order they were published. Falls back to the chunk id for a message without one.
+     */
+    public String partitionKey() {
+        return documentId != null && !documentId.isBlank() ? documentId : chunkId;
+    }
 }
