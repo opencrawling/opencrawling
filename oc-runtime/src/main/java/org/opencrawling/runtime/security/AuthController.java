@@ -18,6 +18,7 @@ package org.opencrawling.runtime.security;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.opencrawling.core.security.Caller;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.core.env.Environment;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,6 +36,7 @@ import java.util.Optional;
  * {@code GET /api/auth/me} describes the verified caller of the request.
  */
 @RestController
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET) // IdentityProperties exists only there
 @RequestMapping(AuthController.PATH)
 @Tag(name = "Authentication", description = "Sign-in settings for the admin UI and the current caller")
 public class AuthController {
