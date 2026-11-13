@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "opencrawling-alfresco": {
+      "type": "streamable-http",
+      "url": "http://localhost:8080/mcp"
+    },
+    "opencrawling-alfresco-sse": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse"
+    }
+  }
+}

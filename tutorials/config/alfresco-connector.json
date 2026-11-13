@@ -1,0 +1,25 @@
+{
+  "name": "Alfresco_Tutorial",
+  "description": "Alfresco Content Services (Tutorial Instance with Zero-Trust ACLs)",
+  "type": "repository",
+  "className": "org.opencrawling.alfresco.AlfrescoRepositoryConnector",
+  "maxConnections": 10,
+  "configuration": {
+    "url": "http://alfresco:8080/alfresco/api/-default-/public/alfresco/versions/1",
+    "username": "admin",
+    "password": "admin",
+    "crawlMode": "folder",
+    "queryLanguage": "afts",
+    "searchQuery": "TYPE:'cm:content'",
+    "rootFolderPath": "/opencrawling-tutorial",
+    "rootFolderId": "",
+    "siteId": "",
+    "excludedFolders": "Data Dictionary",
+    "batchSize": "100",
+    "maxContentSizeBytes": "52428800",
+    "mimeTypeFilter": "",
+    "includeSubfolders": "true",
+    "includeContentStream": "true",
+    "includeAcls": "true"
+  }
+}
