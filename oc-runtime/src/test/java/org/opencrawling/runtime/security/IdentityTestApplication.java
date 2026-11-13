@@ -27,6 +27,7 @@ import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
 import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -55,7 +56,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * A minimal web application for the HTTP-level identity tests: the real MCP server (Streamable HTTP), the real
  * security configuration and resource server, a backend that records the identity each tool call reaches it with,
  * and two stand-in REST endpoints. No database, Kafka or vector store.
+ *
+ * <p>{@code @TestComponent} keeps this class and its {@link Endpoints} out of component scanning: the runtime's
+ * {@code @SpringBootApplication} scans {@code org.opencrawling}, so without it every {@code @SpringBootTest} of the
+ * full application (the JUnit ITs) would also get the recording backend and the stand-in endpoints. Tests that want
+ * this application name it in {@code @SpringBootTest(classes = ...)}.
  */
+@TestComponent
 @SpringBootConfiguration
 @ImportAutoConfiguration({
         org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration.class,
@@ -125,7 +132,11 @@ public class IdentityTestApplication {
         }
     }
 
-    /** Stand-ins for a REST endpoint and the OIS ingest endpoint, which has its own bearer token. */
+    /**
+     * Stand-ins for a REST endpoint and the OIS ingest endpoint, which has its own bearer token. Imported above, and
+     * out of component scanning like the application itself, since it maps the real OIS ingest path.
+     */
+    @TestComponent
     @RestController
     public static class Endpoints {
         @GetMapping("/api/ping")
