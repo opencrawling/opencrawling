@@ -53,7 +53,7 @@
         <picocli.version>4.7.7</picocli.version>
         <opencrawling-sdk.version>1.0.5-SNAPSHOT</opencrawling-sdk.version>
 
-        <junit.version>5.11.4</junit.version>
+        <junit.version>6.1.3</junit.version>
         <assertj.version>3.27.7</assertj.version>
 
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
