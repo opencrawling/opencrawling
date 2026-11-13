@@ -83,6 +83,12 @@ wait_until "Ollama model puller (mxbai-embed-large)" 600 \
 wait_until "Alfresco Content Services (http://localhost:8081)" "${TIMEOUT}" \
   curl -sf http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1/probes/-ready-
 
+wait_until "Alfresco Share (http://localhost:8081/share/)" 180 \
+  curl -sfL http://localhost:8081/share/
+
+wait_until "Alfresco Content App / Workspace (http://localhost:8081/workspace/)" 60 \
+  curl -sf http://localhost:8081/workspace/
+
 wait_until "OpenCrawling Backend & MCP Server (http://localhost:8080/api/system/status)" 180 \
   curl -sf http://localhost:8080/api/system/status
 
@@ -91,6 +97,8 @@ wait_until "OpenCrawling Admin UI (http://localhost:3000)" 60 \
 
 echo ""
 log_ok "All tutorial services are running and healthy!"
+echo "  - Alfresco Share    : http://localhost:8081/share/ (admin / admin)"
+echo "  - Alfresco Workspace: http://localhost:8081/workspace/ (alias: http://localhost:8081/content-app/)"
 echo "  - Alfresco REST API : http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1 (admin / admin)"
 echo "  - OpenCrawling UI   : http://localhost:3000"
 echo "  - OpenCrawling API  : http://localhost:8080/swagger-ui.html"
