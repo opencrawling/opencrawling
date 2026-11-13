@@ -51,4 +51,14 @@ class NonWebStartupTest {
             assertThat(context).doesNotHaveBean(SecurityFilterChain.class);
         });
     }
+
+    @Test
+    void theAdminUiEndpointsAreLeftOutOfANonWebContext() {
+        // The decoupled crawler and workers run the runtime with spring.main.web-application-type=none.
+        runner.withUserConfiguration(AuthController.class, ManagementAuthorization.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(AuthController.class);
+                });
+    }
 }

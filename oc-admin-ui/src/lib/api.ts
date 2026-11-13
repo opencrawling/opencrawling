@@ -47,6 +47,8 @@ export const jobApi = {
   pause: (id: string) => api.post(`/jobs/${id}/pause`),
   create: (data: any) => api.post('/jobs', data),
   delete: (id: string) => api.delete(`/jobs/${id}`),
+  /** What the caller may do with each job they can see (READ, EXECUTE, MANAGE). */
+  permissions: () => api.get<Record<string, ('READ' | 'EXECUTE' | 'MANAGE')[]>>('/jobs/permissions'),
 }
 
 export const connectorApi = {
@@ -239,8 +241,25 @@ export const reportApi = {
   getById: (jobId: string, executionId: string) => api.get<JobReportSummary>(`/reports/${jobId}/${executionId}`),
   getDocumentLedger: (jobId: string, executionId: string, params?: { status?: string; query?: string; page?: number; size?: number }) =>
     api.get<PaginatedLedgerResponse>(`/reports/${jobId}/${executionId}/documents`, { params }),
-  getExportUrl: (jobId: string, executionId: string, format: 'csv' | 'parquet' | 'json') =>
-    `/api/reports/${jobId}/${executionId}/export?format=${format}`,
+  /**
+   * Downloads an export through the API client, so the request carries the access token (a plain link would not),
+   * and saves it under `filename`.
+   */
+  downloadExport: async (jobId: string, executionId: string, format: 'csv' | 'parquet' | 'json', filename: string) => {
+    const res = await api.get<Blob>(`/reports/${encodeURIComponent(jobId)}/${encodeURIComponent(executionId)}/export`,
+      { params: { format }, responseType: 'blob', timeout: 120000 })
+    const url = URL.createObjectURL(res.data)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  },
   runQuery: (sql: string) => api.post<{ columns: string[]; rows: any[][] }>('/reports/query', { sql }),
 }
 

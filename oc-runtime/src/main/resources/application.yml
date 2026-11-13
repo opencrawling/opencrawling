@@ -303,6 +303,14 @@ opencrawling:
         # Values of all these claims are the caller's groups/roles; dots name nested claims.
         group-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_GROUP_CLAIMS:realm_access.roles,groups}
         tenant-claim: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_TENANT_CLAIM:}
+      # How the admin UI signs users in (OpenID Connect authorization code flow with PKCE, jwt mode only). The UI
+      # reads these from the public GET /api/auth/config.
+      admin-ui:
+        # The identity provider's public client for the UI. Blank: the UI does not sign users in.
+        client-id: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_CLIENT_ID:}
+        scope: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_SCOPE:openid profile}
+        # The issuer as the browser reaches it, when that differs from the resource server's issuer-uri.
+        issuer: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_ISSUER:}
     management:
       # Who may do what on the management plane (jobs, connectors, settings, reports, traces). Needs identity
       # mode jwt with protect-api; the runtime refuses to start otherwise. Off: every caller may do everything.

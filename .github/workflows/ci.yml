@@ -105,10 +105,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: oc-admin-ui/package-lock.json
 
-      - name: Install dependencies & run frontend build
+      - name: Install dependencies, run unit tests & frontend build
         run: |
           cd oc-admin-ui
           npm ci
+          npm test
           npm run build
 
   archetypes-ci:

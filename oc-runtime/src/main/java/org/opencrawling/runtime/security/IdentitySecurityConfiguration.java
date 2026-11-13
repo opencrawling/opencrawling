@@ -23,6 +23,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.security.config.Customizer;
@@ -139,7 +140,8 @@ public class IdentitySecurityConfiguration {
 
     /**
      * The requests that need a token in {@code jwt} mode: the MCP endpoints, plus {@code /api/**} (except OIS
-     * ingest, and BPM events that carry a source's signature or Basic credentials) with {@code protect-api}.
+     * ingest, the admin UI's sign-in settings, and BPM events that carry a source's signature or Basic credentials)
+     * with {@code protect-api}.
      */
     static RequestMatcher protectedRequests(IdentityProperties properties, Environment environment) {
         PathPatternRequestMatcher.Builder paths = PathPatternRequestMatcher.withDefaults();
@@ -150,6 +152,7 @@ public class IdentitySecurityConfiguration {
         if (properties.isProtectApi()) {
             matchers.add(new AndRequestMatcher(paths.matcher("/api/**"),
                     new NegatedRequestMatcher(paths.matcher(OIS_INGEST_PATH)),
+                    new NegatedRequestMatcher(paths.matcher(HttpMethod.GET, AuthController.CONFIG_PATH)),
                     new NegatedRequestMatcher(new AndRequestMatcher(paths.matcher(BPM_EVENTS_PATH), BPM_SHARED_SECRET))));
         }
         return new OrRequestMatcher(matchers);

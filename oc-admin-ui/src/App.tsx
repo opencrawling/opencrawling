@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   LayoutDashboard,
   PlayCircle,
@@ -26,7 +26,10 @@ import {
   ChevronRight,
   Wand2,
   ArrowRightLeft,
-  FileSpreadsheet
+  FileSpreadsheet,
+  LogIn,
+  LogOut,
+  ShieldAlert
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
@@ -36,10 +39,75 @@ import Narrativization from './components/Narrativization'
 import McfMigration from './components/McfMigration'
 import ReportDashboard from './components/ReportDashboard'
 import { statusApi } from './lib/api'
+import { useAuth } from './lib/useAuth'
+import { initials, type Me } from './lib/auth'
 
 type View = 'dashboard' | 'jobs' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings'
 
+/** Which views a caller may open; the runtime enforces the same rules on the API. */
+function canOpen(view: View, me: Me): boolean {
+  switch (view) {
+    case 'connectors':
+    case 'narrativization':
+      return me.canCreateJobs
+    case 'mcf-migration':
+    case 'logs':
+    case 'settings':
+      return me.admin
+    default:
+      return true
+  }
+}
+
+function CenteredCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-screen items-center justify-center bg-background text-foreground p-4">
+      <div className="card-container max-w-md w-full flex flex-col items-center gap-4 text-center">
+        <div className="bg-primary p-3 rounded-lg">
+          <Search className="w-7 h-7 text-primary-foreground" />
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  const { status, me, error, signIn } = useAuth()
+
+  if (status === 'loading') {
+    return <CenteredCard><p className="text-muted text-sm">Loading…</p></CenteredCard>
+  }
+  if (status === 'misconfigured') {
+    return (
+      <CenteredCard>
+        <ShieldAlert className="w-6 h-6 text-yellow-500" />
+        <h1 className="text-lg font-bold">Sign-in is not set up</h1>
+        <p className="text-muted text-sm">
+          This runtime requires a token on its API, but no client is configured for the admin UI.
+          Set <code>opencrawling.security.identity.admin-ui.client-id</code> to the identity provider's public client.
+        </p>
+      </CenteredCard>
+    )
+  }
+  if (status === 'signed-out' || !me) {
+    return (
+      <CenteredCard>
+        <h1 className="text-lg font-bold">OpenCrawling</h1>
+        <p className="text-muted text-sm">Sign in with your organization's account to manage pipelines.</p>
+        {error && <p className="text-red-400 text-xs break-words">Sign-in failed: {error}</p>}
+        <button onClick={signIn} className="btn-primary flex items-center gap-2">
+          <LogIn className="w-4 h-4" />
+          Sign in
+        </button>
+      </CenteredCard>
+    )
+  }
+  return <Console me={me} />
+}
+
+function Console({ me }: { me: Me }) {
+  const { status, signOut } = useAuth()
   const [activeView, setActiveView] = useState<View>('dashboard')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [systemStatus, setSystemStatus] = useState<Record<string, string>>({
@@ -101,7 +169,7 @@ export default function App() {
     return "text-slate-300";
   }
 
-  const menuItems = [
+  const menuItems = ([
     { id: 'dashboard',       label: 'Dashboard',              icon: LayoutDashboard },
     { id: 'jobs',            label: 'Job Management',         icon: PlayCircle },
     { id: 'connectors',      label: 'Connectors',              icon: Plug2 },
@@ -110,7 +178,7 @@ export default function App() {
     { id: 'logs',            label: 'Real-time Logs',         icon: Activity },
     { id: 'narrativization', label: 'Narrativization',        icon: Wand2 },
     { id: 'settings',        label: 'Settings',                icon: SettingsIcon },
-  ]
+  ] as { id: View; label: string; icon: typeof LayoutDashboard }[]).filter(item => canOpen(item.id, me))
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -135,7 +203,7 @@ export default function App() {
           {menuItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveView(item.id as View)}
+              onClick={() => setActiveView(item.id)}
               className={`
                 w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors
                 ${activeView === item.id 
@@ -181,21 +249,32 @@ export default function App() {
               }`} />
               System: {systemStatus.system}
             </div>
-            <div className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center">
-              <span className="text-xs font-bold">PL</span>
-            </div>
+            {status === 'signed-in' && (
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center"
+                  title={[me.principal, me.admin ? 'admin' : null, ...me.groups].filter(Boolean).join(' · ')}
+                >
+                  <span className="text-xs font-bold">{initials(me.principal)}</span>
+                </div>
+                <span className="hidden md:inline text-sm text-muted">{me.principal}</span>
+                <button onClick={signOut} className="p-1.5 rounded-md hover:bg-secondary" title="Sign out">
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-8 custom-scrollbar">
           {activeView === 'dashboard' && <Dashboard />}
           {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
-          {activeView === 'connectors' && <ConnectorForm />}
+          {activeView === 'connectors' && canOpen('connectors', me) && <ConnectorForm />}
           {activeView === 'reports' && <ReportDashboard />}
-          {activeView === 'mcf-migration' && <McfMigration />}
-          {activeView === 'settings' && <Settings />}
-          {activeView === 'narrativization' && <Narrativization />}
-          {activeView === 'logs' && (
+          {activeView === 'mcf-migration' && canOpen('mcf-migration', me) && <McfMigration />}
+          {activeView === 'settings' && canOpen('settings', me) && <Settings />}
+          {activeView === 'narrativization' && canOpen('narrativization', me) && <Narrativization />}
+          {activeView === 'logs' && canOpen('logs', me) && (
             <div className="flex flex-col gap-4 h-[calc(100vh-12rem)]">
                <h1 className="text-2xl font-bold">Real-time Activity Logs</h1>
                <div className="flex-1 bg-slate-900 rounded-lg p-4 font-mono text-sm overflow-y-auto border border-border text-slate-300 flex flex-col gap-1.5 custom-scrollbar">

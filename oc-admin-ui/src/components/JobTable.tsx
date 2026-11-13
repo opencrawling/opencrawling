@@ -58,6 +58,8 @@ import {
   Cloud
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
+import { useAuth } from '../lib/useAuth'
+import type { JobAction } from '../lib/auth'
 
 type JobStatus = 'Running' | 'Paused' | 'Error' | 'Finished' | 'Ready'
 
@@ -188,6 +190,11 @@ interface JobTableProps {
 
 export default function JobTable({ setActiveView }: JobTableProps) {
   const [jobs, setJobs] = useState<Job[]>([])
+  const { me } = useAuth()
+  const authorizationOn = me?.managementAuthorization ?? false
+  const [permissions, setPermissions] = useState<Record<string, JobAction[]>>({})
+  /** Whether the caller may do this with the job; the runtime refuses it either way. */
+  const may = (jobId: string, action: JobAction) => !authorizationOn || (permissions[jobId] ?? []).includes(action)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('All')
   const [isLoading, setIsLoading] = useState(false)
@@ -459,6 +466,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     try {
       const res = await jobApi.getAll()
       setJobs(res.data || [])
+      if (authorizationOn) {
+        const allowed = await jobApi.permissions()
+        setPermissions(allowed.data || {})
+      }
     } catch (err) {
       console.error("Failed to fetch jobs:", err)
     } finally {
@@ -641,13 +652,13 @@ export default function JobTable({ setActiveView }: JobTableProps) {
             <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button 
+          {(me?.canCreateJobs ?? true) && <button 
             onClick={openCreateForm}
             className="btn-primary flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-black border border-cyan-400/25 shadow-lg shadow-cyan-500/20"
           >
             <Plus className="w-4 h-4 text-black" />
             New Pipeline Job
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -839,7 +850,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                       <div className="flex items-center justify-center gap-1">
                         <button 
                           onClick={() => triggerAction(job.id, 'start')}
-                          disabled={job.status === 'Running' || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || job.status === 'Running' || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-cyan-500/10 hover:text-cyan-500 transition-colors disabled:opacity-30" 
                           title="Start crawl job"
                         >
@@ -847,7 +858,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         </button>
                         <button 
                           onClick={() => triggerAction(job.id, 'pause')}
-                          disabled={job.status !== 'Running' || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || job.status !== 'Running' || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-yellow-500/10 hover:text-yellow-500 transition-colors disabled:opacity-30" 
                           title="Pause crawl job"
                         >
@@ -855,7 +866,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         </button>
                         <button 
                           onClick={() => triggerAction(job.id, 'stop')}
-                          disabled={(job.status !== 'Running' && job.status !== 'Paused') || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || (job.status !== 'Running' && job.status !== 'Paused') || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-red-500/10 hover:text-red-500 transition-colors disabled:opacity-30" 
                           title="Stop crawl job"
                         >
@@ -872,6 +883,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                           <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
                         </button>
  
+                        {may(job.id, 'MANAGE') && <>
                         <button 
                           onClick={() => openEditForm(job)}
                           className="p-1.5 rounded hover:bg-slate-700 hover:text-foreground transition-colors"
@@ -886,6 +898,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        </>}
                       </div>
                     </td>
                   </tr>

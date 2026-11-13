@@ -133,6 +133,14 @@ export default function ReportDashboard() {
     setTimeout(() => setCopiedSql(false), 2500)
   }
 
+  const handleDownload = async (jobId: string, executionId: string, format: 'csv' | 'parquet' | 'json', filename: string) => {
+    try {
+      await reportApi.downloadExport(jobId, executionId, format, filename)
+    } catch (err) {
+      console.error(`Failed to download the ${format} export:`, err)
+    }
+  }
+
   const handleOpenSqlPlayground = (report: JobReportSummary) => {
     const path = report.reportPathParquet || `mode=${report.pipelineMode}/**/job_${report.jobId}_*.parquet`
     setSqlQuery(`SELECT status, count(*) AS doc_count, avg(duration_ms) AS avg_duration_ms FROM read_parquet('${path}') GROUP BY status`)
@@ -448,14 +456,14 @@ export default function ReportDashboard() {
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
-                          <a
-                            href={reportApi.getExportUrl(report.jobId, report.executionId, 'csv')}
-                            download={`manifest_${report.executionId}.csv`}
+                          <button
+                            type="button"
+                            onClick={() => handleDownload(report.jobId, report.executionId, 'csv', `manifest_${report.executionId}.csv`)}
                             className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
                             title="Download CSV Compliance Manifest"
                           >
                             <Download className="w-4 h-4" />
-                          </a>
+                          </button>
                           <button
                             onClick={() => handleOpenSqlPlayground(report)}
                             className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground hover:text-cyan-400 transition-colors"
@@ -504,32 +512,32 @@ export default function ReportDashboard() {
 
             {/* Export Toolbar */}
             <div className="flex flex-wrap items-center gap-2">
-              <a
-                href={reportApi.getExportUrl(selectedReport.jobId, selectedReport.executionId, 'csv')}
-                download={`manifest_${selectedReport.executionId}.csv`}
+              <button
+                type="button"
+                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'csv', `manifest_${selectedReport.executionId}.csv`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-green-400" />
                 CSV Manifest
-              </a>
+              </button>
 
-              <a
-                href={reportApi.getExportUrl(selectedReport.jobId, selectedReport.executionId, 'parquet')}
-                download={`job_${selectedReport.jobId}_exec_${selectedReport.executionId}.parquet`}
+              <button
+                type="button"
+                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'parquet', `job_${selectedReport.jobId}_exec_${selectedReport.executionId}.parquet`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-purple-400" />
                 Parquet File
-              </a>
+              </button>
 
-              <a
-                href={reportApi.getExportUrl(selectedReport.jobId, selectedReport.executionId, 'json')}
-                download={`summary_${selectedReport.executionId}.json`}
+              <button
+                type="button"
+                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'json', `summary_${selectedReport.executionId}.json`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-yellow-400" />
                 JSON Summary
-              </a>
+              </button>
 
               <button
                 onClick={() => handleCopyDuckDbSql(selectedReport)}
