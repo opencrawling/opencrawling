@@ -23,7 +23,7 @@ import java.util.List;
 
 /**
  * Reading OIS sidecars ({@value #PREFIX}): the {@code <key>.ois.json} metadata files the Ozone and S3 migration
- * writers store next to each migrated binary. Off by default.
+ * writers store next to each migrated binary, and Apache Iceberg lakehouse table rows. Off by default.
  */
 @ConfigurationProperties(prefix = SidecarProperties.PREFIX)
 public class SidecarProperties {
@@ -41,7 +41,7 @@ public class SidecarProperties {
 
     private boolean enabled = false;
 
-    /** The registered Ozone or S3 output connectors (names in {@code connectors.json}) whose sidecars may be read. */
+    /** The registered Ozone, S3, or Apache Iceberg output connectors (names in {@code connectors.json}) whose sidecars may be read. */
     private List<String> connectors = new ArrayList<>();
 
     /** The OAuth2 scope a verified caller's token must carry; blank: not checked. */

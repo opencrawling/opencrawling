@@ -55,7 +55,7 @@ class GatedMcpSearchBackendTest {
     @Test
     void everyBackendGoesThroughTheGate() {
         List<Class<? extends McpVectorSearchBackend>> backends = List.of(
-                LuxirMcpSearchBackend.class, MilvusMcpSearchBackend.class, OpenArchMcpSearchBackend.class,
+                IcebergMcpSearchBackend.class, LuxirMcpSearchBackend.class, MilvusMcpSearchBackend.class, OpenArchMcpSearchBackend.class,
                 ElasticsearchMcpSearchBackend.class, OpenSearch2McpSearchBackend.class, OpenSearch3McpSearchBackend.class,
                 PgVectorMcpSearchBackend.class, QdrantMcpSearchBackend.class, SolrMcpSearchBackend.class,
                 VespaMcpSearchBackend.class);

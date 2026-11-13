@@ -36,3 +36,8 @@ services:
     build:
       context: ../../
       dockerfile: docker/local/Dockerfile.writer-consumer
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/local/Dockerfile.mcp-server

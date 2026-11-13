@@ -362,12 +362,12 @@ Authorization: ${ocEventsAuthorization}</flowable:expression>
 
 ## 🗂️ OIS Sidecars
 
-Lets a verified caller, typically an agent, read the OIS metadata sidecars (`<key>.ois.json`) of content migrated to Apache Ozone or AWS S3, without downloading the binaries (REST `/api/sidecars/**`, MCP tools `listSidecarStores` and `readOisSidecars`). Each sidecar is filtered by the runtime's authorization gate, as search results are. See [Model Context Protocol, OIS sidecars](Model-Context-Protocol#%EF%B8%8F-ois-sidecars).
+Lets a verified caller, typically an agent, read the OIS metadata sidecars (`<key>.ois.json` on Apache Ozone or AWS S3, or columnar OIS rows in Apache Iceberg via `IcebergSidecarStore`), without downloading the binaries (REST `/api/sidecars/**`, MCP tools `listSidecarStores` and `readOisSidecars`). Each sidecar is filtered by the runtime's authorization gate, as search results are. See [Model Context Protocol, OIS sidecars](Model-Context-Protocol#%EF%B8%8F-ois-sidecars).
 
 *   **`OPENCRAWLING_SIDECARS_ENABLED`** (`opencrawling.sidecars.enabled`): whether the endpoints and tools exist.
     *   *Type*: `boolean`
     *   *Default*: `false`
-*   **`OPENCRAWLING_SIDECARS_CONNECTORS`** (`opencrawling.sidecars.connectors`): the registered Ozone or S3 output connectors (names in `connectors.json`) whose sidecars may be read, comma-separated.
+*   **`OPENCRAWLING_SIDECARS_CONNECTORS`** (`opencrawling.sidecars.connectors`): the registered Ozone, S3, or Apache Iceberg output connectors (names in `connectors.json`) whose sidecars may be read, comma-separated.
     *   *Type*: list
     *   *Default*: empty (none)
 *   **`OPENCRAWLING_SIDECARS_REQUIRED_SCOPE`** (`opencrawling.sidecars.required-scope`): the OAuth2 scope the caller's token must carry. Blank: not checked.
@@ -378,6 +378,31 @@ Lets a verified caller, typically an agent, read the OIS metadata sidecars (`<ke
 *   **`opencrawling.sidecars.max-scan`**: keys one request lists before it stops and returns a cursor (default `5000`; never above `50000`).
 *   **`opencrawling.sidecars.max-sidecar-bytes`**: larger sidecars are skipped (default `1048576`; never above 16 MB).
 *   **`OPENCRAWLING_SIDECARS_CURSOR_SECRET`** (`opencrawling.sidecars.cursor-secret`), **`opencrawling.sidecars.cursor-ttl`**: paging cursors are encrypted with this secret (at least 32 characters) and expire after the TTL (default `1h`). Blank: a random key per instance, so a cursor only works on the instance that gave it, until it restarts.
+
+---
+
+## 🧊 Apache Iceberg MCP Tools
+
+Exposes time-travel, snapshot provenance, entity queries, and Zero-Trust partition statistics over Apache Iceberg tables (`IcebergMcpTools` and `IcebergMcpSearchBackend`).
+
+*   **`OPENCRAWLING_MCP_ICEBERG_ENABLED`** (`opencrawling.mcp.iceberg.enabled`, alias `opencrawling.iceberg.mcp.enabled`): explicitly enables `IcebergMcpTools`. Also auto-enabled whenever `opencrawling.mcp.server.enabled=true` and `spring.opencrawling.output.type=iceberg`.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
+*   **`OPENCRAWLING_MCP_ICEBERG_DEFAULT_MAX_RESULTS`** (`opencrawling.mcp.iceberg.default-max-results`): default `maxResults` when omitted in `queryIcebergEntities`.
+    *   *Type*: `integer`
+    *   *Default*: `25`
+*   **`OPENCRAWLING_MCP_ICEBERG_MAX_RESULTS`** (`opencrawling.mcp.iceberg.max-results`): upper bound on results returned per entity query (hard ceiling `500`).
+    *   *Type*: `integer`
+    *   *Default*: `200`
+*   **`OPENCRAWLING_MCP_ICEBERG_MAX_SCAN`** (`opencrawling.mcp.iceberg.max-scan`): maximum Iceberg rows scanned per tool invocation (hard ceiling `100000`).
+    *   *Type*: `integer`
+    *   *Default*: `20000`
+*   **`OPENCRAWLING_MCP_ICEBERG_MAX_SNAPSHOTS`** (`opencrawling.mcp.iceberg.max-snapshots`): maximum snapshots returned by `listIcebergSnapshots` (hard ceiling `500`).
+    *   *Type*: `integer`
+    *   *Default*: `100`
+*   **`OPENCRAWLING_MCP_ICEBERG_REQUIRE_VERIFIED_CALLER`** (`opencrawling.mcp.iceberg.require-verified-caller`): requires an authenticated token-verified caller even when global identity mode is `none`.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
 
 ---
 

@@ -15,12 +15,16 @@
  */
 package org.opencrawling.iceberg.output.writer;
 
+import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetricsConfig;
+import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.data.GenericRecord;
+import org.apache.iceberg.data.InternalRecordWrapper;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.io.FileAppender;
@@ -40,6 +44,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -71,7 +76,7 @@ public class IcebergRecordWriter {
         record.setField("title", title != null ? title : documentId);
 
         // MIME type
-        String mimeType = getFirstMetadataValue(metadata, "mimeType", "content_type", "media_type");
+        String mimeType = getFirstMetadataValue(metadata, "mimeType", "content_type", "media_type", "mime_type");
         record.setField("mime_type", mimeType != null ? mimeType : "application/octet-stream");
 
         // Length and Checksum
@@ -142,11 +147,57 @@ public class IcebergRecordWriter {
             return null;
         }
 
-        String dataFilePath = table.location() + "/data/" + UUID.randomUUID() + ".parquet";
+        PartitionKey partitionKey = resolvePartitionKey(table, records.get(0));
+        return writeSinglePartitionFile(table, records, partitionKey);
+    }
+
+    /** Writes records grouped by Iceberg partition key so partition stats and manifest pruning stay accurate. */
+    public static List<DataFile> writePartitionedRecords(Table table, List<Record> records) throws IOException {
+        if (records == null || records.isEmpty()) {
+            return List.of();
+        }
+        if (table.spec() == null || !table.spec().isPartitioned() || records.size() == 1) {
+            PartitionKey singleKey = resolvePartitionKey(table, records.get(0));
+            return List.of(writeSinglePartitionFile(table, records, singleKey));
+        }
+
+        Map<PartitionKey, List<Record>> byPartition = new LinkedHashMap<>();
+        InternalRecordWrapper wrapper = new InternalRecordWrapper(table.schema().asStruct());
+        for (Record rec : records) {
+            PartitionKey key = new PartitionKey(table.spec(), table.schema());
+            key.partition(wrapper.wrap(rec));
+            byPartition.computeIfAbsent(key.copy(), ignored -> new ArrayList<>()).add(rec);
+        }
+
+        List<DataFile> files = new ArrayList<>(byPartition.size());
+        for (Map.Entry<PartitionKey, List<Record>> entry : byPartition.entrySet()) {
+            files.add(writeSinglePartitionFile(table, entry.getValue(), entry.getKey()));
+        }
+        return files;
+    }
+
+    private static PartitionKey resolvePartitionKey(Table table, Record sample) {
+        if (table.spec() == null || !table.spec().isPartitioned() || sample == null) {
+            return null;
+        }
+        PartitionKey partitionKey = new PartitionKey(table.spec(), table.schema());
+        partitionKey.partition(new InternalRecordWrapper(table.schema().asStruct()).wrap(sample));
+        return partitionKey;
+    }
+
+    private static DataFile writeSinglePartitionFile(Table table, List<Record> records, PartitionKey partitionKey)
+            throws IOException {
+        String partitionPath = (partitionKey != null && table.spec().isPartitioned()) ? partitionKey.toPath() : "";
+        String dataDir = (partitionPath != null && !partitionPath.isBlank())
+                ? table.location() + "/data/" + partitionPath
+                : table.location() + "/data";
+        String dataFilePath = dataDir + "/" + UUID.randomUUID() + ".parquet";
         OutputFile outputFile = table.io().newOutputFile(dataFilePath);
 
         FileAppender<Record> appender = Parquet.write(outputFile)
+                .forTable(table)
                 .schema(table.schema())
+                .metricsConfig(MetricsConfig.forTable(table))
                 .createWriterFunc(messageType -> GenericParquetWriter.create(table.schema(), messageType))
                 .build();
         try {
@@ -155,23 +206,38 @@ public class IcebergRecordWriter {
             appender.close();
         }
 
-        return DataFiles.builder(table.spec())
+        DataFiles.Builder builder = DataFiles.builder(table.spec())
                 .withPath(dataFilePath)
                 .withFileSizeInBytes(appender.length())
                 .withRecordCount(appender.metrics().recordCount())
-                .withFormat(FileFormat.PARQUET)
-                .build();
+                .withMetrics(appender.metrics())
+                .withFormat(FileFormat.PARQUET);
+        if (partitionKey != null && table.spec().isPartitioned()) {
+            builder.withPartition(partitionKey);
+        }
+        return builder.build();
     }
 
     public static void commitDataFile(Table table, DataFile dataFile) {
         if (dataFile != null) {
-            log.info("Committing DataFile '{}' (records: {}, size: {} bytes) to Iceberg table '{}'",
-                    dataFile.path(), dataFile.recordCount(), dataFile.fileSizeInBytes(), table.name());
-            table.newAppend()
-                    .appendFile(dataFile)
-                    .commit();
-            log.info("Snapshot committed successfully to table '{}'", table.name());
+            commitDataFiles(table, List.of(dataFile));
         }
+    }
+
+    public static void commitDataFiles(Table table, List<DataFile> dataFiles) {
+        if (dataFiles == null || dataFiles.isEmpty()) {
+            return;
+        }
+        AppendFiles append = table.newAppend();
+        for (DataFile dataFile : dataFiles) {
+            if (dataFile != null) {
+                log.info("Committing DataFile '{}' (records: {}, size: {} bytes) to Iceberg table '{}'",
+                        dataFile.path(), dataFile.recordCount(), dataFile.fileSizeInBytes(), table.name());
+                append.appendFile(dataFile);
+            }
+        }
+        append.commit();
+        log.info("Snapshot committed successfully to table '{}'", table.name());
     }
 
     public static Map<String, String> extractEntitiesMap(Map<String, List<String>> metadata) {
