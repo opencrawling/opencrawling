@@ -1,0 +1,19 @@
+{
+  "id": "new",
+  "name": "Alfresco_Tutorial_PGVector_Job",
+  "repositoryConnector": "Alfresco_Tutorial",
+  "outputConnector": "PGVector_Output",
+  "authorityConnector": "",
+  "path": "/opencrawling-tutorial",
+  "status": "Ready",
+  "currentStage": "Idle",
+  "documents": 0,
+  "lastRun": "N/A",
+  "transformationConnector": "Ollama_Embedding_Default",
+  "pipelineMode": "rag",
+  "narrativization": {
+    "enabled": false,
+    "template": "",
+    "connectorType": "iceberg"
+  }
+}

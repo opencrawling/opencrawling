@@ -1,0 +1,10 @@
+ACME Enterprise Handbook & Security Policy (Public Edition)
+
+1. General Onboarding
+Welcome to ACME Corporation. This handbook is classified as PUBLIC and is accessible to all employees, contractors, and guests across the organization.
+
+2. Working Hours and Collaboration
+Core collaboration hours are 10:00 to 16:00 local time. Teams use Alfresco Content Services for document management and OpenCrawling with Zero-Trust Model Context Protocol (MCP) search to retrieve approved corporate knowledge.
+
+3. AI & Knowledge Retrieval Guidelines
+All employees may query public company guidelines, office directories, and holiday schedules through AI assistants connected to OpenCrawling. Sensitive financial, architectural, and executive documents are enforced strictly by document-level Access Control Lists (ACLs).
