@@ -1,0 +1,65 @@
+{
+  "notes": [
+    "Use these argument payloads in MCP Inspector (Web UI or --cli mode) against http://localhost:8080/mcp.",
+    "Because Alfresco prefixes group authorities with GROUP_, pass GROUP_finance / GROUP_engineering in userRoles.",
+    "For listAccessibleSources, pass dimensions: 1024 to query vector_store_1024 only (when Admin UI jobs run against a decoupled stack, VectorOutputConnector also writes to vector_store while consumers write to vector_store_1024). For secureVectorSearch, omitting dimensions automatically selects vector_store_1024 from the 1024-d query vector."
+  ],
+  "personas": {
+    "guest_public_only": {
+      "listAccessibleSources": {
+        "userPrincipal": "guest",
+        "userRoles": "",
+        "dimensions": 1024
+      },
+      "secureVectorSearch": {
+        "query": "ACME budget architecture handbook",
+        "userPrincipal": "guest",
+        "userRoles": "",
+        "maxResults": 10,
+        "minScore": 0.0
+      }
+    },
+    "charlie_finance": {
+      "listAccessibleSources": {
+        "userPrincipal": "charlie",
+        "userRoles": "GROUP_finance",
+        "dimensions": 1024
+      },
+      "secureVectorSearch": {
+        "query": "Q4 operating budget financial forecast",
+        "userPrincipal": "charlie",
+        "userRoles": "GROUP_finance",
+        "maxResults": 10,
+        "minScore": 0.0
+      }
+    },
+    "bob_engineering_with_explicit_deny": {
+      "listAccessibleSources": {
+        "userPrincipal": "bob",
+        "userRoles": "GROUP_engineering",
+        "dimensions": 1024
+      },
+      "secureVectorSearch_blocked_engineering_doc": {
+        "query": "zero-trust architecture rotating mTLS certificates",
+        "userPrincipal": "bob",
+        "userRoles": "GROUP_engineering",
+        "maxResults": 10,
+        "minScore": 0.0
+      }
+    },
+    "alice_engineering_finance_and_executive": {
+      "listAccessibleSources": {
+        "userPrincipal": "alice",
+        "userRoles": "GROUP_engineering,GROUP_finance",
+        "dimensions": 1024
+      },
+      "secureVectorSearch": {
+        "query": "Project Horizon board resolution M&A strategy",
+        "userPrincipal": "alice",
+        "userRoles": "GROUP_engineering,GROUP_finance",
+        "maxResults": 10,
+        "minScore": 0.0
+      }
+    }
+  }
+}

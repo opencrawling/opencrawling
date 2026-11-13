@@ -59,7 +59,7 @@ public class TestEmbeddingConsumer {
         );
         
         try {
-            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMsg).get();
+            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMsg.partitionKey(), embeddedMsg).get();
             log.info("[Test] Published simulated embedded chunk: {} with dimensions: {}", message.chunkId(), dimensions);
         } catch (Exception e) {
             log.error("[Test] Failed to publish simulated embedded chunk", e);

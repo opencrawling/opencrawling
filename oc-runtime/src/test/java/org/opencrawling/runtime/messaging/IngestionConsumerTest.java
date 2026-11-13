@@ -20,12 +20,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.claimcheck.ClaimCheckProperties;
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.runtime.config.KafkaConfig;
 import org.springframework.kafka.core.KafkaTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.ByteArrayInputStream;
 import java.util.HashSet;
@@ -149,6 +151,36 @@ class IngestionConsumerTest {
 
         assertEquals(List.of(), chunk.metadata().get("security_allowed_read"));
         assertEquals(List.of(), chunk.metadata().get("security_denied_read"));
+    }
+
+    @Test
+    void aDocumentsChunksAndItsDeleteShareOneKey() {
+        // One key per document puts its chunks and its DELETE on one partition, so a writer can never apply the
+        // DELETE before a chunk published earlier and bring the deleted document back.
+        String documentId = "http://example.com/a.html";
+
+        clearInvocations(kafkaTemplate);
+        consumer.consume(new IngestionMessage(documentId, "file:///claims/doc", Map.of(), "public", "2026-01-01T00:00:00Z", null, null, Map.of()));
+        consumer.consume(new IngestionMessage(documentId, "file:///claims/doc", Map.of(), "public", null, "2026-01-02T00:00:00Z",
+                null, null, Map.of(), DocumentAction.DELETE));
+
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
+        verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaConfig.CHUNKS_TOPIC_NAME), keys.capture(), sent.capture());
+
+        List<DocumentChunkMessage> messages = sent.getAllValues().stream().map(DocumentChunkMessage.class::cast).toList();
+        assertTrue(messages.size() > 2, "expected several chunks and a DELETE, got " + messages.size());
+        assertEquals(DocumentAction.DELETE, messages.get(messages.size() - 1).action());
+        assertEquals(Set.of(documentId), new HashSet<>(keys.getAllValues()));
+    }
+
+    @Test
+    void thePartitionKeyIsNotPartOfTheMessage() throws Exception {
+        DocumentChunkMessage chunk = new DocumentChunkMessage("doc-1", "chunk-1", "text", Map.of(), null, null, Map.of());
+
+        String json = JsonMapper.builder().build().writeValueAsString(chunk);
+
+        assertFalse(json.contains("partitionKey"), json);
     }
 
     /** Consumes one UPSERT message for {@code documentId} and returns the chunk ids it published, in order. */
