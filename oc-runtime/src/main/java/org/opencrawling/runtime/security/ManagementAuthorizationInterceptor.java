@@ -32,6 +32,8 @@ import java.util.List;
  * may call them. Job creators may also list connectors (without their configuration) and use the narrativization
  * copilot, which they need to set up jobs.
  *
+ * <p>The Platform API's equivalents ({@code /api/v1/...}) are listed with the same rules.
+ *
  * <p>Routes that act on one job, report or trace are checked by their controller against the job's access. Routes with
  * their own caller checks (discovery, dynamic jobs, sidecars, BPM events, OIS ingest) are not listed.
  */
@@ -57,7 +59,21 @@ public class ManagementAuthorizationInterceptor implements HandlerInterceptor {
             rule(null, "/api/vespa/**", false),
             rule(null, "/api/observability/metrics", false),
             rule(null, "/api/reports/query", false),
-            rule(null, "/api/transformation/copilot/**", true));
+            rule(null, "/api/transformation/copilot/**", true),
+            // Platform API (/api/v1): the same rules for the same operations. Custom methods (":check", ":query") are
+            // separate path segments, so each one is listed.
+            rule(HttpMethod.GET, "/api/v1/connectors", true),
+            rule(HttpMethod.GET, "/api/v1/connectors/{name}", true),
+            rule(null, "/api/v1/connectors", false),
+            rule(null, "/api/v1/connectors/**", false),
+            rule(null, "/api/v1/connectors:check", false),
+            rule(null, "/api/v1/settings/**", false),
+            rule(null, "/api/v1/system/logs", false),
+            rule(null, "/api/v1/migrations/**", false),
+            rule(null, "/api/v1/integrations/**", false),
+            rule(null, "/api/v1/observability/metrics", false),
+            rule(null, "/api/v1/executions:query", false),
+            rule(null, "/api/v1/narrativization:generate-template", true));
 
     private final ManagementAuthorization authorization;
 

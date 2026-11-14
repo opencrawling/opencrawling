@@ -53,6 +53,8 @@ jobs:
             script: "test-java-client-sdk.sh"
           - name: "Java Client SDK Decoupled Test Suite"
             script: "test-java-client-sdk-decoupled.sh"
+          - name: "Platform API v1 Test Suite"
+            script: "test-platform-api-v1.sh"
           - name: "gRPC Transport Test Suite"
             script: "test-grpc-transport.sh"
           - name: "gRPC Push Repository Connector Test Suite"

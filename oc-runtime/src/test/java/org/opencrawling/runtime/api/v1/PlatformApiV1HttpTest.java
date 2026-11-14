@@ -1,0 +1,398 @@
+/*
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opencrawling.runtime.api.v1;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.opencrawling.runtime.security.IdentityTestApplication;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/** The Platform API over HTTP, with management authorization off (every caller may do everything). */
+@SpringBootTest(classes = {IdentityTestApplication.class, PlatformApiTestSupport.PlatformApi.class},
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"spring.ai.mcp.server.protocol=STREAMABLE"})
+class PlatformApiV1HttpTest {
+
+    @LocalServerPort
+    int port;
+
+    private PlatformApiTestSupport.Http http;
+    private final JsonMapper json = JsonMapper.builder().build();
+    private final String tag = "v1-" + UUID.randomUUID().toString().substring(0, 8);
+    private final List<String> createdJobs = new ArrayList<>();
+    private final List<String> createdConnectors = new ArrayList<>();
+
+    @BeforeEach
+    void client() {
+        http = new PlatformApiTestSupport.Http(port);
+    }
+
+    @AfterEach
+    void cleanUp() {
+        createdJobs.forEach(id -> http.send("DELETE", "/api/v1/jobs/" + id, null));
+        createdConnectors.forEach(name -> http.send("DELETE", "/api/v1/connectors/" + name + "?force=true", null));
+    }
+
+    private JsonNode body(HttpResponse<String> response) {
+        return json.readTree(response.body());
+    }
+
+    private String jobJson(String name) {
+        return "{\"name\":\"" + name + "\",\"repositoryConnector\":\"FileSystem_Local\",\"outputConnector\":\"PGVector_Output\","
+                + "\"path\":\"/tmp/" + name + "\",\"pipelineMode\":\"rag\"}";
+    }
+
+    private JsonNode createJob(String name) {
+        HttpResponse<String> created = http.send("POST", "/api/v1/jobs", jobJson(name));
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        JsonNode job = body(created);
+        createdJobs.add(job.get("id").asString());
+        return job;
+    }
+
+    private static void assertProblem(HttpResponse<String> response, int status, String type) {
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(status);
+        assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(ct -> assertThat(ct).startsWith("application/problem+json"));
+        assertThat(response.body()).contains("\"type\":\"https://opencrawling.org/problems/" + type + "\"")
+                .contains("\"status\":" + status).contains("\"requestId\"");
+        assertThat(response.headers().firstValue("X-Request-Id")).isPresent();
+    }
+
+    @Test
+    void theIndexLinksEveryCollectionAndTheVersionAndHealthAnswer() {
+        HttpResponse<String> index = http.send("GET", "/api/v1", null);
+        assertThat(index.statusCode()).isEqualTo(200);
+        JsonNode links = body(index).get("links");
+        assertThat(links.get("jobs").asString()).isEqualTo("/api/v1/jobs");
+        assertThat(links.get("executions").asString()).isEqualTo("/api/v1/executions");
+        assertThat(body(index).get("documentation").get("openapi").asString()).isEqualTo("/v3/api-docs/v1");
+        assertThat(body(index).get("features").get("dynamicJobs").asBoolean()).isFalse();
+
+        assertThat(body(http.send("GET", "/api/v1/version", null)).get("apiVersion").asString()).isEqualTo(ApiV1.VERSION);
+        HttpResponse<String> health = http.send("GET", "/api/v1/health", null);
+        assertThat(health.statusCode()).isIn(200, 503);
+        assertThat(body(health).has("status")).isTrue();
+        assertThat(body(health).get("components").has("system")).isFalse();
+    }
+
+    @Test
+    void aJobIsCreatedReadAndConditionallyRead() {
+        HttpResponse<String> created = http.send("POST", "/api/v1/jobs", jobJson(tag));
+        assertThat(created.statusCode()).isEqualTo(201);
+        JsonNode job = body(created);
+        String id = job.get("id").asString();
+        createdJobs.add(id);
+        assertThat(created.headers().firstValue("Location")).hasValue("/api/v1/jobs/" + id);
+        String etag = created.headers().firstValue("ETag").orElseThrow();
+        assertThat(job.get("state").get("status").asString()).isEqualTo("Ready");
+        assertThat(job.get("state").get("lastRun").isNull()).isTrue();
+        assertThat(job.get("permissions").toString()).contains("READ", "EXECUTE", "MANAGE");
+
+        HttpResponse<String> read = http.send("GET", "/api/v1/jobs/" + id, null);
+        assertThat(read.statusCode()).isEqualTo(200);
+        assertThat(read.headers().firstValue("ETag")).hasValue(etag);
+        HttpResponse<String> notModified = http.send("GET", "/api/v1/jobs/" + id, null, "If-None-Match", etag);
+        assertThat(notModified.statusCode()).isEqualTo(304);
+        assertThat(notModified.body()).isEmpty();
+    }
+
+    @Test
+    void invalidJobsAreRefusedWithFieldErrors() {
+        HttpResponse<String> missing = http.send("POST", "/api/v1/jobs", "{\"repositoryConnector\":\"FileSystem_Local\"}");
+        assertProblem(missing, 400, "validation-failed");
+        assertThat(missing.body()).contains("\"field\":\"name\"", "\"field\":\"outputConnector\"", "\"field\":\"path\"");
+
+        HttpResponse<String> unknown = http.send("POST", "/api/v1/jobs", "{\"name\":\"x\",\"repositoryConnector\":\"Nope_Here\","
+                + "\"outputConnector\":\"FileSystem_Local\",\"path\":\"/tmp\"}");
+        assertProblem(unknown, 400, "validation-failed");
+        assertThat(unknown.body()).contains("no connector named 'Nope_Here'").contains("'FileSystem_Local' is a repository connector, not output");
+
+        HttpResponse<String> mode = http.send("POST", "/api/v1/jobs", jobJson(tag).replace("\"rag\"", "\"warp-speed\""));
+        assertProblem(mode, 400, "validation-failed");
+        assertThat(mode.body()).contains("\"field\":\"pipelineMode\"");
+    }
+
+    @Test
+    void jobsAreFilteredSortedAndPagedWithACursor() {
+        for (String suffix : List.of("c", "a", "b")) {
+            createJob(tag + "-" + suffix);
+        }
+        HttpResponse<String> first = http.send("GET", "/api/v1/jobs?q=" + tag + "&sort=-name&limit=2", null);
+        assertThat(first.statusCode()).isEqualTo(200);
+        JsonNode page = body(first);
+        assertThat(page.get("items").size()).isEqualTo(2);
+        assertThat(page.get("items").get(0).get("name").asString()).isEqualTo(tag + "-c");
+        assertThat(page.get("page").get("totalItems").asInt()).isEqualTo(3);
+        String cursor = page.get("page").get("nextCursor").asString();
+        assertThat(first.headers().firstValue("Link")).hasValueSatisfying(link ->
+                assertThat(link).contains("cursor=" + cursor).endsWith("rel=\"next\""));
+
+        JsonNode second = body(http.send("GET", "/api/v1/jobs?q=" + tag + "&sort=-name&limit=2&cursor=" + cursor, null));
+        assertThat(second.get("items").get(0).get("name").asString()).isEqualTo(tag + "-a");
+        assertThat(second.get("page").get("nextCursor").isNull()).isTrue();
+
+        assertProblem(http.send("GET", "/api/v1/jobs?q=other&sort=-name&limit=2&cursor=" + cursor, null), 400, "validation-failed");
+        assertProblem(http.send("GET", "/api/v1/jobs?cursor=not-a-cursor", null), 400, "validation-failed");
+        assertProblem(http.send("GET", "/api/v1/jobs?sort=colour", null), 400, "validation-failed");
+        assertProblem(http.send("GET", "/api/v1/jobs?limit=0", null), 400, "validation-failed");
+    }
+
+    @Test
+    void replacingAndPatchingRespectIfMatch() {
+        JsonNode job = createJob(tag);
+        String id = job.get("id").asString();
+        String etag = http.send("GET", "/api/v1/jobs/" + id, null).headers().firstValue("ETag").orElseThrow();
+
+        HttpResponse<String> replaced = http.send("PUT", "/api/v1/jobs/" + id, jobJson(tag + "-renamed"), "If-Match", etag);
+        assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
+        assertThat(body(replaced).get("name").asString()).isEqualTo(tag + "-renamed");
+        String newEtag = replaced.headers().firstValue("ETag").orElseThrow();
+        assertThat(newEtag).isNotEqualTo(etag);
+
+        HttpResponse<String> stale = http.send("PUT", "/api/v1/jobs/" + id, jobJson(tag), "If-Match", etag);
+        assertProblem(stale, 412, "precondition-failed");
+        assertThat(stale.body()).contains("\"currentEtag\"");
+
+        HttpResponse<String> patched = http.send("PATCH", "/api/v1/jobs/" + id, "{\"name\":\"" + tag + "-patched\",\"pipelineMode\":null}",
+                "Content-Type", "application/merge-patch+json", "If-Match", newEtag);
+        assertThat(patched.statusCode()).as(patched.body()).isEqualTo(200);
+        assertThat(body(patched).get("name").asString()).isEqualTo(tag + "-patched");
+        assertThat(body(patched).get("path").asString()).as("untouched by the patch").isEqualTo("/tmp/" + tag + "-renamed");
+        assertThat(body(patched).get("pipelineMode").isNull()).as("null removes the override").isTrue();
+
+        HttpResponse<String> badPatch = http.send("PATCH", "/api/v1/jobs/" + id, "{\"name\":null}",
+                "Content-Type", "application/merge-patch+json");
+        assertProblem(badPatch, 400, "validation-failed");
+        assertThat(badPatch.body()).contains("\"field\":\"name\"");
+    }
+
+    @Test
+    void aDeletedJobIsGone() {
+        String id = createJob(tag).get("id").asString();
+        HttpResponse<String> deleted = http.send("DELETE", "/api/v1/jobs/" + id, null);
+        assertThat(deleted.statusCode()).isEqualTo(204);
+        createdJobs.remove(id);
+        HttpResponse<String> gone = http.send("GET", "/api/v1/jobs/" + id, null);
+        assertProblem(gone, 404, "not-found");
+        assertThat(gone.body()).contains("\"instance\":\"/api/v1/jobs/" + id + "\"");
+    }
+
+    @Test
+    void startingAJobAnswersWithItsRunAndAnIdempotencyKeyPreventsASecondRun() {
+        String id = createJob(tag).get("id").asString();
+        String key = "start-" + tag;
+        HttpResponse<String> started = http.send("POST", "/api/v1/jobs/" + id + ":start", null, "Idempotency-Key", key,
+                "X-Correlation-Id", "corr-1");
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(202);
+        String executionId = body(started).get("executionId").asString();
+        assertThat(executionId).startsWith("exec-");
+        assertThat(started.headers().firstValue("Location")).hasValue("/api/v1/job-runs/" + executionId);
+
+        HttpResponse<String> retried = http.send("POST", "/api/v1/jobs/" + id + ":start", null, "Idempotency-Key", key);
+        assertThat(retried.statusCode()).isEqualTo(202);
+        assertThat(body(retried).get("executionId").asString()).isEqualTo(executionId);
+        assertThat(retried.headers().firstValue("Idempotent-Replayed")).hasValue("true");
+        assertThat(retried.headers().firstValue("Location")).hasValue("/api/v1/job-runs/" + executionId);
+
+        HttpResponse<String> stopped = http.send("POST", "/api/v1/jobs/" + id + ":stop", null);
+        assertThat(stopped.statusCode()).isIn(200, 202);
+        assertThat(body(stopped).get("id").asString()).isEqualTo(id);
+
+        assertProblem(http.send("POST", "/api/v1/jobs/" + id + ":start", null, "Idempotency-Key", "bad key!"), 400, "validation-failed");
+        assertProblem(http.send("POST", "/api/v1/jobs/missing-" + tag + ":start", null), 404, "not-found");
+    }
+
+    @Test
+    void anIdempotencyKeyCannotBeReusedForADifferentRequest() {
+        String key = "create-" + tag;
+        HttpResponse<String> first = http.send("POST", "/api/v1/jobs", jobJson(tag), "Idempotency-Key", key);
+        assertThat(first.statusCode()).isEqualTo(201);
+        createdJobs.add(body(first).get("id").asString());
+        HttpResponse<String> replay = http.send("POST", "/api/v1/jobs", jobJson(tag), "Idempotency-Key", key);
+        assertThat(replay.statusCode()).isEqualTo(201);
+        assertThat(body(replay).get("id").asString()).isEqualTo(body(first).get("id").asString());
+        assertThat(http.send("GET", "/api/v1/jobs?q=" + tag, null).body()).contains("\"totalItems\":1");
+
+        assertProblem(http.send("POST", "/api/v1/jobs", jobJson(tag + "-other"), "Idempotency-Key", key), 422, "idempotency-key-reused");
+    }
+
+    @Test
+    void pausingMarksTheJobAndRunsInProgressAreListed() {
+        String id = createJob(tag).get("id").asString();
+        HttpResponse<String> paused = http.send("POST", "/api/v1/jobs/" + id + ":pause", null);
+        assertThat(paused.statusCode()).isEqualTo(200);
+        assertThat(body(paused).get("state").get("status").asString()).isEqualTo("Paused");
+
+        assertThat(http.send("GET", "/api/v1/job-runs", null).statusCode()).isEqualTo(200);
+        HttpResponse<String> noRun = http.send("GET", "/api/v1/job-runs/exec-nothing", null);
+        assertProblem(noRun, 404, "not-found");
+        assertThat(noRun.body()).contains("\"execution\":\"/api/v1/executions/exec-nothing\"");
+    }
+
+    @Test
+    void executionsAreListedNewestFirstAndTheirLedgerIsPaged() {
+        JsonNode list = body(http.send("GET", "/api/v1/executions", null));
+        assertThat(list.get("items").get(0).get("executionId").asString()).isEqualTo(PlatformApiTestSupport.EXECUTION_ID);
+        assertThat(body(http.send("GET", "/api/v1/executions?status=FAILED", null)).get("page").get("totalItems").asInt()).isEqualTo(1);
+        assertThat(body(http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID, null)).get("jobId").asString())
+                .isEqualTo("job-a");
+        assertProblem(http.send("GET", "/api/v1/executions/exec-unknown", null), 404, "not-found");
+
+        HttpResponse<String> ledger = http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID + "/documents?limit=50", null);
+        assertThat(ledger.statusCode()).as(ledger.body()).isEqualTo(200);
+        assertThat(body(ledger).get("page").get("totalItems").asInt()).isEqualTo(120);
+        String next = body(ledger).get("page").get("nextCursor").asString();
+        HttpResponse<String> third = http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID
+                + "/documents?limit=50&cursor=" + body(http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID
+                + "/documents?limit=50&cursor=" + next, null)).get("page").get("nextCursor").asString(), null);
+        assertThat(body(third).get("page").get("nextCursor").isNull()).isTrue();
+
+        assertProblem(http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID + "/export?format=csv", null),
+                404, "export-not-available");
+        assertProblem(http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID + "/export?format=exe", null),
+                400, "validation-failed");
+        assertProblem(http.send("POST", "/api/v1/executions:query", "{\"sql\":\"\"}"), 400, "validation-failed");
+    }
+
+    @Test
+    void connectorsAreManagedWithTheirSecretsMasked() {
+        String name = "Test_" + tag.replace("-", "_");
+        String connector = "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo\","
+                + "\"configuration\":{\"url\":\"http://repo\",\"password\":\"s3cret\",\"apiKey\":\"k-123\",\"idpTokenUrl\":\"http://idp\"}}";
+        HttpResponse<String> created = http.send("POST", "/api/v1/connectors", connector);
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        createdConnectors.add(name);
+        assertThat(created.body()).contains("\"password\":\"********\"", "\"apiKey\":\"********\"", "\"idpTokenUrl\":\"http://idp\"")
+                .doesNotContain("s3cret", "k-123");
+        assertProblem(http.send("POST", "/api/v1/connectors", connector), 409, "connector-exists");
+
+        HttpResponse<String> read = http.send("GET", "/api/v1/connectors/" + name, null);
+        String masked = read.body();
+        assertThat(masked).doesNotContain("s3cret");
+        String etag = read.headers().firstValue("ETag").orElseThrow();
+
+        // Sending back what was read keeps the secrets; the legacy API (admins) shows the stored values.
+        HttpResponse<String> replaced = http.send("PUT", "/api/v1/connectors/" + name,
+                connector.replace("s3cret", "********").replace("k-123", "********").replace("http://repo", "http://repo2"), "If-Match", etag);
+        assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
+        String stored = http.send("GET", "/api/connectors/repository", null).body();
+        assertThat(stored).contains("\"password\":\"s3cret\"", "\"apiKey\":\"k-123\"", "http://repo2");
+
+        assertProblem(http.send("PUT", "/api/v1/connectors/" + name, connector.replace(name, name + "x")), 400, "validation-failed");
+        assertProblem(http.send("POST", "/api/v1/connectors", connector.replace(name, name + "_new")
+                .replace("s3cret", "********")), 400, "validation-failed");
+
+        assertThat(body(http.send("GET", "/api/v1/connectors?type=output&limit=500", null)).get("items").toString())
+                .contains("PGVector_Output").doesNotContain("FileSystem_Local");
+        assertThat(body(http.send("POST", "/api/v1/connectors/" + name + ":check", null)).get("success").asBoolean()).isTrue();
+        assertThat(body(http.send("POST", "/api/v1/connectors:check", connector)).get("message").asString()).isEqualTo("Reachable");
+    }
+
+    @Test
+    void aConnectorInUseIsOnlyDeletedWithForce() {
+        String name = "Test_" + tag.replace("-", "_");
+        http.send("POST", "/api/v1/connectors", "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo\"}");
+        createdConnectors.add(name);
+        String id = createJob(tag).get("id").asString();
+        http.send("PATCH", "/api/v1/jobs/" + id, "{\"repositoryConnector\":\"" + name + "\"}", "Content-Type", "application/merge-patch+json");
+
+        HttpResponse<String> refused = http.send("DELETE", "/api/v1/connectors/" + name, null);
+        assertProblem(refused, 409, "connector-in-use");
+        assertThat(refused.body()).contains("\"jobs\":[\"" + id + "\"]");
+        assertThat(http.send("DELETE", "/api/v1/connectors/" + name + "?force=true", null).statusCode()).isEqualTo(204);
+        createdConnectors.remove(name);
+    }
+
+    @Test
+    void settingsHaveETagsAndRefuseStaleChanges() {
+        HttpResponse<String> read = http.send("GET", "/api/v1/settings/system", null);
+        assertThat(read.statusCode()).isEqualTo(200);
+        String etag = read.headers().firstValue("ETag").orElseThrow();
+        assertThat(http.send("GET", "/api/v1/settings/system", null, "If-None-Match", etag).statusCode()).isEqualTo(304);
+        assertProblem(http.send("PUT", "/api/v1/settings/system", read.body(), "If-Match", "\"stale\""), 412, "precondition-failed");
+        HttpResponse<String> saved = http.send("PUT", "/api/v1/settings/system", read.body(), "If-Match", etag);
+        assertThat(saved.statusCode()).as(saved.body()).isEqualTo(200);
+    }
+
+    @Test
+    void errorsBeforeAndOutsideControllersAreProblemsToo() {
+        assertProblem(http.send("GET", "/api/v1/nothing-here", null), 404, "no-such-endpoint");
+        HttpResponse<String> method = http.send("DELETE", "/api/v1/jobs", null);
+        assertProblem(method, 405, "method-not-allowed");
+        assertThat(method.headers().firstValue("Allow")).hasValueSatisfying(allow -> assertThat(allow).contains("GET", "POST"));
+        assertProblem(http.send("POST", "/api/v1/jobs", "{not json"), 400, "malformed-request");
+        assertProblem(http.send("POST", "/api/v1/jobs", "name=x", "Content-Type", "text/plain"), 415, "unsupported-media-type");
+
+        HttpResponse<String> requestId = http.send("GET", "/api/v1/jobs/none-" + tag, null, "X-Request-Id", "my-trace-42");
+        assertThat(requestId.headers().firstValue("X-Request-Id")).hasValue("my-trace-42");
+        assertThat(requestId.body()).contains("\"requestId\":\"my-trace-42\"");
+    }
+
+    @Test
+    void theLegacyEndpointsAnswerAsBefore() {
+        HttpResponse<String> legacy = http.send("GET", "/api/jobs/none-" + tag, null);
+        assertThat(legacy.statusCode()).isEqualTo(404);
+        assertThat(legacy.headers().firstValue("Content-Type").orElse("")).doesNotStartWith("application/problem+json");
+        assertThat(legacy.headers().firstValue("X-Request-Id")).isEmpty();
+        assertThat(http.send("POST", "/api/v1/ingest/ois/job-1", "{}").headers().firstValue("X-Request-Id")).isEmpty();
+        // An error raised before a legacy controller runs keeps Spring's default answer, not a problem detail.
+        HttpResponse<String> malformed = http.send("POST", "/api/jobs", "{not json");
+        assertThat(malformed.statusCode()).isEqualTo(400);
+        assertThat(malformed.headers().firstValue("Content-Type").orElse("")).doesNotStartWith("application/problem+json");
+        assertThat(malformed.body()).doesNotContain("opencrawling.org/problems");
+    }
+
+    @Test
+    void theOpenApiDocumentDescribesThePlatformApiOnly() {
+        HttpResponse<String> response = http.send("GET", "/v3/api-docs/v1", null);
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode doc = body(response);
+        assertThat(doc.get("info").get("title").asString()).isEqualTo("OpenCrawling Platform API");
+        assertThat(doc.get("components").get("schemas").has("Problem")).isTrue();
+        List<String> operationIds = new ArrayList<>();
+        doc.get("paths").properties().forEach(path -> {
+            assertThat(path.getKey()).startsWith("/api/v1").doesNotStartWith("/api/v1/ingest").doesNotStartWith("/api/v1/admin");
+            path.getValue().properties().forEach(operation -> {
+                assertThat(operation.getValue().has("operationId")).as(path.getKey()).isTrue();
+                operationIds.add(operation.getValue().get("operationId").asString());
+                assertThat(operation.getValue().get("responses").has("500")).as(path.getKey()).isTrue();
+            });
+        });
+        assertThat(operationIds).doesNotHaveDuplicates().contains("listJobs", "createJob", "getJob", "replaceJob", "patchJob",
+                "deleteJob", "startJob", "stopJob", "pauseJob", "listJobRuns", "getJobRun", "stopJobRun", "listExecutions",
+                "getExecution", "listExecutionDocuments", "exportExecution", "queryExecutions", "listConnectors",
+                "getConnector", "createConnector", "replaceConnector", "deleteConnector", "checkConnector",
+                "checkConnectorDefinition", "getSystemSettings", "replaceSystemSettings", "getTransportSettings",
+                "replaceTransportSettings", "testGrpcTransport", "getSystemStatus", "getSystemThroughput", "getSystemLogs",
+                "getMetrics", "diagnoseJob", "getJobTraces", "getJobErrors", "planManifoldCfMigration",
+                "applyManifoldCfMigration", "getVespaHealth", "getVespaDocumentCounts", "queryVespa",
+                "deployVespaBundledSchema", "deployVespaCustomSchema", "generateNarrativizationTemplate", "getApiIndex",
+                "getVersion", "getHealth", "getCurrentCaller", "listJobExecutions");
+
+        assertThat(http.send("GET", "/v3/api-docs/all", null).body()).contains("\"/api/jobs\"", "\"/api/v1/jobs\"");
+    }
+}
