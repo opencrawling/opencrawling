@@ -92,6 +92,7 @@ class PlatformApiV1HttpTest {
         assertThat(body(index).get("documentation").get("openapi").asString()).isEqualTo("/v3/api-docs/v1");
         assertThat(body(index).get("features").get("dynamicJobs").asBoolean()).isFalse();
 
+        assertThat(http.send("GET", "/api/v1/", null).statusCode()).isEqualTo(200);
         assertThat(body(http.send("GET", "/api/v1/version", null)).get("apiVersion").asString()).isEqualTo(ApiV1.VERSION);
         HttpResponse<String> health = http.send("GET", "/api/v1/health", null);
         assertThat(health.statusCode()).isIn(200, 503);
@@ -341,6 +342,7 @@ class PlatformApiV1HttpTest {
     @Test
     void errorsBeforeAndOutsideControllersAreProblemsToo() {
         assertProblem(http.send("GET", "/api/v1/nothing-here", null), 404, "no-such-endpoint");
+        assertProblem(http.send("GET", "/api/v1/dynamic-jobs", null), 404, "no-such-endpoint"); // feature off
         HttpResponse<String> method = http.send("DELETE", "/api/v1/jobs", null);
         assertProblem(method, 405, "method-not-allowed");
         assertThat(method.headers().firstValue("Allow")).hasValueSatisfying(allow -> assertThat(allow).contains("GET", "POST"));
@@ -382,17 +384,26 @@ class PlatformApiV1HttpTest {
                 assertThat(operation.getValue().get("responses").has("500")).as(path.getKey()).isTrue();
             });
         });
-        assertThat(operationIds).doesNotHaveDuplicates().contains("listJobs", "createJob", "getJob", "replaceJob", "patchJob",
-                "deleteJob", "startJob", "stopJob", "pauseJob", "listJobRuns", "getJobRun", "stopJobRun", "listExecutions",
-                "getExecution", "listExecutionDocuments", "exportExecution", "queryExecutions", "listConnectors",
-                "getConnector", "createConnector", "replaceConnector", "deleteConnector", "checkConnector",
-                "checkConnectorDefinition", "getSystemSettings", "replaceSystemSettings", "getTransportSettings",
-                "replaceTransportSettings", "testGrpcTransport", "getSystemStatus", "getSystemThroughput", "getSystemLogs",
-                "getMetrics", "diagnoseJob", "getJobTraces", "getJobErrors", "planManifoldCfMigration",
-                "applyManifoldCfMigration", "getVespaHealth", "getVespaDocumentCounts", "queryVespa",
-                "deployVespaBundledSchema", "deployVespaCustomSchema", "generateNarrativizationTemplate", "getApiIndex",
-                "getVersion", "getHealth", "getCurrentCaller", "listJobExecutions");
+        assertThat(operationIds).doesNotHaveDuplicates();
+        assertThat(PlatformApiTestSupport.operations(doc)).as("every operation at its documented method and path, and no others")
+                .containsExactlyInAnyOrderEntriesOf(PlatformApiTestSupport.CORE_OPERATIONS);
 
         assertThat(http.send("GET", "/v3/api-docs/all", null).body()).contains("\"/api/jobs\"", "\"/api/v1/jobs\"");
+    }
+
+    @Test
+    void connectorNamesMayHaveInnerSpacesAsMigrationsCreate() {
+        String name = "Test Space " + tag;
+        HttpResponse<String> created = http.send("POST", "/api/v1/connectors",
+                "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo\"}");
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        createdConnectors.add(name.replace(" ", "%20"));
+        HttpResponse<String> replaced = http.send("PUT", "/api/v1/connectors/" + name.replace(" ", "%20"),
+                "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo2\"}");
+        assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
+        assertProblem(http.send("POST", "/api/v1/connectors", "{\"name\":\" leading\",\"type\":\"repository\",\"className\":\"x\"}"),
+                400, "validation-failed");
+        assertProblem(http.send("POST", "/api/v1/connectors", "{\"name\":\"a:b\",\"type\":\"repository\",\"className\":\"x\"}"),
+                400, "validation-failed");
     }
 }

@@ -181,7 +181,9 @@ public class ExecutionsV1Controller {
     public Object query(@Valid @RequestBody QueryInput input) {
         ResponseEntity<?> result = reports.executeQuery(new ReportController.QueryRequest(input.sql()));
         int status = result.getStatusCode().value();
-        if (status == 400) {
+        // A query the engine cannot run (syntax, unknown column, missing file) is the caller's to fix: DuckDB's
+        // message says why. Only admins may query.
+        if (status == 400 || status == 500) {
             throw new ApiProblem(org.springframework.http.HttpStatus.BAD_REQUEST, "invalid-query", "Invalid query",
                     String.valueOf(result.getBody()));
         }

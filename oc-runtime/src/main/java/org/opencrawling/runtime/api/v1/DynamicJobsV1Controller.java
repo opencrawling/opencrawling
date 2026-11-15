@@ -35,7 +35,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.net.URI;
 import java.util.List;
 
 /**
@@ -43,7 +42,7 @@ import java.util.List;
  * verified caller (typically an agent). Enabled with {@code opencrawling.jobs.dynamic.enabled}.
  */
 @RestController
-@RequestMapping(ApiV1.BASE + "/dynamic-jobs")
+@RequestMapping(ApiV1.BASE)
 @ConditionalOnProperty(name = DynamicJobProperties.PREFIX + ".enabled", havingValue = "true")
 @Tag(name = "Dynamic jobs", description = "On-demand ingestion of a folder or document by a verified caller")
 public class DynamicJobsV1Controller {
@@ -59,7 +58,7 @@ public class DynamicJobsV1Controller {
                     + "validateOnly=true checks the request without starting. Send an Idempotency-Key so that a retry returns the same job.")
     @ApiResponse(responseCode = "202", description = "Started", headers = @Header(name = "Location", description = "URL of the dynamic job"))
     @ApiResponse(responseCode = "200", description = "validateOnly: the validation result")
-    @PostMapping
+    @PostMapping("/dynamic-jobs")
     public ResponseEntity<?> start(@RequestBody(required = false) DynamicJobController.DynamicJobBody body,
                                    @RequestHeader(value = ApiV1.IDEMPOTENCY_KEY, required = false) String idempotencyKey,
                                    @RequestHeader(value = ApiV1.CORRELATION_ID, required = false) String correlationId) {
@@ -69,7 +68,7 @@ public class DynamicJobsV1Controller {
     @Operation(operationId = "ingestDynamicDocument", summary = "Ingest or delete one document",
             description = "Upserts or deletes a single document of a registered connector for the caller.")
     @ApiResponse(responseCode = "202", description = "Accepted")
-    @PostMapping(":ingest-document")
+    @PostMapping("/dynamic-jobs:ingest-document")
     public ResponseEntity<?> document(@RequestBody(required = false) DynamicJobController.DocumentBody body,
                                       @RequestHeader(value = ApiV1.IDEMPOTENCY_KEY, required = false) String idempotencyKey,
                                       @RequestHeader(value = ApiV1.CORRELATION_ID, required = false) String correlationId) {
@@ -78,7 +77,7 @@ public class DynamicJobsV1Controller {
 
     @Operation(operationId = "listDynamicJobs", summary = "List dynamic jobs", description = "The caller's dynamic jobs (all of them for admins).")
     @ApiResponse(responseCode = "200", description = "A page of dynamic jobs")
-    @GetMapping
+    @GetMapping("/dynamic-jobs")
     public Page<DynamicJobService.JobStatus> list(
             @Parameter(description = "Page size, 1 to 500 (default 50)") @RequestParam(required = false) Integer limit,
             @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
@@ -89,14 +88,14 @@ public class DynamicJobsV1Controller {
 
     @Operation(operationId = "getDynamicJob", summary = "Get a dynamic job")
     @ApiResponse(responseCode = "200", description = "The dynamic job's status")
-    @GetMapping("/{jobId}")
+    @GetMapping("/dynamic-jobs/{jobId}")
     public DynamicJobService.JobStatus get(@PathVariable String jobId) {
         return dynamicJobs.status(jobId);
     }
 
     @Operation(operationId = "stopDynamicJob", summary = "Stop a dynamic job")
     @ApiResponse(responseCode = "202", description = "Stop requested")
-    @PostMapping("/{jobId}:stop")
+    @PostMapping("/dynamic-jobs/{jobId}:stop")
     public ResponseEntity<DynamicJobService.JobStatus> stop(@PathVariable String jobId) {
         return dynamicJobs.stop(jobId);
     }
@@ -104,14 +103,14 @@ public class DynamicJobsV1Controller {
     @Operation(operationId = "approveDynamicJob", summary = "Approve a dynamic job",
             description = "For jobs waiting for approval (opencrawling.jobs.dynamic.approval). Admins only.")
     @ApiResponse(responseCode = "200", description = "Approved; the job starts")
-    @PostMapping("/{jobId}:approve")
+    @PostMapping("/dynamic-jobs/{jobId}:approve")
     public DynamicJobService.JobStatus approve(@PathVariable String jobId) {
         return dynamicJobs.approve(jobId);
     }
 
     @Operation(operationId = "rejectDynamicJob", summary = "Reject a dynamic job", description = "Admins only.")
     @ApiResponse(responseCode = "200", description = "Rejected")
-    @PostMapping("/{jobId}:reject")
+    @PostMapping("/dynamic-jobs/{jobId}:reject")
     public DynamicJobService.JobStatus reject(@PathVariable String jobId,
                                               @RequestBody(required = false) DynamicJobController.RejectBody body) {
         return dynamicJobs.reject(jobId, body);
@@ -121,7 +120,7 @@ public class DynamicJobsV1Controller {
     private static ResponseEntity<?> relocate(ResponseEntity<?> result) {
         if (result.getBody() instanceof DynamicJobService.Accepted accepted && accepted.jobId() != null) {
             return ResponseEntity.status(result.getStatusCode())
-                    .location(URI.create(ApiV1.BASE + "/dynamic-jobs/" + accepted.jobId()))
+                    .location(ApiV1.location("dynamic-jobs", accepted.jobId()))
                     .body(accepted);
         }
         return result;

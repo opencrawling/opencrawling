@@ -60,6 +60,14 @@ public class OpenCrawlingWriter {
             HttpClient.newHttpClient(), baseUrl, apiKey, bearerToken, Duration.ofSeconds(timeoutSeconds), new ObjectMapper());
     }
 
+    /**
+     * For writers that save another way, such as in-process inside the runtime: they override
+     * {@link #upsertConnector} and {@link #upsertJob} and have no HTTP client.
+     */
+    protected OpenCrawlingWriter() {
+        this.client = null;
+    }
+
     public void upsertConnector(ConnectorRequest request) {
         log.info("Upserting connector '{}' (type={}, class={})", request.name(), request.type(), request.className());
         client.connectors().create(request);

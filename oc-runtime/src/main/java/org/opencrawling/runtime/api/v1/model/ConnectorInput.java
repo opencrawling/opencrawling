@@ -29,7 +29,7 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "A connector definition")
 public record ConnectorInput(
-        @NotBlank @Pattern(regexp = NAME_PATTERN, message = "must be 1 to 100 letters, digits, '.', '_' or '-'")
+        @NotBlank @Pattern(regexp = NAME_PATTERN, message = "must be 1 to 100 letters, digits, spaces, '.', '_' or '-', not starting or ending with a space")
         @Schema(description = "Unique name; on replace it must match the path or be left out", example = "HR_Share", requiredMode = Schema.RequiredMode.REQUIRED)
         String name,
         @Size(max = 500)
@@ -47,5 +47,6 @@ public record ConnectorInput(
         @Schema(description = "Implementation-specific settings. Secret values come back masked as \"" + ConnectorResource.MASK + "\"; send the mask back to keep a stored secret unchanged")
         Map<String, String> configuration) {
 
-    public static final String NAME_PATTERN = "[A-Za-z0-9._-]{1,100}";
+    /** Letters, digits, '.', '_', '-' and inner spaces (as ManifoldCF migrations create); never '/' or ':'. */
+    public static final String NAME_PATTERN = "[A-Za-z0-9._-](?:[A-Za-z0-9 ._-]{0,98}[A-Za-z0-9._-])?";
 }

@@ -67,7 +67,7 @@ public class PlatformV1Controller {
     @Operation(operationId = "getApiIndex", summary = "Entry point",
             description = "Links to every collection, the optional features enabled on this installation, and the API description.")
     @ApiResponse(responseCode = "200", description = "The index")
-    @GetMapping({"", "/"})
+    @GetMapping
     public ApiIndex index() {
         Map<String, String> links = new LinkedHashMap<>();
         for (String collection : new String[] {"jobs", "job-runs", "executions", "connectors", "settings/system",
@@ -92,6 +92,13 @@ public class PlatformV1Controller {
                 "openapi", "/v3/api-docs/" + ApiV1.OPENAPI_GROUP,
                 "swaggerUi", "/swagger-ui.html",
                 "guide", "https://github.com/opencrawling/opencrawling/wiki/Platform-API"));
+    }
+
+    /** The same with a trailing slash; not listed separately in the API description. */
+    @Operation(hidden = true)
+    @GetMapping("/")
+    public ApiIndex indexWithSlash() {
+        return index();
     }
 
     @Operation(operationId = "getVersion", summary = "API and runtime versions")

@@ -55,7 +55,6 @@ import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -132,7 +131,7 @@ public class JobsV1Controller {
         checkConnectors(input);
         SaveOutcome outcome = jobs.save(input.toJob(null));
         JobDTO created = saved(outcome, "new");
-        return ResponseEntity.created(URI.create(ApiV1.BASE + "/jobs/" + created.id()))
+        return ResponseEntity.created(ApiV1.location("jobs", created.id()))
                 .eTag(etag(created))
                 .body(resource(created));
     }
@@ -224,7 +223,7 @@ public class JobsV1Controller {
                         ? JobRunResource.of(info)
                         : new JobRunResource(started.executionId(), started.jobId(), Instant.now(), false);
                 yield ResponseEntity.accepted()
-                        .location(URI.create(ApiV1.BASE + "/job-runs/" + started.executionId()))
+                        .location(ApiV1.location("job-runs", started.executionId()))
                         .body(run);
             }
             case StartOutcome.NotFound notFound -> throw ApiProblem.notFound("Job", id);

@@ -43,7 +43,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.net.URI;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -115,7 +114,7 @@ public class ConnectorsV1Controller {
                 input.maxConnections(), ConnectorResource.unmask(input.configuration(), Map.of()));
         JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", input.name());
         ConnectorResource body = ConnectorResource.of(saved);
-        return ResponseEntity.created(URI.create(ApiV1.BASE + "/connectors/" + saved.name()))
+        return ResponseEntity.created(ApiV1.location("connectors", saved.name()))
                 .eTag(Etags.of(body, json)).body(body);
     }
 

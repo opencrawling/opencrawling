@@ -64,6 +64,7 @@ public class ToolsV1Controller {
     @ApiResponse(responseCode = "502", description = "ManifoldCF could not be reached or answered with an error")
     @PostMapping("/migrations/manifoldcf:plan")
     public McfMigrationController.MigrationResponse planManifoldCf(@RequestBody McfMigrationController.MigrationRequest request) {
+        requireMcfUrl(request);
         return manifoldcf.plan(request);
     }
 
@@ -73,6 +74,7 @@ public class ToolsV1Controller {
     @ApiResponse(responseCode = "502", description = "ManifoldCF could not be reached or answered with an error")
     @PostMapping("/migrations/manifoldcf:apply")
     public McfMigrationController.MigrationResponse applyManifoldCf(@RequestBody McfMigrationController.MigrationRequest request) {
+        requireMcfUrl(request);
         return manifoldcf.apply(request);
     }
 
@@ -121,5 +123,12 @@ public class ToolsV1Controller {
         ResponseEntity<TemplateCopilotResponse> result = copilot.generateTemplate(request);
         JobsV1Controller.requireOk(result, "Template", "");
         return result.getBody();
+    }
+
+    /** A missing URL is the caller's mistake (400), not a ManifoldCF failure (502). */
+    private static void requireMcfUrl(McfMigrationController.MigrationRequest request) {
+        if (request == null || request.mcfUrl() == null || request.mcfUrl().isBlank()) {
+            throw ApiProblem.invalid("mcfUrl", "is required");
+        }
     }
 }

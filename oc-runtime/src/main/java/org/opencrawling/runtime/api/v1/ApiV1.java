@@ -51,6 +51,14 @@ public final class ApiV1 {
 
     private ApiV1() {}
 
+    /**
+     * A URL under {@link #BASE} from path segments, each percent-encoded, so ids and names with spaces or other
+     * reserved characters give a valid {@code Location}.
+     */
+    public static java.net.URI location(String... segments) {
+        return org.springframework.web.util.UriComponentsBuilder.fromPath(BASE).pathSegment(segments).encode().build().toUri();
+    }
+
     /** Whether the request is for the Platform API (and not one of the older endpoints that share the prefix). */
     public static boolean isPlatformRequest(HttpServletRequest request) {
         String path = request.getRequestURI();
