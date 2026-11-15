@@ -157,6 +157,17 @@ describe('jobApi', () => {
     expect(calls[0].data).not.toHaveProperty('access')
   })
 
+  it('reads a job with its version and saves a change with If-Match', async () => {
+    reply({ data: { id: '7', name: 'HR', state: { status: 'Ready' } }, headers: { ETag: '"j1"' } })
+    reply({ data: { id: '7', name: 'HR 2', state: { status: 'Ready' } }, headers: { ETag: '"j2"' } })
+    const read = await jobApi.getVersioned('7')
+    expect(read.etag).toBe('"j1"')
+    expect(read.data.name).toBe('HR')
+    await jobApi.create({ ...read.data, name: 'HR 2' }, read.etag)
+    expect(calls[1]).toMatchObject({ method: 'PATCH', url: '/api/v1/jobs/7' })
+    expect(calls[1].headers.get('If-Match')).toBe('"j1"')
+  })
+
   it('maps unknown pipeline modes to null and fills missing state', () => {
     const job = toJob({ ...jobResource, pipelineMode: null, state: { status: 'Error', stage: null, documents: 0, lastRun: null } })
     expect(job.pipelineMode).toBeNull()
@@ -200,6 +211,22 @@ describe('connectorApi', () => {
       name: 'My FS', description: 'd', type: 'repository', className: 'c.FS', maxConnections: 5,
       configuration: { password: '********', tls: 'true', port: '22' },
     })
+  })
+
+  it('reads a connector with its version and replaces it with If-Match, but creates without one', async () => {
+    reply({ data: { name: 'HR Share', type: 'repository', className: 'x.Fs', configuration: { password: '********' } },
+      headers: { ETag: '"c1"' } })
+    reply({ data: { name: 'HR Share', type: 'repository' } })
+    reply({ data: { name: 'New', type: 'repository' } })
+    const read = await connectorApi.getVersioned('HR Share')
+    expect(calls[0].url).toBe('/api/v1/connectors/HR%20Share')
+    expect(read.etag).toBe('"c1"')
+    await connectorApi.create({ ...read.data, type: 'repository' }, 'HR Share', read.etag)
+    expect(calls[1]).toMatchObject({ method: 'PUT' })
+    expect(calls[1].headers.get('If-Match')).toBe('"c1"')
+    await connectorApi.create({ ...read.data, name: 'New', type: 'repository' }, 'HR Share', read.etag)
+    expect(calls[2]).toMatchObject({ method: 'POST', url: '/api/v1/connectors' })
+    expect(calls[2].headers.has('If-Match')).toBe(false)
   })
 
   it('deletes and checks connectors', async () => {

@@ -114,7 +114,7 @@ public class PlatformV1Controller {
     @ApiResponse(responseCode = "200", description = "The versions")
     @GetMapping("/version")
     public VersionInfo version() {
-        return new VersionInfo(ApiV1.VERSION, PlatformV1Controller.class.getPackage().getImplementationVersion());
+        return new VersionInfo(ApiV1.VERSION, RUNTIME_VERSION);
     }
 
     @Operation(operationId = "getHealth", summary = "Health of the runtime",
@@ -143,5 +143,26 @@ public class PlatformV1Controller {
 
     private boolean enabled(String property) {
         return environment.getProperty(property, Boolean.class, false);
+    }
+
+    /** The build's version: from the jar's manifest, or else from the Maven properties packaged in the jar. */
+    private static final String RUNTIME_VERSION = runtimeVersion();
+
+    private static String runtimeVersion() {
+        String version = PlatformV1Controller.class.getPackage().getImplementationVersion();
+        if (version != null) {
+            return version;
+        }
+        try (java.io.InputStream in = PlatformV1Controller.class.getResourceAsStream(
+                "/META-INF/maven/org.opencrawling/oc-runtime/pom.properties")) {
+            if (in != null) {
+                java.util.Properties properties = new java.util.Properties();
+                properties.load(in);
+                return properties.getProperty("version");
+            }
+        } catch (java.io.IOException ignored) {
+            // unknown: reported as null
+        }
+        return null;
     }
 }

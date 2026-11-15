@@ -120,6 +120,9 @@ public class ApiV1OpenApiConfiguration {
         }
         if (method == PathItem.HttpMethod.PUT || method == PathItem.HttpMethod.PATCH || method == PathItem.HttpMethod.DELETE) {
             add(responses, "412", "If-Match does not match the current ETag");
+            if (addressesOne) {
+                add(responses, "428", "If-Match is missing, on a runtime that requires it (opencrawling.api.require-if-match)");
+            }
         }
         if (method == PathItem.HttpMethod.POST) {
             add(responses, "409", "Conflict with the resource's state, or an Idempotency-Key still in progress");

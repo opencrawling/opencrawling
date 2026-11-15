@@ -260,15 +260,23 @@ const listJobs = async () => (await fetchAll<JobResource>('/jobs')).map(toJob)
 export const jobApi = {
   getAll: async () => ({ data: await listJobs() }),
   getById: async (id: string) => ({ data: toJob((await api.get<JobResource>(`/jobs/${seg(id)}`)).data) }),
+  /** The job with its version (ETag), read together, to edit it and save with If-Match. */
+  getVersioned: async (id: string): Promise<Versioned<Job>> => {
+    const res = await api.get<JobResource>(`/jobs/${seg(id)}`)
+    return { data: toJob(res.data), etag: etagOf(res.headers) }
+  },
   start: (id: string) => api.post(`/jobs/${seg(id)}:start`),
   stop: (id: string) => api.post(`/jobs/${seg(id)}:stop`),
   pause: (id: string) => api.post(`/jobs/${seg(id)}:pause`),
-  /** Creates a job (no id, or `new`) or saves the form's fields of an existing one. */
-  create: async (job: JobDefinition) => {
+  /**
+   * Creates a job (no id, or `new`) or saves the form's fields of an existing one; with the ETag it was read with, a
+   * change made in between (by someone else, or by its run) answers 412 instead of being overwritten.
+   */
+  create: async (job: JobDefinition, etag?: string | null) => {
     const res = !job.id || job.id === 'new'
       ? await api.post<JobResource>('/jobs', toJobInput(job))
       : await api.patch<JobResource>(`/jobs/${seg(job.id)}`, toJobPatch(job),
-        { headers: { 'Content-Type': 'application/merge-patch+json' } })
+        { headers: { 'Content-Type': 'application/merge-patch+json', ...ifMatch(etag) } })
     return { data: toJob(res.data) }
   },
   delete: (id: string) => api.delete(`/jobs/${seg(id)}`),
@@ -354,14 +362,20 @@ export const connectorApi = {
   getAll: async (type: ConnectorType) => ({
     data: (await fetchAll<ConnectorResource>('/connectors', { type })).map(toConnector),
   }),
+  /** The connector with its version (ETag), read together, to edit it and save with If-Match. */
+  getVersioned: async (name: string): Promise<Versioned<ReturnType<typeof toConnector>>> => {
+    const res = await api.get<ConnectorResource>(`/connectors/${seg(name)}`)
+    return { data: toConnector(res.data), etag: etagOf(res.headers) }
+  },
   /**
    * Saves a connector: replaces `existingName` (the connector being edited) when the name is unchanged, otherwise
-   * creates a new one (the API refuses a name that is taken).
+   * creates a new one (the API refuses a name that is taken). With the ETag the connector was read with, a change made
+   * in between answers 412 instead of being overwritten.
    */
-  create: async (connector: ConnectorDefinition, existingName?: string | null) => {
+  create: async (connector: ConnectorDefinition, existingName?: string | null, etag?: string | null) => {
     const input = toConnectorInput(connector)
     const res = existingName && existingName === connector.name
-      ? await api.put<ConnectorResource>(`/connectors/${seg(existingName)}`, input)
+      ? await api.put<ConnectorResource>(`/connectors/${seg(existingName)}`, input, { headers: ifMatch(etag) })
       : await api.post<ConnectorResource>('/connectors', input)
     return { data: toConnector(res.data) }
   },

@@ -238,6 +238,10 @@ class PlatformApiV1OperationsHttpTest {
         HttpResponse<String> failing = http.send("POST", "/api/v1/executions:query", "{\"sql\":\"SELECT nope FROM missing\"}");
         assertThat(failing.statusCode()).as("the engine's error is the author's to fix").isEqualTo(400);
         assertThat(failing.body()).contains("#problem-invalid-query", "Table missing does not exist");
+        when(reports.executeDuckDbQuery("SELECT boom")).thenThrow(new OutOfMemoryError("Java heap space at /opt/app/x"));
+        HttpResponse<String> fault = http.send("POST", "/api/v1/executions:query", "{\"sql\":\"SELECT boom\"}");
+        assertThat(fault.statusCode()).as("a server fault is not the caller's query").isEqualTo(500);
+        assertThat(fault.body()).contains("#problem-internal-error").doesNotContain("heap", "/opt/app");
         HttpResponse<String> writing = http.send("POST", "/api/v1/executions:query", "{\"sql\":\"DELETE FROM ledger\"}");
         assertThat(writing.statusCode()).isEqualTo(400);
         assertThat(writing.body()).contains("#problem-invalid-query", "read-only");

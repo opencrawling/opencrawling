@@ -58,12 +58,35 @@ public final class LegacyApi {
             new Successor("/api/sidecars", ApiV1.BASE + "/sidecar-stores"),
             new Successor("/api/auth/me", ApiV1.BASE + "/me"));
 
+    /** Where the deprecation is documented (RFC 9745 3: {@code Link: <...>; rel="deprecation"}). */
+    public static final String DOCUMENTATION = "https://github.com/opencrawling/opencrawling/wiki/Platform-API#legacy-endpoints";
+
+    /** Legacy paths whose own successor is known: a resource or action, not only its collection. */
+    private static final List<java.util.Map.Entry<java.util.regex.Pattern, String>> EXACT = List.of(
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/dynamic/([^/]+)"), ApiV1.BASE + "/dynamic-jobs/$1"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/(?!runs$|permissions$|dynamic$)([^/]+)/(start|stop|pause)"),
+                    ApiV1.BASE + "/jobs/$1:$2"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/(?!runs$|permissions$|dynamic$)([^/]+)"), ApiV1.BASE + "/jobs/$1"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/reports/[^/]+/([^/]+)(/documents|/export)?"),
+                    ApiV1.BASE + "/executions/$1$2"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/observability/diagnose/([^/]+)"), ApiV1.BASE + "/jobs/$1/diagnosis"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/observability/(traces|errors)/([^/]+)"), ApiV1.BASE + "/jobs/$2/$1"));
+
     private LegacyApi() {}
 
-    /** The v1 resource that replaces a legacy path, or empty if the path is not a deprecated legacy endpoint. */
+    /**
+     * The v1 resource that replaces a legacy path, or empty if the path is not a deprecated legacy endpoint: the exact
+     * successor where there is one ({@code /api/jobs/42} is {@code /api/v1/jobs/42}), otherwise its collection.
+     */
     public static Optional<String> successor(String path) {
         if (path == null) {
             return Optional.empty();
+        }
+        for (java.util.Map.Entry<java.util.regex.Pattern, String> exact : EXACT) {
+            java.util.regex.Matcher matcher = exact.getKey().matcher(path);
+            if (matcher.matches()) {
+                return Optional.of(matcher.replaceFirst(exact.getValue()));
+            }
         }
         for (Successor successor : SUCCESSORS) {
             String prefix = successor.legacyPrefix();

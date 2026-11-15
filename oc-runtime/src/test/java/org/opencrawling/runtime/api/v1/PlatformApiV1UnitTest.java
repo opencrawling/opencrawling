@@ -237,15 +237,21 @@ class PlatformApiV1UnitTest {
     @Test
     void legacyEndpointsHaveTheirPlatformApiSuccessor() {
         assertThat(LegacyApi.successor("/api/jobs")).hasValue("/api/v1/jobs");
-        assertThat(LegacyApi.successor("/api/jobs/42/start")).hasValue("/api/v1/jobs");
-        assertThat(LegacyApi.successor("/api/jobs/dynamic/dj-1")).hasValue("/api/v1/dynamic-jobs");
+        assertThat(LegacyApi.successor("/api/jobs/42/start")).as("the exact action").hasValue("/api/v1/jobs/42:start");
+        assertThat(LegacyApi.successor("/api/jobs/42")).hasValue("/api/v1/jobs/42");
         assertThat(LegacyApi.successor("/api/jobs/runs")).hasValue("/api/v1/job-runs");
         assertThat(LegacyApi.successor("/api/system/settings/transport")).hasValue("/api/v1/settings/transport");
         assertThat(LegacyApi.successor("/api/system/settings")).hasValue("/api/v1/settings/system");
         assertThat(LegacyApi.successor("/api/v1/admin/settings/transport/test-grpc")).hasValue("/api/v1/settings/transport");
-        assertThat(LegacyApi.successor("/api/reports/42/exec-1/documents")).hasValue("/api/v1/executions");
+        assertThat(LegacyApi.successor("/api/reports/42/exec-1/documents")).hasValue("/api/v1/executions/exec-1/documents");
+        assertThat(LegacyApi.successor("/api/reports")).hasValue("/api/v1/executions");
         assertThat(LegacyApi.successor("/api/observability/metrics")).hasValue("/api/v1/observability/metrics");
-        assertThat(LegacyApi.successor("/api/observability/diagnose/42")).hasValue("/api/v1/jobs");
+        assertThat(LegacyApi.successor("/api/observability/diagnose/42")).hasValue("/api/v1/jobs/42/diagnosis");
+        assertThat(LegacyApi.successor("/api/observability/traces/42")).hasValue("/api/v1/jobs/42/traces");
+        assertThat(LegacyApi.successor("/api/jobs/dynamic/dj-1")).hasValue("/api/v1/dynamic-jobs/dj-1");
+        assertThat(LegacyApi.successor("/api/jobs/runs")).as("not a job id").hasValue("/api/v1/job-runs");
+        assertThat(ExecutionsV1Controller.shortenPaths("IO Error: No files found that match the pattern \"/data/reports/mode=RAG/x.parquet\""))
+                .isEqualTo("IO Error: No files found that match the pattern \"x.parquet\"");
         assertThat(LegacyApi.successor("/api/auth/me")).hasValue("/api/v1/me");
 
         assertThat(LegacyApi.successor("/api/auth/config")).as("public sign-in settings").isEmpty();

@@ -32,16 +32,24 @@ public class LegacyDeprecationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return LegacyApi.successor(request.getRequestURI()).isEmpty();
+        return LegacyApi.successor(path(request)).isEmpty();
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        LegacyApi.successor(request.getRequestURI()).ifPresent(successor -> {
+        LegacyApi.successor(path(request)).ifPresent(successor -> {
             response.setHeader("Deprecation", LegacyApi.deprecationHeader());
-            response.addHeader("Link", "<" + successor + ">; rel=\"successor-version\"");
+            response.addHeader("Link", "<" + request.getContextPath() + successor + ">; rel=\"successor-version\"");
+            response.addHeader("Link", "<" + LegacyApi.DOCUMENTATION + ">; rel=\"deprecation\"; type=\"text/html\"");
         });
         chain.doFilter(request, response);
+    }
+
+    /** The path inside the application, without a context path the runtime may be deployed under. */
+    private static String path(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String context = request.getContextPath();
+        return context != null && !context.isEmpty() && uri.startsWith(context) ? uri.substring(context.length()) : uri;
     }
 }

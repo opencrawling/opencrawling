@@ -147,6 +147,42 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | The CLI jar had two SLF4J providers and printed warnings on every command | Real-stack run (the migrator's `slf4j-simple` is now excluded, as in the runtime) |
 | `oc job start --wait` never ended: it waited for a status that jobs never have | Moving the CLI to v1 (now follows the run) |
 
+## Independent review
+
+Before release, the API had a read-only review by a reviewer that had not written it. They checked it against:
+- RFC 9110, 9457, 8288, 9745, 7396 and 6585;
+- the IETF Idempotency-Key draft;
+- the Google, Zalando and Microsoft API guidelines;
+- the OWASP API Security Top 10.
+
+Each finding was checked against the code first; all of the ones below held up.
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| A job's ETag covered only its definition, so `If-None-Match` could answer `304` while its state changed | The tag covers the whole representation (definition, state, the caller's permissions) | Core `aConditionalReadSeesARunsStateChange...` |
+| `If-Match` was checked outside the lock that writes: two changes from one version could both pass (lost update) | Check and write under one lock for jobs, connectors (also create) and settings | Core `ofManyChangesMadeFromTheSameVersionExactlyOneWins` (12 concurrent; fails without the lock) |
+| Settings were applied before a value was checked; the documented example had an invalid heap value | Validate first, then apply; the example is `-Xmx512m`; v1 names the field | Core `invalidSettingsAreRefusedWithTheirFieldsAndChangeNothing` |
+| `s3SecretAccessKey`, header settings and URL passwords were returned in clear | Secrets by name (`*secret*`, headers, connection strings) and in URLs are masked | Core masking test; Unit `secretsAreRecognisedByNameAndInsideUrls` |
+| A stored secret sent back as the mask could be sent to a new address | Refused when an address setting changes | Core; Unit `storedSecretsAreKeptOnlyWhileTheConnectorPointsWhereItDid` |
+| A secret rotation did not change the connector ETag | Keyed digest of the secrets in the tag | Core; Unit `theSecretsDigestChangesWithASecretAndNeedsTheKey` |
+| `job-runs/{id}:stop` stopped the job's current run, maybe a newer one | Stops exactly that run | Core; Unit `aRunIsStoppedOnlyWhileItIsTheJobsRun` |
+| No cache policy or security headers; `401` was not a problem detail | `Cache-Control`, `Vary`, `nosniff`, CSP on every answer; `401` problem with `WWW-Authenticate` | Core `everyAnswerCarriesTheCacheAndSecurityHeaders`; Authorization |
+| Request bodies were unbounded (OWASP API4) | 1 MiB cap, with or without `Content-Length`; `413`; maps at most 200 entries | Core `anOversizedBodyIsRefused...` |
+| Problem types incomplete in the guide; type URIs did not resolve | Registry enforced in code; the guide lists every type under the anchor its URI names | `PlatformApiV1ProblemTypesTest` |
+| API description lacked shared headers, parameters and responses; a curl sample broke shell quoting; two index links shared a name | Documented; quoted; unique names | Core `theApiDescriptionShows...`, `theIndexNamesEachLinkOnce`; Features curl test |
+| Idempotency: Redis write failure, short in-progress timeout, global eviction in memory, unbounded stored answers, draft key format refused, keyed uploads ignored | Retried writes and renewed markers; per-caller shares, running keys never dropped; `idempotency-answer-unavailable`; Structured Field keys; keyed uploads refused; `Retry-After` | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT`, Core |
+| Offset cursors gave duplicates or gaps when items arrived; unstable order | Cursors resume after their last item; the id breaks ties in every sort | Unit `aCursorResumesAfterItsLastItem...` |
+| Every execution read parsed every report on disk | Read by id | Core and Operations execution tests |
+| SDK never retried, could not pass options everywhere, buffered exports; the UI saved jobs and connectors without `If-Match` | Retries with backoff (same key); `withDefaults`; streamed export; the UI reads and sends versions | SDK `PlatformClientTest`; `api.test.ts` |
+| Deprecation pointed at collections only | Exact successors, `rel="deprecation"` link, context path | Unit; Core |
+| `executions:query` reported server faults as invalid queries and showed server paths | `500` for faults, paths shortened | Operations |
+| No way to require `If-Match` | `opencrawling.api.require-if-match` gives `428` | `PlatformApiV1RequireIfMatchHttpTest` |
+
+**Deferred, with reasons:**
+- **`RateLimit` headers and `429` on writes:** the runtime has no rate limiter yet, so there are no limits to advertise.
+- **Long-running operations as resources, events and webhooks:** these are part 2 of #313 (scenario runs).
+- **Discovery and sidecar collections in the `Page` envelope:** they keep the shapes of the features' own APIs, and sidecars have their own cursor.
+
 ## Real-stack run
 
 Run on 2026-11-15 against the full decoupled stack (`docker-compose-decoupled.yml`: runtime and MCP server, ingestion, embedding and writer consumers, Kafka, PostgreSQL with pgvector, Redis, Ollama, Ozone, admin UI), built from this branch, in an isolated Compose project.

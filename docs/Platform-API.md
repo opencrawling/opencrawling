@@ -70,6 +70,7 @@ Every error is `application/problem+json`. The one exception is `GET /api/v1/hea
 | <a id="problem-idempotency-answer-unavailable"></a>`idempotency-answer-unavailable` | 409 | The request with this `Idempotency-Key` already succeeded (`firstStatus`), but its answer was too large to keep. It was not run again; read the resource instead |
 | <a id="problem-conflict"></a>`conflict` | 409 | Another conflict with the resource's state, reported by an optional feature |
 | <a id="problem-precondition-failed"></a>`precondition-failed` | 412 | `If-Match` does not match the current version; `currentEtag` is the current one |
+| <a id="problem-precondition-required"></a>`precondition-required` | 428 | A change without `If-Match`, on a runtime that requires it (`opencrawling.api.require-if-match`) |
 | <a id="problem-body-too-large"></a>`body-too-large` | 413 | The request body is larger than allowed; `maxBytes` says how large it may be |
 | <a id="problem-unsupported-media-type"></a>`unsupported-media-type` | 415 | The `Content-Type` is not one the operation takes |
 | <a id="problem-idempotency-key-reused"></a>`idempotency-key-reused` | 422 | The `Idempotency-Key` was used before for a different request |
@@ -120,7 +121,7 @@ Single resources (jobs, connectors, system and transport settings) return an `ET
 - **Conditional reads:** `GET` with `If-None-Match: <etag>` answers `304 Not Modified` only when nothing in the answer changed.
 - **Conditional changes:** `PUT`, `PATCH` and `DELETE` with `If-Match: <etag>` answer `412` when the resource changed since you read it. Read it again, and redo the change on what is there now. A job whose run changed its state since you read it answers `412` too.
 - **Atomic:** the check and the change happen as one step, so of several changes made from the same version exactly one succeeds and the others get `412` (no lost updates, RFC 9110 13.1.1).
-- **Without `If-Match`:** the change is applied unconditionally.
+- **Without `If-Match`:** the change is applied unconditionally, unless the runtime sets `opencrawling.api.require-if-match=true`. Then every change of a job, connector or settings document must carry `If-Match`, and one without it answers `428 precondition-required` (RFC 6585).
 - **Weak tags (a deliberate deviation from RFC 9110):** a weak copy of a tag (`W/"..."`) is accepted in `If-Match`. RFC 9110 asks for strong comparison there, but proxies that compress responses, such as nginx with `gzip on`, turn tags weak. The tag digests the JSON, not the bytes sent, so it still names the same version.
 - **Browsers:** the runtime sends no CORS headers, so serve browser clients from the same origin, as the admin UI is. A proxy that adds CORS must expose the headers clients read: `Access-Control-Expose-Headers: ETag, Location, Link, X-Request-Id`.
 
@@ -316,7 +317,7 @@ curl -s -X PATCH "$API/jobs/1763038591234" -H "$AUTH" -H 'Content-Type: applicat
 
 Not duplicated: OIS ingest (`/api/v1/ingest/ois/{jobId}`) and BPM events (`/api/events/bpm/...`) are machine-to-machine endpoints with their own authentication; `/api/auth/config` stays public for the admin UI.
 
-**Deprecation:** the admin UI, the CLI and the Java SDK's `platform()` client use `/api/v1`, so the legacy management endpoints in the table are deprecated. They still work exactly as before, for existing integrations. What marks them:
+**Deprecation:** the admin UI, the CLI and the Java SDK's `platform()` client use `/api/v1`, so the legacy management endpoints in the table are deprecated. Each answer of one also links to its exact successor (`/api/jobs/42/start` to `/api/v1/jobs/42:start`), and to this section with `Link: <...>; rel="deprecation"` (RFC 9745). They still work exactly as before, for existing integrations. What marks them:
 
 - **Response headers:** each answer carries `Deprecation: @1794700800` (RFC 9745: deprecated since 2026-11-15) and `Link: </api/v1/...>; rel="successor-version"` naming the replacement.
 - **Swagger UI:** in "All endpoints" they are marked deprecated, with their successor.

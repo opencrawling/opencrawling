@@ -59,12 +59,20 @@ import java.util.stream.Stream;
  * request id. Resources that have versions come back as {@link Versioned}; send the ETag back with
  * {@link RequestOptions#ifMatch(String)} so a change made in the meantime is not overwritten. Send an
  * {@link RequestOptions#idempotent(String) Idempotency-Key} with requests that create or start something, so a
- * retry after a network error does not do it twice. Collections come in {@link Page pages}; the {@code stream}
- * methods follow the cursors.
+ * retry after a network error does not do it twice; without one, the client makes one for each {@code POST}. Requests
+ * that are safe to repeat are retried after network errors and {@code 429}/{@code 502}/{@code 503}/{@code 504}
+ * ({@link RetryPolicy}). Collections come in {@link Page pages}; the {@code stream} methods follow the cursors.
  *
  * <p>Obtain it from {@code OpenCrawlingClient.platform()}.
  */
 public interface PlatformClient {
+
+    /**
+     * This client, sending these options with every request (for example a correlation or request id, or an
+     * {@code If-Match}); options given to a single call win. Every {@code POST} gets an {@code Idempotency-Key} anyway,
+     * so it can be retried safely ({@link RetryPolicy}).
+     */
+    PlatformClient withDefaults(RequestOptions options);
 
     /** Links to every collection, and which optional features are enabled. */
     ApiIndex index();

@@ -162,6 +162,9 @@ Runs are kept in memory: they are not shared between runtime instances and do no
     *   *Type*: `int`
     *   *Default*: `262144`
     *   For a larger answer only its status is kept, and a retry answers `409 idempotency-answer-unavailable` instead of running the request again.
+*   **`OPENCRAWLING_API_REQUIRE_IF_MATCH`** (`opencrawling.api.require-if-match`): require `If-Match` on every change of a job, connector or settings document; a change without it answers `428`. Turn it on when several people or tools manage the same runtime.
+    *   *Type*: `boolean`
+    *   *Default*: `false`
 *   **`OPENCRAWLING_API_MAX_REQUEST_BYTES`** (`opencrawling.api.max-request-bytes`): the largest request body the Platform API takes; a larger one answers `413`.
     *   *Type*: `long`
     *   *Default*: `1048576`

@@ -179,23 +179,29 @@ public class ExecutionsV1Controller {
     @ApiResponse(responseCode = "200", description = "Columns and rows")
     @PostMapping("/executions:query")
     public Object query(@Valid @RequestBody QueryInput input) {
-        ResponseEntity<?> result = reports.executeQuery(new ReportController.QueryRequest(input.sql()));
-        int status = result.getStatusCode().value();
-        // A query the engine cannot run (syntax, unknown column, missing file) is the caller's to fix: DuckDB's
-        // message says why. Only admins may query.
-        if (status == 400 || status == 500) {
-            throw new ApiProblem(org.springframework.http.HttpStatus.BAD_REQUEST, "invalid-query", "Invalid query",
-                    String.valueOf(result.getBody()));
-        }
-        if (status >= 400) {
-            throw ApiProblem.fromStatus(status, String.valueOf(result.getBody()));
-        }
-        return result.getBody();
+        // A query refused as not read-only, or one the engine cannot run (syntax, unknown column, missing file), is the
+        // caller's to fix: the engine's message says why, with file paths shortened to their names. Anything else is a
+        // server fault (500), whose detail stays in the log. Only admins may query.
+        return switch (reports.query(input.sql())) {
+            case ReportController.QueryOutcome.Rows rows -> rows.result();
+            case ReportController.QueryOutcome.Refused refused -> throw new ApiProblem(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "invalid-query", "Invalid query", shortenPaths(refused.message()));
+            case ReportController.QueryOutcome.EngineError engine -> throw new ApiProblem(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "invalid-query", "Invalid query", shortenPaths(engine.message()));
+            case ReportController.QueryOutcome.Failed failed -> throw new ApiProblem(
+                    org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR, "internal-error", "Internal error",
+                    "The query could not be run because of a server error; the request id finds it in the log.");
+        };
     }
 
     private List<JobReportSummary> all() {
         ResponseEntity<List<JobReportSummary>> result = reports.getAllReports();
         return result.getBody() == null ? List.of() : result.getBody();
+    }
+
+    /** Absolute paths in an engine message, shortened to their last part, so the answer shows no server layout. */
+    static String shortenPaths(String message) {
+        return message == null ? null : message.replaceAll("(?<![\\w:])/(?:[^/\\s'\"]+/)+([^/\\s'\"]+)", "$1");
     }
 
     /** Read directly by id: the cost does not grow with the number of executions kept. */

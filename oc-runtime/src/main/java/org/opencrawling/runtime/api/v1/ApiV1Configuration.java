@@ -88,6 +88,17 @@ public class ApiV1Configuration {
         return registration;
     }
 
+    /** Only with opencrawling.api.require-if-match: unconditional changes of versioned resources answer 428. */
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "opencrawling.api.require-if-match", havingValue = "true")
+    public FilterRegistrationBean<ConditionalRequestFilter> apiV1ConditionalRequestFilter(JsonMapper json) {
+        FilterRegistrationBean<ConditionalRequestFilter> registration =
+                new FilterRegistrationBean<>(new ConditionalRequestFilter(json));
+        registration.setOrder(SecurityFilterProperties.DEFAULT_FILTER_ORDER + 5);
+        registration.addUrlPatterns(ApiV1.BASE + "/*");
+        return registration;
+    }
+
     /** Before Spring Security, so a refused call to a legacy endpoint also learns its successor. */
     @Bean
     public FilterRegistrationBean<LegacyDeprecationFilter> legacyDeprecationFilter() {

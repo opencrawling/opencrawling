@@ -45,6 +45,8 @@ class PlatformClientTest {
 
     private HttpServer server;
     private final Map<String, Answer> answers = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Answers given once each, before {@link #answers}, in order. */
+    private final Map<String, java.util.Deque<Answer>> queued = new java.util.concurrent.ConcurrentHashMap<>();
     private final List<String> requests = new CopyOnWriteArrayList<>();
     private final List<Map<String, String>> requestHeaders = new CopyOnWriteArrayList<>();
     private PlatformClient api;
@@ -59,7 +61,9 @@ class PlatformClientTest {
             requestHeaders.add(exchange.getRequestHeaders().entrySet().stream()
                     .collect(Collectors.toMap(e -> e.getKey().toLowerCase(), e -> e.getValue().get(0), (a, b) -> a)));
             exchange.getRequestBody().readAllBytes();
-            Answer answer = answers.getOrDefault(key, new Answer(404, "application/problem+json",
+            java.util.Deque<Answer> once = queued.get(key);
+            Answer next = once != null ? once.poll() : null;
+            Answer answer = next != null ? next : answers.getOrDefault(key, new Answer(404, "application/problem+json",
                     "{\"type\":\"https://opencrawling.org/problems/not-found\",\"title\":\"Not found\",\"status\":404}", Map.of()));
             byte[] body = answer.body().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", answer.contentType());
@@ -105,7 +109,9 @@ class PlatformClientTest {
         assertThat(requestHeaders.get(0).get("accept")).contains("application/problem+json");
 
         api.jobs().start("1", RequestOptions.none());
-        assertThat(requestHeaders.get(1)).doesNotContainKeys("idempotency-key", "x-correlation-id", "x-request-id");
+        assertThat(requestHeaders.get(1)).doesNotContainKeys("x-correlation-id", "x-request-id");
+        assertThat(requestHeaders.get(1).get("idempotency-key")).as("a POST without a key gets one, so it can be retried")
+                .startsWith("sdk-");
     }
 
     @Test
@@ -191,5 +197,64 @@ class PlatformClientTest {
         ApiProblem path = new ApiProblem(404, "https://opencrawling.org/problems/not-found", "Not found", null);
         assertThat(path.code()).isEqualTo("not-found");
         assertThat(new ApiProblem(500, null, "x", null).code()).isNull();
+    }
+
+    private void answerOnce(String request, int status, String body, Map<String, String> headers) {
+        queued.computeIfAbsent(request, r -> new java.util.concurrent.ConcurrentLinkedDeque<>())
+                .add(new Answer(status, "application/json", body, headers));
+    }
+
+    @Test
+    void safeRequestsAreRetriedAndAPostKeepsItsKeyAcrossAttempts() {
+        PlatformClient fast = OpenCrawlingClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
+                .retryPolicy(new RetryPolicy(3, java.time.Duration.ofMillis(1), java.time.Duration.ofMillis(5))).build().platform();
+        answerOnce("GET /api/v1/jobs/1", 503, "{}", Map.of());
+        answer("GET /api/v1/jobs/1", 200, "{\"id\":\"1\"}", Map.of());
+        assertThat(fast.jobs().get("1").value().id()).isEqualTo("1");
+        assertThat(requests).containsExactly("GET /api/v1/jobs/1", "GET /api/v1/jobs/1");
+
+        requests.clear();
+        requestHeaders.clear();
+        answerOnce("POST /api/v1/jobs/1:start", 502, "", Map.of());
+        answerOnce("POST /api/v1/jobs/1:start", 429, "", Map.of("Retry-After", "0"));
+        answer("POST /api/v1/jobs/1:start", 202, "{\"executionId\":\"exec-1\"}", Map.of());
+        assertThat(fast.jobs().start("1", RequestOptions.none()).value().executionId()).isEqualTo("exec-1");
+        assertThat(requests).hasSize(3);
+        assertThat(requestHeaders).extracting(h -> h.get("idempotency-key")).as("one key for all attempts").containsOnly(
+                requestHeaders.get(0).get("idempotency-key"));
+    }
+
+    @Test
+    void whatIsNotSafeToRepeatOrIsAnAnswerIsNotRetried() {
+        PlatformClient fast = OpenCrawlingClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
+                .retryPolicy(new RetryPolicy(3, java.time.Duration.ofMillis(1), java.time.Duration.ofMillis(5))).build().platform();
+        answer("GET /api/v1/health", 503, "{\"status\":\"DEGRADED\"}", Map.of());
+        assertThat(fast.health().isHealthy()).isFalse();
+        assertThat(requests).as("an unhealthy runtime is an answer").hasSize(1);
+
+        requests.clear();
+        answer("PATCH /api/v1/jobs/1", 503, "{\"status\":503}", Map.of());
+        assertThat(catchThrowableOfType(ApiProblemException.class,
+                () -> fast.jobs().patch("1", Map.of("name", "x"), RequestOptions.none()))).isNotNull();
+        assertThat(requests).as("an unconditional patch is sent once").hasSize(1);
+    }
+
+    @Test
+    void defaultOptionsReachCallsThatTakeNoneAndExportsStreamToTheFile() throws IOException {
+        answer("POST /api/v1/jobs/1:stop", 200, "{\"id\":\"1\"}", Map.of());
+        api.withDefaults(RequestOptions.none().withCorrelationId("batch-7").withRequestId("r-7")).jobs().stop("1");
+        assertThat(requestHeaders.get(0)).containsEntry("x-correlation-id", "batch-7").containsEntry("x-request-id", "r-7");
+
+        answers.put("GET /api/v1/executions/exec-1/export?format=csv", new Answer(200, "text/csv", "id,status\nd1,OK\n", Map.of()));
+        java.nio.file.Path target = java.nio.file.Files.createTempFile("export", ".csv");
+        try {
+            api.executions().exportTo("exec-1", "csv", target);
+            assertThat(java.nio.file.Files.readString(target)).isEqualTo("id,status\nd1,OK\n");
+            ApiProblemException missing = catchThrowableOfType(ApiProblemException.class,
+                    () -> api.executions().exportTo("exec-2", "avro", target));
+            assertThat(missing.getStatusCode()).isEqualTo(404);
+        } finally {
+            java.nio.file.Files.deleteIfExists(target);
+        }
     }
 }

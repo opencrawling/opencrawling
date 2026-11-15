@@ -57,7 +57,7 @@ import {
   Archive,
   Cloud
 } from 'lucide-react'
-import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage } from '../lib/api'
+import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage, isPreconditionFailed } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import type { JobAction } from '../lib/auth'
 
@@ -210,6 +210,8 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   // Modal / Form state
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingJob, setEditingJob] = useState<Job | null>(null)
+  // Version of the job being edited, read with its fields, sent as If-Match so a save never overwrites a newer change
+  const [editingEtag, setEditingEtag] = useState<string | null>(null)
   
   // Form fields state
   const [formName, setFormName] = useState('')
@@ -527,6 +529,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
 
   const openCreateForm = () => {
     setEditingJob(null)
+    setEditingEtag(null)
     setFormName('')
     setFormRepository(repositoryConnectors[0]?.name || '')
     setFormOutput(outputConnectors[0]?.name || '')
@@ -543,7 +546,16 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     setIsFormOpen(true)
   }
 
-  const openEditForm = (job: Job) => {
+  const openEditForm = async (listed: Job) => {
+    // The fields and their version come from one read, so the version matches what the form shows.
+    let job = listed
+    try {
+      const fresh = await jobApi.getVersioned(listed.id)
+      job = fresh.data
+      setEditingEtag(fresh.etag)
+    } catch {
+      setEditingEtag(null)
+    }
     setEditingJob(job)
     setFormName(job.name)
     setFormRepository(job.repositoryConnector)
@@ -611,12 +623,14 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           connectorType: formNarrConnectorType,
         }
       }
-      await jobApi.create(jobData)
+      await jobApi.create(jobData, editingJob ? editingEtag : null)
       await fetchJobs(false)
       setIsFormOpen(false)
     } catch (err) {
       console.error("Failed to save job:", err)
-      setFormError(problemMessage(err, 'Failed to save job configuration'))
+      setFormError(isPreconditionFailed(err)
+        ? 'This job changed since you opened it (someone edited it, or its run moved on). Close the form and open it again to edit the current version.'
+        : problemMessage(err, 'Failed to save job configuration'))
     } finally {
       setIsSaving(false)
     }

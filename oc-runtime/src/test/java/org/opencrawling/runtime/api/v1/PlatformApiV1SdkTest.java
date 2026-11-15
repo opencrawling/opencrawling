@@ -384,7 +384,8 @@ class PlatformApiV1SdkTest {
         assertThat(accepted.statusUrl()).isEqualTo("/api/v1/dynamic-jobs/dj-1");
         assertThat(accepted.state()).isEqualTo("RUNNING");
 
-        when(dynamicJobs.document(any(), any(), isNull(), anyString(), isNull()))
+        // The SDK gives every POST an Idempotency-Key, so the request carries one.
+        when(dynamicJobs.document(any(), any(), org.mockito.ArgumentMatchers.startsWith("sdk-"), anyString(), isNull()))
                 .thenReturn(new DynamicJobService.Accepted("dj-5", "exec-dj-5", "/api/jobs/dynamic/dj-5", DynamicJobService.State.RUNNING, false));
         assertThat(api.dynamicJobs().ingestDocument(DocumentIngestRequest.upsert("Alfresco_Content_Services",
                 "workspace://SpacesStore/abc"), RequestOptions.none()).jobId()).isEqualTo("dj-5");

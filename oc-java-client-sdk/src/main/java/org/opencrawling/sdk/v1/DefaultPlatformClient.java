@@ -82,10 +82,36 @@ public class DefaultPlatformClient implements PlatformClient {
 
     private final HttpTransport transport;
     private final ObjectMapper json;
+    private final RetryPolicy retryPolicy;
+    private final RequestOptions defaults;
 
     public DefaultPlatformClient(HttpTransport transport) {
+        this(transport, RetryPolicy.defaults());
+    }
+
+    public DefaultPlatformClient(HttpTransport transport, RetryPolicy retryPolicy) {
+        this(transport, retryPolicy, RequestOptions.none());
+    }
+
+    private DefaultPlatformClient(HttpTransport transport, RetryPolicy retryPolicy, RequestOptions defaults) {
         this.transport = Objects.requireNonNull(transport, "transport");
         this.json = transport.getObjectMapper();
+        this.retryPolicy = retryPolicy != null ? retryPolicy : RetryPolicy.defaults();
+        this.defaults = defaults != null ? defaults : RequestOptions.none();
+    }
+
+    @Override
+    public PlatformClient withDefaults(RequestOptions options) {
+        return new DefaultPlatformClient(transport, retryPolicy, merge(defaults, options));
+    }
+
+    /** Each option set in {@code overrides} wins; the others come from {@code base}. */
+    static RequestOptions merge(RequestOptions base, RequestOptions overrides) {
+        RequestOptions o = overrides != null ? overrides : RequestOptions.none();
+        return new RequestOptions(o.idempotencyKey() != null ? o.idempotencyKey() : base.idempotencyKey(),
+                o.correlationId() != null ? o.correlationId() : base.correlationId(),
+                o.requestId() != null ? o.requestId() : base.requestId(),
+                o.ifMatch() != null ? o.ifMatch() : base.ifMatch());
     }
 
     // ---------------------------------------------------------------- platform
@@ -102,7 +128,8 @@ public class DefaultPlatformClient implements PlatformClient {
 
     @Override
     public Health health() {
-        HttpTransport.RawResponse response = send("GET", path("health"), null, null, RequestOptions.none(), Map.of());
+        // Not retried: a 503 here is an answer (the runtime is unhealthy), not a failure to get one.
+        HttpTransport.RawResponse response = send("GET", path("health"), null, null, RequestOptions.none(), Map.of(), false);
         if (response.status() == 503) {
             return read(response, type(Health.class)); // unhealthy: the body is the health report
         }
@@ -312,8 +339,16 @@ public class DefaultPlatformClient implements PlatformClient {
 
         @Override
         public Path exportTo(String executionId, String format, Path target) {
-            try {
-                Files.write(target, export(executionId, format));
+            Map<String, String> headers = new LinkedHashMap<>(headersFor(merge(defaults, RequestOptions.none())));
+            headers.put("Accept", "*/*");
+            try (HttpTransport.StreamResponse response = transport.openStream("GET",
+                    path("executions", executionId, "export") + params("format", format), headers)) {
+                if (response.status() >= 400) {
+                    byte[] problem = response.body().readAllBytes();
+                    ok(new HttpTransport.RawResponse(response.status(), response.headers(), problem));
+                }
+                // Streamed to the file: report files can be large.
+                Files.copy(response.body(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 return target;
             } catch (IOException e) {
                 throw new OpenCrawlingNetworkException("Could not write the report to " + target, e);
@@ -601,13 +636,39 @@ public class DefaultPlatformClient implements PlatformClient {
 
     private HttpTransport.RawResponse send(String method, String path, Object body, String contentType,
                                            RequestOptions options, Map<String, String> extraHeaders) {
-        RequestOptions o = options != null ? options : RequestOptions.none();
+        return send(method, path, body, contentType, options, extraHeaders, true);
+    }
+
+    private static Map<String, String> headersFor(RequestOptions o) {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Accept", ACCEPT);
         headers.put("Idempotency-Key", o.idempotencyKey());
         headers.put("X-Correlation-Id", o.correlationId());
         headers.put("X-Request-Id", o.requestId());
         headers.put("If-Match", o.ifMatch());
+        return headers;
+    }
+
+    /**
+     * Sends a request, and repeats it when that is safe and may help ({@link RetryPolicy}). A {@code POST} without a
+     * key gets one, so that it can be repeated without running twice; uploads (multipart) take no key and are not
+     * repeated.
+     */
+    private HttpTransport.RawResponse send(String method, String path, Object body, String contentType,
+                                           RequestOptions options, Map<String, String> extraHeaders, boolean retry) {
+        RequestOptions o = merge(defaults, options);
+        boolean upload = contentType != null && contentType.startsWith("multipart/");
+        if ("POST".equals(method) && o.idempotencyKey() == null && !upload) {
+            o = o.withIdempotencyKey("sdk-" + UUID.randomUUID());
+        }
+        boolean repeatable = switch (method) {
+            case "GET", "HEAD", "PUT", "DELETE" -> true;
+            case "POST" -> o.idempotencyKey() != null && !upload;
+            case "PATCH" -> o.ifMatch() != null; // a conditional patch applies at most once
+            default -> false;
+        };
+        int attempts = retry && repeatable ? retryPolicy.maxAttempts() : 1;
+        Map<String, String> headers = headersFor(o);
         headers.putAll(extraHeaders);
         byte[] bytes;
         if (body == null) {
@@ -623,7 +684,31 @@ public class DefaultPlatformClient implements PlatformClient {
                 throw new IllegalArgumentException("Could not write the request body as JSON", e);
             }
         }
-        return transport.exchange(method, path, headers, bytes, bytes != null ? contentType : null);
+        for (int attempt = 1; ; attempt++) {
+            HttpTransport.RawResponse response;
+            try {
+                response = transport.exchange(method, path, headers, bytes, bytes != null ? contentType : null);
+            } catch (OpenCrawlingNetworkException e) {
+                if (attempt >= attempts) {
+                    throw e;
+                }
+                pause(retryPolicy.delay(attempt, null));
+                continue;
+            }
+            if (attempt >= attempts || !RetryPolicy.RETRYABLE_STATUSES.contains(response.status())) {
+                return response;
+            }
+            pause(retryPolicy.delay(attempt, response.header("Retry-After")));
+        }
+    }
+
+    private static void pause(java.time.Duration delay) {
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new OpenCrawlingNetworkException("Interrupted while waiting to retry", e);
+        }
     }
 
     /** The response if it succeeded; otherwise its problem as an exception. */

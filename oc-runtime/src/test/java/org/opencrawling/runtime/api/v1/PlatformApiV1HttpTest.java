@@ -497,7 +497,8 @@ class PlatformApiV1HttpTest {
         HttpResponse<String> legacy = http.send("GET", "/api/jobs", null);
         assertThat(legacy.statusCode()).as("it still works").isEqualTo(200);
         assertThat(legacy.headers().firstValue("Deprecation")).hasValue("@1794700800");
-        assertThat(legacy.headers().allValues("Link")).contains("</api/v1/jobs>; rel=\"successor-version\"");
+        assertThat(legacy.headers().allValues("Link")).contains("</api/v1/jobs>; rel=\"successor-version\"",
+                "<" + LegacyApi.DOCUMENTATION + ">; rel=\"deprecation\"; type=\"text/html\"");
 
         HttpResponse<String> settings = http.send("GET", "/api/system/settings", null);
         assertThat(settings.headers().allValues("Link")).contains("</api/v1/settings/system>; rel=\"successor-version\"");

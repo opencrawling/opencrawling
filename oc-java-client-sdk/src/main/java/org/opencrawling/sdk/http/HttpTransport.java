@@ -204,6 +204,51 @@ public class HttpTransport {
         }
     }
 
+    /** A response whose body is read as it arrives; close it when done. */
+    public record StreamResponse(int status, java.util.Map<String, java.util.List<String>> headers,
+                                 java.io.InputStream body) implements AutoCloseable {
+        public String header(String name) {
+            java.util.List<String> values = headers.get(name.toLowerCase(java.util.Locale.ROOT));
+            return values == null || values.isEmpty() ? null : values.get(0);
+        }
+
+        @Override
+        public void close() throws IOException {
+            body.close();
+        }
+    }
+
+    /** Sends a request without a body and returns the answer's body as a stream, for large files. */
+    public StreamResponse openStream(String method, String path, java.util.Map<String, String> headers) {
+        String fullUrl = path.startsWith("http://") || path.startsWith("https://")
+                ? path
+                : baseUrl + (path.startsWith("/") ? path : "/" + path);
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(fullUrl)).timeout(requestTimeout);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("X-API-Key", apiKey);
+        }
+        if (headers != null) {
+            headers.forEach((name, value) -> {
+                if (value != null) {
+                    builder.header(name, value);
+                }
+            });
+        }
+        builder.method(method.toUpperCase(java.util.Locale.ROOT), HttpRequest.BodyPublishers.noBody());
+        try {
+            HttpResponse<java.io.InputStream> response = sendWithToken(builder, HttpResponse.BodyHandlers.ofInputStream());
+            java.util.Map<String, java.util.List<String>> lowerCase = new java.util.LinkedHashMap<>();
+            response.headers().map().forEach((name, values) ->
+                    lowerCase.put(name.toLowerCase(java.util.Locale.ROOT), java.util.List.copyOf(values)));
+            return new StreamResponse(response.statusCode(), lowerCase, response.body());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new OpenCrawlingNetworkException("Network error while communicating with OpenCrawling endpoint: " + fullUrl, e);
+        }
+    }
+
     /** Sends with the current token; after a {@code 401}, once more with a new one if the provider could get it. */
     private <T> HttpResponse<T> sendWithToken(HttpRequest.Builder builder, HttpResponse.BodyHandler<T> handler)
             throws IOException, InterruptedException {

@@ -38,7 +38,7 @@ import {
   Cloud
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { connectorApi, problemMessage } from '../lib/api'
+import { connectorApi, problemMessage, isPreconditionFailed } from '../lib/api'
 import VespaModelInsights from './VespaModelInsights'
 
 type ConnectorType = 'repository' | 'output' | 'authority' | 'transformation'
@@ -219,6 +219,8 @@ export default function ConnectorForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null)
+  // Version of the connector being edited, read with its fields, sent as If-Match on save
+  const [selectedEtag, setSelectedEtag] = useState<string | null>(null)
 
   const [s3CustomHeaders, setS3CustomHeaders] = useState<S3HeaderPair[]>([])
   const [selectedPreset, setSelectedPreset] = useState<string>('')
@@ -317,6 +319,7 @@ export default function ConnectorForm() {
 
   const handleReset = () => {
     setSelectedConnector(null)
+    setSelectedEtag(null)
     setCheckResult(null)
     setS3CustomHeaders([])
     setSelectedPreset('')
@@ -332,7 +335,16 @@ export default function ConnectorForm() {
     })
   }
 
-  const handleSelectConnector = (connector: ConnectorFormData) => {
+  const handleSelectConnector = async (listed: ConnectorFormData) => {
+    // The fields and their version come from one read, so the version matches what the form shows.
+    let connector = listed
+    try {
+      const fresh = await connectorApi.getVersioned(listed.name)
+      connector = { ...listed, ...fresh.data } as ConnectorFormData
+      setSelectedEtag(fresh.etag)
+    } catch {
+      setSelectedEtag(null)
+    }
     setSelectedConnector(connector.name)
     setCheckResult(null)
     setSelectedPreset('')
@@ -388,12 +400,14 @@ export default function ConnectorForm() {
     setIsSaving(true)
     try {
       // The connector being edited is replaced; a new name creates a new connector.
-      await connectorApi.create({ ...data, type: activeTab }, selectedConnector)
+      await connectorApi.create({ ...data, type: activeTab }, selectedConnector, selectedEtag)
       await fetchConnectors()
       handleReset()
     } catch (error) {
       console.error('Error saving connector:', error)
-      alert(`Failed to save connector: ${problemMessage(error, 'unknown error')}`)
+      alert(isPreconditionFailed(error)
+        ? 'This connector was changed by someone else since you opened it. Open it again to see the current settings, then make your changes again.'
+        : `Failed to save connector: ${problemMessage(error, 'unknown error')}`)
     } finally {
       setIsSaving(false)
     }
