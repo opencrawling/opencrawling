@@ -85,6 +85,12 @@ public class IcebergRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        // null for catalogs without a URI (hadoop, in-memory)
+        return catalogUri;
+    }
+
+    @Override
     public void connect() throws Exception {
         if (this.catalog != null) {
             log.info("Iceberg Catalog is already initialized/injected.");

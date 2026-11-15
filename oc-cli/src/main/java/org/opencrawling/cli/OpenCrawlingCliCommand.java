@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,18 +28,23 @@ import java.util.concurrent.Callable;
 @Command(
     name = "oc",
     mixinStandardHelpOptions = true,
-    version = "OpenCrawling CLI v1.0.0-SNAPSHOT (Java 25)",
+    version = "OpenCrawling CLI v1.0.5-SNAPSHOT (Java 25)",
     description = "OpenCrawling CLI (oc-cli) for DevSecOps & Terminal Ingestion Management",
     subcommands = {
         JobCommand.class,
         ConnectorCommand.class,
+        PushCommand.class,
         ArchetypeCommand.class,
         CopilotCommand.class,
         AIOpsCommand.class,
         ConfigCommand.class,
+        AuthCommand.class,
         SystemCommand.class,
         SchemaCommand.class,
-        McfCommand.class
+        McfCommand.class,
+        ReportCommand.class,
+        OpenApiCommand.class,
+        DiscoveryCommand.class
     }
 )
 public class OpenCrawlingCliCommand implements Callable<Integer> {

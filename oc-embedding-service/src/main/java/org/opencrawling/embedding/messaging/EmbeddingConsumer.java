@@ -40,7 +40,9 @@ public class EmbeddingConsumer {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    @KafkaListener(topics = KafkaConfig.CHUNKS_TOPIC_NAME)
+    @KafkaListener(
+            topics = KafkaConfig.CHUNKS_TOPIC_NAME,
+            groupId = "${spring.kafka.consumer.embedding-group-id:opencrawling-embedding-group}")
     public void consume(DocumentChunkMessage message) {
         log.info("Received chunk for embedding: {} (Engine: {}, Connector: {})", 
             message.chunkId(), message.transformationEngine(), message.transformationConnector());
@@ -55,7 +57,7 @@ public class EmbeddingConsumer {
                     new float[0],
                     DocumentAction.DELETE
                 );
-                kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMessage).get();
+                kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMessage.partitionKey(), embeddedMessage).get();
                 return;
             }
             // Resolve the dynamic embedding model client from factory
@@ -75,11 +77,16 @@ public class EmbeddingConsumer {
                 embedding
             );
 
-            // Publish to embedded topic
-            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, message.chunkId(), embeddedMessage).get();
+            // Publish to embedded topic, keyed by document id so the writer applies a document's messages in order
+            kafkaTemplate.send(KafkaConfig.EMBEDDED_TOPIC_NAME, embeddedMessage.partitionKey(), embeddedMessage).get();
             log.info("Successfully generated embedding and published chunk: {}", message.chunkId());
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to generate embedding for chunk: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it, instead of losing it.
+            throw new IllegalStateException("Embedding failed for chunk " + message.chunkId(), e);
         }
     }
 }

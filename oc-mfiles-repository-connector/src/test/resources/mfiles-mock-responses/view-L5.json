@@ -1,0 +1,40 @@
+{
+  "Path": "v101/L5",
+  "MoreResults": false,
+  "Items": [
+    {
+      "FolderContentItemType": 4,
+      "ObjectVersion": {
+        "ObjVer": {
+          "ID": 48193,
+          "Type": 0,
+          "Version": 2
+        },
+        "Title": "Master Services Agreement",
+        "DisplayID": "48193",
+        "Class": 22,
+        "Deleted": false,
+        "CreatedUtc": "2026-04-10T10:30:00Z",
+        "LastModifiedUtc": "2026-09-28T09:00:00Z",
+        "ObjectCheckedOut": false,
+        "Files": [
+          {
+            "ID": 11,
+            "Name": "MSA",
+            "Extension": "docx",
+            "Version": 1,
+            "ChangeTimeUtc": "2026-09-28T09:00:00Z"
+          },
+          {
+            "ID": 12,
+            "Name": "Exhibit A",
+            "Extension": "pdf",
+            "Version": 1,
+            "ChangeTimeUtc": "2026-09-28T09:00:00Z"
+          }
+        ],
+        "SingleFile": false
+      }
+    }
+  ]
+}

@@ -26,6 +26,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Map;
 import java.util.function.Function;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -51,5 +53,31 @@ class OpenSearch3StoreWriterConsumerTest {
         consumer.consume(tombstone);
 
         verify(client).delete(any(Function.class));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() throws Exception {
+        // The document purge used to be swallowed at debug level, so a failed tombstone was lost without trace.
+        OpenSearchClient client = mock(OpenSearchClient.class);
+        when(client.deleteByQuery(any(Function.class))).thenThrow(new java.io.IOException("opensearch unavailable"));
+        OpenSearch3StoreWriterConsumer consumer = new OpenSearch3StoreWriterConsumer(client);
+        ReflectionTestUtils.setField(consumer, "indexName", "enterprise_kb");
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-opensearch-1", "chunk-opensearch-1", "", Map.of(), new float[0],
+                        DocumentAction.DELETE)));
+        assertTrue(thrown.getMessage().contains("chunk-opensearch-1"));
+    }
+
+    @Test
+    void aFailedWriteIsRethrownSoKafkaRetriesIt() throws Exception {
+        OpenSearchClient client = mock(OpenSearchClient.class);
+        when(client.index(any(Function.class))).thenThrow(new java.io.IOException("opensearch unavailable"));
+        OpenSearch3StoreWriterConsumer consumer = new OpenSearch3StoreWriterConsumer(client);
+        ReflectionTestUtils.setField(consumer, "indexName", "enterprise_kb");
+
+        assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-opensearch-1", "chunk-opensearch-1", "text", Map.of(),
+                        new float[]{1f, 0f}, DocumentAction.UPSERT)));
     }
 }

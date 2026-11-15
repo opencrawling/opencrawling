@@ -26,6 +26,13 @@ import org.opencrawling.core.transport.TransportSettingsDTO;
 import org.opencrawling.runtime.transport.InternalTransportManager;
 import org.opencrawling.runtime.transport.TestGrpcResponseDTO;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "Transport Settings", description = "Configuration and testing of internal communication transport (gRPC vs. REST)")
 @RestController
 @RequestMapping
 public class TransportSettingsController {
@@ -37,6 +44,8 @@ public class TransportSettingsController {
         this.transportManager = transportManager;
     }
 
+    @Operation(summary = "Get internal transport settings", description = "Retrieves active internal transport mode (AUTO, GRPC, REST), gRPC server status, and fallback preferences.")
+    @ApiResponse(responseCode = "200", description = "Internal transport configuration map")
     @GetMapping({"/api/v1/admin/settings/transport", "/api/system/settings/transport"})
     public ResponseEntity<Map<String, Object>> getTransportSettings() {
         TransportSettingsDTO settings = transportManager.getSettings();
@@ -50,18 +59,24 @@ public class TransportSettingsController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Update transport settings (PUT)", description = "Updates and applies internal communication transport configuration.")
+    @ApiResponse(responseCode = "200", description = "Updated transport settings")
     @PutMapping({"/api/v1/admin/settings/transport", "/api/system/settings/transport"})
     public ResponseEntity<TransportSettingsDTO> updateTransportSettingsPut(@RequestBody TransportSettingsDTO newSettings) {
         transportManager.updateSettings(newSettings);
         return ResponseEntity.ok(transportManager.getSettings());
     }
 
+    @Operation(summary = "Update transport settings (POST)", description = "Alternative POST endpoint for updating internal communication transport configuration.")
+    @ApiResponse(responseCode = "200", description = "Updated transport settings")
     @PostMapping({"/api/v1/admin/settings/transport", "/api/system/settings/transport"})
     public ResponseEntity<TransportSettingsDTO> updateTransportSettingsPost(@RequestBody TransportSettingsDTO newSettings) {
         transportManager.updateSettings(newSettings);
         return ResponseEntity.ok(transportManager.getSettings());
     }
 
+    @Operation(summary = "Test gRPC connectivity", description = "Executes an internal gRPC channel connectivity test to verify port binding and round-trip communication.")
+    @ApiResponse(responseCode = "200", description = "gRPC test execution result")
     @PostMapping({"/api/v1/admin/settings/transport/test-grpc", "/api/system/settings/transport/test-grpc"})
     public ResponseEntity<TestGrpcResponseDTO> testGrpcConnection(@RequestBody(required = false) Map<String, Object> payload) {
         String host = "127.0.0.1";

@@ -77,7 +77,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled-flowable
     ports:
       - "11434:11434"
@@ -92,7 +92,7 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-flowable
     entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
     environment:
@@ -145,6 +145,7 @@ services:
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_USERNAME=rest-admin
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_PASSWORD=test
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_INCLUDE_VARIABLES=true
+      - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_HISTORY_LEVEL=audit
       - SPRING_OPENCRAWLING_CONNECTOR_FLOWABLE_SCOPE=all
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/
@@ -158,8 +159,10 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
       - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - opencrawling-claims-flowable:/data/claims
+      - opencrawling-reportsdata-flowable:/data/reports
     depends_on:
       kafka:
         condition: service_started
@@ -200,6 +203,7 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     volumes:
       - opencrawling-claims-flowable:/data/claims
     depends_on:
@@ -274,6 +278,8 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_OUTPUT_PGVECTOR_FLOWABLE_COLLOCATED_SCHEMA=true
+      - SPRING_OPENCRAWLING_OUTPUT_PGVECTOR_FLOWABLE_EXPRESSION_INDEXES=true
     depends_on:
       kafka:
         condition: service_started
@@ -304,8 +310,14 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_OUTPUT_PGVECTOR_FLOWABLE_COLLOCATED_SCHEMA=true
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-flowable:/data/reports
     depends_on:
       postgres-vector:
         condition: service_healthy
@@ -335,3 +347,6 @@ volumes:
     name: opencrawling-flowabledata
   opencrawling-claims-flowable:
     name: opencrawling-claims-flowable
+  opencrawling-reportsdata-flowable:
+    name: opencrawling-reportsdata-flowable
+

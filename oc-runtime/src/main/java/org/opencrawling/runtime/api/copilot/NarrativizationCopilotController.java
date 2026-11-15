@@ -22,6 +22,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "Auto-Narrativization Copilot", description = "LLM-powered generation of narrative prompt templates for metadata-to-text transformation")
 @RestController
 @RequestMapping("/api/transformation/copilot")
 @CrossOrigin(origins = "*")
@@ -33,6 +38,8 @@ public class NarrativizationCopilotController {
         this.copilotService = copilotService;
     }
 
+    @Operation(summary = "Generate narrativization template", description = "Uses an LLM (Ollama or OpenAI) to generate a Mustache prompt template transforming structured schema fields into rich natural language narrative text.")
+    @ApiResponse(responseCode = "200", description = "Generated template with explanation and sample rendering")
     @PostMapping("/generate")
     public ResponseEntity<TemplateCopilotResponse> generateTemplate(
             @RequestBody SchemaContextRequest request

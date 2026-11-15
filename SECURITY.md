@@ -11,13 +11,24 @@ We actively support and fix security vulnerabilities in the following versions o
 
 ## Reporting a Vulnerability
 
-We take the security of OpenCrawling seriously. If you believe you have found a security vulnerability, please do not report it publicly via the GitHub issue tracker.
+We take the security of OpenCrawling seriously. If you believe you have found a security vulnerability, please do not report it publicly via the public GitHub issue tracker.
 
-Instead, please report it directly to the project maintainers. 
+Instead, please report it privately using one of the following channels:
 
-When reporting, please include:
-- A description of the vulnerability.
-- Steps to reproduce or a proof of concept (PoC).
-- Potential impact of the vulnerability.
+1. **GitHub Security Advisory (Preferred):**  
+   Submit a confidential report via [GitHub Private Vulnerability Reporting](https://github.com/opencrawling/opencrawling/security/advisories/new).
+2. **Email:**  
+   Send an encrypted or plain report to `security@opencrawling.org` (or directly to maintainers at `piergiorgio@apache.org`).
 
-We will acknowledge your report within 48 hours and work with you to coordinate a security release if a fix is necessary.
+### What to Include
+
+When reporting a vulnerability, please include:
+- A clear description of the vulnerability and potential impact.
+- Step-by-step instructions or a minimal Proof of Concept (PoC) to reproduce the issue.
+- Any affected components, dependencies, or configuration setups.
+
+### Response & Disclosure Timelines
+
+- **Initial acknowledgment:** Within 48 hours of receipt.
+- **Triage & Status updates:** We will assess severity and provide regular progress updates.
+- **Coordination & Release:** We will coordinate the release date with you and publish a security advisory with credit upon public release.

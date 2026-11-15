@@ -92,7 +92,13 @@ public class VespaStoreWriterConsumer {
             client.put(vespaDocument.id(), vespaDocument.json(), OperationParameters.empty()).get();
             log.info("Successfully fed chunk {} to Vespa document type '{}'.", message.chunkId(), documentType);
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to feed embedded chunk to Vespa: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Documents are put
+            // by id and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Vespa feed failed for chunk " + message.chunkId(), e);
         }
     }
 }

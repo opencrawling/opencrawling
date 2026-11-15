@@ -15,10 +15,12 @@
  */
 package org.opencrawling.opensearch3.messaging;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.opensearch3.OpenSearch3Constants;
 import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.FieldValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,52 +58,34 @@ public class OpenSearch3StoreWriterConsumer {
             message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for OpenSearch: {}", message.chunkId());
-                client.delete(d -> d.index(indexName).id(message.chunkId()));
-                log.info("Successfully deleted tombstone chunk {} from OpenSearch index '{}'.", message.chunkId(), indexName);
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for OpenSearch 3.x: documentId={}, chunkId={}", docId, message.chunkId());
+                // The delete that purges the document's chunks; a failure propagates, so the tombstone is retried.
+                client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
+                        .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_DOCUMENT_ID).value(FieldValue.of(docId))))
+                        .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_ID).value(FieldValue.of(docId))))
+                        .should(s -> s.term(t -> t.field(OpenSearch3Constants.FIELD_ID).value(FieldValue.of(message.chunkId()))))
+                )));
+                try {
+                    client.delete(d -> d.index(indexName).id(message.chunkId()));
+                } catch (Exception ignored) {
+                }
+                log.info("Successfully deleted tombstone document/chunk {} from OpenSearch index '{}'.", docId, indexName);
                 return;
             }
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map) {
-                Map<?, ?> securityMap = (Map<?, ?>) securityObj;
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List) {
-                    List<?> permsList = (List<?>) permsObj;
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map) {
-                            Map<?, ?> permMap = (Map<?, ?>) permObj;
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof org.opencrawling.core.security.SecurityConfig) {
-                org.opencrawling.core.security.SecurityConfig sc = (org.opencrawling.core.security.SecurityConfig) securityObj;
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (org.opencrawling.core.security.PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             Map<String, Object> row = new HashMap<>();
             row.put(OpenSearch3Constants.FIELD_ID, message.chunkId());
+            if (message.documentId() != null && !message.documentId().isBlank()) {
+                row.put(OpenSearch3Constants.FIELD_DOCUMENT_ID, message.documentId());
+            }
             row.put(OpenSearch3Constants.FIELD_TEXT, message.text());
             
             Object uriVal = message.metadata().get("uri");
@@ -133,6 +117,9 @@ public class OpenSearch3StoreWriterConsumer {
             log.info("Successfully saved chunk {} to OpenSearch index '{}'.", message.chunkId(), indexName);
         } catch (Exception e) {
             log.error("Failed to store embedded chunk in OpenSearch: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Chunks are indexed
+            // under their own ids and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("OpenSearch 3.x write failed for chunk " + message.chunkId(), e);
         }
     }
 }

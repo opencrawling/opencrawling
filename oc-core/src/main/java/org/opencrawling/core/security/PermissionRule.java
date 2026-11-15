@@ -15,6 +15,13 @@
  */
 package org.opencrawling.core.security;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+/**
+ * One permission on a document. An absent {@code displayName} is left out of the JSON rather than written as
+ * {@code null}, as the OIS document schema requires.
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record PermissionRule(
     String identity,
     String identityType,

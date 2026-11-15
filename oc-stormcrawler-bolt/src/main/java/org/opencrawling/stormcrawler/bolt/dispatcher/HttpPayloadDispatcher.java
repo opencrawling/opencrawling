@@ -38,7 +38,7 @@ public class HttpPayloadDispatcher implements PayloadDispatcher {
     public static final String CONF_TIMEOUT_MS = "opencrawling.http.timeout.ms";
     public static final String CONF_AUTH_HEADER = "opencrawling.http.auth.header";
 
-    private String endpoint = "http://localhost:8080/api/v1/ingest/ois";
+    private String endpoint = "http://localhost:8080/api/v1/ingest/ois/1";
     private int timeoutMs = 5000;
     private String authHeader = null;
     private transient HttpClient httpClient;

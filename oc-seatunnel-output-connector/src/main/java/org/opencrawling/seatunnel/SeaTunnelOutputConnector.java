@@ -19,7 +19,6 @@ import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.seatunnel.client.SeaTunnelJobConfigBuilder;
@@ -81,7 +80,7 @@ public class SeaTunnelOutputConnector implements OutputConnector {
         this.embeddingModel = embeddingModel;
         this.kafkaTemplate = kafkaTemplate;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
     }
 
     @Override
@@ -207,7 +206,7 @@ public class SeaTunnelOutputConnector implements OutputConnector {
 
     private void publishToKafkaOrBuffer(DocumentEmbeddedMessage message) {
         if (kafkaTemplate != null) {
-            kafkaTemplate.send(properties.kafkaTopic(), message.chunkId(), message);
+            kafkaTemplate.send(properties.kafkaTopic(), message.partitionKey(), message);
         } else {
             log.debug("KafkaTemplate not injected, buffered message {} for SeaTunnel topic {}", message.chunkId(), properties.kafkaTopic());
         }

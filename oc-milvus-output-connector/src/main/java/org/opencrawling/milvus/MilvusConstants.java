@@ -21,6 +21,7 @@ public final class MilvusConstants {
         // Prevent instantiation
     }
 
+    public static final String FIELD_DOCUMENT_ID = "documentId";
     public static final String FIELD_ID = "id";
     public static final String FIELD_TEXT = "text";
     public static final String FIELD_URI = "uri";

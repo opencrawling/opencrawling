@@ -1,0 +1,13 @@
+ACME Engineering - Zero-Trust RAG & Pipeline Architecture Blueprint
+Classification: RESTRICTED - ENGINEERING (GROUP_engineering ALLOW, bob EXPLICIT DENY)
+
+1. System Architecture
+Our internal AI retrieval pipeline connects Alfresco Content Services to PGVector via OpenCrawling's decoupled Kafka architecture (Claim Check Pattern + Apache Tika 4 + Ollama mxbai-embed-large 1024-dimensional embeddings).
+
+2. Fail-Closed Security Design
+Every chunk stored in vector_store_1024 retains collocated OIS ACL metadata:
+- security_read_keys: normalized user (u:) and group (g:) allow tokens plus public
+- security_denied_read: explicit DENY principals evaluated BEFORE any allow grant
+
+3. Internal Service Endpoints & Rotating Keys Procedure
+Internal staging PGVector cluster uses dedicated mTLS certificates rotated every 30 days via Vault namespace eng/prod-rag-secrets. External contractors and restricted accounts (including explicit DENY principals) must never view this blueprint.

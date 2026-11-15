@@ -1,0 +1,14 @@
+ACME Corporation - Q4 2026 Financial Forecast & Budget Allocation
+Classification: CONFIDENTIAL - FINANCE DEPARTMENT ONLY (GROUP_finance)
+
+Executive Summary:
+The approved Q4 2026 operating budget totals $14.8M across core engineering, cloud infrastructure, and enterprise compliance initiatives.
+
+Budget Breakdown:
+- Cloud & Vector Infrastructure (pgvector + Kafka clusters): $3.2M allocated
+- R&D and AI Platform Licensing: $5.9M allocated
+- Security & Regulatory Audit Reserve: $1.7M reserved for Q4 SOC2 Type II audit
+- EMEA & North America Operations: $4.0M allocated
+
+Forecast Note:
+Projected Q4 recurring revenue is $22.4M with an expected 18% EBITDA margin. Redistribution exceeding $250,000 requires Finance Director sign-off.

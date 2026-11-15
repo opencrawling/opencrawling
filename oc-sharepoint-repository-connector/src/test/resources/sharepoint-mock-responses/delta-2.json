@@ -1,0 +1,81 @@
+{
+  "value": [
+    {
+      "id": "i1",
+      "name": "Architecture_Spec.docx",
+      "eTag": "\"{I1},3\"",
+      "cTag": "\"c:{I1},2\"",
+      "size": 1548,
+      "webUrl": "https://contoso.sharepoint.com/sites/engineering/Shared%20Documents/Architecture_Spec.docx",
+      "createdDateTime": "2026-03-12T14:20:00Z",
+      "lastModifiedDateTime": "2026-09-30T10:15:30Z",
+      "createdBy": {
+        "user": {
+          "email": "adele.vance@contoso.com",
+          "displayName": "Adele Vance"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "email": "megan.bowen@contoso.com",
+          "displayName": "Megan Bowen"
+        }
+      },
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "f1"
+      },
+      "file": {
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      "sharepointIds": {
+        "listItemUniqueId": "luid-i1"
+      },
+      "@microsoft.graph.downloadUrl": "{{BASE}}/download/i1?tempauth=signed",
+      "listItem": {
+        "id": "5",
+        "fields": {
+          "@odata.etag": "\"x\"",
+          "id": "5",
+          "Title": "Architecture Specification",
+          "ProjectCode": "PRJ-CLOUD-2026",
+          "DocumentStatus": "Approved",
+          "Classification": {
+            "Label": "Internal-Confidential",
+            "TermGuid": "term-1",
+            "WssId": 3
+          },
+          "Reviewers": [
+            {
+              "LookupId": 7,
+              "LookupValue": "Adele Vance",
+              "Email": "adele.vance@contoso.com"
+            },
+            {
+              "LookupId": 9,
+              "LookupValue": "Megan Bowen",
+              "Email": "megan.bowen@contoso.com"
+            }
+          ],
+          "Budget": 150000.5,
+          "Signed": true,
+          "_UIVersionString": "2.0",
+          "FileLeafRef": "Architecture_Spec.docx",
+          "ContentType": "Document",
+          "AuthorLookupId": "7"
+        }
+      }
+    },
+    {
+      "id": "i2",
+      "deleted": {
+        "state": "deleted"
+      },
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "root1"
+      }
+    }
+  ],
+  "@odata.deltaLink": "{{BASE}}/v1.0/drives/b!lib1/root/delta?token=d2"
+}

@@ -19,6 +19,11 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.springframework.http.ResponseEntity;
@@ -26,14 +31,33 @@ import org.springframework.web.bind.annotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.opencrawling.core.connector.JobContext;
+import org.opencrawling.core.connector.RepositoryConnectorFactory;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
-import org.opencrawling.filesystem.FileSystemRepositoryConnector;
+import org.opencrawling.core.reporting.ExecutionProvenance;
+import org.opencrawling.core.security.Caller;
+import org.opencrawling.runtime.connector.ConnectorFactory;
+import org.opencrawling.runtime.connector.ConnectorResolutionException;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
+import org.opencrawling.runtime.orchestrator.JobRunRegistry;
+import org.opencrawling.runtime.security.CallerResolver;
+import org.opencrawling.runtime.security.ManagementAuthorization;
+import org.opencrawling.runtime.security.ManagementAuthorization.JobAction;
+import org.opencrawling.runtime.security.JwtCallerMapper;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
+@Tag(name = "Pipeline & Jobs", description = "Operations for managing, configuring, triggering, and monitoring crawling pipeline jobs")
 @RestController
 @RequestMapping("/api/jobs")
 public class JobController {
@@ -42,22 +66,36 @@ public class JobController {
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private final List<JobDTO> jobs;
     private final JobOrchestrator jobOrchestrator;
-    private final FileSystemRepositoryConnector fileSystemRepositoryConnector;
-    private final OutputConnector outputConnector;
+    private final ConnectorFactory connectorFactory;
+    private final JobRunRegistry runRegistry;
     private final JdbcTemplate jdbcTemplate;
 
     @Autowired(required = false)
     private PipelineProperties pipelineProperties;
 
+    @Autowired(required = false)
+    private Environment environment;
+
+    @Autowired(required = false)
+    private org.opencrawling.runtime.reporting.JobLedgerAccumulator ledgerAccumulator;
+
+    /** Absent outside servlet web apps; then no caller is ever recorded. */
+    @Autowired(required = false)
+    private CallerResolver callerResolver;
+
+    /** Absent when a test builds the controller itself; then every request is allowed, as with authorization off. */
+    @Autowired(required = false)
+    private ManagementAuthorization authorization;
+
     @Autowired
     public JobController(
             JobOrchestrator jobOrchestrator,
-            FileSystemRepositoryConnector fileSystemRepositoryConnector,
-            OutputConnector outputConnector,
+            ConnectorFactory connectorFactory,
+            JobRunRegistry runRegistry,
             JdbcTemplate jdbcTemplate) {
         this.jobOrchestrator = jobOrchestrator;
-        this.fileSystemRepositoryConnector = fileSystemRepositoryConnector;
-        this.outputConnector = outputConnector;
+        this.connectorFactory = connectorFactory;
+        this.runRegistry = runRegistry;
         this.jdbcTemplate = jdbcTemplate;
         
         // Initial defaults
@@ -68,22 +106,65 @@ public class JobController {
         this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));
     }
 
+    @Operation(summary = "List all pipeline jobs", description = "Returns a list of all configured crawling pipeline jobs and their latest execution state.")
+    @ApiResponse(responseCode = "200", description = "List of configured jobs successfully retrieved")
     @GetMapping
     public List<JobDTO> getAllJobs() {
-        return jobs;
+        if (!authorizationOn()) {
+            return jobs;
+        }
+        return jobs.stream().filter(job -> allowed(job, JobAction.READ)).toList();
     }
 
+    @Operation(summary = "What the caller may do with each job", description = "For every job the caller may see: READ, EXECUTE (start, stop, pause) and MANAGE (edit, delete). Every job allows all three when management authorization is off.")
+    @ApiResponse(responseCode = "200", description = "Allowed actions by job id")
+    @GetMapping("/permissions")
+    public Map<String, List<JobAction>> getJobPermissions() {
+        Map<String, List<JobAction>> permissions = new LinkedHashMap<>();
+        for (JobDTO job : jobs) {
+            List<JobAction> allowedActions = Arrays.stream(JobAction.values()).filter(action -> allowed(job, action)).toList();
+            if (allowedActions.contains(JobAction.READ)) {
+                permissions.put(job.id(), allowedActions);
+            }
+        }
+        return permissions;
+    }
+
+    @Operation(summary = "Get pipeline job by ID", description = "Retrieves details and status of a specific crawling job by its identifier.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Job details successfully retrieved"),
+        @ApiResponse(responseCode = "404", description = "Job not found")
+    })
     @GetMapping("/{id}")
-    public ResponseEntity<JobDTO> getJob(@PathVariable String id) {
-        return jobs.stream()
-                .filter(j -> j.id().equals(id))
-                .findFirst()
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<JobDTO> getJob(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
+        JobDTO job = findJobById(id);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(job);
     }
 
+    /**
+     * The job with this exact id, whoever asks: for callers inside the runtime that authenticate on their own (OIS
+     * ingest token, gRPC push). Request handlers use {@link #getJob}, which applies the caller's access.
+     */
+    public JobDTO findJobById(String id) {
+        return jobs.stream().filter(j -> j.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /** Whether the current caller may see this job, its runs, reports and traces. */
+    public boolean canRead(JobDTO job) {
+        return job != null && allowed(job, JobAction.READ);
+    }
+
+    @Operation(summary = "Create or update a pipeline job", description = "Creates a new crawling job or updates an existing job definition.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Job created or updated successfully"),
+        @ApiResponse(responseCode = "400", description = "Invalid job configuration or unrecognized pipeline mode")
+    })
     @PostMapping
-    public ResponseEntity<Void> saveJob(@RequestBody JobDTO job) {
+    public synchronized ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
         log.info("Saving job: {}", job.name());
         try {
             PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
@@ -92,9 +173,18 @@ public class JobController {
             log.warn("Rejecting job '{}': {}", job.name(), e.getMessage());
             return ResponseEntity.badRequest().build();
         }
+        String validationError = validate(job);
+        if (validationError != null) {
+            log.warn("Rejecting job '{}': {}", job.name(), validationError);
+            return ResponseEntity.badRequest().body(Map.of("error", validationError));
+        }
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
-            // Generate unique ID based on timestamp
-            String newId = String.valueOf(System.currentTimeMillis());
+            if (authorization != null && !authorization.canCreateJobs()) {
+                log.warn("Rejecting job '{}': the caller may not create jobs.", job.name());
+                return ResponseEntity.status(403).build();
+            }
+            // Timestamp-based id, moved forward while taken: jobs saved in the same millisecond used to share one.
+            String newId = newJobId();
             JobDTO newJob = new JobDTO(
                 newId,
                 job.name(),
@@ -108,11 +198,21 @@ public class JobController {
                 "N/A",
                 job.transformationConnector() != null ? job.transformationConnector() : "Ollama_Embedding_Default",
                 job.narrativization(),
-                job.pipelineMode()
+                job.pipelineMode(),
+                job.crawlSpec(),
+                accessForNewJob(job.access())
             );
             jobs.add(newJob);
         } else {
             // Edit/Update existing job
+            JobDTO target = findJobById(job.id());
+            if (target != null && !allowed(target, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (target != null && !allowed(target, JobAction.MANAGE)) {
+                log.warn("Rejecting update of job {}: only its owner or an admin may edit it.", target.id());
+                return ResponseEntity.status(403).build();
+            }
             for (int i = 0; i < jobs.size(); i++) {
                 if (jobs.get(i).id().equals(job.id())) {
                     JobDTO existing = jobs.get(i);
@@ -129,7 +229,9 @@ public class JobController {
                         existing.lastRun(),
                         job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
                         job.narrativization() != null ? job.narrativization() : existing.narrativization(),
-                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode()
+                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode(),
+                        job.crawlSpec() != null ? job.crawlSpec() : existing.crawlSpec(),
+                        accessForUpdate(existing.access(), job.access())
                     ));
                     break;
                 }
@@ -139,18 +241,42 @@ public class JobController {
         return ResponseEntity.status(201).build();
     }
 
+    @Operation(summary = "Delete a pipeline job", description = "Removes a pipeline job definition by its identifier.")
+    @ApiResponse(responseCode = "200", description = "Job successfully deleted")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteJob(@PathVariable String id) {
+    public ResponseEntity<Void> deleteJob(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Deleting job: {}", id);
+        if (authorizationOn()) {
+            JobDTO job = findJobById(id);
+            if (job == null || !allowed(job, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (!allowed(job, JobAction.MANAGE)) {
+                log.warn("Rejecting deletion of job {}: only its owner or an admin may delete it.", id);
+                return ResponseEntity.status(403).build();
+            }
+        }
         jobs.removeIf(j -> j.id().equals(id));
         PersistenceHelper.save("jobs.json", jobs);
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "Start a pipeline job", description = "Initiates asynchronous crawling and ingestion execution for the specified job on a Java 25 Virtual Thread.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Job start signal accepted and initiated"),
+        @ApiResponse(responseCode = "404", description = "Job not found"),
+        @ApiResponse(responseCode = "409", description = "Job already running, or its connectors cannot be used"),
+        @ApiResponse(responseCode = "429", description = "The cap on runs at the same time (opencrawling.jobs.max-concurrent-runs), or the caller's own cap (opencrawling.jobs.max-concurrent-runs-per-caller), is reached")
+    })
     @PostMapping("/{id}/start")
-    public ResponseEntity<Void> startJob(@PathVariable String id) {
+    public ResponseEntity<Void> startJob(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id,
+            @Parameter(description = "Optional id that ties this run to the caller's own request or workflow; recorded in the run's ledger")
+            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         log.info("Starting job {}", id);
-        updateJobStatus(id, "Running");
+        // Taken here, on the request thread: the run's own thread has no security context.
+        final ExecutionProvenance provenance = provenance(correlationId);
 
         final String cleanId = id != null ? id.trim() : "";
 
@@ -160,329 +286,85 @@ public class JobController {
             .findFirst()
             .orElse(null);
             
-        if (activeJob == null) {
+        if (activeJob == null || !allowed(activeJob, JobAction.READ)) {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
+            return ResponseEntity.notFound().build();
+        } else if (!allowed(activeJob, JobAction.EXECUTE)) {
+            log.warn("Job {} not started: the caller may see it but not run it.", activeJob.id());
+            return ResponseEntity.status(403).build();
         } else {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
-            RepositoryConnector resolvedConnector = null;
-            OutputConnector resolvedOutputConnector = null;
-            try {
-                List<ConnectorController.ConnectorDTO> connectors = 
-                    PersistenceHelper.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
-                
-                // 1. Repository Connector Resolution
-                ConnectorController.ConnectorDTO connConfig = connectors.stream()
-                    .filter(c -> c.name().equalsIgnoreCase(activeJob.repositoryConnector()))
-                    .findFirst()
-                    .orElse(null);
-                    
-                if (connConfig != null) {
-                    if (connConfig.className().contains("Alfresco")) {
-                        String url = connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
-                        String username = connConfig.configuration().getOrDefault("username", "admin");
-                        String password = connConfig.configuration().getOrDefault("password", "admin");
-                        int batchSize = 100;
-                        try {
-                            batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
-                        } catch (Exception ignored) {}
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
-                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
-                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
-                        String siteId = connConfig.configuration().getOrDefault("siteId", "");
-                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
-                        String excludedFoldersStr = connConfig.configuration().getOrDefault("excludedFolders", "Data Dictionary");
-                        java.util.Set<String> excludedFolders = java.util.Arrays.stream(excludedFoldersStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        String searchQuery = connConfig.configuration().getOrDefault("searchQuery", "TYPE:'cm:content'");
-                        String queryLanguage = connConfig.configuration().getOrDefault("queryLanguage", "afts");
-                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
-                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
-                        long maxContentSizeBytes = 52428800L;
-                        try {
-                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
-                        } catch (Exception ignored) {}
-                        String mimeTypeFilterStr = connConfig.configuration().getOrDefault("mimeTypeFilter", "");
-                        java.util.Set<String> mimeTypeFilter = java.util.Arrays.stream(mimeTypeFilterStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-
-                        resolvedConnector = new org.opencrawling.alfresco.AlfrescoRepositoryConnector(
-                                url, username, password, batchSize,
-                                org.opencrawling.alfresco.AlfrescoCrawlMode.fromString(crawlModeStr),
-                                rootFolderPath, rootFolderId, siteId,
-                                includeSubfolders, excludedFolders,
-                                searchQuery, queryLanguage,
-                                includeAcls, includeContentStream,
-                                maxContentSizeBytes, mimeTypeFilter,
-                                timeoutSeconds
-                        );
-                    } else if (connConfig.className().contains("Iceberg")) {
-                        String catalogType = connConfig.configuration().getOrDefault("catalogType", "in-memory");
-                        String catalogUri = connConfig.configuration().getOrDefault("catalogUri", "");
-                        String warehouse = connConfig.configuration().getOrDefault("warehouse", "tmp/iceberg-warehouse");
-                        String idColumn = connConfig.configuration().getOrDefault("idColumn", "");
-                        resolvedConnector = new org.opencrawling.iceberg.IcebergRepositoryConnector(catalogType, catalogUri, warehouse, idColumn);
-                    } else if (connConfig.className().contains("Cmis") || connConfig.className().contains("cmis")) {
-                        String endpointUrl = connConfig.configuration().getOrDefault("endpointUrl",
-                                connConfig.configuration().getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/cmis/versions/1.1/browser"));
-                        String repositoryId = connConfig.configuration().getOrDefault("repositoryId", "");
-                        String username = connConfig.configuration().getOrDefault("username", "admin");
-                        String password = connConfig.configuration().getOrDefault("password", "admin");
-                        String bindingTypeStr = connConfig.configuration().getOrDefault("bindingType", "browser");
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", "folder");
-                        String rootFolderPath = connConfig.configuration().getOrDefault("rootFolderPath", "/");
-                        String rootFolderId = connConfig.configuration().getOrDefault("rootFolderId", "");
-                        boolean includeSubfolders = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSubfolders", "true"));
-                        String excludedFolderPathsStr = connConfig.configuration().getOrDefault("excludedFolderPaths", "");
-                        java.util.Set<String> excluded = java.util.Arrays.stream(excludedFolderPathsStr.split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .collect(java.util.stream.Collectors.toSet());
-                        String cmisQuery = connConfig.configuration().getOrDefault("cmisQuery", "SELECT * FROM cmis:document");
-                        String versionsModeStr = connConfig.configuration().getOrDefault("versionsMode", "latest_major");
-                        boolean includeContentStream = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeContentStream", "true"));
-                        long maxContentSizeBytes = 52428800L;
-                        try {
-                            maxContentSizeBytes = Long.parseLong(connConfig.configuration().getOrDefault("maxContentSizeBytes", "52428800"));
-                        } catch (Exception ignored) {}
-                        boolean includeAcls = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeAcls", "true"));
-                        boolean includeSecondaryTypes = Boolean.parseBoolean(connConfig.configuration().getOrDefault("includeSecondaryTypes", "true"));
-                        boolean changeLogEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("changeLogEnabled", "false"));
-                        String changeLogToken = connConfig.configuration().getOrDefault("changeLogToken", "");
-                        int batchSize = 100;
-                        try {
-                            batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100"));
-                        } catch (Exception ignored) {}
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(connConfig.configuration().getOrDefault("timeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-
-                        resolvedConnector = new org.opencrawling.cmis.CmisRepositoryConnector(
-                                endpointUrl, repositoryId, username, password,
-                                org.opencrawling.cmis.CmisBindingType.fromString(bindingTypeStr),
-                                org.opencrawling.cmis.CmisCrawlMode.fromString(crawlModeStr),
-                                rootFolderPath, rootFolderId, includeSubfolders, excluded,
-                                cmisQuery, org.opencrawling.cmis.CmisVersionsMode.fromString(versionsModeStr),
-                                includeContentStream, maxContentSizeBytes, includeAcls, includeSecondaryTypes,
-                                changeLogEnabled, changeLogToken, batchSize, timeoutSeconds
-                        );
-                        log.info("Successfully resolved dynamic CMIS repository connector for endpoint '{}'", endpointUrl);
-                    } else if (connConfig.className().contains("Jdbc")) {
-                        String url = connConfig.configuration().getOrDefault("url", "jdbc:h2:mem:opencrawling;DB_CLOSE_DELAY=-1");
-                        String driverClassName = connConfig.configuration().getOrDefault("driverClassName", connConfig.configuration().getOrDefault("driver-class-name", ""));
-                        String username = connConfig.configuration().getOrDefault("username", "");
-                        String password = connConfig.configuration().getOrDefault("password", "");
-                        String crawlModeStr = connConfig.configuration().getOrDefault("crawlMode", connConfig.configuration().getOrDefault("mode", "table"));
-                        String tableName = connConfig.configuration().getOrDefault("tableName", connConfig.configuration().getOrDefault("table-name", ""));
-                        String schemaName = connConfig.configuration().getOrDefault("schemaName", connConfig.configuration().getOrDefault("schema-name", ""));
-                        String pkCols = connConfig.configuration().getOrDefault("primaryKeyColumns", connConfig.configuration().getOrDefault("primaryKeyColumn", "id"));
-                        java.util.Set<String> primaryKeyColumns = java.util.Arrays.stream(pkCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String titleColumn = connConfig.configuration().getOrDefault("titleColumn", "title");
-                        String exclCols = connConfig.configuration().getOrDefault("excludedColumns", "");
-                        java.util.Set<String> excludedColumns = java.util.Arrays.stream(exclCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String querySql = connConfig.configuration().getOrDefault("querySql", connConfig.configuration().getOrDefault("sql", ""));
-                        String blobColumnName = connConfig.configuration().getOrDefault("blobColumnName", "");
-                        String fileNameColumn = connConfig.configuration().getOrDefault("fileNameColumn", "");
-                        String mimeTypeColumn = connConfig.configuration().getOrDefault("mimeTypeColumn", "");
-                        boolean incrementalEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("incrementalEnabled", "false"));
-                        String hwmColumn = connConfig.configuration().getOrDefault("hwmColumn", "updated_at");
-                        String hwmType = connConfig.configuration().getOrDefault("hwmType", "timestamp");
-                        boolean softDeleteEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("softDeleteEnabled", "false"));
-                        String softDeleteColumn = connConfig.configuration().getOrDefault("softDeleteColumn", "is_deleted");
-                        String softDeleteValue = connConfig.configuration().getOrDefault("softDeleteValue", "true");
-                        boolean securityEnabled = Boolean.parseBoolean(connConfig.configuration().getOrDefault("securityEnabled", "false"));
-                        String userCols = connConfig.configuration().getOrDefault("userColumns", "");
-                        java.util.Set<String> userColumns = java.util.Arrays.stream(userCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String groupCols = connConfig.configuration().getOrDefault("groupColumns", "");
-                        java.util.Set<String> groupColumns = java.util.Arrays.stream(groupCols.split(","))
-                                .map(String::trim).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.toSet());
-                        String tenantColumn = connConfig.configuration().getOrDefault("tenantColumn", "");
-                        String defaultPermission = connConfig.configuration().getOrDefault("defaultPermission", "read");
-                        int fetchSize = 1000;
-                        try { fetchSize = Integer.parseInt(connConfig.configuration().getOrDefault("fetchSize", "1000")); } catch (Exception ignored) {}
-                        int batchSize = 100;
-                        try { batchSize = Integer.parseInt(connConfig.configuration().getOrDefault("batchSize", "100")); } catch (Exception ignored) {}
-                        int maxPoolSize = 10;
-                        try { maxPoolSize = Integer.parseInt(connConfig.configuration().getOrDefault("maxPoolSize", "10")); } catch (Exception ignored) {}
-                        int minIdle = 2;
-                        try { minIdle = Integer.parseInt(connConfig.configuration().getOrDefault("minIdle", "2")); } catch (Exception ignored) {}
-                        long connectionTimeoutMs = 30000L;
-                        try { connectionTimeoutMs = Long.parseLong(connConfig.configuration().getOrDefault("connectionTimeoutMs", "30000")); } catch (Exception ignored) {}
-
-                        String narrativizationTemplate = connConfig.configuration().getOrDefault("narrativizationTemplate", "");
-
-                        org.opencrawling.jdbc.JdbcRepositoryConnector jdbcConn = new org.opencrawling.jdbc.JdbcRepositoryConnector(
-                                url, driverClassName, username, password,
-                                org.opencrawling.jdbc.JdbcCrawlMode.fromString(crawlModeStr),
-                                tableName, schemaName, primaryKeyColumns, titleColumn, excludedColumns,
-                                querySql, blobColumnName, fileNameColumn, mimeTypeColumn,
-                                incrementalEnabled, hwmColumn, hwmType,
-                                softDeleteEnabled, softDeleteColumn, softDeleteValue,
-                                securityEnabled, userColumns, groupColumns, tenantColumn, defaultPermission,
-                                fetchSize, batchSize, maxPoolSize, minIdle, connectionTimeoutMs
-                        );
-                        if (!narrativizationTemplate.isBlank()) {
-                            jdbcConn.setNarrativizationTemplate(narrativizationTemplate);
-                        }
-                        resolvedConnector = jdbcConn;
-                        log.info("Successfully resolved dynamic JDBC repository connector for URL '{}' (target table: '{}')", url, tableName);
-                    } else {
-                        resolvedConnector = fileSystemRepositoryConnector;
-                    }
+            String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+            JobRunRegistry.Reservation reservation;
+            switch (runRegistry.reserve(activeJob.id(), executionId, callerKey(provenance))) {
+                case JobRunRegistry.AlreadyRunning running -> {
+                    log.warn("Job {} is already running [Exec ID: {}]; start rejected.", activeJob.id(), running.run().executionId());
+                    return ResponseEntity.status(409).build();
                 }
-
-                // 2. Output Connector Resolution
-                ConnectorController.ConnectorDTO outConfig = connectors.stream()
-                    .filter(c -> c.name().equalsIgnoreCase(activeJob.outputConnector()) || (c.type() != null && c.type().equalsIgnoreCase("output") && c.name().equalsIgnoreCase(activeJob.outputConnector())))
-                    .findFirst()
-                    .orElse(null);
-
-                if (outConfig != null) {
-                    String cls = outConfig.className();
-                    if (cls.contains("Qdrant")) {
-                        String host = outConfig.configuration().getOrDefault("qdrantHost", "localhost");
-                        int grpcPort = 6334;
-                        try {
-                            grpcPort = Integer.parseInt(outConfig.configuration().getOrDefault("qdrantPort", "6334"));
-                        } catch (Exception ignored) {}
-                        boolean useTls = Boolean.parseBoolean(outConfig.configuration().getOrDefault("useTls", "false"));
-                        String apiKey = outConfig.configuration().getOrDefault("qdrantApiKey", "");
-                        String collectionName = outConfig.configuration().getOrDefault("qdrantCollection", "enterprise_kb");
-                        int dimensions = 1024;
-                        try {
-                            dimensions = Integer.parseInt(outConfig.configuration().getOrDefault("qdrantDimensions", "1024"));
-                        } catch (Exception ignored) {}
-
-                        io.qdrant.client.QdrantGrpcClient.Builder grpcBuilder = io.qdrant.client.QdrantGrpcClient.newBuilder(host, grpcPort, useTls);
-                        if (apiKey != null && !apiKey.isBlank()) {
-                            grpcBuilder.withApiKey(apiKey);
-                        }
-                        io.qdrant.client.QdrantClient qdrantClient = new io.qdrant.client.QdrantClient(grpcBuilder.build());
-
-                        org.opencrawling.qdrant.config.QdrantOutputProperties props = new org.opencrawling.qdrant.config.QdrantOutputProperties(
-                            host, grpcPort, apiKey, collectionName, dimensions,
-                            org.opencrawling.qdrant.config.QdrantOutputProperties.Distance.COSINE,
-                            org.opencrawling.qdrant.config.QdrantOutputProperties.Quantization.NONE,
-                            useTls, 500
-                        );
-                        org.opencrawling.qdrant.config.QdrantCollectionInitializer initializer = new org.opencrawling.qdrant.config.QdrantCollectionInitializer(qdrantClient, props);
-                        initializer.initializeCollection();
-
-                        org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
-                        resolvedOutputConnector = new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper, null);
-                        log.info("Successfully resolved dynamic Qdrant output connector for collection '{}'", collectionName);
-                    } else if (cls.contains("Vespa")) {
-                        String endpoint = outConfig.configuration().getOrDefault("vespaEndpoint", "http://localhost:8080");
-                        String namespace = outConfig.configuration().getOrDefault("vespaNamespace", "opencrawling");
-                        String documentType = outConfig.configuration().getOrDefault("vespaDocumentType", "opencrawling_chunk");
-                        int dimensions = 1024;
-                        try {
-                            dimensions = Integer.parseInt(outConfig.configuration().getOrDefault("vespaDimensions", "1024"));
-                        } catch (Exception ignored) {}
-                        int timeoutSeconds = 30;
-                        try {
-                            timeoutSeconds = Integer.parseInt(outConfig.configuration().getOrDefault("vespaTimeoutSeconds", "30"));
-                        } catch (Exception ignored) {}
-                        boolean tlsEnabled = Boolean.parseBoolean(outConfig.configuration().getOrDefault("vespaTlsEnabled", "false"));
-                        String tlsCertificate = outConfig.configuration().getOrDefault("vespaTlsCertificate", "");
-                        String tlsPrivateKey = outConfig.configuration().getOrDefault("vespaTlsPrivateKey", "");
-                        String tlsCaCertificates = outConfig.configuration().getOrDefault("vespaTlsCaCertificates", "");
-
-                        ai.vespa.feed.client.FeedClientBuilder feedClientBuilder = ai.vespa.feed.client.FeedClientBuilder.create(java.net.URI.create(endpoint));
-                        if (tlsEnabled && !tlsCertificate.isBlank() && !tlsPrivateKey.isBlank()) {
-                            feedClientBuilder.setCertificate(java.nio.file.Path.of(tlsCertificate), java.nio.file.Path.of(tlsPrivateKey));
-                            if (!tlsCaCertificates.isBlank()) {
-                                feedClientBuilder.setCaCertificatesFile(java.nio.file.Path.of(tlsCaCertificates));
-                            }
-                        }
-                        ai.vespa.feed.client.FeedClient feedClient = feedClientBuilder.build();
-
-                        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = new org.opencrawling.vespa.config.VespaOutputProperties(
-                                endpoint, namespace, documentType, dimensions, timeoutSeconds, tlsEnabled,
-                                tlsCertificate.isBlank() ? null : tlsCertificate,
-                                tlsPrivateKey.isBlank() ? null : tlsPrivateKey,
-                                tlsCaCertificates.isBlank() ? null : tlsCaCertificates
-                        );
-
-                        org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
-                        resolvedOutputConnector = new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper, null);
-                        log.info("Successfully resolved dynamic Vespa output connector at endpoint '{}'", endpoint);
-                    } else if (cls.contains("Doxis")) {
-                        org.opencrawling.doxis.output.config.DoxisOutputProperties doxisProps =
-                                org.opencrawling.doxis.output.config.DoxisConnectorSettings.fromConfiguration(outConfig.configuration());
-                        resolvedOutputConnector = new org.opencrawling.doxis.output.DoxisOutputConnector(doxisProps);
-                        log.info("Successfully resolved dynamic Doxis output connector for '{}' (repository '{}', content strategy {})",
-                                doxisProps.baseUrl(), doxisProps.repository(), doxisProps.content().strategy());
-                    } else if (cls.contains("SeaTunnel") || cls.contains("seatunnel")) {
-                        String restUrl = outConfig.configuration().getOrDefault("seatunnelRestUrl", "http://localhost:8080");
-                        String jobName = outConfig.configuration().getOrDefault("seatunnelJobName", "opencrawling_ingestion_pipeline");
-                        String kafkaBootstrap = outConfig.configuration().getOrDefault("seatunnelKafkaBootstrapServers", "localhost:9092");
-                        String targetSinks = outConfig.configuration().getOrDefault("seatunnelTargetSinks", "console");
-                        org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
-                                restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
-                                "opencrawling-embedded", "opencrawling-seatunnel-group",
-                                targetSinks, 1024, true, 30
-                        );
-                        org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
-                        resolvedOutputConnector = new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
-                        log.info("Successfully resolved dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
-                    } else if (cls.contains("Ozone") || cls.contains("ozone")) {
-                        String volume = outConfig.configuration().getOrDefault("volume", "opencrawling");
-                        String bucket = outConfig.configuration().getOrDefault("bucket", "migration");
-                        String clientType = outConfig.configuration().getOrDefault("clientType", "NATIVE");
-                        String omHost = outConfig.configuration().getOrDefault("omHost", "localhost");
-                        int omPort = 9862;
-                        try { omPort = Integer.parseInt(outConfig.configuration().getOrDefault("omPort", "9862")); } catch (Exception ignored) {}
-                        String s3Endpoint = outConfig.configuration().getOrDefault("s3Endpoint", "http://localhost:9878");
-                        String accessKey = outConfig.configuration().getOrDefault("accessKey", "any");
-                        String secretKey = outConfig.configuration().getOrDefault("secretKey", "any");
-
-                        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
-                        ozoneProps.setVolume(volume);
-                        ozoneProps.setBucket(bucket);
-                        ozoneProps.setClientType(clientType);
-                        ozoneProps.setOmHost(omHost);
-                        ozoneProps.setOmPort(omPort);
-                        ozoneProps.setS3Endpoint(s3Endpoint);
-                        ozoneProps.setAccessKey(accessKey);
-                        ozoneProps.setSecretKey(secretKey);
-                        ozoneProps.setKeyStrategy(outConfig.configuration().getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
-                        ozoneProps.setTombstoneAction(outConfig.configuration().getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
-
-                        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties, null);
-                        ozoneConnector.setPipelineMode(resolvePipelineMode(activeJob));
-                        resolvedOutputConnector = ozoneConnector;
-                        log.info("Successfully resolved dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
-                    }
+                case JobRunRegistry.LimitReached limit -> {
+                    log.warn("Job {} not started: {} runs are already in progress (opencrawling.jobs.max-concurrent-runs).", activeJob.id(), limit.limit());
+                    return ResponseEntity.status(429).build();
                 }
-            } catch (Exception e) {
-                log.error("Failed to resolve dynamic connectors for job {}: {}", id, e.getMessage(), e);
+                case JobRunRegistry.CallerLimitReached callerLimit -> {
+                    log.warn("Job {} not started: its caller already has {} runs in progress (opencrawling.jobs.max-concurrent-runs-per-caller).", activeJob.id(), callerLimit.limit());
+                    return ResponseEntity.status(429).build();
+                }
+                case JobRunRegistry.Reserved reserved -> reservation = reserved.reservation();
             }
-            
-            if (resolvedConnector == null) {
-                resolvedConnector = fileSystemRepositoryConnector; // Fallback
-            }
-            if (resolvedOutputConnector == null) {
-                resolvedOutputConnector = this.outputConnector; // Fallback
-            }
-
+            updateJobStatus(id, "Running");
             final PipelineMode mode = resolvePipelineMode(activeJob);
+            RepositoryConnector resolvedConnector;
+            OutputConnector resolvedOutputConnector;
+            try {
+                List<ConnectorController.ConnectorDTO> connectors =
+                    PersistenceHelper.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
 
-            // Fail fast: the Apache Ozone output connector is dedicated to Migration Mode only
-            if (resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector && !mode.isMigration()) {
-                log.error("Job {} rejected: OzoneOutputConnector requires pipeline mode 'migration' but job resolved to '{}'", id, mode.externalName());
-                updateJobStatusAndStage(id, "Error", "Rejected: Ozone output requires migration mode", getActualDbDocCount());
+                ConnectorController.ConnectorDTO connConfig = connectors.stream()
+                    .filter(c -> c.name() != null && c.name().equalsIgnoreCase(activeJob.repositoryConnector()))
+                    .findFirst()
+                    .orElse(null);
+                ConnectorController.ConnectorDTO outConfig = connectors.stream()
+                    .filter(c -> c.name() != null && c.name().equalsIgnoreCase(activeJob.outputConnector()))
+                    .findFirst()
+                    .orElse(null);
+
+                RepositoryConnectorFactory factory = connConfig != null ? findFactory(connConfig.className()) : null;
+                if (factory != null) {
+                    try {
+                        resolvedConnector = factory.create(connConfig.configuration(), jobContext(activeJob));
+                    } catch (IllegalArgumentException e) {
+                        reservation.release();
+                        log.error("Job {} rejected: invalid configuration: {}", id, e.getMessage(), e);
+                        updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
+                        return ResponseEntity.status(409).build();
+                    }
+                } else {
+                    resolvedConnector = connectorFactory.repository(connConfig);
+                }
+                resolvedOutputConnector = connectorFactory.output(outConfig, mode);
+            } catch (ConnectorResolutionException e) {
+                reservation.release();
+                log.error("Job {} rejected: {}", id, e.getMessage(), e);
+                updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
+
+            // Fail fast: the Apache Ozone and AWS S3 output connectors are dedicated to Migration Mode only
+            if ((resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector
+                    || resolvedOutputConnector instanceof org.opencrawling.s3.S3OutputConnector) && !mode.isMigration()) {
+                reservation.release();
+                String connectorName = resolvedOutputConnector.getClass().getSimpleName();
+                log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
+                updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
+                return ResponseEntity.status(409).build();
+            }
+
+            // With pre-embedding governance on, nothing may be embedded without passing the gate.
+            if (jobOrchestrator.bypassesGovernance(resolvedOutputConnector, mode)) {
+                reservation.release();
+                log.error("Job {} rejected: {}", id, JobOrchestrator.GOVERNANCE_BYPASS);
+                updateJobStatusAndStage(id, "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
+                        getActualDbDocCount());
                 return ResponseEntity.status(409).build();
             }
             
@@ -493,26 +375,27 @@ public class JobController {
             log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
-            Thread.ofVirtual().start(() -> {
+            reservation.start(stopRequested -> {
+                boolean succeeded = false;
                 try {
-                    log.info("Background Virtual Thread running. Path: {}, OutputConnector: {}", finalActiveJob.path(), finalOutputConnector.getName());
-                    jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.narrativization(), mode);
-                    log.info("Background Virtual Thread completed successfully!");
-                    // update status to completed when done, and pull actual db document count
-                    updateJobStatusAndStage(id, "Finished", "Completed", getActualDbDocCount());
+                    log.info("Background Virtual Thread running [Exec ID: {}]. Path: {}, OutputConnector: {}", executionId, finalActiveJob.path(), finalOutputConnector.getName());
+                    succeeded = jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId, stopRequested, provenance);
                 } catch (Exception e) {
                     log.error("Background Virtual Thread failed: {}", e.getMessage(), e);
-                    updateJobStatusAndStage(id, "Error", "Failed", getActualDbDocCount());
                 } finally {
-                    // Connectors built for this job (from its connector configuration) own their clients and sessions,
-                    // e.g. a Doxis CSB login; release them. The shared Spring output connector is left untouched.
-                    if (finalOutputConnector != this.outputConnector) {
-                        try {
-                            finalOutputConnector.disconnect();
-                        } catch (Exception e) {
-                            log.warn("Failed to disconnect output connector {} after job {}: {}", finalOutputConnector.getName(), id, e.getMessage());
-                        }
-                    }
+                    connectorFactory.release(finalOutputConnector);
+                }
+                // A stop interrupts this thread; clear it so the status updates below are not cut short.
+                Thread.interrupted();
+                long docCount = resolveExecutionDocCount(executionId, finalActiveJob.documents());
+                if (stopRequested.getAsBoolean()) {
+                    log.info("Job {} stopped [Exec ID: {}].", id, executionId);
+                    updateJobStatusAndStage(id, "Finished", "Stopped", docCount);
+                } else if (succeeded) {
+                    log.info("Background Virtual Thread completed successfully!");
+                    updateJobStatusAndStage(id, "Finished", "Completed", docCount);
+                } else {
+                    updateJobStatusAndStage(id, "Error", "Failed", docCount);
                 }
             });
         }
@@ -520,16 +403,139 @@ public class JobController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "Stop a pipeline job", description = "Stops a running pipeline job: the crawl ends at the latest before its next document, "
+            + "and the job is marked Finished with stage Stopped. A job with no run in this runtime (for example a saved 'Running' status left by a "
+            + "restart) is marked Finished.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "202", description = "Stop requested; the job's status changes when its run has ended"),
+        @ApiResponse(responseCode = "200", description = "The job had no run here; its status was set to Finished"),
+        @ApiResponse(responseCode = "404", description = "Job not found")
+    })
     @PostMapping("/{id}/stop")
-    public ResponseEntity<Void> stopJob(@PathVariable String id) {
+    public ResponseEntity<Void> stopJob(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Stopping job {}", id);
+        JobDTO job = findJob(id);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
+        }
+        if (runRegistry.stop(job.id())) {
+            return ResponseEntity.accepted().build();
+        }
         updateJobStatus(id, "Finished");
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "List running jobs", description = "The job runs in progress in this runtime, oldest first.")
+    @ApiResponse(responseCode = "200", description = "Runs in progress")
+    @GetMapping("/runs")
+    public List<JobRunRegistry.RunInfo> getRuns() {
+        if (!authorizationOn()) {
+            return runRegistry.runs();
+        }
+        // Runs of jobs outside the job list (dynamic jobs) are listed for admins; their callers use the dynamic job API.
+        return runRegistry.runs().stream().filter(run -> {
+            JobDTO job = findJob(run.jobId());
+            return job != null ? allowed(job, JobAction.READ) : authorization.isAdmin();
+        }).toList();
+    }
+
+    @Operation(summary = "Get a job's run", description = "The job's run in progress in this runtime: execution id, start time and whether a stop was requested.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "The job is running"),
+        @ApiResponse(responseCode = "404", description = "The job has no run in progress here")
+    })
+    @GetMapping("/{id}/run")
+    public ResponseEntity<JobRunRegistry.RunInfo> getRun(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
+        JobDTO job = findJob(id);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        return runRegistry.run(job.id()).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    }
+
+    private boolean authorizationOn() {
+        return authorization != null && authorization.isEnabled();
+    }
+
+    private boolean allowed(JobDTO job, JobAction action) {
+        return authorization == null || authorization.can(job.access(), action);
+    }
+
+    /**
+     * The access a new job gets. With authorization on, the caller owns it and it belongs to the caller's tenant; an
+     * admin may name another owner or tenant. The allowed users and groups are taken as sent.
+     */
+    private JobAccess accessForNewJob(JobAccess requested) {
+        if (!authorizationOn()) {
+            return requested;
+        }
+        Caller caller = authorization.currentCaller().orElseThrow();
+        JobAccess base = requested != null ? requested : new JobAccess(null, null, null, null);
+        if (authorization.isAdmin(caller)) {
+            return base.withOwnerAndTenant(base.owner() != null ? base.owner() : caller.principal(),
+                    base.tenantId() != null ? base.tenantId() : caller.tenant());
+        }
+        return base.withOwnerAndTenant(caller.principal(), caller.tenant());
+    }
+
+    /**
+     * The access after an edit. Without an access block in the request it stays as it was. An owner may change the
+     * allowed users and groups but not the owner or tenant; an admin may change everything, for example to assign a
+     * job created before authorization was on.
+     */
+    private JobAccess accessForUpdate(JobAccess existing, JobAccess requested) {
+        if (requested == null) {
+            return existing;
+        }
+        if (!authorizationOn()) {
+            return requested;
+        }
+        Caller caller = authorization.currentCaller().orElseThrow();
+        if (authorization.isAdmin(caller)) {
+            return requested.withOwnerAndTenant(
+                    requested.owner() != null ? requested.owner() : existing != null ? existing.owner() : null,
+                    requested.tenantId() != null ? requested.tenantId() : existing != null ? existing.tenantId() : null);
+        }
+        return requested.withOwnerAndTenant(existing != null ? existing.owner() : null,
+                existing != null ? existing.tenantId() : null);
+    }
+
+    private String newJobId() {
+        long candidate = System.currentTimeMillis();
+        while (findJob(String.valueOf(candidate)) != null) {
+            candidate++;
+        }
+        return String.valueOf(candidate);
+    }
+
+    private JobDTO findJob(String id) {
+        String cleanId = id != null ? id.trim() : "";
+        return jobs.stream()
+            .filter(j -> j.id() != null && j.id().trim().equalsIgnoreCase(cleanId))
+            .findFirst()
+            .orElse(null);
+    }
+
+    @Operation(summary = "Pause a pipeline job", description = "Signals a running pipeline job to pause execution.")
+    @ApiResponse(responseCode = "200", description = "Job pause signal processed")
     @PostMapping("/{id}/pause")
-    public ResponseEntity<Void> pauseJob(@PathVariable String id) {
+    public ResponseEntity<Void> pauseJob(
+            @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Pausing job {}", id);
+        if (authorizationOn()) {
+            JobDTO job = findJobById(id);
+            if (job == null || !allowed(job, JobAction.READ)) {
+                return ResponseEntity.notFound().build();
+            }
+            if (!allowed(job, JobAction.EXECUTE)) {
+                return ResponseEntity.status(403).build();
+            }
+        }
         updateJobStatus(id, "Paused");
         return ResponseEntity.ok().build();
     }
@@ -538,7 +544,7 @@ public class JobController {
      * Resolves the effective pipeline mode for a job: the per-job override wins, otherwise the
      * global {@code opencrawling.pipeline.mode} default applies.
      */
-    PipelineMode resolvePipelineMode(JobDTO job) {
+    public PipelineMode resolvePipelineMode(JobDTO job) {
         return resolvePipelineMode(job != null ? job.id() : null, job != null ? job.pipelineMode() : null, pipelineProperties);
     }
 
@@ -565,7 +571,6 @@ public class JobController {
                 String stage = "Idle";
                 if (status.equals("Running")) {
                     stage = "Scanning";
-                    docCount += 10;
                     log.info("Job '{}' [ID: {}] status updated to Running. Stage: Scanning. Root path: {}", job.name(), job.id(), job.path());
                 } else if (status.equals("Paused")) {
                     stage = "Paused";
@@ -589,7 +594,10 @@ public class JobController {
                     docCount,
                     lastRun,
                     job.transformationConnector(),
-                    job.narrativization()
+                    job.narrativization(),
+                    job.pipelineMode(),
+                    job.crawlSpec(),
+                    job.access()
                 ));
                 break;
             }
@@ -613,12 +621,54 @@ public class JobController {
                     docCount,
                     LocalDateTime.now().format(formatter),
                     job.transformationConnector(),
-                    job.narrativization()
+                    job.narrativization(),
+                    job.pipelineMode(),
+                    job.crawlSpec(),
+                    job.access()
                 ));
                 break;
             }
         }
         PersistenceHelper.save("jobs.json", jobs);
+    }
+
+    public void recordPushExecution(String id, long pushedDocs, boolean success) {
+        if (id == null || id.isBlank()) return;
+        for (int i = 0; i < jobs.size(); i++) {
+            JobDTO job = jobs.get(i);
+            if (job.id().equals(id)) {
+                long updatedDocs = Math.max(0L, job.documents()) + Math.max(0L, pushedDocs);
+                jobs.set(i, new JobDTO(
+                    job.id(),
+                    job.name(),
+                    job.repositoryConnector(),
+                    job.outputConnector(),
+                    job.authorityConnector(),
+                    job.path(),
+                    success ? "Finished" : "Error",
+                    success ? "Completed" : "Failed",
+                    updatedDocs,
+                    LocalDateTime.now().format(formatter),
+                    job.transformationConnector(),
+                    job.narrativization(),
+                    job.pipelineMode(),
+                    job.crawlSpec(),
+                    job.access()
+                ));
+                PersistenceHelper.save("jobs.json", jobs);
+                break;
+            }
+        }
+    }
+
+    private long resolveExecutionDocCount(String executionId, long previousCount) {
+        if (ledgerAccumulator != null && executionId != null) {
+            org.opencrawling.core.event.JobExecutionCompletedEvent event = ledgerAccumulator.getCompletedEvent(executionId);
+            if (event != null) {
+                return event.totalDocuments();
+            }
+        }
+        return previousCount;
     }
 
     private long getActualDbDocCount() {
@@ -637,9 +687,13 @@ public class JobController {
         }
     }
 
+    @Schema(description = "Auto-Narrativization Copilot transformation configuration")
     public static record NarrativizationConfig(
+        @Schema(description = "Whether LLM-driven narrativization is active for this job", example = "false")
         boolean enabled,
+        @Schema(description = "Mustache narrative prompt template", example = "# {{title}}\n{{summary}}")
         String template,
+        @Schema(description = "Connector type hint for template schema extraction", example = "FileSystem")
         String connectorType
     ) {
         public static NarrativizationConfig disabled() {
@@ -647,20 +701,114 @@ public class JobController {
         }
     }
 
+    /** Starts a job with no correlation id. */
+    public ResponseEntity<Void> startJob(String id) {
+        return startJob(id, null);
+    }
+
+    void setCallerResolver(CallerResolver callerResolver) {
+        this.callerResolver = callerResolver;
+    }
+
+    void setAuthorization(ManagementAuthorization authorization) {
+        this.authorization = authorization;
+    }
+
+    /**
+     * The key the per-caller cap counts runs under: the verified party that starts the run (for a delegated token,
+     * the acting agent), qualified by its tenant when it has one. {@code null} for a run with no verified caller.
+     */
+    public static String callerKey(ExecutionProvenance provenance) {
+        if (provenance == null || !provenance.callerVerified() || provenance.triggeredBy() == null) {
+            return null;
+        }
+        return provenance.callerTenant() != null
+                ? provenance.callerTenant() + "/" + provenance.triggeredBy()
+                : provenance.triggeredBy();
+    }
+
+    /** Who is starting a run through the API: the verified caller of this request, if there is one. */
+    private ExecutionProvenance provenance(String correlationId) {
+        Optional<Caller> caller = callerResolver != null ? callerResolver.verifiedCaller() : Optional.empty();
+        return caller
+                .map(c -> ExecutionProvenance.verified(c.principal(),
+                        c.attributes().get(JwtCallerMapper.ACTOR) instanceof String actor ? actor : null,
+                        c.groups(), c.tenant(), ExecutionProvenance.SOURCE_API, correlationId))
+                .orElseGet(() -> ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_API, correlationId));
+    }
+
+    /**
+     * Validates a job against its repository connector's factory, if it has one.
+     *
+     * @return the validation error, or null if the job is valid
+     */
+    private String validate(JobDTO job) {
+        ConnectorController.ConnectorDTO connConfig = PersistenceHelper
+            .loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of()).stream()
+            .filter(c -> c.name().equalsIgnoreCase(job.repositoryConnector()))
+            .findFirst()
+            .orElse(null);
+        RepositoryConnectorFactory factory = connConfig != null ? findFactory(connConfig.className()) : null;
+        if (factory == null) {
+            return null;
+        }
+        try {
+            factory.create(connConfig.configuration(), jobContext(job));
+            return null;
+        } catch (IllegalArgumentException e) {
+            return e.getMessage();
+        }
+    }
+
+    private static RepositoryConnectorFactory findFactory(String className) {
+        if (className == null) {
+            return null;
+        }
+        for (RepositoryConnectorFactory factory : ServiceLoader.load(RepositoryConnectorFactory.class)) {
+            if (factory.className().equals(className)) {
+                return factory;
+            }
+        }
+        return null;
+    }
+
+    private JobContext jobContext(JobDTO job) {
+        return new JobContext(job.id(), job.path(), job.crawlSpec(),
+            environment != null ? environment::getProperty : key -> null);
+    }
+
+    @Schema(description = "Pipeline job definition and execution status")
     public static record JobDTO(
+        @Schema(description = "Unique job identifier", example = "1")
         String id,
+        @Schema(description = "Human-readable job name", example = "Default_Job")
         String name,
+        @Schema(description = "Name of the configured repository connector", example = "FileSystem_Local")
         String repositoryConnector,
+        @Schema(description = "Name of the configured output connector", example = "PGVector_Output")
         String outputConnector,
+        @Schema(description = "Name of authority connector for ACL verification", example = "")
         String authorityConnector,
+        @Schema(description = "Root path or target repository resource", example = "/data")
         String path,
+        @Schema(description = "Job execution state (Ready, Running, Paused, Finished, Error)", example = "Ready")
         String status,
+        @Schema(description = "Current processing stage (Idle, Scanning, Extracting, Embedding, Writing, Completed, Failed)", example = "Idle")
         String currentStage,
+        @Schema(description = "Total number of documents processed", example = "0")
         long documents,
+        @Schema(description = "Timestamp of the last job execution", example = "N/A")
         String lastRun,
+        @Schema(description = "Name of the transformation connector or embedding provider", example = "Ollama_Embedding_Default")
         String transformationConnector,
+        @Schema(description = "Auto-Narrativization Copilot configuration")
         NarrativizationConfig narrativization,
-        String pipelineMode
+        @Schema(description = "Execution pipeline mode (RAG or MIGRATION)", example = "RAG")
+        String pipelineMode,
+        @Schema(description = "Connector-specific job settings, such as the web crawler's seeds and limits")
+        Map<String, Object> crawlSpec,
+        @Schema(description = "Who may see and run the job when management authorization is on; null for jobs created before it")
+        JobAccess access
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
@@ -680,11 +828,53 @@ public class JobController {
             String transformationConnector,
             NarrativizationConfig narrativization
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null, null);
+        }
+
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization,
+            String pipelineMode
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null, null);
+        }
+
+        /** The fourteen-field form used before jobs carried an access block. */
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization,
+            String pipelineMode,
+            Map<String, Object> crawlSpec
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, null);
         }
 
         public JobDTO withPipelineMode(String mode) {
-            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode);
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec, access);
+        }
+
+        public JobDTO withAccess(JobAccess newAccess) {
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, newAccess);
         }
     }
 }

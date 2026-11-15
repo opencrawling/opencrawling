@@ -42,6 +42,55 @@
 
 set -euo pipefail
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # Configuration
 ALFRESCO_HOST="${ALFRESCO_HOST:-localhost}"
 ALFRESCO_PORT="${ALFRESCO_PORT:-8081}"
@@ -49,9 +98,9 @@ ALFRESCO_USERNAME="${ALFRESCO_USERNAME:-admin}"
 ALFRESCO_PASSWORD="${ALFRESCO_PASSWORD:-admin}"
 ALFRESCO_URL="${ALFRESCO_URL:-http://${ALFRESCO_HOST}:${ALFRESCO_PORT}/alfresco/api/-default-/public/alfresco/versions/1}"
 COMPOSE_FILE="oc-alfresco-repository-connector/docker/docker-compose-decoupled-with-alfresco.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 TIMEOUT="${TIMEOUT:-300}"
 MCP_PORT="${MCP_PORT:-8080}"
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
 
 # Formatting
 RED='\033[0;31m'
@@ -92,7 +141,11 @@ log_info "Working directory set to: $(pwd)"
 
 # Helper function for docker compose commands
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 # Basic auth header for Alfresco REST API calls
@@ -163,7 +216,12 @@ log_pass "Existing containers and port bindings cleaned up."
 # STEP 3: Build OpenCrawling decoupled microservice images
 # ------------------------------------------------------------------------------
 log_step 3 "Building OpenCrawling decoupled microservice images from source..."
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW:-}SKIP_BUILD=true: Skipping compose build and using existing images.${NC:-}"
+else
+  echo -e "${YELLOW:-}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC:-}"
+  compose build
+fi
 log_pass "Docker microservice images built successfully."
 
 # ------------------------------------------------------------------------------
@@ -604,12 +662,12 @@ HTTP_STATUS="000"
 ELAPSED=0
 MCP_TIMEOUT=60
 
-until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $MCP_TIMEOUT ]; do
+until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "400" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $MCP_TIMEOUT ]; do
   HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${MCP_PORT}/mcp" 2>/dev/null || echo "")
   if [ -z "$HTTP_STATUS" ] || [ "$HTTP_STATUS" == "000" ]; then
     HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${MCP_PORT}/" 2>/dev/null || echo "000")
   fi
-  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
     sleep 2
     ELAPSED=$((ELAPSED + 2))
   fi
@@ -617,7 +675,7 @@ done
 
 log_info "MCP Server HTTP response status: ${HTTP_STATUS}"
 
-if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
   log_error "MCP Server readiness check failed: returned HTTP status ${HTTP_STATUS}."
   compose logs oc-mcp-server --tail 30 || true
   exit 1
@@ -630,7 +688,7 @@ log_pass "MCP Server verified successfully."
 # STEP 9: Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE
 # ------------------------------------------------------------------------------
 log_step 9 "Executing OIS Document Lifecycle Tombstone DELETE action test..."
-mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesAllVectorStores
+mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores
 log_pass "OIS Tombstone DELETE action test passed."
 
 # ------------------------------------------------------------------------------

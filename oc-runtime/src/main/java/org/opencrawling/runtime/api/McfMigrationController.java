@@ -44,6 +44,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * Backs the ManifoldCF Migration wizard in {@code oc-admin-ui}. A thin HTTP wrapper around {@code
  * oc-mcf-migrator}'s {@link MigrationEngine} — the same engine the standalone CLI uses.
@@ -66,6 +71,7 @@ import java.util.Map;
  *
  * <p>{@code mcfPassword} is never echoed back in any response.
  */
+@Tag(name = "ManifoldCF Migration", description = "Planning and automated migration from Apache ManifoldCF configurations to OpenCrawling")
 @RestController
 @RequestMapping("/api/mcf-migration")
 public class McfMigrationController {
@@ -77,6 +83,8 @@ public class McfMigrationController {
     @Value("${server.port:8080}")
     private int serverPort;
 
+    @Operation(summary = "Plan migration from ManifoldCF", description = "Connects to a running Apache ManifoldCF instance, extracts connector and job configurations, and produces a migration preview report.")
+    @ApiResponse(responseCode = "200", description = "Migration plan preview generated")
     @PostMapping("/plan")
     public MigrationResponse plan(@RequestBody MigrationRequest request) {
         requireMcfUrl(request);
@@ -92,6 +100,8 @@ public class McfMigrationController {
         return toResponse(migrationPlan, null);
     }
 
+    @Operation(summary = "Apply migration from ManifoldCF", description = "Executes the migration plan against the local OpenCrawling instance, automatically registering connectors and jobs.")
+    @ApiResponse(responseCode = "200", description = "Migration applied successfully with per-entity results")
     @PostMapping("/apply")
     public MigrationResponse apply(@RequestBody MigrationRequest request) {
         requireMcfUrl(request);
@@ -148,22 +158,35 @@ public class McfMigrationController {
         return new MigrationResponse(connections, jobs, summary, connectionResults, jobResults);
     }
 
+    @Schema(description = "ManifoldCF migration analysis and execution request")
     public record MigrationRequest(
+        @Schema(description = "URL of the running Apache ManifoldCF instance API", example = "http://localhost:8345/mcf-api-service/json")
         String mcfUrl,
+        @Schema(description = "Optional HTTP Basic authentication username for ManifoldCF", example = "admin")
         String mcfUsername,
+        @Schema(description = "Optional HTTP Basic authentication password for ManifoldCF", example = "admin")
         String mcfPassword,
+        @Schema(description = "Target dense vector embedding dimensions for migrated RAG jobs", example = "384")
         Integer defaultEmbeddingDimensions,
+        @Schema(description = "List of specific ManifoldCF repository/output connection names to apply (empty for all)")
         List<String> selectedConnections,
+        @Schema(description = "List of specific ManifoldCF job names to apply (empty for all)")
         List<String> selectedJobs
     ) {
     }
 
+    @Schema(description = "ManifoldCF migration plan and apply outcome response")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record MigrationResponse(
+        @Schema(description = "Analyzed repository and output connections")
         List<ConnectionSummary> connections,
+        @Schema(description = "Analyzed crawler jobs and target mappings")
         List<JobSummary> jobs,
+        @Schema(description = "High-level summary of migration compatibility score and totals")
         PlanSummary summary,
+        @Schema(description = "Results of applying connection configurations to OpenCrawling")
         Map<String, ApplyResultSummary> connectionResults,
+        @Schema(description = "Results of applying job configurations to OpenCrawling")
         Map<String, ApplyResultSummary> jobResults
     ) {
     }

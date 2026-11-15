@@ -1,0 +1,41 @@
+[
+  {
+    "PropertyDef": 0,
+    "TypedValue": {
+      "DataType": 1,
+      "HasValue": true,
+      "Value": "Master Services Agreement",
+      "DisplayValue": "Master Services Agreement"
+    }
+  },
+  {
+    "PropertyDef": 100,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 22,
+        "Version": -1,
+        "DisplayValue": "Master Services Agreement",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "Master Services Agreement"
+    }
+  },
+  {
+    "PropertyDef": 25,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 12,
+        "Version": -1,
+        "DisplayValue": "sarah.connor",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "sarah.connor"
+    }
+  }
+]

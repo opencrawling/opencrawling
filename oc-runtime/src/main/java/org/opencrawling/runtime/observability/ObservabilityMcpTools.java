@@ -17,6 +17,10 @@ package org.opencrawling.runtime.observability;
 
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
+import org.opencrawling.runtime.api.JobVisibility;
+import org.opencrawling.runtime.security.ManagementAuthorization;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,8 +37,21 @@ public class ObservabilityMcpTools {
     private static final Logger log = LoggerFactory.getLogger(ObservabilityMcpTools.class);
     private final TelemetryTraceStore traceStore;
 
+    /** Absent when a test builds the tools itself; then every job's traces are visible, as with authorization off. */
+    private JobVisibility visibility;
+
     public ObservabilityMcpTools(TelemetryTraceStore traceStore) {
         this.traceStore = traceStore;
+    }
+
+    @Autowired(required = false)
+    public void setVisibility(@Lazy JobVisibility visibility) {
+        this.visibility = visibility;
+    }
+
+    /** Traces and errors of a job the caller may not see are answered as if the job had none. */
+    private boolean visible(String jobId) {
+        return visibility == null || visibility.canReadJob(jobId);
     }
 
     public record JobTraceResponse(
@@ -65,6 +82,9 @@ public class ObservabilityMcpTools {
             @McpToolParam(description = "The unique identifier of the job to fetch traces for", required = true) String jobId
     ) {
         log.info("AIOps MCP Tool invoked: fetchJobTraces(jobId={})", jobId);
+        if (!visible(jobId)) {
+            return new JobTraceResponse(jobId, 0, 0L, "UNKNOWN", List.of(), Map.of());
+        }
         List<TelemetryTraceStore.SpanRecord> spans = traceStore.getSpansForJob(jobId);
 
         if (spans.isEmpty()) {
@@ -95,6 +115,9 @@ public class ObservabilityMcpTools {
             @McpToolParam(description = "Timeframe window e.g. '1h', '24h', or 'all'", required = false) String timeframe
     ) {
         log.info("AIOps MCP Tool invoked: getErrorLogs(jobId={}, timeframe={})", jobId, timeframe);
+        if (!visible(jobId)) {
+            return new ErrorLogsResponse(jobId, 0, List.of());
+        }
         List<TelemetryTraceStore.ErrorLogRecord> errors = traceStore.getErrorsForJob(jobId);
 
         if (errors.isEmpty()) {
@@ -120,6 +143,9 @@ public class ObservabilityMcpTools {
     public ThroughputMetricsResponse queryThroughputMetrics(
             @McpToolParam(description = "The name or ID of the connector (e.g. 'Alfresco_Repository', 'PGVector_Output')", required = false) String connectorId
     ) {
+        if (visibility != null && !visibility.isAdmin()) {
+            throw ManagementAuthorization.forbidden("Only members of the admin groups may read platform metrics.");
+        }
         log.info("AIOps MCP Tool invoked: queryThroughputMetrics(connectorId={})", connectorId);
         List<TelemetryTraceStore.MetricRecord> metricsList = traceStore.getMetricsForConnector(connectorId);
 

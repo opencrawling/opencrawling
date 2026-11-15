@@ -154,6 +154,12 @@ public class CmisClientTest {
                     "repositoryId": "-default-",
                     "repositoryName": "Alfresco Community",
                     "vendorName": "Alfresco",
+                    "cmisVersionSupported": "1.1",
+                    "principalIdAnyone": "GROUP_EVERYONE"
+                  },
+                  "secondary": {
+                    "repositoryId": "secondary",
+                    "repositoryName": "Secondary Repo",
                     "cmisVersionSupported": "1.1"
                   }
                 }
@@ -179,6 +185,8 @@ public class CmisClientTest {
         CmisClient.CmisRepositoryInfo info = repos.get("-default-");
         assertThat(info.repositoryName()).isEqualTo("Alfresco Community");
         assertThat(info.vendorName()).isEqualTo("Alfresco");
+        assertThat(info.principalAnyone()).isEqualTo("GROUP_EVERYONE");
+        assertThat(repos.get("secondary").principalAnyone()).isEqualTo("cmis:anyone");
     }
 
     @Test

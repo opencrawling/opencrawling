@@ -374,11 +374,13 @@ services:
       - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
       - OPENCRAWLING_MCP_SERVER_ENABLED=false
       - OPENCRAWLING_TIKA_FORK_ENABLED=false
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       # Runtime state (settings, connectors, jobs) stays in /data and is NOT crawled.
       - ../../oc-runtime/data:/data
       # Dedicated crawl source: only the documents to migrate.
       - ${OC_CRAWL_SOURCE_DIR:-../../oc-runtime/crawl-data/ozone-migration}:/crawl
+      - opencrawling-reportsdata-ozone:/data/reports
     depends_on:
       - kafka
       - redis
@@ -483,6 +485,8 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - SPRING_OPENCRAWLING_KAFKA_TOPIC_PARTITIONS=${OC_KAFKA_PARTITIONS:-3}
       - OPENCRAWLING_PIPELINE_MODE=migration
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=ozone
@@ -493,8 +497,10 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_S3_ENDPOINT=http://target-s3g:9878
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_VOLUME=s3v
       - SPRING_OPENCRAWLING_OUTPUT_OZONE_BUCKET=migration-target
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - ../../oc-runtime/data:/app/data
+      - opencrawling-reportsdata-ozone:/data/reports
     depends_on:
       postgres:
         condition: service_healthy
@@ -518,3 +524,6 @@ volumes:
     name: opencrawling-redisdata-ozone
   opencrawling-kafkadata-ozone:
     name: opencrawling-kafkadata-ozone
+  opencrawling-reportsdata-ozone:
+    name: opencrawling-reportsdata-ozone
+

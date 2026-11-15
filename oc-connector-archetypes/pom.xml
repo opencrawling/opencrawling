@@ -23,7 +23,7 @@
 
     <groupId>org.opencrawling.archetypes</groupId>
     <artifactId>opencrawling-connector-archetypes</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.5-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>OpenCrawling - Connector Archetypes Parent</name>
@@ -154,7 +154,7 @@
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
-                <version>0.11.0</version>
+                <version>0.12.0</version>
                 <extensions>true</extensions>
                 <configuration>
                     <publishingServerId>central</publishingServerId>

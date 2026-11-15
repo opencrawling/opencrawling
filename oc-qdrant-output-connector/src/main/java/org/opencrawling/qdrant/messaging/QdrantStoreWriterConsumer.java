@@ -16,6 +16,7 @@
 package org.opencrawling.qdrant.messaging;
 
 import io.qdrant.client.QdrantClient;
+import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Points.PointStruct;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -33,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
+import static io.qdrant.client.ConditionFactory.matchKeyword;
 import static io.qdrant.client.PointIdFactory.id;
 
 @Component
@@ -67,10 +69,25 @@ public class QdrantStoreWriterConsumer {
                 message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for Qdrant storage: {}", message.chunkId());
-                UUID pointUuid = UUID.nameUUIDFromBytes(message.chunkId().getBytes(StandardCharsets.UTF_8));
-                client.deleteAsync(properties.collectionName(), List.of(id(pointUuid))).get();
-                log.info("Successfully deleted tombstone chunk {} from Qdrant collection '{}'.", message.chunkId(), properties.collectionName());
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for Qdrant storage: documentId={}, chunkId={}", docId, message.chunkId());
+
+                Filter filter = Filter.newBuilder()
+                        .addShould(matchKeyword(QdrantFields.FIELD_DOCUMENT_ID, docId))
+                        .addShould(matchKeyword(QdrantFields.FIELD_CHUNK_ID, docId))
+                        .build();
+
+                client.deleteAsync(properties.collectionName(), filter).get();
+
+                try {
+                    UUID pointUuid = UUID.nameUUIDFromBytes(docId.getBytes(StandardCharsets.UTF_8));
+                    client.deleteAsync(properties.collectionName(), List.of(id(pointUuid))).get();
+                } catch (Exception ignored) {
+                }
+
+                log.info("Successfully deleted tombstone document/chunks {} from Qdrant collection '{}'.", docId, properties.collectionName());
                 return;
             }
             Object uri = message.metadata().get(QdrantFields.FIELD_URI);
@@ -79,6 +96,7 @@ public class QdrantStoreWriterConsumer {
             Object security = message.metadata().get("security");
 
             PointStruct point = mapper.toPoint(
+                    message.documentId(),
                     message.chunkId(),
                     message.text(),
                     uri != null ? String.valueOf(uri) : "",
@@ -91,7 +109,13 @@ public class QdrantStoreWriterConsumer {
             client.upsertAsync(properties.collectionName(), List.of(point)).get();
             log.info("Successfully saved chunk {} to Qdrant collection '{}'.", message.chunkId(), properties.collectionName());
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Qdrant: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Points are upserted
+            // by id and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Qdrant write failed for chunk " + message.chunkId(), e);
         }
     }
 }

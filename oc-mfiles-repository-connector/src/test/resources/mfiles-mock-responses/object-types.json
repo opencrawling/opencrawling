@@ -1,0 +1,12 @@
+[
+  {
+    "ID": 0,
+    "Name": "Document",
+    "NamePlural": "Documents"
+  },
+  {
+    "ID": 103,
+    "Name": "Customer",
+    "NamePlural": "Customers"
+  }
+]

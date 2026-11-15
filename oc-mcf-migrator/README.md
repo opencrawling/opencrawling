@@ -156,37 +156,37 @@ jar for standalone CLI use (`oc-mcf-migrator-<version>-cli.jar`).
 
 ```bash
 # Discover what this build currently supports:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar list-mappers
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar list-mappers
 
 # audit: report only, writes nothing:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar audit \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar audit \
   --mcf-url http://localhost:8345/mcf-api-service/json \
   --oc-url http://localhost:8080
 
 # import: write the supported half directly to OpenCrawling:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar import \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar import \
   --mcf-url http://localhost:8345/mcf-api-service/json \
   --oc-url http://localhost:8080
 
 # convert: emit OIS-format (ois/v1alpha1) job files, no API call at all:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar convert \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar convert \
   --mcf-url http://localhost:8345/mcf-api-service/json \
   --output-dir ./ois-jobs
 
 # convert straight from ManifoldCF's own native XML export, no live API at all:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar convert \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar convert \
   --mcf-export-file ./mcf-export.xml --output-dir ./ois-jobs
 
 # Any subcommand: JSON or HTML report instead of Markdown:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar audit \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar audit \
   --mcf-url http://localhost:8345/mcf-api-service/json --report-format html
 
 # Any subcommand: plan against a previously-saved snapshot instead of a live ManifoldCF API:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar audit \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar audit \
   --mcf-input-dir ./mcf-snapshot
 
 # Manually map a connection with no auto-mapper to a connector you already created by hand:
-java -jar target/oc-mcf-migrator-1.0.0-SNAPSHOT-cli.jar import \
+java -jar target/oc-mcf-migrator-1.0.4-SNAPSHOT-cli.jar import \
   --mcf-url http://localhost:8345/mcf-api-service/json --oc-url http://localhost:8080 \
   --map-connector "Solr_Output=Qdrant_Vector_Store"
 ```

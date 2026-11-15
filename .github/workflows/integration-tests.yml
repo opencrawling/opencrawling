@@ -45,16 +45,28 @@ jobs:
             script: "test-cli-decoupled.sh"
           - name: "Docker Decoupled Pipeline Test Suite"
             script: "test-docker-decoupled.sh"
+          - name: "Root CLI Runner Scripts Test Suite"
+            script: "test-run-scripts.sh"
+          - name: "OIS Ingest Endpoint Decoupled Test Suite"
+            script: "test-ois-ingest-decoupled.sh"
           - name: "Java Client SDK Test Suite"
             script: "test-java-client-sdk.sh"
           - name: "Java Client SDK Decoupled Test Suite"
             script: "test-java-client-sdk-decoupled.sh"
           - name: "gRPC Transport Test Suite"
             script: "test-grpc-transport.sh"
+          - name: "gRPC Push Repository Connector Test Suite"
+            script: "test-grpc-push-connector.sh"
+          - name: "gRPC Push Repository Connector Decoupled Test Suite"
+            script: "test-grpc-push-decoupled.sh"
           - name: "Observability Stack Test Suite"
             script: "test-observability.sh"
+          - name: "Secure MCP Server Decoupled Test Suite"
+            script: "test-mcp-decoupled.sh"
           - name: "Narrativization Pipeline Test Suite"
             script: "test-narrativization.sh"
+          - name: "Lakehouse Audit Reporting Decoupled Test Suite"
+            script: "test-reporting-decoupled.sh"
           - name: "Apache Ozone Claim-Check GC Test Suite"
             script: "test-ozone-claimcheck-gc.sh"
           - name: "Apache Ozone Decoupled Pipeline Test Suite"
@@ -69,8 +81,14 @@ jobs:
             script: "test-ozone-migration-decoupled.sh"
             ozone_client_type: "S3G"
             claim_check_client_type: "S3"
+          - name: "AWS S3 Migration Decoupled Pipeline Test Suite"
+            script: "test-s3-migration-decoupled.sh"
+          - name: "Alfresco Connector Test Suite"
+            script: "test-alfresco-connector.sh"
           - name: "Alfresco Decoupled Pipeline Test Suite"
             script: "test-alfresco-decoupled.sh"
+          - name: "Alfresco Migration Decoupled Pipeline Test Suite"
+            script: "test-alfresco-migration-decoupled.sh"
           - name: "Alfresco Process Services Connector Test Suite"
             script: "test-aps-connector.sh"
           - name: "Alfresco Process Services Decoupled Pipeline Test Suite"
@@ -83,24 +101,54 @@ jobs:
             script: "test-cmis-connector.sh"
           - name: "CMIS Decoupled Pipeline Test Suite"
             script: "test-cmis-decoupled.sh"
+          - name: "Doxis Connector Test Suite"
+            script: "test-doxis-repository-connector.sh"
+          - name: "FileNet Connector Test Suite"
+            script: "test-filenet-repository-connector.sh"
+          - name: "FileNet Decoupled Pipeline Test Suite"
+            script: "test-filenet-decoupled.sh"
+          - name: "Documentum Connector Test Suite"
+            script: "test-documentum-repository-connector.sh"
+          - name: "Documentum Decoupled Pipeline Test Suite"
+            script: "test-documentum-decoupled.sh"
           - name: "Flowable Connector Test Suite"
             script: "test-flowable-connector.sh"
           - name: "Flowable Decoupled Pipeline Test Suite"
             script: "test-flowable-decoupled.sh"
+          - name: "Apache Iceberg Output Connector Test Suite"
+            script: "test-iceberg-output-connector.sh"
+          - name: "Apache Iceberg Output Decoupled Pipeline Test Suite"
+            script: "test-iceberg-output-decoupled.sh"
           - name: "JDBC Connector Test Suite"
             script: "test-jdbc-connector.sh"
           - name: "JDBC Decoupled Pipeline Test Suite"
             script: "test-jdbc-decoupled.sh"
           - name: "Luxir Decoupled Pipeline Test Suite"
             script: "test-luxir-decoupled.sh"
+          - name: "M-Files Connector Test Suite"
+            script: "test-mfiles-repository-connector.sh"
+          - name: "M-Files Decoupled Pipeline Test Suite"
+            script: "test-mfiles-decoupled.sh"
           - name: "Milvus Decoupled Pipeline Test Suite"
             script: "test-milvus-decoupled.sh"
           - name: "OpenSearch Decoupled Pipeline Test Suite"
             script: "test-opensearch-decoupled.sh"
+          - name: "Elasticsearch Connector Test Suite"
+            script: "test-elasticsearch-connector.sh"
+          - name: "Elasticsearch Decoupled Pipeline Test Suite"
+            script: "test-elasticsearch-decoupled.sh"
+          - name: "Hyland OpenArch Integration Test Suite"
+            script: "test-openarch-integration.sh"
+          - name: "Hyland OpenArch Decoupled Pipeline Test Suite"
+            script: "test-openarch-decoupled.sh"
           - name: "Qdrant Connector Test Suite"
             script: "test-qdrant-connector.sh"
           - name: "Qdrant Decoupled Pipeline Test Suite"
             script: "test-qdrant-decoupled.sh"
+          - name: "SharePoint Connector Test Suite"
+            script: "test-sharepoint-repository-connector.sh"
+          - name: "SharePoint Decoupled Pipeline Test Suite"
+            script: "test-sharepoint-decoupled.sh"
           - name: "Apache SeaTunnel Decoupled Pipeline Test Suite"
             script: "test-seatunnel-decoupled.sh"
           - name: "Apache Solr Decoupled Pipeline Test Suite"
@@ -120,23 +168,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/share/swift \
+            "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force || true
+          sudo docker builder prune --all --force || true
+          df -h
+
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
-          cache: 'maven'
+
+      - name: Restore Maven cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository
+          key: setup-java-${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            setup-java-${{ runner.os }}-maven-
 
       - name: Build internal snapshot dependencies
         run: mvn clean install -DskipTests -DskipITs
 
       - name: Make scripts executable
-        run: chmod +x scripts/*.sh
+        run: chmod +x run.sh scripts/*.sh
 
       - name: Ensure data directories have write permissions
         run: |
           mkdir -p oc-runtime/data oc-cli/target oc-embedding-service/target
           chmod 755 oc-runtime/data oc-cli/target oc-embedding-service/target
+
+      # the DCTM REST mock's conformance check reads OpenText's published OpenAPI document, which is YAML
+      - name: Set up Python for the Documentum mock conformance check
+        if: matrix.test.script == 'test-documentum-repository-connector.sh'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML for the Documentum mock conformance check
+        if: matrix.test.script == 'test-documentum-repository-connector.sh'
+        run: pip install pyyaml
 
       - name: Execute ${{ matrix.test.name }}
         env:

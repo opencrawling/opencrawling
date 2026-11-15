@@ -1,0 +1,175 @@
+{
+  "AccessControlList": {
+    "IsUnSpecified": false,
+    "CheckedOutToUserID": -2147483648,
+    "HasCheckedOutToUserID": false,
+    "IsFullyAuthoritative": false,
+    "CustomComponent": {
+      "AccessControlEntries": [
+        {
+          "ChangePermissionsPermission": 1,
+          "EditPermission": 1,
+          "ReadPermission": 1,
+          "DeletePermission": 1,
+          "IsGroup": false,
+          "UserOrGroupID": 12,
+          "IsPsudoUser": false,
+          "HasConcreteUserOrGruopID": true
+        },
+        {
+          "ChangePermissionsPermission": 1,
+          "EditPermission": 1,
+          "ReadPermission": 1,
+          "DeletePermission": 1,
+          "IsGroup": true,
+          "UserOrGroupID": 5,
+          "IsPsudoUser": false,
+          "HasConcreteUserOrGruopID": true
+        },
+        {
+          "ChangePermissionsPermission": 1,
+          "EditPermission": 1,
+          "ReadPermission": 1,
+          "DeletePermission": 1,
+          "IsGroup": true,
+          "UserOrGroupID": 7,
+          "IsPsudoUser": false,
+          "HasConcreteUserOrGruopID": true
+        },
+        {
+          "ChangePermissionsPermission": 2,
+          "EditPermission": 2,
+          "ReadPermission": 2,
+          "DeletePermission": 2,
+          "IsGroup": false,
+          "UserOrGroupID": 9,
+          "IsPsudoUser": false,
+          "HasConcreteUserOrGruopID": true
+        },
+        {
+          "ChangePermissionsPermission": 1,
+          "EditPermission": 1,
+          "ReadPermission": 1,
+          "DeletePermission": 1,
+          "IsGroup": false,
+          "UserOrGroupID": 1001,
+          "IsPsudoUser": true,
+          "HasConcreteUserOrGruopID": false
+        }
+      ],
+      "CanDeactivate": false,
+      "CurrentUserBinding": -2147483648,
+      "HasCurrentUser": false,
+      "HasCurrentUserBinding": false,
+      "HasNamedACLLink": false,
+      "HasPseudoUsers": true,
+      "IsActive": true,
+      "NamedACLLink": -1
+    },
+    "AutomaticComponents": [
+      {
+        "AccessControlEntries": [
+          {
+            "ChangePermissionsPermission": 1,
+            "EditPermission": 1,
+            "ReadPermission": 1,
+            "DeletePermission": 1,
+            "IsGroup": false,
+            "UserOrGroupID": 12,
+            "IsPsudoUser": false,
+            "HasConcreteUserOrGruopID": true
+          },
+          {
+            "ChangePermissionsPermission": 1,
+            "EditPermission": 1,
+            "ReadPermission": 1,
+            "DeletePermission": 1,
+            "IsGroup": true,
+            "UserOrGroupID": 5,
+            "IsPsudoUser": false,
+            "HasConcreteUserOrGruopID": true
+          },
+          {
+            "ChangePermissionsPermission": 1,
+            "EditPermission": 1,
+            "ReadPermission": 1,
+            "DeletePermission": 1,
+            "IsGroup": false,
+            "UserOrGroupID": 1001,
+            "IsPsudoUser": true,
+            "HasConcreteUserOrGruopID": false
+          }
+        ],
+        "CanDeactivate": false,
+        "CurrentUserBinding": -2147483648,
+        "HasCurrentUser": false,
+        "HasCurrentUserBinding": false,
+        "HasNamedACLLink": false,
+        "HasPseudoUsers": true,
+        "IsActive": true,
+        "NamedACLLink": -1
+      },
+      {
+        "AccessControlEntries": [
+          {
+            "ChangePermissionsPermission": 2,
+            "EditPermission": 2,
+            "ReadPermission": 2,
+            "DeletePermission": 2,
+            "IsGroup": false,
+            "UserOrGroupID": 12,
+            "IsPsudoUser": false,
+            "HasConcreteUserOrGruopID": true
+          }
+        ],
+        "CanDeactivate": false,
+        "CurrentUserBinding": -2147483648,
+        "HasCurrentUser": false,
+        "HasCurrentUserBinding": false,
+        "HasNamedACLLink": false,
+        "HasPseudoUsers": false,
+        "IsActive": false,
+        "NamedACLLink": -1
+      }
+    ]
+  },
+  "CustomACL": true,
+  "NamedACL": {
+    "ID": 3,
+    "Name": "Legal only",
+    "IsNamedACL": true,
+    "HasAutomaticComponent": false,
+    "IsUnSpecified": false,
+    "AccessControlList": {
+      "AutomaticComponents": [],
+      "CustomComponent": {
+        "AccessControlEntries": [
+          {
+            "ChangePermissionsPermission": 1,
+            "EditPermission": 1,
+            "ReadPermission": 1,
+            "DeletePermission": 1,
+            "IsGroup": true,
+            "UserOrGroupID": 8,
+            "IsPsudoUser": false,
+            "HasConcreteUserOrGruopID": true
+          }
+        ],
+        "CanDeactivate": false,
+        "CurrentUserBinding": -2147483648,
+        "HasCurrentUser": false,
+        "HasCurrentUserBinding": false,
+        "HasNamedACLLink": false,
+        "HasPseudoUsers": false,
+        "IsActive": true,
+        "NamedACLLink": -1
+      }
+    }
+  },
+  "ObjVer": {
+    "Version": 3,
+    "VersionType": 4,
+    "ID": 48192,
+    "Type": 0
+  }
+}

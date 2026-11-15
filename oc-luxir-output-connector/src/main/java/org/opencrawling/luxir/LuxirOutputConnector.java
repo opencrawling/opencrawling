@@ -15,9 +15,9 @@
  */
 package org.opencrawling.luxir;
 
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.luxir.client.LuxirClient;
@@ -43,6 +43,28 @@ public class LuxirOutputConnector implements OutputConnector {
 
     private static final Logger log = LoggerFactory.getLogger(LuxirOutputConnector.class);
     private static final String NUL_CHAR = Character.toString(0);
+
+    private static final Set<String> RESERVED_KEYS = Set.of(
+            "title",
+            "uri",
+            "acl",
+            "lastModified",
+            "security",
+            "security_inheritance",
+            "security_allowed_read",
+            "security_denied_read",
+            LuxirConstants.FIELD_ID,
+            LuxirConstants.FIELD_DOC_ID,
+            LuxirConstants.FIELD_TEXT,
+            LuxirConstants.FIELD_TITLE,
+            LuxirConstants.FIELD_URI,
+            LuxirConstants.FIELD_SOURCE,
+            LuxirConstants.FIELD_LAST_MODIFIED,
+            LuxirConstants.FIELD_ACL,
+            LuxirConstants.FIELD_SECURITY_INHERITANCE,
+            LuxirConstants.FIELD_SECURITY_ALLOWED_READ,
+            LuxirConstants.FIELD_SECURITY_DENIED_READ
+    );
 
     private final LuxirClient luxirClient;
     private final LuxirOutputProperties properties;
@@ -71,7 +93,7 @@ public class LuxirOutputConnector implements OutputConnector {
         this.properties = properties;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
     }
 
     @Override
@@ -141,15 +163,13 @@ public class LuxirOutputConnector implements OutputConnector {
                     doc.put(LuxirConstants.FIELD_TEXT, chunk.getText());
                     doc.put(LuxirConstants.FIELD_URI, document.uri());
 
-                    // Multi-valued ACL tokens
-                    List<String> acls = new ArrayList<>();
-                    if (document.acl() != null && !document.acl().isBlank()) {
-                        acls.addAll(Arrays.stream(document.acl().split(","))
-                                .map(String::trim)
-                                .filter(s -> !s.isEmpty())
-                                .toList());
-                    }
-                    doc.put(LuxirConstants.FIELD_ACL, acls);
+                    // Zero-Trust security metadata (one normalization for every store, see EffectiveAcl)
+                    EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                    doc.put(LuxirConstants.FIELD_SECURITY_INHERITANCE, String.valueOf(effectiveAcl.inheritanceEnabled()));
+                    doc.put(LuxirConstants.FIELD_SECURITY_ALLOWED_READ, effectiveAcl.allowedRead());
+                    doc.put(LuxirConstants.FIELD_SECURITY_DENIED_READ, effectiveAcl.deniedRead());
+                    // Empty lists are not stored, and readers then fall back to acl_ss, so it holds the effective readers.
+                    doc.put(LuxirConstants.FIELD_ACL, effectiveAcl.allowedRead());
 
                     if (document.lastModified() != null) {
                         doc.put(LuxirConstants.FIELD_LAST_MODIFIED, document.lastModified().toString());
@@ -164,9 +184,8 @@ public class LuxirOutputConnector implements OutputConnector {
 
                     // Add other metadata attributes
                     metadata.forEach((key, val) -> {
-                        if (!"title".equals(key) && !LuxirConstants.FIELD_ID.equals(key) && !LuxirConstants.FIELD_TEXT.equals(key)) {
-                            String targetKey = key.endsWith("_s") || key.endsWith("_t") || key.endsWith("_ss") ? key : key + "_s";
-                            doc.put(targetKey, val);
+                        if (!RESERVED_KEYS.contains(key) && !key.equals(properties.vectorField())) {
+                            doc.put(LuxirFieldNames.forMetadata(key, val), val);
                         }
                     });
 

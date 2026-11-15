@@ -15,9 +15,10 @@
  */
 package org.opencrawling.vector;
 
+import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.security.ReadKeys;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
-import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -26,8 +27,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -41,6 +40,8 @@ import java.util.HashMap;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 
 @Component
@@ -53,24 +54,48 @@ public class VectorOutputConnector implements OutputConnector {
     private final TokenTextSplitter textSplitter;
     private final TextExtractionService textExtractionService;
     private final EmbeddingModel embeddingModel;
+    private final JdbcTemplate jdbcTemplate;
+    private final boolean flowableCollocatedSchema;
+    private final String vectorTableName;
 
     @Autowired
     public VectorOutputConnector(
             VectorStore vectorStore,
             @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
-            @Autowired(required = false) TextExtractionService textExtractionService) {
+            @Autowired(required = false) TextExtractionService textExtractionService,
+            @Autowired(required = false) JdbcTemplate jdbcTemplate,
+            @Value("${spring.opencrawling.output.pgvector.flowable-collocated-schema:false}") boolean flowableCollocatedSchema,
+            @Value("${spring.ai.vectorstore.pgvector.table-name:vector_store}") String vectorTableName) {
         this.vectorStore = vectorStore;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+        this.jdbcTemplate = jdbcTemplate;
+        this.flowableCollocatedSchema = flowableCollocatedSchema;
+        this.vectorTableName = (vectorTableName != null && !vectorTableName.isBlank()) ? vectorTableName : "vector_store";
+    }
+
+    public VectorOutputConnector(
+            VectorStore vectorStore,
+            EmbeddingModel embeddingModel,
+            TextExtractionService textExtractionService) {
+        this(vectorStore, embeddingModel, textExtractionService, null, false, "vector_store");
     }
 
     public VectorOutputConnector(VectorStore vectorStore, EmbeddingModel embeddingModel) {
-        this(vectorStore, embeddingModel, null);
+        this(vectorStore, embeddingModel, null, null, false, "vector_store");
     }
 
     public VectorOutputConnector(VectorStore vectorStore) {
-        this(vectorStore, null, null);
+        this(vectorStore, null, null, null, false, "vector_store");
+    }
+
+    public VectorOutputConnector(
+            VectorStore vectorStore,
+            EmbeddingModel embeddingModel,
+            JdbcTemplate jdbcTemplate,
+            boolean flowableCollocatedSchema) {
+        this(vectorStore, embeddingModel, null, jdbcTemplate, flowableCollocatedSchema, "vector_store");
     }
 
     @Override
@@ -151,35 +176,21 @@ public class VectorOutputConnector implements OutputConnector {
                         metadata.put(key, cleanedList);
                     }
                 });
+                // The source document id keys relationship-based authorization (OpenFGA) on read.
+                metadata.put("documentId", document.id());
                 metadata.put("uri", document.uri());
                 metadata.put("acl", document.acl());
                 metadata.put("lastModified", document.lastModified().toString());
 
-                // Map standard OIS security fields for role-based and zero-trust pre-filtering
-                List<String> allowedRead = new ArrayList<>();
-                List<String> deniedRead = new ArrayList<>();
-                boolean inheritanceEnabled = false;
-
-                if (document.security() != null) {
-                    inheritanceEnabled = document.security().inheritanceEnabled();
-                    if (document.security().permissions() != null) {
-                        for (PermissionRule rule : document.security().permissions()) {
-                            if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access()) || "admin".equalsIgnoreCase(rule.access())) {
-                                allowedRead.add(rule.identity());
-                            } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                deniedRead.add(rule.identity());
-                            }
-                        }
-                    }
+                // Flattened security fields for role-based and zero-trust pre-filtering
+                EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                if (effectiveAcl.security() != null) {
+                    metadata.put("security", effectiveAcl.security());
                 }
-
-                if (allowedRead.isEmpty() && deniedRead.isEmpty()) {
-                    allowedRead.add("public");
-                }
-
-                metadata.put("security_inheritance", inheritanceEnabled);
-                metadata.put("security_allowed_read", allowedRead);
-                metadata.put("security_denied_read", deniedRead);
+                metadata.put("security_inheritance", effectiveAcl.inheritanceEnabled());
+                metadata.put("security_allowed_read", effectiveAcl.allowedRead());
+                metadata.put("security_denied_read", effectiveAcl.deniedRead());
+                metadata.put(ReadKeys.FIELD, ReadKeys.forAllowed(effectiveAcl.allowedRead()));
 
                 // Construct Spring AI Document
                 Document aiDoc = new Document(document.id(), text, metadata);
@@ -208,6 +219,10 @@ public class VectorOutputConnector implements OutputConnector {
                     // Persist the embedded chunks to the configured Vector Store
                     vectorStore.add(chunks);
                     log.info("Successfully added document {} to Vector Store.", document.id());
+
+                    if (flowableCollocatedSchema && jdbcTemplate != null) {
+                        updateFlowableCollocatedColumns(chunks, document);
+                    }
                 } finally {
                     PrecomputedEmbeddingModel.clear();
                 }
@@ -217,5 +232,46 @@ public class VectorOutputConnector implements OutputConnector {
                 throw new RuntimeException("Failed to process document: " + document.id(), e);
             }
         });
+    }
+
+    private void updateFlowableCollocatedColumns(List<Document> chunks, RepositoryDocument document) {
+        String scopeId = null;
+        if (document.metadata() != null) {
+            if (document.metadata().containsKey("flowable_scope_id") && !document.metadata().get("flowable_scope_id").isEmpty()) {
+                scopeId = document.metadata().get("flowable_scope_id").get(0);
+            } else if (document.metadata().containsKey("flowable_proc_inst_id") && !document.metadata().get("flowable_proc_inst_id").isEmpty()) {
+                scopeId = document.metadata().get("flowable_proc_inst_id").get(0);
+            }
+        }
+
+        String scopeType = null;
+        if (document.metadata() != null && document.metadata().containsKey("flowable_scope_type") && !document.metadata().get("flowable_scope_type").isEmpty()) {
+            scopeType = document.metadata().get("flowable_scope_type").get(0);
+        }
+
+        if (scopeId != null && scopeType != null) {
+            List<Object[]> batchArgs = new ArrayList<>();
+            for (Document chunk : chunks) {
+                batchArgs.add(new Object[]{scopeId, scopeType, chunk.getId()});
+            }
+            try {
+                jdbcTemplate.batchUpdate("UPDATE " + vectorTableName + " SET scope_id_ = ?, scope_type_ = ? WHERE id = ?::uuid", batchArgs);
+            } catch (Exception e) {
+                try {
+                    jdbcTemplate.batchUpdate("UPDATE " + vectorTableName + " SET scope_id_ = ?, scope_type_ = ? WHERE id = ?", batchArgs);
+                } catch (Exception ex) {
+                    log.warn("Failed to populate dedicated Flowable columns on {}: {}", vectorTableName, ex.getMessage());
+                }
+            }
+            log.info("Updated dedicated Flowable columns (scope_id: {}, scope_type: {}) for {} chunks in {}", scopeId, scopeType, chunks.size(), vectorTableName);
+        }
+    }
+
+    public boolean isFlowableCollocatedSchema() {
+        return flowableCollocatedSchema;
+    }
+
+    public String getVectorTableName() {
+        return vectorTableName;
     }
 }

@@ -20,7 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.SecurityConfig;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -43,7 +45,9 @@ public class ${connectorName}Fetcher {
                     new ByteArrayInputStream("Sample document content".getBytes(StandardCharsets.UTF_8)),
                     Map.of("contentType", List.of("text/plain"), "source", List.of(basePath)),
                     "public",
-                    Instant.now()
+                    SecurityConfig.createPublic(),
+                    Instant.now(),
+                    DocumentAction.UPSERT
                 );
                 sink.next(doc);
                 sink.complete();

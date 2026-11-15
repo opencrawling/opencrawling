@@ -18,6 +18,55 @@
 # via docker-compose-decoupled.yml and runs live CLI assertions against the cluster with detailed logging.
 set -e
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -26,7 +75,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PASSED_COUNT=0
-TOTAL_TESTS=11
+TOTAL_TESTS=17
 
 log_step() {
     echo -e "\n${BOLD}${CYAN}────────────────────────────────────────────────────────────────────────────────${NC}"
@@ -59,8 +108,15 @@ command -v docker >/dev/null 2>&1 || { log_fail "Docker is required but not inst
 command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || { log_fail "Docker Compose is required. Aborting."; exit 1; }
 
 # Helper function for docker compose commands
+COMPOSE_FILE="docker-compose-decoupled.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
+
 compose() {
-  docker compose -f docker-compose-decoupled.yml "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 # Teardown cleanup handler
@@ -76,9 +132,9 @@ trap cleanup EXIT
 log_step "1" "Building oc-cli executable JAR from source..."
 mvn clean package -pl oc-cli -DskipTests
 
-CLI_JAR="oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar"
-if [ ! -f "$CLI_JAR" ]; then
-    log_fail "CLI JAR executable not found at $CLI_JAR"
+CLI_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v '\.original$' | head -n 1 || echo "")
+if [ -z "$CLI_JAR" ] || [ ! -f "$CLI_JAR" ]; then
+    log_fail "CLI JAR executable not found under oc-cli/target/"
     exit 1
 fi
 RUN_CLI="java --enable-preview -jar $CLI_JAR"
@@ -89,7 +145,12 @@ log_pass "Built oc-cli executable JAR successfully: $CLI_JAR"
 # ------------------------------------------------------------------------------
 log_step "2" "Booting decoupled container cluster (PostgreSQL, Redis, Ollama, Kafka, oc-runtime, oc-embedding-service)..."
 compose down --remove-orphans || true
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW:-}SKIP_BUILD=true: Skipping compose build and using existing images.${NC:-}"
+else
+  echo -e "${YELLOW:-}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC:-}"
+  compose build
+fi
 compose up -d
 
 # ------------------------------------------------------------------------------
@@ -167,6 +228,14 @@ echo -e "\n${CYAN}  [4.5] Probing output connector health ('oc connector check')
 $RUN_CLI connector check --name PGVector_Output --type output
 log_pass "oc connector check verified PGVector_Output health"
 
+echo -e "\n${CYAN}  [4.5b] Probing gRPC Push repository connector health ('oc connector check --name Grpc_Push_Connector')...${NC}"
+$RUN_CLI connector check --name Grpc_Push_Connector --type repository
+log_pass "oc connector check verified Grpc_Push_Connector health"
+
+echo -e "\n${CYAN}  [4.5c] Probing gRPC Push listener directly via CLI ('oc push ping')...${NC}"
+$RUN_CLI push ping --host 127.0.0.1 --port 9096
+log_pass "oc push ping verified live gRPC Push listener on port 9096"
+
 # 4.4 Job Orchestration & AIOps Traces
 echo -e "\n${CYAN}  [4.6] Listing active ingestion jobs ('oc job list')...${NC}"
 $RUN_CLI job list
@@ -212,6 +281,35 @@ else
     log_fail "oc archetype init failed to produce pom.xml"
     exit 1
 fi
+
+# 4.7 Live OpenAPI 3.1 Contract Management & Introspection ('oc openapi')
+echo -e "\n${CYAN}  [4.12] Probing live OpenAPI 3.1 contract & Swagger UI status ('oc openapi status')...${NC}"
+$RUN_CLI openapi status
+log_pass "oc openapi status verified live /v3/api-docs and /swagger-ui.html"
+
+echo -e "\n${CYAN}  [4.13] Exporting live OpenAPI 3.1 spec to YAML and validating contract ('oc openapi export' & 'oc openapi validate')...${NC}"
+DECOUPLED_OPENAPI_YAML="oc-cli/target/decoupled-openapi.yaml"
+rm -f "$DECOUPLED_OPENAPI_YAML"
+$RUN_CLI openapi export --format yaml --output "$DECOUPLED_OPENAPI_YAML"
+$RUN_CLI openapi validate --file "$DECOUPLED_OPENAPI_YAML"
+log_pass "oc openapi export & validate verified live OpenAPI 3.1 YAML specification"
+
+echo -e "\n${CYAN}  [4.14] Listing documented endpoints and exporting AI function-calling tools ('oc openapi endpoints' & 'oc openapi tools')...${NC}"
+$RUN_CLI openapi endpoints --tag "Pipeline & Jobs"
+DECOUPLED_TOOLS_JSON="oc-cli/target/decoupled-openapi-tools.json"
+rm -f "$DECOUPLED_TOOLS_JSON"
+$RUN_CLI openapi tools --provider openai --tag "Pipeline & Jobs" --output "$DECOUPLED_TOOLS_JSON"
+if [ -f "$DECOUPLED_TOOLS_JSON" ]; then
+    log_pass "oc openapi endpoints & tools exported AI agent tool definitions to $DECOUPLED_TOOLS_JSON"
+else
+    log_fail "oc openapi tools failed to write $DECOUPLED_TOOLS_JSON"
+    exit 1
+fi
+
+# 4.8 Live Pre-Crawl Repository Discovery ('oc discovery')
+echo -e "\n${CYAN}  [4.15] Querying discoverable repository connectors ('oc discovery connectors')...${NC}"
+$RUN_CLI discovery connectors || true
+log_pass "oc discovery connectors executed successfully"
 
 # ------------------------------------------------------------------------------
 # STEP 5: Final Execution Summary Report

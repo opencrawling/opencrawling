@@ -18,16 +18,17 @@ name: Publish OpenCrawling CLI (oc-cli)
 
 on:
   release:
-    types: [ published ]
+    types: [ published, prereleased, released ]
   push:
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Release version for oc-cli (e.g. 1.0.0)'
+        description: 'Release version for oc-cli (e.g. 1.0.4)'
+        type: string
         required: false
-        default: '1.0.0'
+        default: '1.0.4'
 
 permissions: read-all
 
@@ -47,7 +48,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -66,32 +67,40 @@ jobs:
             VER="${{ inputs.release_version }}"
             TAG_NAME="v${VER}"
           else
-            VER=""
-            TAG_NAME=""
+            VER="1.0.4"
+            TAG_NAME="v1.0.4"
           fi
           if [ -n "$VER" ]; then
-            echo "Setting oc-cli release version to $VER"
-            cd oc-cli
-            mvn versions:set -DnewVersion="$VER" -DgenerateBackupPoms=false
-            cd ..
+            echo "Setting oc-cli release version banner to $VER"
+            sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${VER}/" oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Build & Test CLI Module
+      - name: Build & Install CLI Reactor Dependencies
         run: |
-          mvn clean package -pl oc-cli -am
+          mvn clean install -pl oc-cli -am -DskipTests
 
       - name: Run CLI Integration Test Script
         run: |
           chmod +x scripts/test-cli.sh
           ./scripts/test-cli.sh
 
+      - name: Prepare Release Executable JAR
+        run: |
+          mkdir -p oc-cli/target/release-jar
+          BUILT_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v 'original' | head -n 1)
+          if [ -n "${{ steps.version.outputs.version }}" ]; then
+            cp "$BUILT_JAR" "oc-cli/target/release-jar/oc-cli-${{ steps.version.outputs.version }}.jar"
+          else
+            cp "$BUILT_JAR" "oc-cli/target/release-jar/"
+          fi
+
       - name: Upload CLI Executable Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: oc-cli-jar
-          path: oc-cli/target/oc-cli-*.jar
+          path: oc-cli/target/release-jar/oc-cli-*.jar
 
   publish-cli-docker:
     name: Build & Push CLI Docker Image (GHCR)
@@ -113,13 +122,13 @@ jobs:
           OWNER: '${{ github.repository_owner }}'
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.2.0
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v4.4.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -140,7 +149,7 @@ jobs:
             type=raw,value=${{ needs.build-and-test-cli.outputs.version }},enable=${{ needs.build-and-test-cli.outputs.version != '' }}
 
       - name: Build and Push CLI Docker Image
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: docker/Dockerfile.cli
@@ -148,8 +157,8 @@ jobs:
           tags: ${{ steps.meta-cli.outputs.tags }}
           labels: ${{ steps.meta-cli.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=cli
+          cache-to: type=gha,mode=min,scope=cli
 
   publish-github-release-assets:
     name: Attach Assets to GitHub Release
@@ -158,19 +167,33 @@ jobs:
     needs: build-and-test-cli
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Download CLI Executable Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: oc-cli-jar
           path: release-assets/
 
-      - name: Upload Assets to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign CLI JAR with Cosign (Keyless)
+        run: |
+          for jar in release-assets/oc-cli-*.jar; do
+            cosign sign-blob --yes --bundle "${jar}.sigstore.json" "$jar"
+          done
+        env:
+          COSIGN_YES: "true"
+
+      - name: Upload Assets & Signatures to GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.build-and-test-cli.outputs.tag_name }}
-          files: release-assets/oc-cli-*.jar
+          files: |
+            release-assets/oc-cli-*.jar
+            release-assets/oc-cli-*.jar.sigstore.json
 
   publish-homebrew-tap:
     name: Update Homebrew Tap Formula
@@ -179,7 +202,7 @@ jobs:
     needs: [build-and-test-cli, publish-github-release-assets]
     steps:
       - name: Download CLI Executable Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: oc-cli-jar
           path: release-assets/
@@ -192,7 +215,7 @@ jobs:
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
 
       - name: Update Homebrew Tap Formula
-        uses: mislav/bump-homebrew-formula-action@v3
+        uses: mislav/bump-homebrew-formula-action@v4.2
         with:
           formula-name: oc
           formula-path: Formula/oc.rb

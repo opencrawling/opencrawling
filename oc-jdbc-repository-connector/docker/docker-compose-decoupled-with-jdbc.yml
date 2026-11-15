@@ -80,7 +80,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled-jdbc
     ports:
       - "11434:11434"
@@ -95,7 +95,7 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-jdbc
     entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
     environment:
@@ -162,6 +162,9 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-jdbc:/data/reports
     depends_on:
       kafka:
         condition: service_started
@@ -194,6 +197,7 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     depends_on:
       kafka:
         condition: service_started
@@ -277,12 +281,18 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-jdbc:/data/reports
     depends_on:
       postgres-vector:
         condition: service_healthy
@@ -310,3 +320,6 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata-jdbc:
     name: opencrawling-kafkadata-jdbc
+  opencrawling-reportsdata-jdbc:
+    name: opencrawling-reportsdata-jdbc
+

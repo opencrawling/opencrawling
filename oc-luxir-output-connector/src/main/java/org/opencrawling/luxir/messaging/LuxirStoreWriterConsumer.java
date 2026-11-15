@@ -16,11 +16,11 @@
 package org.opencrawling.luxir.messaging;
 
 import jakarta.annotation.PostConstruct;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
-import org.opencrawling.core.security.PermissionRule;
-import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.luxir.LuxirConstants;
+import org.opencrawling.luxir.LuxirFieldNames;
 import org.opencrawling.luxir.client.LuxirClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +38,36 @@ import java.util.*;
 public class LuxirStoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(LuxirStoreWriterConsumer.class);
+
+    private static final Set<String> RESERVED_KEYS = Set.of(
+            "id",
+            "doc_id",
+            "documentId",
+            "chunkId",
+            "chunk_index",
+            "total_chunks",
+            "text",
+            "uri",
+            "acl",
+            "title",
+            "source",
+            "lastModified",
+            "security",
+            "security_inheritance",
+            "security_allowed_read",
+            "security_denied_read",
+            "embedding",
+            LuxirConstants.FIELD_DOC_ID,
+            LuxirConstants.FIELD_TEXT,
+            LuxirConstants.FIELD_TITLE,
+            LuxirConstants.FIELD_URI,
+            LuxirConstants.FIELD_SOURCE,
+            LuxirConstants.FIELD_LAST_MODIFIED,
+            LuxirConstants.FIELD_ACL,
+            LuxirConstants.FIELD_SECURITY_INHERITANCE,
+            LuxirConstants.FIELD_SECURITY_ALLOWED_READ,
+            LuxirConstants.FIELD_SECURITY_DENIED_READ
+    );
 
     private final LuxirClient luxirClient;
 
@@ -78,40 +108,11 @@ public class LuxirStoreWriterConsumer {
                 return;
             }
 
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map<?, ?> securityMap) {
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List<?> permsList) {
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map<?, ?> permMap) {
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof SecurityConfig sc) {
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             Map<String, Object> doc = new LinkedHashMap<>();
             doc.put(LuxirConstants.FIELD_ID, message.chunkId());
@@ -138,15 +139,8 @@ public class LuxirStoreWriterConsumer {
                 doc.put(LuxirConstants.FIELD_LAST_MODIFIED, String.valueOf(lastModifiedVal));
             }
 
-            // Legacy ACL token parsing
-            Object aclVal = message.metadata().get("acl");
-            if (aclVal != null) {
-                List<String> aclTokens = Arrays.stream(String.valueOf(aclVal).split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .toList();
-                doc.put(LuxirConstants.FIELD_ACL, aclTokens);
-            }
+            // Empty lists are not stored, and readers then fall back to acl_ss, so it holds the effective readers.
+            doc.put(LuxirConstants.FIELD_ACL, allowedRead);
 
             // Zero-Trust security metadata
             doc.put(LuxirConstants.FIELD_SECURITY_INHERITANCE, String.valueOf(inheritanceEnabled));
@@ -164,17 +158,21 @@ public class LuxirStoreWriterConsumer {
 
             // Extra metadata
             message.metadata().forEach((key, val) -> {
-                if (!"uri".equals(key) && !"acl".equals(key) && !"lastModified".equals(key)
-                        && !"security".equals(key) && !"title".equals(key) && !"source".equals(key)) {
-                    String targetKey = key.endsWith("_s") || key.endsWith("_t") || key.endsWith("_ss") ? key : key + "_s";
-                    doc.put(targetKey, val);
+                if (!RESERVED_KEYS.contains(key) && !key.equals(vectorFieldName)) {
+                    doc.put(LuxirFieldNames.forMetadata(key, val), val);
                 }
             });
 
             luxirClient.updateDocuments(collectionName, List.of(doc), autoCommit);
             log.info("Successfully saved chunk {} to Luxir collection '{}'.", message.chunkId(), collectionName);
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Luxir: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Documents are
+            // updated by id and a DELETE removes by id, so retrying either is safe.
+            throw new IllegalStateException("Luxir write failed for chunk " + message.chunkId(), e);
         }
     }
 }

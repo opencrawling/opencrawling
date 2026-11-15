@@ -1,0 +1,503 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://opencrawling.org/schemas/ois-document-schema.json",
+  "$comment": "Copyright © 2026 the original author or authors (piergiorgio@apache.org). Licensed under the Apache License, Version 2.0 (the 'License'); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an 'AS IS' BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.",
+  "title": "OIS Document Payload Schema",
+  "description": "Standard schema for exchanging data and security permissions of enterprise files.",
+  "type": "object",
+  "required": [
+    "id",
+    "source"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier of the document in the target index."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "UPSERT",
+        "DELETE"
+      ],
+      "default": "UPSERT",
+      "description": "Lifecycle operation to perform on the target document index (UPSERT for creation/updates or DELETE for tombstones)."
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "type",
+        "instance"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Repository type (e.g. sharepoint, s3, database, filesystem, cmis, bpmn2)."
+        },
+        "instance": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Base URI of the scanned repository instance."
+        },
+        "connectorVersion": {
+          "type": "string",
+          "description": "Version of the repository connector used."
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "required": [
+        "mimeType"
+      ],
+      "properties": {
+        "mimeType": {
+          "type": "string",
+          "description": "RFC 2046 media type of the document."
+        },
+        "text": {
+          "type": "string",
+          "description": "Extracted text content from the document (utf-8)."
+        },
+        "claimCheckUri": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "URI reference pointing to the raw binary file in shared storage."
+        },
+        "sidecarUri": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "URI reference pointing to the persistent <key>.ois.json sidecar envelope stored alongside the raw binary in cloud/lakehouse object storage (e.g. Apache Ozone, AWS S3)."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "Hex-encoded SHA-256 cryptographic checksum of the raw binary payload, used for cloud migration integrity verification and deduplication."
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of the raw binary payload in bytes."
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary key-value metadata map extracted from the source file, including standard CMIS repository properties and BPMN 2.0 workflow engine execution states. A single-valued property is a scalar; a multi-valued property (for example a CMIS multi-valued property or a document with several authors) is an array of the same type.",
+      "properties": {
+        "title": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "author": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "lastModified": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "array", "items": { "type": "string", "format": "date-time" } }
+          ]
+        },
+        "cmis:objectId": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The unique identifier of the object in the CMIS repository."
+        },
+        "cmis:name": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The name of the object in the CMIS repository."
+        },
+        "cmis:objectTypeId": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The type of the CMIS object (e.g. cmis:document, cmis:folder)."
+        },
+        "cmis:createdBy": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The user who created the CMIS object."
+        },
+        "cmis:creationDate": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "array", "items": { "type": "string", "format": "date-time" } }
+          ],
+          "description": "The timestamp when the CMIS object was created."
+        },
+        "cmis:lastModifiedBy": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The user who last modified the CMIS object."
+        },
+        "cmis:changeToken": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The change token of the CMIS object."
+        },
+        "cmis:versionLabel": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The version label of the CMIS document."
+        },
+        "cmis:isLatestVersion": {
+          "type": "boolean",
+          "description": "Indicates whether this is the latest version of the CMIS document."
+        },
+        "bpmn:processInstanceId": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The unique identifier of the workflow process instance."
+        },
+        "bpmn:processDefinitionId": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The unique identifier of the BPMN 2.0 process definition."
+        },
+        "bpmn:processDefinitionKey": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The business key/identifier of the BPMN 2.0 process definition."
+        },
+        "bpmn:processDefinitionName": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The human-readable name of the BPMN 2.0 process definition."
+        },
+        "bpmn:businessKey": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The business key associated with the process instance."
+        },
+        "bpmn:status": {
+          "type": "string",
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED",
+            "COMPLETED",
+            "EXTERNALLY_TERMINATED",
+            "INTERNALLY_TERMINATED"
+          ],
+          "description": "The execution status of the workflow instance."
+        },
+        "bpmn:startDate": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "array", "items": { "type": "string", "format": "date-time" } }
+          ],
+          "description": "The timestamp when the process instance was started."
+        },
+        "bpmn:endDate": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "array", "items": { "type": "string", "format": "date-time" } }
+          ],
+          "description": "The timestamp when the process instance completed or terminated."
+        },
+        "bpmn:startUserId": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "The identifier of the user who initiated the process instance."
+        },
+        "bpmn:variables": {
+          "type": "object",
+          "description": "Key-value map of process/workflow variables.",
+          "additionalProperties": true
+        },
+        "bpmn:activeTasks": {
+          "type": "array",
+          "description": "List of active user tasks or activities in the process instance.",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "taskName"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string",
+                "description": "The unique identifier of the active task instance."
+              },
+              "taskName": {
+                "type": "string",
+                "description": "The human-readable name of the active task."
+              },
+              "taskDefinitionKey": {
+                "type": "string",
+                "description": "The activity ID/key of the task in the BPMN XML."
+              },
+              "assignee": {
+                "type": "string",
+                "description": "The user currently assigned to the task."
+              },
+              "candidateUsers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Users who are candidates to claim/perform the task."
+              },
+              "candidateGroups": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "User groups who are candidates to claim/perform the task."
+              },
+              "dueDate": {
+                "type": "string",
+                "format": "date-time",
+                "description": "The task due date."
+              },
+              "createTime": {
+                "type": "string",
+                "format": "date-time",
+                "description": "The timestamp when the task was created."
+              }
+            }
+          }
+        },
+        "bpmn:transitionEvent": {
+          "type": "object",
+          "description": "Real-time event-driven BPMN 2.0 lifecycle transition notification triggering immediate ACL mutation or tombstone revocation.",
+          "required": [
+            "eventType",
+            "timestamp"
+          ],
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "PROCESS_STARTED",
+                "TASK_ASSIGNED",
+                "TASK_COMPLETED",
+                "ACL_UPDATED",
+                "PROCESS_COMPLETED",
+                "PROCESS_TERMINATED"
+              ],
+              "description": "The workflow lifecycle event that triggered the document or ACL state transition."
+            },
+            "timestamp": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO 8601 timestamp when the workflow transition occurred."
+            },
+            "previousStatus": {
+              "type": "string",
+              "description": "Previous workflow or document lifecycle status prior to the transition."
+            },
+            "newStatus": {
+              "type": "string",
+              "description": "New workflow or document lifecycle status following the transition."
+            }
+          }
+        },
+        "ois:provenance": {
+          "type": "object",
+          "description": "Provenance and delegated multi-agent identity metadata (OAuth 2.0 Token Exchange RFC 8693) tracking who triggered the ingestion or migration operation.",
+          "properties": {
+            "jobId": {
+              "type": "string",
+              "description": "Identifier of the OIS job execution that produced this payload."
+            },
+            "triggeredBy": {
+              "type": "string",
+              "description": "Trigger mechanism (e.g. scheduler, webhook, mcp-agent, manual)."
+            },
+            "onBehalfOf": {
+              "type": "string",
+              "description": "Subject identifier (RFC 8693 'sub' / 'on_behalf_of') of the human user whose source permissions bounded the operation."
+            },
+            "actorAgent": {
+              "type": "string",
+              "description": "Actor identifier (RFC 8693 'act.sub') of the autonomous AI agent or service orchestrating the job on behalf of the human user."
+            },
+            "ingestedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO 8601 timestamp when the document envelope was generated."
+            }
+          }
+        },
+        "ois:governance": {
+          "type": "object",
+          "description": "In-flight pre-embedding governance and PII redaction audit record.",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "ALLOW",
+                "REDACT",
+                "DROP"
+              ],
+              "description": "Policy decision applied prior to chunking, embedding, or target storage."
+            },
+            "redacted": {
+              "type": "boolean",
+              "description": "Indicates whether sensitive entities (e.g. PII) were redacted from the extracted text before downstream routing."
+            },
+            "redactionCategories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Categories of sensitive data redacted (e.g. EMAIL, SSN, CREDIT_CARD, PHONE, IBAN)."
+            },
+            "policyId": {
+              "type": "string",
+              "description": "Identifier of the governance policy or webhook rule evaluated."
+            },
+            "evaluatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO 8601 timestamp when governance evaluation completed."
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "inheritanceEnabled",
+        "permissions"
+      ],
+      "properties": {
+        "evaluationPolicy": {
+          "type": "string",
+          "enum": [
+            "FAIL_CLOSED"
+          ],
+          "default": "FAIL_CLOSED",
+          "description": "Normative security evaluation policy. Compliant consumers MUST enforce FAIL_CLOSED semantics: an absent or empty permissions array defaults to deny-all (never public), explicit 'deny' entries override 'read'/'write', and effective access is the intersection of repository, folder, and document ACLs."
+        },
+        "inheritanceEnabled": {
+          "type": "boolean",
+          "description": "Indicates whether the document inherits ACL settings from its folder structure."
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "identity",
+              "identityType",
+              "access"
+            ],
+            "properties": {
+              "identity": {
+                "type": "string",
+                "description": "Unique identifier of the user or group (e.g. Active Directory SID or email)."
+              },
+              "identityType": {
+                "type": "string",
+                "description": "Authentication namespace/type of the identity (e.g. windows-sid, oauth-group, user-principal-name, local-role, public, cmis-user, cmis-group, bpmn-assignee, bpmn-candidate-user, bpmn-candidate-group, or custom provider namespaces)."
+              },
+              "displayName": {
+                "type": "string",
+                "description": "Human-readable label for debugging audit logs."
+              },
+              "access": {
+                "type": "string",
+                "enum": [
+                  "read",
+                  "write",
+                  "deny"
+                ],
+                "description": "Permission rule matching the security constraint."
+              }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "description": "Optional Relationship-Based Access Control (ReBAC / Zanzibar / OpenFGA) relationship tuples preserved alongside static ACLs.",
+          "items": {
+            "type": "object",
+            "required": [
+              "user",
+              "relation",
+              "object"
+            ],
+            "properties": {
+              "user": {
+                "type": "string",
+                "description": "Subject or user-set in ReBAC notation (e.g. user:alice@company.com, group:finance#member)."
+              },
+              "relation": {
+                "type": "string",
+                "description": "Relationship name (e.g. viewer, editor, owner, parent_folder)."
+              },
+              "object": {
+                "type": "string",
+                "description": "Target object identifier in ReBAC notation (e.g. document:doc-554032-sp, folder:q3-ma)."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "action": {
+        "const": "DELETE"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
+  "then": {
+    "properties": {
+      "content": {
+        "type": "object"
+      },
+      "security": {
+        "type": "object"
+      }
+    }
+  },
+  "else": {
+    "required": [
+      "content",
+      "metadata",
+      "security"
+    ]
+  }
+}

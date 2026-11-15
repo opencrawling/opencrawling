@@ -36,8 +36,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/share/swift \
+            "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force || true
+          df -h
+
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -46,6 +58,35 @@ jobs:
       - name: Run Maven Unit & Integration Tests
         run: |
           mvn clean verify -DfailIfNoTests=false
+
+  ois-conformance:
+    name: OIS Sidecar Conformance (current OIS schema)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Fetch the OIS document schema from the specification repository
+        run: |
+          curl -fsSL --retry 3 \
+            https://raw.githubusercontent.com/opencrawling/open-ingestion-standard/master/schemas/document.schema.json \
+            -o "$RUNNER_TEMP/document.schema.json"
+
+      - name: Validate the migration writers' sidecars against it
+        run: |
+          mvn -B -pl oc-runtime -am test \
+            -Dtest=OisSidecarConformanceTest -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dois.schema.file="$RUNNER_TEMP/document.schema.json"
 
   frontend-ci:
     name: Admin UI React 19 Frontend Build & Tests
@@ -58,16 +99,17 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: oc-admin-ui/package-lock.json
 
-      - name: Install dependencies & run frontend build
+      - name: Install dependencies, run unit tests & frontend build
         run: |
           cd oc-admin-ui
           npm ci
+          npm test
           npm run build
 
   archetypes-ci:
@@ -80,13 +122,43 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/share/swift \
+            "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force || true
+          df -h
+
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build and Test Archetypes
+      - name: Build, Generate, and Test All Connector Archetypes
         run: |
-          mvn clean test-compile -pl oc-connector-archetypes -am
+          PROJECT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          mvn clean install -DskipTests -pl oc-core,oc-observability,oc-connector-archetypes,oc-connector-archetypes/opencrawling-archetype-repository-connector,oc-connector-archetypes/opencrawling-archetype-output-connector,oc-connector-archetypes/opencrawling-archetype-transformation-connector -am
+          ARCH_TEST_DIR=$(mktemp -d)
+          for TYPE in repository output transformation; do
+            CAP_TYPE="$(tr '[:lower:]' '[:upper:]' <<< ${TYPE:0:1})${TYPE:1}"
+            mvn archetype:generate -B \
+              -DarchetypeCatalog=local \
+              -DarchetypeGroupId=org.opencrawling.archetypes \
+              -DarchetypeArtifactId=opencrawling-archetype-${TYPE}-connector \
+              -DarchetypeVersion="${PROJECT_VER}" \
+              -DgroupId=org.opencrawling.connectors \
+              -DartifactId=sample-${TYPE}-connector \
+              -Dversion="${PROJECT_VER}" \
+              -Dpackage=org.opencrawling.connectors.sample \
+              -DconnectorName=Sample${CAP_TYPE}Connector \
+              -DoutputDirectory="$ARCH_TEST_DIR"
+            mvn -f "$ARCH_TEST_DIR/sample-${TYPE}-connector/pom.xml" test
+          done
+          rm -rf "$ARCH_TEST_DIR"

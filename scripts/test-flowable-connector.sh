@@ -78,6 +78,7 @@ echo -e "${YELLOW}Running Maven integration tests for oc-flowable-repository-con
 mvn test -pl oc-flowable-repository-connector \
   -Dspring.opencrawling.connector.flowable.url="http://localhost:${FLOWABLE_PORT}/flowable-rest/service" \
   -Dspring.opencrawling.connector.flowable.username="rest-admin" \
-  -Dspring.opencrawling.connector.flowable.password="test"
+  -Dspring.opencrawling.connector.flowable.password="test" \
+  -Dspring.opencrawling.connector.flowable.history-level="audit"
 
 echo -e "${GREEN}=== Flowable Repository Connector Integration Test Passed Successfully! ===${NC}"

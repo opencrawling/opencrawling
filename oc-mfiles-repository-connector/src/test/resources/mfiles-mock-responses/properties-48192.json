@@ -1,0 +1,173 @@
+[
+  {
+    "PropertyDef": 0,
+    "TypedValue": {
+      "DataType": 1,
+      "HasValue": true,
+      "Value": "Global Vendor NDA - Final Signed",
+      "DisplayValue": "Global Vendor NDA - Final Signed"
+    }
+  },
+  {
+    "PropertyDef": 20,
+    "TypedValue": {
+      "DataType": 7,
+      "HasValue": true,
+      "Value": "2026-04-10T10:30:00Z",
+      "DisplayValue": "10/04/2026 10:30"
+    }
+  },
+  {
+    "PropertyDef": 21,
+    "TypedValue": {
+      "DataType": 7,
+      "HasValue": true,
+      "Value": "2026-09-27T15:20:00Z",
+      "DisplayValue": "27/09/2026 15:20"
+    }
+  },
+  {
+    "PropertyDef": 22,
+    "TypedValue": {
+      "DataType": 8,
+      "HasValue": true,
+      "Value": true,
+      "DisplayValue": "Yes"
+    }
+  },
+  {
+    "PropertyDef": 23,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 14,
+        "Version": -1,
+        "DisplayValue": "alex.vance",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "alex.vance"
+    }
+  },
+  {
+    "PropertyDef": 25,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 12,
+        "Version": -1,
+        "DisplayValue": "sarah.connor",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "sarah.connor"
+    }
+  },
+  {
+    "PropertyDef": 39,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 3,
+        "Version": -1,
+        "DisplayValue": "Approved",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "Approved"
+    }
+  },
+  {
+    "PropertyDef": 100,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 14,
+        "Version": -1,
+        "DisplayValue": "Non-Disclosure Agreement",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "Non-Disclosure Agreement"
+    }
+  },
+  {
+    "PropertyDef": 1020,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 5,
+        "Version": -1,
+        "DisplayValue": "Cyberdyne Systems",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "Cyberdyne Systems"
+    }
+  },
+  {
+    "PropertyDef": 1021,
+    "TypedValue": {
+      "DataType": 3,
+      "HasValue": true,
+      "Value": 150000.0,
+      "DisplayValue": "150 000,00"
+    }
+  },
+  {
+    "PropertyDef": 1022,
+    "TypedValue": {
+      "DataType": 5,
+      "HasValue": true,
+      "Value": "2026-05-01T00:00:00Z",
+      "DisplayValue": "01/05/2026"
+    }
+  },
+  {
+    "PropertyDef": 1023,
+    "TypedValue": {
+      "DataType": 8,
+      "HasValue": true,
+      "Value": true,
+      "DisplayValue": "Yes"
+    }
+  },
+  {
+    "PropertyDef": 1024,
+    "TypedValue": {
+      "DataType": 10,
+      "HasValue": true,
+      "Lookups": [
+        {
+          "Item": 1,
+          "Version": -1,
+          "DisplayValue": "Legal",
+          "Deleted": false,
+          "Hidden": false
+        },
+        {
+          "Item": 2,
+          "Version": -1,
+          "DisplayValue": "Vendor",
+          "Deleted": false,
+          "Hidden": false
+        }
+      ],
+      "DisplayValue": "Legal; Vendor"
+    }
+  },
+  {
+    "PropertyDef": 1099,
+    "TypedValue": {
+      "DataType": 1,
+      "HasValue": false,
+      "Value": null,
+      "DisplayValue": ""
+    }
+  }
+]

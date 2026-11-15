@@ -34,8 +34,17 @@ public record JobResponse(
     String lastRun,
     String transformationConnector,
     NarrativizationConfig narrativization,
-    String pipelineMode
+    String pipelineMode,
+    JobAccess access
 ) {
+    public JobResponse(String id, String name, String repositoryConnector, String outputConnector,
+                       String authorityConnector, String path, String status, String currentStage, long documents,
+                       String lastRun, String transformationConnector, NarrativizationConfig narrativization,
+                       String pipelineMode) {
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents,
+                lastRun, transformationConnector, narrativization, pipelineMode, null);
+    }
+
     public String getId() {
         return id;
     }

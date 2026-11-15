@@ -1,0 +1,8 @@
+{"id":"{base}/repositories/corp?dql=...&page=1&items-per-page=2","title":"DQL query results","author":[{"name":"Open Text Documentum"}],"updated":"2026-10-31T11:00:00.123+02:00","page":1,"items-per-page":2,
+ "links":[{"rel":"self","href":"{base}/repositories/corp?page=1"},{"rel":"first","href":"{base}/repositories/corp?page=1"},{"rel":"next","href":"{base}/repositories/corp?page=2"}],
+ "entries":[
+  {"id":"{base}/repositories/corp?index=0","title":"090277b680000103","updated":"2026-10-31T11:00:00.123+02:00","links":[{"rel":"edit","href":"{base}/repositories/corp/objects/090277b680000103"}],
+   "content":{"json-root":"query-result","definition":"{base}/repositories/corp/types/dm_document","properties":{"r_object_id":"090277b680000103","i_chronicle_id":"090277b680000102","r_object_type":"dm_document","r_modify_date":"2026-01-05T12:14:54.000+02:00","i_vstamp":0,"acl_domain":"dmadmin","acl_name":"oc_public_read","owner_name":"Anna Smith","group_name":"finance"}}},
+  {"id":"{base}/repositories/corp?index=1","title":"090277b680000105","updated":"2026-10-31T11:00:00.123+02:00","links":[{"rel":"edit","href":"{base}/repositories/corp/objects/090277b680000105"}],
+   "content":{"json-root":"query-result","definition":"{base}/repositories/corp/types/oc_contract","properties":{"r_object_id":"090277b680000105","i_chronicle_id":"090277b680000104","r_object_type":"oc_contract","r_modify_date":"2026-01-05T12:14:54.000+02:00","i_vstamp":3,"acl_domain":"dmadmin","acl_name":"oc_finance_restricted","owner_name":"Rui Costa","group_name":"regulatory"}}}
+ ]}

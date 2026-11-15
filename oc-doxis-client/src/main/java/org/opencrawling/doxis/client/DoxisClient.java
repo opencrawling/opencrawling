@@ -28,6 +28,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
@@ -59,6 +63,8 @@ public class DoxisClient implements AutoCloseable {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final ReentrantLock sessionLock = new ReentrantLock();
+    private final LoginMode loginMode;
+    private final Supplier<String> credential;
     private volatile String token;
 
     public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
@@ -71,6 +77,18 @@ public class DoxisClient implements AutoCloseable {
     public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
                        String clientId, Duration timeout, int maxRetries, Duration retryBackoff,
                        HttpClient httpClient, ObjectMapper objectMapper) {
+        this(baseUrl, customerName, username, password, role, clientId, timeout, maxRetries, retryBackoff, httpClient,
+                objectMapper, LoginMode.PASSWORD, null);
+    }
+
+    /**
+     * As above, choosing how the session is opened. {@code credential} supplies the session ticket
+     * ({@link LoginMode#SESSION_TICKET}) or the OIDC access token ({@link LoginMode#OIDC_ACCESS_TOKEN}); it is asked again on
+     * every (re-)login, so a token source can hand out a fresh token. Ignored for {@link LoginMode#PASSWORD}.
+     */
+    public DoxisClient(String baseUrl, String customerName, String username, String password, String role,
+                       String clientId, Duration timeout, int maxRetries, Duration retryBackoff,
+                       HttpClient httpClient, ObjectMapper objectMapper, LoginMode loginMode, Supplier<String> credential) {
         String base = baseUrl.trim();
         while (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
@@ -86,6 +104,8 @@ public class DoxisClient implements AutoCloseable {
         this.retryBackoff = retryBackoff;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
+        this.loginMode = loginMode == null ? LoginMode.PASSWORD : loginMode;
+        this.credential = credential;
     }
 
     public String getBaseUrl() {
@@ -95,6 +115,13 @@ public class DoxisClient implements AutoCloseable {
     public ObjectMapper objectMapper() {
         return objectMapper;
     }
+
+    /**
+     * How the CSB session is opened (Doxis REST 14.4.1): {@code POST /login} with user name and password,
+     * {@code POST /loginBySessionTicket} with a session ticket, or {@code POST /loginOIDCWithAccessToken} with an OIDC/OAuth2
+     * access token issued by the identity provider the CSB customer is configured for.
+     */
+    public enum LoginMode { PASSWORD, SESSION_TICKET, OIDC_ACCESS_TOKEN }
 
     // ------------------------------------------------------------------ session
 
@@ -120,22 +147,51 @@ public class DoxisClient implements AutoCloseable {
     private String doLogin() throws IOException, InterruptedException {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("customerName", customerName);
-        params.put("userName", username);
-        params.put("password", password);
-        if (role != null && !role.isBlank()) {
-            params.put("role", role);
+        String path;
+        String who;
+        switch (loginMode) {
+            case SESSION_TICKET -> {
+                path = "/loginBySessionTicket";
+                params.put("sessionTicket", requiredCredential("session ticket"));
+                params.put("createOwnSession", true);
+                who = "session ticket";
+            }
+            case OIDC_ACCESS_TOKEN -> {
+                path = "/loginOIDCWithAccessToken";
+                params.put("accessToken", requiredCredential("OIDC access token"));
+                if (role != null && !role.isBlank()) {
+                    params.put("roleName", role);
+                }
+                who = "OIDC access token";
+            }
+            default -> {
+                path = "/login";
+                params.put("userName", username);
+                params.put("password", password);
+                if (role != null && !role.isBlank()) {
+                    params.put("role", role);
+                }
+                who = username;
+            }
         }
         params.put("clientImplementationId", clientId);
-        JsonNode jwt = execute("Login as " + username + "@" + customerName,
-                () -> jsonRequest("/login", "POST", params, false), true, false);
+        JsonNode jwt = execute("Login (" + who + ") to " + customerName, () -> jsonRequest(path, "POST", params, false), true, false);
         String value = jwt.isTextual() ? jwt.textValue() : jwt.toString();
         value = value.strip();
         if (value.length() > 1 && value.startsWith("\"") && value.endsWith("\"")) {
             value = value.substring(1, value.length() - 1);
         }
-        log.info("Logged in to Doxis CSB at {} as {} (customer {}, role {}).", baseUrl, username, customerName,
+        log.info("Logged in to Doxis CSB at {} via {} (customer {}, role {}).", baseUrl, who, customerName,
                 role != null ? role : "-");
         return value;
+    }
+
+    private String requiredCredential(String what) {
+        String value = credential == null ? null : credential.get();
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("No " + what + " available for the Doxis login.");
+        }
+        return value.strip();
     }
 
     /**
@@ -171,6 +227,16 @@ public class DoxisClient implements AutoCloseable {
 
     public JsonNode getRepository(String repository) throws IOException, InterruptedException {
         return get("Get repository " + repository, "/dmsRepositories/" + enc(repository));
+    }
+
+    /**
+     * {@code GET /session/ticket}: a session ticket for the current session, which another client can use with
+     * {@link LoginMode#SESSION_TICKET}.
+     */
+    public String getSessionTicket() throws IOException, InterruptedException {
+        JsonNode ticket = get("Get session ticket", "/session/ticket");
+        String value = ticket.isTextual() ? ticket.textValue() : ticket.path("sessionTicket").asText(ticket.toString());
+        return value.strip();
     }
 
     public JsonNode getLoggedInUser() throws IOException, InterruptedException {
@@ -430,6 +496,148 @@ public class DoxisClient implements AutoCloseable {
         executeTolerating404("Delete document " + documentId, () -> plainRequest(path, "DELETE"));
     }
 
+    // ------------------------------------------------------------------ crawling reads (repository connector)
+
+    /**
+     * One page of a CQL document search. A non-null {@code searchId} is a server-side result set that must be closed with
+     * {@link #closeSearch(String)}; {@code restrictionMode} is CSB's {@code searchResultRestrictionMode}.
+     */
+    public record SearchPage(String searchId, int totalHitCount, String restrictionMode, int maxSearchResults, int start,
+                             List<JsonNode> hits) {
+    }
+
+    public List<JsonNode> listRoles() throws IOException, InterruptedException {
+        return list(get("List roles", "/roles"));
+    }
+
+    /**
+     * {@code POST /documents/search} returning the first page of current versions ({@code DocumentWsTO} hits).
+     * {@code logicallyDeletedFilter} is {@code NON_DELETED_OBJECTS}, {@code ONLY_DELETED_OBJECTS} or {@code ANY_OBJECTS}.
+     */
+    public SearchPage searchDocuments(String cqlStatement, String logicallyDeletedFilter, int pageSize)
+            throws IOException, InterruptedException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("cqlStatement", cqlStatement);
+        params.put("currentVersionOnly", true);
+        params.put("fetchResultLimitation", pageSize);
+        params.put("logicallyDeletedFilter", logicallyDeletedFilter);
+        return toSearchPage(execute("Search documents", () -> jsonRequest("/documents/search", "POST", params, true), true, true));
+    }
+
+    /**
+     * {@code GET /documents/searchResults/{searchId}?offset&limit}: a further page of an open search result.
+     */
+    public SearchPage nextSearchResults(String searchId, int offset, int limit) throws IOException, InterruptedException {
+        return toSearchPage(get("Get search results " + searchId + " from " + offset,
+                "/documents/searchResults/" + enc(searchId) + "?offset=" + offset + "&limit=" + limit));
+    }
+
+    /**
+     * {@code DELETE /documents/searchResults/{searchId}}; failures are logged, not thrown.
+     */
+    public void closeSearch(String searchId) throws InterruptedException {
+        if (searchId == null || searchId.isBlank() || "null".equals(searchId)) {
+            return;
+        }
+        try {
+            execute("Close search " + searchId, () -> plainRequest("/documents/searchResults/" + enc(searchId), "DELETE"), true, true);
+        } catch (IOException e) {
+            log.debug("Closing Doxis search {} failed: {}", searchId, e.getMessage());
+        }
+    }
+
+    /**
+     * {@code GET …/documents/{uuid}/versions?initializeRepresentations=true}: the whole {@code DocumentWsTO} (primary parent,
+     * dates, type, logical-delete state) with its {@code versions[]}.
+     */
+    public JsonNode getDocumentWithVersions(String repository, String documentId) throws IOException, InterruptedException {
+        return get("Get versions of " + documentId, "/dmsRepositories/" + enc(repository) + "/documents/"
+                + enc(documentId) + "/versions?initializeRepresentations=true");
+    }
+
+    /**
+     * {@code GET …/versions/{v}/representations/{rep}/contentObjects/{id}}: streams the binary into {@code target} and returns
+     * its length. Each attempt writes a truncated sibling {@code .part} file that is moved onto {@code target} only on success,
+     * so a failed or retried attempt never leaves a partial file. Content-link documents cannot be downloaded through REST
+     * ({@code SEDNA0104}); callers skip them.
+     */
+    public long downloadContentObject(String repository, String documentId, String versionNr, String representationId,
+                                      String contentObjectId, Path target) throws IOException, InterruptedException {
+        String path = "/dmsRepositories/" + enc(repository) + "/documents/" + enc(documentId) + "/versions/" + enc(versionNr)
+                + "/representations/" + enc(representationId) + "/contentObjects/" + enc(contentObjectId);
+        String operation = "Download content object " + contentObjectId + " of " + documentId;
+        Path part = target.resolveSibling(target.getFileName() + ".part");
+        login();
+        int attempt = 0;
+        boolean reloggedIn = false;
+        try {
+            while (true) {
+                HttpRequest request = builder(path, true).setHeader("Accept", "*/*").GET().build();
+                HttpResponse<Path> response;
+                try {
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofFile(part,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING));
+                } catch (ConnectException e) {
+                    if (attempt >= maxRetries) {
+                        throw e;
+                    }
+                    backoff(operation, ++attempt, "connection refused", null);
+                    continue;
+                }
+                int status = response.statusCode();
+                if (status >= 200 && status < 300) {
+                    Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                    return Files.size(target);
+                }
+                String body = Files.readString(part, StandardCharsets.UTF_8);
+                if (status == 401 && !reloggedIn) {
+                    log.info("Doxis session expired during {}, logging in again.", operation);
+                    sessionLock.lock();
+                    try {
+                        token = doLogin();
+                    } finally {
+                        sessionLock.unlock();
+                    }
+                    reloggedIn = true;
+                    continue;
+                }
+                if (RETRYABLE_STATUS.contains(status) && attempt < maxRetries) {
+                    backoff(operation, ++attempt, "HTTP " + status, response.headers().firstValue("Retry-After").orElse(null));
+                    continue;
+                }
+                throw toException(operation, status, body);
+            }
+        } finally {
+            Files.deleteIfExists(part);
+        }
+    }
+
+    /**
+     * {@code GET …/records/{uuid}/nodes/{nodeId}/referencedInformationObjects}: what a folder node of an e-file holds —
+     * documents in {@code searchHitsDocumentWsTO[]}, sub-e-files in {@code searchHitsCompoundEntityWsTO[]}.
+     */
+    public JsonNode getNodeReferencedObjects(String repository, String recordId, String nodeId) throws IOException, InterruptedException {
+        return get("Get objects in node " + nodeId + " of record " + recordId, "/dmsRepositories/" + enc(repository) + "/records/"
+                + enc(recordId) + "/nodes/" + enc(nodeId) + "/referencedInformationObjects");
+    }
+
+    /**
+     * {@code POST /auditTrail/search} with an {@code AuditQueryWsTO} (operation types, date range, content repository ids,
+     * {@code maxHits}); returns the audit records. Empty when auditing is switched off on the CSB.
+     */
+    public List<JsonNode> searchAuditTrail(Map<String, Object> auditQuery) throws IOException, InterruptedException {
+        return list(execute("Search audit trail", () -> jsonRequest("/auditTrail/search", "POST", auditQuery, true), true, true));
+    }
+
+    private SearchPage toSearchPage(JsonNode result) {
+        String searchId = result.path("searchId").asText(null);
+        if (searchId != null && (searchId.isBlank() || "null".equals(searchId))) {
+            searchId = null;
+        }
+        return new SearchPage(searchId, result.path("totalHitCount").asInt(-1), result.path("searchResultRestrictionMode").asText(null),
+                result.path("maxSearchResults").asInt(-1), result.path("start").asInt(-1), list(result.path("searchHits")));
+    }
+
     // ------------------------------------------------------------------ plumbing
 
     /** JSON bodies as a tree; operations declared as {@code string} may answer with a bare, unquoted value. */
@@ -596,10 +804,14 @@ public class DoxisClient implements AutoCloseable {
     }
 
     private DoxisApiException toException(String operation, HttpResponse<String> response) {
+        return toException(operation, response.statusCode(), response.body());
+    }
+
+    private DoxisApiException toException(String operation, int statusCode, String body) {
         String errorCode = null;
-        String message = response.body();
+        String message = body;
         try {
-            JsonNode error = objectMapper.readTree(response.body());
+            JsonNode error = objectMapper.readTree(body);
             errorCode = error.path("errorCode").asText(null);
             message = error.path("message").asText(message);
         } catch (Exception ignored) {
@@ -608,6 +820,6 @@ public class DoxisClient implements AutoCloseable {
         if (message != null && message.length() > 500) {
             message = message.substring(0, 500) + "…";
         }
-        return new DoxisApiException("Doxis " + operation, response.statusCode(), errorCode, message);
+        return new DoxisApiException("Doxis " + operation, statusCode, errorCode, message);
     }
 }

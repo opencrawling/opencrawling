@@ -1,0 +1,4 @@
+{"method":"GET","url":"/v1.0/drives/b!docs/root/delta?$top=5","status":200,"clientRequestId":"7b0c0f62-1111-4111-8111-111111111111","headers":{},"body":{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/drives/b!docs/root/delta?$top=5&$skiptoken=5"}}
+{"method":"GET","url":"/v1.0/drives/b!docs/root/delta?$top=5&$skiptoken=5","status":200,"clientRequestId":"7b0c0f62-2222-4222-8222-222222222222","headers":{},"body":{"value":[],"@odata.deltaLink":"https://graph.microsoft.com/v1.0/drives/b!docs/root/delta?token=x"}}
+{"method":"GET","url":"/v1.0/drives/b!docs/root/delta?$top=5&$skiptoken=10","status":200,"clientRequestId":"7b0c0f62-3333-4333-8333-333333333333","headers":{},"body":{"value":[]}}
+{"method":"GET","url":"/v1.0/drives/b!docs","status":200,"clientRequestId":null,"headers":{},"body":{"id":"b!docs","name":"Documents","driveType":"documentLibrary"}}

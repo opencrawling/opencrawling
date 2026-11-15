@@ -59,6 +59,7 @@ spring:
       server:
         name: "opencrawling-secure-vector-mcp"
         version: "1.0.0"
+        protocol: ${SPRING_AI_MCP_SERVER_PROTOCOL:STREAMABLE}
         transport: STREAMABLE_HTTP
         annotation-scanner:
           enabled: true
@@ -86,6 +87,25 @@ spring:
         path-style-access: true
         region: us-east-1
         auto-create-bucket: true
+    reporting:
+      enabled: ${SPRING_OPENCRAWLING_REPORTING_ENABLED:true}
+      storage:
+        type: ${SPRING_OPENCRAWLING_REPORTING_STORAGE_TYPE:LOCAL}
+        local-dir: ${SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR:target/reports}
+        s3:
+          endpoint: ${SPRING_OPENCRAWLING_REPORTING_S3_ENDPOINT:http://localhost:9878}
+          bucket: ${SPRING_OPENCRAWLING_REPORTING_S3_BUCKET:opencrawling-audit-reports}
+          region: ${SPRING_OPENCRAWLING_REPORTING_S3_REGION:us-east-1}
+          path-style-access: true
+      formats:
+        parquet:
+          enabled: true
+          compression: ZSTD
+          row-group-size-bytes: 134217728
+          page-size-bytes: 1048576
+        avro: false
+        csv: true
+        json: true
 
   kafka:
     bootstrap-servers: 127.0.0.1:9092
@@ -121,6 +141,216 @@ opencrawling:
       max-message-size: 33554432
       fallback-to-rest: true
       keep-alive-time-ms: 30000
+  connector:
+    grpc-push:
+      enabled: ${OPENCRAWLING_GRPC_PUSH_ENABLED:true}
+      port: ${OPENCRAWLING_GRPC_PUSH_PORT:9096}
+      max-message-size-mb: ${OPENCRAWLING_GRPC_PUSH_MAX_MESSAGE_MB:64}
+      inline-binary-threshold-kb: 512
+      token: ${OPENCRAWLING_GRPC_PUSH_TOKEN:}
+      tls:
+        enabled: ${OPENCRAWLING_GRPC_PUSH_TLS_ENABLED:false}
+        cert-chain-path: ""
+        private-key-path: ""
+        trust-cert-path: ""
+        client-auth: ${OPENCRAWLING_GRPC_PUSH_TLS_CLIENT_AUTH:NONE}
+      reflection:
+        enabled: true
+  jobs:
+    # Job runs at the same time in this runtime (job API); further starts get 429. 0 = no cap.
+    max-concurrent-runs: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS:0}
+    # Runs one verified caller (jwt mode with protect-api) may hold at the same time; further starts get 429.
+    # Runs started without a verified caller only count towards max-concurrent-runs. 0 = no cap.
+    max-concurrent-runs-per-caller: ${OPENCRAWLING_JOBS_MAX_CONCURRENT_RUNS_PER_CALLER:0}
+    dynamic:
+      # Jobs a verified caller (typically an agent) describes and starts itself: REST /api/jobs/dynamic/**, MCP
+      # tools triggerDynamicJob, getDynamicJobStatus, listDynamicJobs and stopDynamicJob. Needs
+      # security.identity.mode=jwt (and protect-api for REST). The caller only picks a start folder that is in a
+      # listed connector's scope and that it may read; documents go through the documents topic in RAG mode.
+      enabled: ${OPENCRAWLING_JOBS_DYNAMIC_ENABLED:false}
+      # Registered repository connectors (names in connectors.json) dynamic jobs may use. Empty: none.
+      connectors: ${OPENCRAWLING_JOBS_DYNAMIC_CONNECTORS:}
+      # OAuth2 scope the token must carry. Blank: not checked.
+      required-scope: ${OPENCRAWLING_JOBS_DYNAMIC_REQUIRED_SCOPE:oc:jobs:write}
+      # OAuth2 scope for ingesting or removing one document (POST /api/jobs/dynamic/documents, MCP ingestDocument
+      # and removeDeletedDocument). Either scope lets a caller follow and stop its own jobs. Blank: not checked.
+      document-scope: ${OPENCRAWLING_JOBS_DYNAMIC_DOCUMENT_SCOPE:oc:jobs:run}
+      # Groups whose members may read and stop every dynamic job, not only their own.
+      admin-groups: ${OPENCRAWLING_JOBS_DYNAMIC_ADMIN_GROUPS:}
+      # Dynamic jobs one user may have running at once (0 = no cap of its own; max-concurrent-runs* still apply).
+      max-running-per-user: 2
+      # Whether an agent's folder job or document ingest waits for a member of admin-groups (not the requester) to
+      # approve it (POST /api/jobs/dynamic/{jobId}/approve or /reject). Removals of deleted documents and BPM events
+      # are never held. Unanswered jobs expire after approval-timeout.
+      require-approval: ${OPENCRAWLING_JOBS_DYNAMIC_REQUIRE_APPROVAL:false}
+      approval-timeout: 24h
+      max-pending-per-user: 10
+      # How long a finished job's status and its Idempotency-Key are kept (in memory, lost on restart).
+      retention: 24h
+      max-retained: 1000
+      # The chunk sizes (tokens) a job may ask for with its own chunking; never above 8192. Keep max-chunk-size
+      # within the embedding model's input. Jobs without chunking use the ingestion consumer's default (800).
+      min-chunk-size: 100
+      max-chunk-size: 2048
+      transformation-connector: Ollama_Embedding_Default
+  discovery:
+    # Repository discovery and dry runs (REST /api/discovery/**, MCP tools listRepositoryConnectors,
+    # exploreRepositoryTree and queryRepositoryDryRun). Results are decided with the metadata rules on each
+    # item's source ACL, whatever security.authorization.mode is.
+    enabled: ${OPENCRAWLING_DISCOVERY_ENABLED:false}
+    # Discovery reads live repositories with the connector's credentials, so it needs a caller verified by token
+    # (security.identity.mode=jwt). true also accepts asserted identities: development and tests only.
+    allow-asserted-identity: ${OPENCRAWLING_DISCOVERY_ALLOW_ASSERTED_IDENTITY:false}
+    # Whether results say how many items were hidden from the caller, and give a query's total match count.
+    reveal-hidden-counts: ${OPENCRAWLING_DISCOVERY_REVEAL_HIDDEN_COUNTS:false}
+    # Defaults and upper limits for each request (hard caps: depth 10, nodes 1000, samples 50, scan 100000, 2m).
+    max-depth: 3
+    max-nodes: 200
+    sample-size: 10
+    max-scan: 10000
+    timeout: 30s
+  events:
+    bpm:
+      # Document-transition events from BPM engines (POST /api/events/bpm/document-transition): a configured route
+      # turns a process transition into a single-document ingest (UPSERT) or removal (DELETE).
+      enabled: ${OPENCRAWLING_EVENTS_BPM_ENABLED:false}
+      # Bearer tokens (identity.mode=jwt with protect-api) must carry this scope. Blank: tokens are not accepted.
+      required-scope: ${OPENCRAWLING_EVENTS_BPM_REQUIRED_SCOPE:oc:events:write}
+      # HMAC-signed requests: how far X-OpenCrawling-Timestamp may be from this runtime's clock.
+      max-clock-skew: 5m
+      # How long, and how many, handled event ids are remembered so a repeat is not acted on twice.
+      dedup-retention: 24h
+      max-remembered-events: 10000
+      # Jobs one sender's events may have running at once (0 = no cap of its own).
+      max-running: 10
+      # Senders with a shared secret (at least 32 characters): hmac-secret for X-OpenCrawling-Signature, and/or
+      # token for Basic auth (username = the source's name). Example:
+      #   sources:
+      #     - name: flowable
+      #       hmac-secret: ${OPENCRAWLING_BPM_FLOWABLE_SECRET}
+      #     - name: aps
+      #       token: ${OPENCRAWLING_BPM_APS_TOKEN}
+      sources: []
+      # Which events are acted on: the first route matching the event's engine (optional), process and transition
+      # ("*" for any) names the registered connector and the action (UPSERT or DELETE). Example:
+      #   routes:
+      #     - name: contract-signed
+      #       process: contract-approval
+      #       transition: contractSigned
+      #       connector: Alfresco_Main
+      #       action: UPSERT
+      routes: []
+  sidecars:
+    # OIS sidecars (REST /api/sidecars/**, MCP tools listSidecarStores and readOisSidecars): read the OIS metadata
+    # stored in Ozone/S3 (*.ois.json next to each binary) or Apache Iceberg table rows, filtered by the caller's access.
+    enabled: ${OPENCRAWLING_SIDECARS_ENABLED:false}
+    # Registered Ozone, S3, or Apache Iceberg output connectors (names in connectors.json) whose sidecars may be read.
+    connectors: ${OPENCRAWLING_SIDECARS_CONNECTORS:}
+    required-scope: ${OPENCRAWLING_SIDECARS_REQUIRED_SCOPE:oc:sidecars:read}
+    # true also accepts asserted identities (no token): development and tests only.
+    allow-asserted-identity: false
+    # Per request: sidecars returned (hard cap 1000), keys listed (hard cap 50000), largest sidecar read (hard cap 16MB).
+    default-limit: 50
+    max-limit: 200
+    max-scan: 5000
+    max-sidecar-bytes: 1048576
+    # Seals paging cursors. Blank: a random key per instance. Set the same secret (32+ characters) on every instance
+    # behind a load balancer.
+    cursor-secret: ${OPENCRAWLING_SIDECARS_CURSOR_SECRET:}
+    cursor-ttl: 1h
+  governance:
+    # Pre-embedding governance: every document the ingestion consumer would chunk goes through the hooks first,
+    # which approve it, mask parts of it, or reject it. Permissions are never changed. Fails closed: when a hook
+    # cannot decide, nothing is embedded. With it on, RAG jobs that would also hand documents straight to an output
+    # connector are refused (409), since that path does not pass the gate: run them on the decoupled pipeline.
+    enabled: ${OPENCRAWLING_GOVERNANCE_ENABLED:false}
+    # In order: pii-masking (built in), http (an external governance service), or a PreEmbeddingGovernanceHook
+    # bean's name. Required when enabled.
+    hooks: ${OPENCRAWLING_GOVERNANCE_HOOKS:}
+    # What a rejection of a new version does to the earlier one: purge (stop serving it) or keep.
+    on-rejected-update: ${OPENCRAWLING_GOVERNANCE_ON_REJECTED_UPDATE:purge}
+    pii:
+      # email, payment-card (Luhn-checked) and/or iban (check digits verified).
+      types: email,payment-card,iban
+      # Whether metadata values are masked too (permission and identity keys never are).
+      mask-metadata: true
+    http:
+      url: ${OPENCRAWLING_GOVERNANCE_HTTP_URL:}
+      # Signs each request (X-OpenCrawling-Timestamp, X-OpenCrawling-Signature); at least 32 characters.
+      secret: ${OPENCRAWLING_GOVERNANCE_HTTP_SECRET:}
+      connect-timeout: 5s
+      timeout: 30s
+      # Attempts per document, the first included; only network errors, 429 and 5xx are retried.
+      max-attempts: 3
+      initial-backoff: 500ms
+      max-backoff: 5s
+  ingest:
+    ois:
+      # Bearer token for POST /api/v1/ingest/ois/{jobId}; the endpoint is disabled while it is empty
+      token: ${OPENCRAWLING_INGEST_OIS_TOKEN:}
+  mcp:
+    iceberg:
+      # Apache Iceberg MCP Lakehouse tools (listIcebergSnapshots, getIcebergDocumentAsOf, queryIcebergEntities,
+      # getIcebergIngestionStats). Also auto-enabled when spring.opencrawling.output.type=iceberg.
+      enabled: ${OPENCRAWLING_MCP_ICEBERG_ENABLED:false}
+      default-max-results: ${OPENCRAWLING_MCP_ICEBERG_DEFAULT_MAX_RESULTS:25}
+      max-results: ${OPENCRAWLING_MCP_ICEBERG_MAX_RESULTS:200}
+      max-scan: ${OPENCRAWLING_MCP_ICEBERG_MAX_SCAN:20000}
+      max-snapshots: ${OPENCRAWLING_MCP_ICEBERG_MAX_SNAPSHOTS:100}
+      # true also requires a verified caller (security.identity.mode=jwt) even in identity=none setups; false respects security.identity.mode.
+      require-verified-caller: ${OPENCRAWLING_MCP_ICEBERG_REQUIRE_VERIFIED_CALLER:false}
+  security:
+    identity:
+      # none (default): MCP tools use the identity asserted in their userPrincipal/userRoles arguments.
+      # jwt: the MCP endpoints need a valid bearer token and tools use the token's identity, ignoring those
+      # arguments. Point spring.security.oauth2.resourceserver.jwt.issuer-uri (or jwk-set-uri) at the identity
+      # provider and set spring.security.oauth2.resourceserver.jwt.audiences.
+      mode: ${OPENCRAWLING_SECURITY_IDENTITY_MODE:none}
+      # jwt mode only: also require a token on /api/** (except OIS ingest, which has its own token).
+      protect-api: ${OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API:false}
+      jwt:
+        # The first non-blank claim is the caller's user identity.
+        principal-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_PRINCIPAL_CLAIMS:preferred_username,sub}
+        # Values of all these claims are the caller's groups/roles; dots name nested claims.
+        group-claims: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_GROUP_CLAIMS:realm_access.roles,groups}
+        tenant-claim: ${OPENCRAWLING_SECURITY_IDENTITY_JWT_TENANT_CLAIM:}
+      # How the admin UI signs users in (OpenID Connect authorization code flow with PKCE, jwt mode only). The UI
+      # reads these from the public GET /api/auth/config.
+      admin-ui:
+        # The identity provider's public client for the UI. Blank: the UI does not sign users in.
+        client-id: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_CLIENT_ID:}
+        scope: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_SCOPE:openid profile}
+        # The issuer as the browser reaches it, when that differs from the resource server's issuer-uri.
+        issuer: ${OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_ISSUER:}
+    management:
+      # Who may do what on the management plane (jobs, connectors, settings, reports, traces). Needs identity
+      # mode jwt with protect-api; the runtime refuses to start otherwise. Off: every caller may do everything.
+      enabled: ${OPENCRAWLING_SECURITY_MANAGEMENT_ENABLED:false}
+      # Members may do everything, including jobs created before authorization was on.
+      admin-groups: ${OPENCRAWLING_SECURITY_MANAGEMENT_ADMIN_GROUPS:opencrawling-admin}
+      # Members may also create jobs, which they then own. Empty: only admins create jobs.
+      job-creator-groups: ${OPENCRAWLING_SECURITY_MANAGEMENT_JOB_CREATOR_GROUPS:}
+    authorization:
+      # metadata (default): the ACLs stored with each document decide.
+      # shadow: metadata decides, OpenFGA is asked too and disagreements are logged.
+      # intersection: both must allow. openfga: OpenFGA decides alone.
+      mode: ${OPENCRAWLING_SECURITY_AUTHORIZATION_MODE:metadata}
+      # In intersection/openfga modes stores skip their stored-ACL pre-filters and fetch
+      # limit x overfetch-factor candidates (never more than candidate-budget) for the gate to check.
+      overfetch-factor: 10
+      candidate-budget: 500
+      openfga:
+        api-url: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL:http://localhost:8080}
+        # Pin both in production; auto-provision creates/reuses the store and model (development and tests).
+        store-id: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_STORE_ID:}
+        model-id: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_MODEL_ID:}
+        auto-provision: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_AUTO_PROVISION:false}
+        api-token: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_TOKEN:}
+        timeout: 5s
+        batch-size: 50
+        sync:
+          # Mirrors document permissions into OpenFGA from the documents topic (its own consumer group).
+          enabled: ${OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_SYNC_ENABLED:true}
 
 management:
   endpoints:
@@ -137,6 +367,20 @@ management:
 
 server:
   port: 8080
+
+springdoc:
+  api-docs:
+    path: ${SPRINGDOC_API_DOCS_PATH:/v3/api-docs}
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: ${SPRINGDOC_SWAGGER_UI_PATH:/swagger-ui.html}
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+    display-request-duration: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: none
+  show-actuator: false
 
 logging:
   level:

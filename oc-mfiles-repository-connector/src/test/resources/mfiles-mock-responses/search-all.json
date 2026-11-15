@@ -1,0 +1,100 @@
+{
+  "Items": [
+    {
+      "ObjVer": {
+        "ID": 48192,
+        "Type": 0,
+        "Version": 3
+      },
+      "Title": "Global Vendor NDA - Final Signed",
+      "DisplayID": "48192",
+      "Class": 14,
+      "Deleted": false,
+      "CreatedUtc": "2026-04-10T10:30:00Z",
+      "LastModifiedUtc": "2026-09-27T15:20:00Z",
+      "ObjectCheckedOut": false,
+      "Files": [
+        {
+          "ID": 7,
+          "Name": "Global Vendor NDA - Final Signed",
+          "Extension": "pdf",
+          "Version": 1,
+          "ChangeTimeUtc": "2026-09-27T15:20:00Z"
+        }
+      ],
+      "SingleFile": true
+    },
+    {
+      "ObjVer": {
+        "ID": 48193,
+        "Type": 0,
+        "Version": 2
+      },
+      "Title": "Master Services Agreement",
+      "DisplayID": "48193",
+      "Class": 22,
+      "Deleted": false,
+      "CreatedUtc": "2026-04-10T10:30:00Z",
+      "LastModifiedUtc": "2026-09-28T09:00:00Z",
+      "ObjectCheckedOut": false,
+      "Files": [
+        {
+          "ID": 11,
+          "Name": "MSA",
+          "Extension": "docx",
+          "Version": 1,
+          "ChangeTimeUtc": "2026-09-28T09:00:00Z"
+        },
+        {
+          "ID": 12,
+          "Name": "Exhibit A",
+          "Extension": "pdf",
+          "Version": 1,
+          "ChangeTimeUtc": "2026-09-28T09:00:00Z"
+        }
+      ],
+      "SingleFile": false
+    },
+    {
+      "ObjVer": {
+        "ID": 48194,
+        "Type": 0,
+        "Version": 5
+      },
+      "Title": "Old Invoice",
+      "DisplayID": "48194",
+      "Class": 5,
+      "Deleted": true,
+      "CreatedUtc": "2026-04-10T10:30:00Z",
+      "LastModifiedUtc": "2026-09-29T08:00:00Z",
+      "ObjectCheckedOut": false,
+      "Files": [
+        {
+          "ID": 21,
+          "Name": "Invoice 2019",
+          "Extension": "pdf",
+          "Version": 1,
+          "ChangeTimeUtc": "2026-09-29T08:00:00Z"
+        }
+      ],
+      "SingleFile": true
+    },
+    {
+      "ObjVer": {
+        "ID": 5,
+        "Type": 103,
+        "Version": 1
+      },
+      "Title": "Cyberdyne Systems",
+      "DisplayID": "5",
+      "Class": 31,
+      "Deleted": false,
+      "CreatedUtc": "2026-04-10T10:30:00Z",
+      "LastModifiedUtc": "2026-09-20T12:00:00Z",
+      "ObjectCheckedOut": false,
+      "Files": [],
+      "SingleFile": false
+    }
+  ],
+  "MoreResults": false
+}

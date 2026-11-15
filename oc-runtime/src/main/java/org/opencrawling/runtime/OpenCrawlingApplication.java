@@ -74,13 +74,15 @@ public class OpenCrawlingApplication {
             log.info("--- OpenCrawling Bootstrap ---");
             log.info("Requested Repository Connector Type: {}", repositoryConnectorType);
 
+            // a connector named after the type wins; the "file" match is only a fallback, otherwise type "mfiles" could
+            // select the FileSystem connector
+            String connectorType = repositoryConnectorType.toLowerCase();
             RepositoryConnector activeConnector = repositoryConnectors.stream()
-                .filter(c -> {
-                    String className = c.getClass().getSimpleName().toLowerCase();
-                    String connectorType = repositoryConnectorType.toLowerCase();
-                    return className.contains(connectorType) || (connectorType.contains("file") && className.contains("file"));
-                })
+                .filter(c -> c.getClass().getSimpleName().toLowerCase().contains(connectorType))
                 .findFirst()
+                .or(() -> repositoryConnectors.stream()
+                    .filter(c -> connectorType.contains("file") && c.getClass().getSimpleName().toLowerCase().contains("file"))
+                    .findFirst())
                 .orElse(repositoryConnectors.isEmpty() ? null : repositoryConnectors.get(0));
 
             if (activeConnector == null) {
@@ -97,7 +99,8 @@ public class OpenCrawlingApplication {
             if (crawlOnStartup) {
                 String defaultTarget = "alfresco".equalsIgnoreCase(repositoryConnectorType) ? "-root-" : 
                                       ("cmis".equalsIgnoreCase(repositoryConnectorType) ? "/" : 
-                                      ("jdbc".equalsIgnoreCase(repositoryConnectorType) ? "" : "default"));
+                                      ("jdbc".equalsIgnoreCase(repositoryConnectorType) ? "" : 
+                                      ("openarch".equalsIgnoreCase(repositoryConnectorType) ? "00000000-0000-0000-0000-000000000000" : "default")));
                 String targetPath = (scanPath != null && !scanPath.isBlank()) ? scanPath : defaultTarget;
                 if ((scanPath == null || scanPath.isBlank()) && 
                     !"camunda".equalsIgnoreCase(repositoryConnectorType) && 
@@ -105,11 +108,20 @@ public class OpenCrawlingApplication {
                     !"alfresco".equalsIgnoreCase(repositoryConnectorType) &&
                     !"aps".equalsIgnoreCase(repositoryConnectorType) &&
                     !"cmis".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"doxis".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"sharepoint".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"mfiles".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"filenet".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"documentum".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"openarch".equalsIgnoreCase(repositoryConnectorType) &&
                     !"jdbc".equalsIgnoreCase(repositoryConnectorType)) {
                     log.warn("Crawl on startup is enabled, but spring.opencrawling.scan-path is not set. Skipping sample crawl.");
                 } else {
                     log.info("Triggering sample crawl job on target: {} with transformation connector: {}", targetPath, transformationConnector);
-                    crawlSuccess = orchestrator.runJob(activeConnector, isStandaloneCrawler ? null : outputConnector, targetPath, transformationConnector);
+                    crawlSuccess = orchestrator.runJob(activeConnector, isStandaloneCrawler ? null : outputConnector, targetPath,
+                            transformationConnector, "1", null, null, null, null, () -> false,
+                            org.opencrawling.core.reporting.ExecutionProvenance.anonymous(
+                                    org.opencrawling.core.reporting.ExecutionProvenance.SOURCE_STARTUP, null));
                 }
             } else {
                 log.info("Sample crawl job on startup is disabled. Use properties to enable it (spring.opencrawling.crawl-on-startup=true).");
@@ -118,6 +130,12 @@ public class OpenCrawlingApplication {
             log.info("--- Bootstrap sequence completed ---");
 
             if (isStandaloneCrawler) {
+                // Allow asynchronous reporting tasks (Parquet, CSV, JSON writers) to flush to disk
+                try {
+                    Thread.sleep(1500);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
                 if (crawlSuccess) {
                     log.info("Standalone crawler job completed. Exiting process cleanly.");
                     System.exit(0);

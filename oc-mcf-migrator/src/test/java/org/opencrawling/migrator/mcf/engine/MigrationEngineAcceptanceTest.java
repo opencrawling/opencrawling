@@ -64,7 +64,7 @@ class MigrationEngineAcceptanceTest {
 
     @BeforeAll
     static void setUp() throws IOException {
-        mcfServer = HttpServer.create(new InetSocketAddress(0), 0);
+        mcfServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int mcfPort = mcfServer.getAddress().getPort();
         serveFixture(mcfServer, "/repositoryconnections", "repositoryconnections.json");
         serveFixture(mcfServer, "/outputconnections", "outputconnections.json");
@@ -75,7 +75,7 @@ class MigrationEngineAcceptanceTest {
 
         capturedConnectorPosts = new CopyOnWriteArrayList<>();
         capturedJobPosts = new CopyOnWriteArrayList<>();
-        ocServer = HttpServer.create(new InetSocketAddress(0), 0);
+        ocServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int ocPort = ocServer.getAddress().getPort();
         ocServer.createContext("/api/connectors", exchange -> {
             if ("POST".equals(exchange.getRequestMethod())) {
@@ -96,11 +96,11 @@ class MigrationEngineAcceptanceTest {
         });
         ocServer.start();
 
-        ManifoldCFClient mcfClient = new ManifoldCFClient("http://localhost:" + mcfPort, null, null, 5);
+        ManifoldCFClient mcfClient = new ManifoldCFClient("http://127.0.0.1:" + mcfPort, null, null, 5);
         ConnectorMapperRegistry registry = new ConnectorMapperRegistry();
-        OpenCrawlingWriter writer = new OpenCrawlingWriter("http://localhost:" + ocPort, null, null, 5);
+        OpenCrawlingWriter writer = new OpenCrawlingWriter("http://127.0.0.1:" + ocPort, null, null, 5);
         MigrationOptions options = new MigrationOptions(
-            "http://localhost:" + mcfPort, null, null, "http://localhost:" + ocPort, null,
+            "http://127.0.0.1:" + mcfPort, null, null, "http://127.0.0.1:" + ocPort, null,
             true, "report.md", 384, List.of(), List.of(), false, 5, Map.of());
         engine = new MigrationEngine(mcfClient, registry, writer, options);
     }

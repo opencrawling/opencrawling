@@ -26,8 +26,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -67,7 +67,8 @@ public class CmisClient {
         String rootFolderId,
         String cmisVersionSupported,
         String repositoryUrl,
-        String rootFolderUrl
+        String rootFolderUrl,
+        String principalAnyone
     ) {
         public CmisRepositoryInfo(
                 String repositoryId,
@@ -78,7 +79,23 @@ public class CmisClient {
                 String productVersion,
                 String rootFolderId,
                 String cmisVersionSupported) {
-            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion, rootFolderId, cmisVersionSupported, "", "");
+            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion,
+                 rootFolderId, cmisVersionSupported, "", "", CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
+        }
+
+        public CmisRepositoryInfo(
+                String repositoryId,
+                String repositoryName,
+                String repositoryDescription,
+                String vendorName,
+                String productName,
+                String productVersion,
+                String rootFolderId,
+                String cmisVersionSupported,
+                String repositoryUrl,
+                String rootFolderUrl) {
+            this(repositoryId, repositoryName, repositoryDescription, vendorName, productName, productVersion,
+                 rootFolderId, cmisVersionSupported, repositoryUrl, rootFolderUrl, CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
         }
     }
 
@@ -160,7 +177,7 @@ public class CmisClient {
         }
 
         JsonNode root = objectMapper.readTree(response.body());
-        Map<String, CmisRepositoryInfo> repositories = new HashMap<>();
+        Map<String, CmisRepositoryInfo> repositories = new LinkedHashMap<>();
 
         if (root.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
@@ -171,6 +188,13 @@ public class CmisClient {
                     String repoId = repoNode.path("repositoryId").asText(field.getKey());
                     String repoUrl = repoNode.path("repositoryUrl").asText("");
                     String rootFolderUrl = repoNode.path("rootFolderUrl").asText("");
+                    String principalAnyone = repoNode.path("principalAnyone").asText("");
+                    if (principalAnyone.isBlank()) {
+                        principalAnyone = repoNode.path("principalIdAnyone").asText("");
+                    }
+                    if (principalAnyone.isBlank()) {
+                        principalAnyone = CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL;
+                    }
                     repositories.put(repoId, new CmisRepositoryInfo(
                         repoId,
                         repoNode.path("repositoryName").asText(repoId),
@@ -181,7 +205,8 @@ public class CmisClient {
                         repoNode.path("rootFolderId").asText(""),
                         repoNode.path("cmisVersionSupported").asText("1.1"),
                         repoUrl,
-                        rootFolderUrl
+                        rootFolderUrl,
+                        principalAnyone
                     ));
                 }
             }
@@ -356,11 +381,46 @@ public class CmisClient {
 
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            if (response.statusCode() == 404) {
+                throw new java.io.FileNotFoundException("CMIS object not found: " + objectIdOrPath);
+            }
             throw new IOException("Failed to get CMIS object from " + urlBuilder + ". HTTP " + response.statusCode() + ": " + response.body());
         }
 
         JsonNode rootNode = objectMapper.readTree(response.body());
         return rootNode.has("object") ? rootNode.get("object") : rootNode;
+    }
+
+    /**
+     * The folders an object is filed in (Browser binding {@code cmisselector=parents}). A document may be filed in
+     * several folders, or in none.
+     */
+    public List<JsonNode> getObjectParents(String repositoryId, String objectId) throws IOException, InterruptedException {
+        String url = getRootFolderUrl(repositoryId) + "?objectId=" + urlEncode(objectId)
+                + "&cmisselector=parents&includeACL=false&includeAllowableActions=false";
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("Accept", "application/json")
+                .GET();
+        if (authHeader != null) {
+            builder.header("Authorization", authHeader);
+        }
+        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() == 404) {
+            throw new java.io.FileNotFoundException("CMIS object not found: " + objectId);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Failed to get CMIS object parents from " + url + ". HTTP " + response.statusCode());
+        }
+        List<JsonNode> parents = new ArrayList<>();
+        JsonNode root = objectMapper.readTree(response.body());
+        if (root.isArray()) {
+            for (JsonNode item : root) {
+                parents.add(item.has("object") ? item.get("object") : item);
+            }
+        }
+        return parents;
     }
 
     /**

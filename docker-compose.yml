@@ -53,7 +53,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama
     ports:
       - "11434:11434"
@@ -68,7 +68,7 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller
     environment:
       - OLLAMA_HOST=ollama:11434
@@ -77,7 +77,7 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large"]
 
   kafka:
     image: apache/kafka:3.7.0
@@ -206,3 +206,5 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata:
     name: opencrawling-kafkadata
+  opencrawling-reportsdata:
+    name: opencrawling-reportsdata

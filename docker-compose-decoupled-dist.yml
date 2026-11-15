@@ -54,7 +54,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled
     ports:
       - "11434:11434"
@@ -69,9 +69,9 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
@@ -165,6 +165,7 @@ services:
     image: ghcr.io/opencrawling/oc-crawler:latest
     container_name: oc-crawler-service
     environment:
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
       - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
       - SPRING_OPENCRAWLING_SCAN_PATH=/data
@@ -175,8 +176,11 @@ services:
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - ./oc-runtime/data:/data  # Mount sample files directory
+      - opencrawling-claims:/claims
+      - opencrawling-reportsdata:/data/reports
     depends_on:
       - kafka
       - postgres
@@ -191,6 +195,7 @@ services:
     image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
     container_name: oc-ingestion-consumer-service
     environment:
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
@@ -201,8 +206,10 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     volumes:
       - ./oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
+      - opencrawling-claims:/claims
     depends_on:
       - kafka
       - postgres
@@ -266,6 +273,7 @@ services:
     ports:
       - "8080:8080"
       - "9095:9095"
+      - "9096:9096"
     environment:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
@@ -273,12 +281,25 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
+      - OPENCRAWLING_INGEST_OIS_TOKEN=${OPENCRAWLING_INGEST_OIS_TOKEN:-}
+      - OPENCRAWLING_GRPC_PUSH_ENABLED=${OPENCRAWLING_GRPC_PUSH_ENABLED:-true}
+      - OPENCRAWLING_GRPC_PUSH_PORT=${OPENCRAWLING_GRPC_PUSH_PORT:-9096}
+      - OPENCRAWLING_GRPC_PUSH_TOKEN=${OPENCRAWLING_GRPC_PUSH_TOKEN:-}
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-claims:/claims  # Local claim check files, shared with oc-ingestion-consumer
+      - opencrawling-reportsdata:/data/reports
     depends_on:
       - postgres
       - redis
+      - ollama
     networks:
       opencrawling-network:
         aliases:
@@ -313,3 +334,7 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata:
     name: opencrawling-kafkadata
+  opencrawling-claims:
+    name: opencrawling-claims
+  opencrawling-reportsdata:
+    name: opencrawling-reportsdata

@@ -17,7 +17,12 @@ package org.opencrawling.runtime.api.copilot;
 
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@Schema(description = "Generated narrative template response")
 public record TemplateCopilotResponse(
+    @Schema(description = "Generated Mustache prompt template", example = "# {{title}}\n{{summary}}")
     String template,
+    @Schema(description = "Sample mock data values used for preview rendering")
     Map<String, Object> mockData
 ) {}

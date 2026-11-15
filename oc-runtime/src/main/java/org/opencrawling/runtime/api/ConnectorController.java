@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,12 +27,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 
+import org.opencrawling.runtime.security.ManagementAuthorization;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "Connectors", description = "Management, configuration, and live connectivity tests for repository, output, and transformation connectors")
 @RestController
 @RequestMapping("/api/connectors")
 public class ConnectorController {
 
     private final List<ConnectorDTO> storage;
     private final ConnectorCheckerService checkerService;
+
+    /** Absent when a test builds the controller itself; then connectors are shown in full. */
+    @Autowired(required = false)
+    private ManagementAuthorization authorization;
 
     @Autowired
     public ConnectorController(ConnectorCheckerService checkerService) {
@@ -42,7 +55,7 @@ public class ConnectorController {
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
         defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
-            "url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
+            "url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1",
             "username", "admin",
             "password", "admin",
             "batchSize", "100",
@@ -53,13 +66,32 @@ public class ConnectorController {
         )));
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));
-        defaults.add(new ConnectorDTO("Camunda_7_REST_Engine", "Camunda 7 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://localhost:8080/engine-rest", "username", "demo", "password", "demo")));
+        defaults.add(new ConnectorDTO("Camunda_8_REST_Engine", "Camunda 8 REST Engine", "repository", "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of(
+            "url", "http://localhost:8080/v2",
+            "authType", "basic",
+            "username", "demo",
+            "password", "demo",
+            "batchSize", "100",
+            "includeVariables", "true",
+            "includeUserTasks", "true",
+            "includeIncidents", "true",
+            "includeAcls", "true",
+            "scope", "all"
+        )));
         defaults.add(new ConnectorDTO("APS_REST_Engine", "Alfresco Process Services (APS) Engine", "repository", "org.opencrawling.aps.ApsRepositoryConnector", 10, Map.of(
             "url", "http://localhost:8080/activiti-app/api/enterprise",
             "username", "admin@app.activiti.com",
             "password", "admin",
             "includeVariables", "true",
             "includeTasks", "true"
+        )));
+        defaults.add(new ConnectorDTO("Web_Crawler", "HTTP(S) Web Crawler", "repository", "org.opencrawling.web.WebRepositoryConnector", 10, Map.of(
+            "userAgent", "OpenCrawlingBot/1.0 (+https://opencrawling.github.io)",
+            "maxDepth", "3",
+            "delayMs", "1000",
+            "maxPages", "1000",
+            "stayOnDomain", "true",
+            "respectRobots", "true"
         )));
         defaults.add(new ConnectorDTO("StormCrawler_Web_Engine", "Apache StormCrawler Engine", "repository", "org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector", 10, Map.of(
             "nimbusHost", "localhost",
@@ -102,6 +134,179 @@ public class ConnectorController {
             Map.entry("batchSize", "100"),
             Map.entry("fetchSize", "1000")
         )));
+        defaults.add(new ConnectorDTO("Doxis_Repository", "Doxis 4 ECM Repository (CSB REST API)", "repository", "org.opencrawling.doxis.DoxisRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8080/restws/publicws/rest/api/v1"),
+            Map.entry("authType", "basic"),
+            Map.entry("customerName", ""),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("role", "admins"),
+            Map.entry("repositoryId", ""),
+            Map.entry("crawlMode", "search"),
+            Map.entry("documentClasses", ""),
+            Map.entry("searchQuery", ""),
+            Map.entry("rootFolderId", ""),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "latest_only"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("includeDescriptors", "true"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("descriptorPrefix", ""),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "2"),
+            Map.entry("timeoutSeconds", "120"),
+            Map.entry("incremental", "false"),
+            Map.entry("stateDirectory", "data/doxis-state"),
+            Map.entry("tenantIsolation", "false")
+        )));
+        defaults.add(new ConnectorDTO("SharePoint_Repository", "Microsoft SharePoint Online (Microsoft Graph API)", "repository", "org.opencrawling.sharepoint.SharePointRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("tenantId", ""),
+            Map.entry("clientId", ""),
+            Map.entry("clientSecret", ""),
+            Map.entry("siteUrl", "https://contoso.sharepoint.com/sites/engineering"),
+            Map.entry("driveNames", ""),
+            Map.entry("crawlMode", "delta"),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxFileSizeBytes", "52428800"),
+            Map.entry("includeCustomFields", "true"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("userIdentity", "email"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("everyoneExceptExternalIdentity", ""),
+            Map.entry("organizationLinkIdentity", ""),
+            Map.entry("incremental", "true"),
+            Map.entry("stateDirectory", "data/sharepoint-state"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("maxRetries", "5"),
+            Map.entry("timeoutSeconds", "30")
+        )));
+        defaults.add(new ConnectorDTO("MFiles_Repository", "M-Files Vault (M-Files Web Service REST API)", "repository", "org.opencrawling.mfiles.MFilesRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "https://localhost/REST"),
+            Map.entry("vaultGuid", ""),
+            Map.entry("authType", "token"),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("domain", ""),
+            Map.entry("crawlMode", "search"),
+            Map.entry("objectType", "0"),
+            Map.entry("classIds", ""),
+            Map.entry("viewId", ""),
+            Map.entry("searchQuery", ""),
+            Map.entry("versionMode", "latest_only"),
+            Map.entry("includeFiles", "true"),
+            Map.entry("maxFileSizeBytes", "52428800"),
+            Map.entry("includeProperties", "true"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("principalFormat", "token"),
+            Map.entry("emitDeletes", "true"),
+            Map.entry("incrementalEnabled", "false"),
+            Map.entry("modifiedAfter", ""),
+            Map.entry("batchSize", "500"),
+            Map.entry("parallelism", "4"),
+            Map.entry("timeoutSeconds", "30"),
+            Map.entry("stateDirectory", "data/mfiles-state")
+        )));
+        defaults.add(new ConnectorDTO("FileNet_Repository", "IBM FileNet P8 (Content Services GraphQL API)", "repository", "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "https://localhost:9443/content-services-graphql/graphql"),
+            Map.entry("objectStore", ""),
+            Map.entry("authType", "basic"),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "query"),
+            Map.entry("documentClasses", "Document"),
+            Map.entry("where", ""),
+            Map.entry("sqlQuery", ""),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "current"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeCustomProperties", "true"),
+            Map.entry("readAccessMask", "131201"),
+            Map.entry("authenticatedUsersIdentity", "#authenticated-users"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("principalFormat", "name"),
+            Map.entry("markedDocuments", "exclude"),
+            Map.entry("deletionTracking", "reconcile"),
+            Map.entry("incrementalEnabled", "true"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("timeoutSeconds", "30"),
+            Map.entry("stateDirectory", "data/filenet-state")
+        )));
+        defaults.add(new ConnectorDTO("Documentum_Repository", "OpenText Documentum (REST Services)", "repository", "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "https://localhost:8443/dctm-rest"),
+            Map.entry("repositoryName", ""),
+            Map.entry("authType", "basic"),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("crawlMode", "dql"),
+            Map.entry("objectTypes", "dm_document"),
+            Map.entry("where", ""),
+            Map.entry("dqlQuery", ""),
+            Map.entry("rootCabinetPath", "/"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("versionMode", "current_only"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800"),
+            Map.entry("preferRendition", ""),
+            Map.entry("includeAcls", "true"),
+            Map.entry("worldIdentity", "dm_world"),
+            Map.entry("principalFormat", "name"),
+            Map.entry("requiredGroupDocuments", "exclude"),
+            Map.entry("fallbackPrincipals", ""),
+            Map.entry("includeCustomAttributes", "true"),
+            Map.entry("deletionTracking", "reconcile"),
+            Map.entry("incrementalEnabled", "true"),
+            Map.entry("serverTimeZone", "auto"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("timeoutSeconds", "30"),
+            Map.entry("stateDirectory", "data/documentum-state")
+        )));
+        defaults.add(new ConnectorDTO("Hyland_CIC_Repository", "Hyland Content Innovation Cloud (HXP) Repository", "repository", "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("baseUrl", "https://api.content.hylandcloud.com"),
+            Map.entry("idpTokenUrl", "https://identity.hylandcloud.com/connect/token"),
+            Map.entry("clientId", ""),
+            Map.entry("clientSecret", ""),
+            Map.entry("scopes", "hxp hxp.integrations hxp.content"),
+            Map.entry("tenantId", ""),
+            Map.entry("rootFolderPath", "/"),
+            Map.entry("rootFolderId", ""),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("batchSize", "100"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("maxContentSizeBytes", "52428800")
+        )));
+        defaults.add(new ConnectorDTO("Grpc_Push_Connector", "gRPC Push Streaming Ingestion", "repository", "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", 100, Map.of(
+            "port", "9096",
+            "maxMessageSizeMb", "64",
+            "inlineBinaryThresholdKb", "512",
+            "token", "",
+            "tlsEnabled", "false",
+            "clientAuth", "NONE"
+        )));
+        defaults.add(new ConnectorDTO("OpenArch_Repository", "Hyland OpenArch Federated Repository", "repository", "org.opencrawling.openarch.repository.OpenArchRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("endpointUrl", "http://localhost:8080"),
+            Map.entry("repositoryId", "default"),
+            Map.entry("username", "Administrator"),
+            Map.entry("password", "Administrator"),
+            Map.entry("crawlMode", "QUERY"),
+            Map.entry("hxqlQuery", "SELECT * FROM SysFile"),
+            Map.entry("rootFolderId", "00000000-0000-0000-0000-000000000000"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("batchSize", "100"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("incremental", "false")
+        )));
         defaults.add(new ConnectorDTO("PGVector_Output", "PGVector Store", "output", "org.opencrawling.vector.VectorOutputConnector", 10, Map.of(
             "pgVectorUrl", "jdbc:postgresql://127.0.0.1:5432/opencrawling",
             "pgVectorUsername", "opencrawling",
@@ -139,6 +344,16 @@ public class ConnectorController {
             "opensearch3Password", "admin",
             "opensearch3IndexName", "enterprise_kb",
             "opensearch3Dimensions", "1024"
+        )));
+        defaults.add(new ConnectorDTO("Elasticsearch_Output", "Elasticsearch 8.x/9.x Vector Store", "output", "org.opencrawling.elasticsearch.ElasticsearchOutputConnector", 10, Map.of(
+            "elasticsearchUris", "http://localhost:9200",
+            "elasticsearchUsername", "elastic",
+            "elasticsearchPassword", "",
+            "elasticsearchApiKey", "",
+            "elasticsearchIndexName", "enterprise_kb",
+            "elasticsearchDimensions", "1024",
+            "elasticsearchSimilarity", "cosine",
+            "elasticsearchIndexType", "hnsw"
         )));
         defaults.add(new ConnectorDTO("Vespa_Output", "Vespa Hybrid Search Store", "output", "org.opencrawling.vespa.VespaOutputConnector", 10, Map.of(
             "vespaEndpoint", "http://localhost:8080",
@@ -202,6 +417,69 @@ public class ConnectorController {
             "keyStrategy", "HIERARCHICAL",
             "tombstoneAction", "DELETE_KEY"
         )));
+        defaults.add(new ConnectorDTO("S3_Migration_Output", "AWS S3 Migration Target (Migration Mode only)", "output", "org.opencrawling.s3.S3OutputConnector", 10, Map.of(
+            "bucket", "enterprise-migration-lake",
+            "region", "us-east-1",
+            "credentialsStrategy", "DEFAULT_CHAIN",
+            "keyStrategy", "HIERARCHICAL",
+            "keyPrefix", "migration/v1/",
+            "storageClass", "INTELLIGENT_TIERING",
+            "serverSideEncryption", "SSE_S3",
+            "tombstoneAction", "DELETE_OBJECTS"
+        )));
+        defaults.add(new ConnectorDTO("Alfresco_Migration_Output", "Alfresco Content Services Migration Target (Migration Mode only)", "output", "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8081/alfresco"),
+            Map.entry("username", "admin"),
+            Map.entry("password", "admin"),
+            Map.entry("targetParentNodeId", "-root-"),
+            Map.entry("targetPathPrefix", "MigratedContent/v1"),
+            Map.entry("pathStrategy", "HIERARCHICAL"),
+            Map.entry("nodeType", "cm:content"),
+            Map.entry("conflictStrategy", "OVERWRITE"),
+            Map.entry("syncPermissions", "true"),
+            Map.entry("defaultPermissionRole", "Consumer"),
+            Map.entry("validateAuthorities", "true"),
+            Map.entry("authorityValidationMode", "IN_FLIGHT"),
+            Map.entry("missingAuthorityAction", "SKIP"),
+            Map.entry("authorityGapReportPath", "reports/alfresco-authority-gap.json"),
+            Map.entry("tombstoneAction", "MOVE_TO_TRASH")
+        )));
+        defaults.add(new ConnectorDTO("OpenArch_Output", "Hyland OpenArch Federated Ingestion & Parquet Vector Bridge", "output", "org.opencrawling.openarch.output.OpenArchOutputConnector", 10, Map.ofEntries(
+            Map.entry("endpointUrl", "http://localhost:8080"),
+            Map.entry("repositoryId", "default"),
+            Map.entry("username", "Administrator"),
+            Map.entry("password", "Administrator"),
+            Map.entry("rootFolderId", "00000000-0000-0000-0000-000000000000"),
+            Map.entry("parquetBatchThreshold", "50"),
+            Map.entry("embeddingsType", "mxbai-embed-large"),
+            Map.entry("dimensions", "1024"),
+            Map.entry("upsert", "true"),
+            Map.entry("syncAcls", "true"),
+            Map.entry("uploadBinaries", "true")
+        )));
+        defaults.add(new ConnectorDTO("Hyland_CIC_Output", "Hyland Content Innovation Cloud (HXP) Output Connector", "output", "org.opencrawling.hyland.cic.output.HylandCicOutputConnector", 10, Map.ofEntries(
+            Map.entry("baseUrl", "https://api.content.hylandcloud.com"),
+            Map.entry("idpTokenUrl", "https://identity.hylandcloud.com/connect/token"),
+            Map.entry("clientId", ""),
+            Map.entry("clientSecret", ""),
+            Map.entry("scopes", "hxp hxp.integrations hxp.content"),
+            Map.entry("tenantId", ""),
+            Map.entry("targetFolderPath", "/Enterprise_Ingestion/Automated_Archive"),
+            Map.entry("targetFolderId", ""),
+            Map.entry("defaultContentType", "ArchivedDocument"),
+            Map.entry("conflictResolution", "create-version")
+        )));
+        defaults.add(new ConnectorDTO("Iceberg_Lakehouse_Output", "Apache Iceberg Lakehouse Output Connector", "output", "org.opencrawling.iceberg.output.IcebergOutputConnector", 10, Map.of(
+            "catalogType", "rest",
+            "catalogUri", "http://localhost:8181",
+            "catalogName", "opencrawling_catalog",
+            "warehouse", "s3://warehouse",
+            "namespace", "enterprise_data",
+            "tableName", "documents",
+            "tableStrategy", "UNIFIED",
+            "partitionStrategy", "YEAR_MONTH",
+            "autoSchemaEvolution", "true"
+        )));
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
@@ -219,19 +497,19 @@ public class ConnectorController {
         try {
             java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });
             java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });
             java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn -> {
                 String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name))) {
+                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
                     storage.add(new ConnectorDTO(name, name + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>()));
                 }
             });
@@ -240,13 +518,38 @@ public class ConnectorController {
         }
     }
 
+    @Operation(summary = "List all connectors", description = "Retrieves all configured connectors across all categories.")
+    @ApiResponse(responseCode = "200", description = "List of all configured connectors successfully retrieved")
+    @GetMapping
+    public List<ConnectorDTO> getAllConnectors() {
+        return visible(storage);
+    }
+
+    @Operation(summary = "List connectors by type", description = "Retrieves all configured connectors filtered by category ('repository', 'output', or 'transformation').")
+    @ApiResponse(responseCode = "200", description = "Filtered list of connectors successfully retrieved")
     @GetMapping("/{type}")
-    public List<ConnectorDTO> getConnectors(@PathVariable String type) {
-        return storage.stream()
+    public List<ConnectorDTO> getConnectors(
+            @Parameter(description = "Connector category type ('repository', 'output', or 'transformation')", example = "repository") @PathVariable String type) {
+        return visible(storage.stream()
                 .filter(c -> c.type().equalsIgnoreCase(type))
+                .toList());
+    }
+
+    /**
+     * Connectors as the caller may see them: complete for admins (and with authorization off), without their
+     * configuration, which holds endpoints and credentials, for job creators who pick connectors for their jobs.
+     */
+    private List<ConnectorDTO> visible(List<ConnectorDTO> connectors) {
+        if (authorization == null || authorization.isAdmin()) {
+            return connectors;
+        }
+        return connectors.stream()
+                .map(c -> new ConnectorDTO(c.name(), c.description(), c.type(), c.className(), c.maxConnections(), null))
                 .toList();
     }
 
+    @Operation(summary = "Create or update connector", description = "Saves or updates a connector configuration definition.")
+    @ApiResponse(responseCode = "201", description = "Connector definition saved successfully")
     @PostMapping
     public ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
         System.out.println("Saving connector: " + connector.name());
@@ -256,33 +559,59 @@ public class ConnectorController {
         return ResponseEntity.status(201).build();
     }
 
+    @Operation(summary = "Test connector connectivity", description = "Performs a live connectivity and authentication verification check against the target system.")
+    @ApiResponse(responseCode = "200", description = "Connection check result with status and diagnostic message")
     @PostMapping("/check")
     public ResponseEntity<ConnectionCheckResult> checkConnection(@RequestBody ConnectorDTO connector) {
         System.out.println("Checking connection for connector: " + connector.name() + " (" + connector.className() + ")");
         ConnectorDTO target = connector;
         if (target.className() == null && target.name() != null) {
-            target = storage.stream()
+            ConnectorDTO stored = storage.stream()
                     .filter(c -> c.name().equalsIgnoreCase(connector.name()))
                     .findFirst()
-                    .orElse(connector);
+                    .orElse(null);
+            if (stored != null) {
+                Map<String, String> mergedConfig = new HashMap<>(stored.configuration() != null ? stored.configuration() : Map.of());
+                if (connector.configuration() != null) {
+                    mergedConfig.putAll(connector.configuration());
+                }
+                target = new ConnectorDTO(
+                        stored.name(),
+                        connector.description() != null ? connector.description() : stored.description(),
+                        connector.type() != null ? connector.type() : stored.type(),
+                        stored.className(),
+                        connector.maxConnections() != null ? connector.maxConnections() : stored.maxConnections(),
+                        mergedConfig
+                );
+            }
         }
         ConnectionCheckResult result = checkerService.check(target);
         return ResponseEntity.ok(result);
     }
 
+    @Operation(summary = "Delete connector", description = "Removes a configured connector definition by its name/id.")
+    @ApiResponse(responseCode = "200", description = "Connector deleted successfully")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteConnector(@PathVariable String id) {
+    public ResponseEntity<Void> deleteConnector(
+            @Parameter(description = "Connector unique identifier or name", example = "FileSystem_Local") @PathVariable String id) {
         storage.removeIf(c -> c.name().equals(id));
         PersistenceHelper.save("connectors.json", storage);
         return ResponseEntity.ok().build();
     }
 
+    @Schema(description = "Connector configuration and metadata definition")
     public static record ConnectorDTO(
+        @Schema(description = "Unique connector identifier or name", example = "FileSystem_Local")
         String name, 
+        @Schema(description = "Human-readable description of the connector", example = "Local File System")
         String description, 
+        @Schema(description = "Connector category: 'repository', 'output', or 'transformation'", example = "repository")
         String type, 
+        @Schema(description = "Fully-qualified Java class name of the connector implementation", example = "org.opencrawling.crawler.connectors.filesystem.FileConnector")
         String className, 
+        @Schema(description = "Maximum concurrent connections allowed for this connector", example = "10")
         Integer maxConnections, 
+        @Schema(description = "Key-value configuration properties specific to this connector implementation")
         Map<String, String> configuration
     ) {}
 }

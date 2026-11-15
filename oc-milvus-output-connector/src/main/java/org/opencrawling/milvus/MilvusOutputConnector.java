@@ -19,13 +19,14 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.milvus.v2.client.ConnectConfig;
 import io.milvus.v2.client.MilvusClientV2;
+import io.milvus.v2.service.vector.request.DeleteReq;
 import io.milvus.v2.service.vector.request.InsertReq;
+import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
-import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.security.PermissionRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -76,7 +77,7 @@ public class MilvusOutputConnector implements OutputConnector {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
         this.gson = new Gson();
     }
 
@@ -117,6 +118,23 @@ public class MilvusOutputConnector implements OutputConnector {
     @Override
     public Mono<Void> send(RepositoryDocument document) {
         return Mono.fromRunnable(() -> {
+            if (document.action() == DocumentAction.DELETE) {
+                log.info("Received DELETE action for document {}. Deleting from Milvus collection '{}'.",
+                        document.id(), collectionName);
+                try {
+                    DeleteReq deleteReq = DeleteReq.builder()
+                            .collectionName(collectionName)
+                            .filter("id == '" + escapeFilter(document.id()) + "' or documentId == '" + escapeFilter(document.id()) + "'")
+                            .build();
+                    getOrInitClient().delete(deleteReq);
+                    log.info("Successfully deleted document {} from Milvus collection '{}'.", document.id(), collectionName);
+                } catch (Exception e) {
+                    log.error("Failed to delete document {} from Milvus: {}", document.id(), e.getMessage(), e);
+                    throw new RuntimeException("Failed to delete document from Milvus: " + document.id(), e);
+                }
+                return;
+            }
+
             try (InputStream is = document.contentStream()) {
                 byte[] contentBytes = is.readAllBytes();
 
@@ -185,24 +203,15 @@ public class MilvusOutputConnector implements OutputConnector {
                         embedding[0] = 1.0f;
                     }
 
-                    // Map ACL lists
-                    List<String> allowedRead = new ArrayList<>();
-                    List<String> deniedRead = new ArrayList<>();
-                    boolean inheritanceEnabled = true;
-
-                    if (document.security() != null) {
-                        inheritanceEnabled = document.security().inheritanceEnabled();
-                        for (PermissionRule rule : document.security().permissions()) {
-                            if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                                allowedRead.add(rule.identity());
-                            } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                deniedRead.add(rule.identity());
-                            }
-                        }
-                    }
+                    // Map ACL lists (one normalization for every store, see EffectiveAcl)
+                    EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                    List<String> allowedRead = effectiveAcl.allowedRead();
+                    List<String> deniedRead = effectiveAcl.deniedRead();
+                    boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
                     JsonObject row = new JsonObject();
                     row.addProperty(MilvusConstants.FIELD_ID, chunkId);
+                    row.addProperty(MilvusConstants.FIELD_DOCUMENT_ID, document.id());
                     row.addProperty(MilvusConstants.FIELD_TEXT, chunk.getText());
                     row.addProperty(MilvusConstants.FIELD_URI, document.uri());
                     row.addProperty(MilvusConstants.FIELD_ACL, document.acl());
@@ -240,5 +249,10 @@ public class MilvusOutputConnector implements OutputConnector {
                 throw new RuntimeException("Failed to process document for Milvus: " + document.id(), e);
             }
         });
+    }
+
+    private String escapeFilter(String val) {
+        if (val == null) return "";
+        return val.replace("'", "\\'");
     }
 }

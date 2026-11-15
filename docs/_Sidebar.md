@@ -3,8 +3,20 @@
 * **[Home](Home)**
 * **[Architecture](Architecture)**
 * **[Configuration Guide](Configuration-Guide)**
+* **[Lakehouse Audit Reporting & Ledger](Lakehouse-Audit-Reporting-and-Ledger)**
 * **[Model Context Protocol](Model-Context-Protocol)**
+* **[Web Crawler Specification](Web-Crawler-Specification)**
+* **[Document Authorization](Document-Authorization)**
+* **[Security and Identity Management](Security-and-Identity-Management)**
+* **[Enterprise Multi-Agent Integration](Enterprise-Multi-Agent-Integration)**
+* **[gRPC Push Connector](gRPC-Push-Connector)**
 * **[Migration Guide](Migration-Guide)**
+
+---
+
+### 🧪 Testing
+
+* **[Reporting Integration Test](Lakehouse-Audit-Reporting-and-Ledger#integration-testing-with-decoupled-docker-stack)**
 
 ---
 

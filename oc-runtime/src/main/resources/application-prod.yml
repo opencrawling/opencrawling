@@ -37,3 +37,18 @@ spring:
         driver-class-name: org.postgresql.Driver
         dimensions: ${SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS:1024}
         initialize-schema: ${SPRING_AI_VECTORSTORE_PGVECTOR_INITIALIZE_SCHEMA:true}
+
+springdoc:
+  api-docs:
+    path: ${SPRINGDOC_API_DOCS_PATH:/v3/api-docs}
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: ${SPRINGDOC_SWAGGER_UI_PATH:/swagger-ui.html}
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+    display-request-duration: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: none
+  show-actuator: false
+

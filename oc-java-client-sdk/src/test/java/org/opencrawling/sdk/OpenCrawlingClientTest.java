@@ -40,5 +40,7 @@ class OpenCrawlingClientTest {
         assertNotNull(client.system());
         assertNotNull(client.observability());
         assertNotNull(client.narrativization());
+        assertNotNull(client.reports());
+        assertNotNull(client.openApi());
     }
 }

@@ -21,6 +21,55 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # Color variables
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -68,11 +117,23 @@ command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl is required but not ins
 command -v jq >/dev/null 2>&1 || { echo -e "${RED}jq is required but not installed. Aborting.${NC}" >&2; exit 1; }
 
 COMPOSE_FILE="oc-ozone-output-connector/docker/docker-compose-decoupled-with-ozone.yml"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 
 # Helper function for docker compose commands
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
+
+cleanup() {
+  echo -e "\n${YELLOW}Tearing down Ozone migration decoupled test environment...${NC}"
+  compose down --remove-orphans -v >/dev/null 2>&1 || true
+  rm -rf "${TEST_DOC_DIR:-}"
+}
+trap cleanup EXIT
 
 # Clean up any existing containers from previous test runs
 echo -e "${YELLOW}Cleaning up previous decoupled Ozone migration containers...${NC}"
@@ -80,7 +141,12 @@ compose down --remove-orphans -v || true
 
 # Build microservices images
 echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source...${NC}"
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW:-}SKIP_BUILD=true: Skipping compose build and using existing images.${NC:-}"
+else
+  echo -e "${YELLOW:-}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC:-}"
+  compose build
+fi
 
 # Dedicated crawl source folder: contains ONLY the documents to migrate, so runtime state in
 # oc-runtime/data (settings, connectors, jobs, claims) never ends up in the target bucket.
@@ -396,7 +462,7 @@ echo -e "${CYAN}----------------------------------------------------${NC}"
 
 # Validate schema version
 OIS_SCHEMA=$(echo "$OIS_JSON" | jq -r '."$schema" // ""')
-if [ "$OIS_SCHEMA" != "https://opencrawling.org/schemas/v1/ois-document.json" ]; then
+if [ "$OIS_SCHEMA" != "https://opencrawling.org/schemas/ois-document-schema.json" ]; then
   echo -e "${RED}FAIL: Invalid OIS schema URI: $OIS_SCHEMA${NC}"
   exit 1
 fi
@@ -424,7 +490,7 @@ fi
 echo -e "OIS URI (${SPRING_OPENCRAWLING_OUTPUT_OZONE_CLIENT_TYPE}):     ${GREEN}$OIS_URI${NC}"
 
 # Validate SHA-256 checksum in ContentRef
-OIS_SHA256=$(echo "$OIS_JSON" | jq -r '.contentRef.checksumSha256 // ""')
+OIS_SHA256=$(echo "$OIS_JSON" | jq -r '.content.sha256 // ""')
 if [ "$OIS_SHA256" != "$SOURCE_SHA256" ]; then
   echo -e "${RED}FAIL: OIS SHA-256 checksum ($OIS_SHA256) does not match source ($SOURCE_SHA256)!${NC}"
   exit 1
@@ -432,18 +498,18 @@ fi
 echo -e "OIS SHA-256:            ${GREEN}$OIS_SHA256${NC}"
 
 # Validate Size in ContentRef
-OIS_SIZE=$(echo "$OIS_JSON" | jq -r '.contentRef.contentLength // 0')
+OIS_SIZE=$(echo "$OIS_JSON" | jq -r '.content.sizeBytes // 0')
 if [ "$OIS_SIZE" -ne "$SOURCE_SIZE" ]; then
-  echo -e "${RED}FAIL: OIS contentRef.contentLength ($OIS_SIZE) does not match source size ($SOURCE_SIZE)!${NC}"
+  echo -e "${RED}FAIL: OIS content.sizeBytes ($OIS_SIZE) does not match source size ($SOURCE_SIZE)!${NC}"
   exit 1
 fi
 echo -e "OIS Content Size:       ${GREEN}$OIS_SIZE bytes${NC}"
 
 # Validate filename and binary locator in ContentRef
-OIS_FILENAME=$(echo "$OIS_JSON" | jq -r '.contentRef.filename // ""')
-OIS_KEY=$(echo "$OIS_JSON" | jq -r '.contentRef.key // ""')
+OIS_FILENAME=$(echo "$OIS_JSON" | jq -r '.content.filename // ""')
+OIS_KEY=$(echo "$OIS_JSON" | jq -r '.content.key // ""')
 if [ "$OIS_FILENAME" != "$TEST_FILENAME" ] || [ "$OIS_KEY" != "$BINARY_KEY" ]; then
-  echo -e "${RED}FAIL: OIS contentRef filename/key mismatch (filename='$OIS_FILENAME', key='$OIS_KEY', expected '$TEST_FILENAME' / '$BINARY_KEY')${NC}"
+  echo -e "${RED}FAIL: OIS content filename/key mismatch (filename='$OIS_FILENAME', key='$OIS_KEY', expected '$TEST_FILENAME' / '$BINARY_KEY')${NC}"
   exit 1
 fi
 echo -e "OIS Filename / Key:     ${GREEN}$OIS_FILENAME / $OIS_KEY${NC}"
@@ -456,6 +522,22 @@ fi
 SECURITY_INHERITANCE=$(echo "$OIS_JSON" | jq -r '.security.inheritanceEnabled')
 SECURITY_RULES=$(echo "$OIS_JSON" | jq -r '.security.permissions | length')
 echo -e "Zero-Trust Inheritance: ${GREEN}$SECURITY_INHERITANCE${NC} (${SECURITY_RULES} permission rules)"
+
+# Validate the OIS source and provenance blocks the pipeline stamps (#292)
+if ! echo "$OIS_JSON" | jq -e '(.source.type | type == "string") and (.source.instance | type == "string" and length > 0)' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar must carry source.type and source.instance${NC}"
+  exit 1
+fi
+if ! echo "$OIS_JSON" | jq -e '(.metadata["ois:provenance"].jobId | type == "string") and (.metadata["ois:provenance"].ingestedAt | type == "string")' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar must carry metadata.ois:provenance (jobId, ingestedAt)${NC}"
+  exit 1
+fi
+if ! echo "$OIS_JSON" | jq -e '.security.evaluationPolicy == "FAIL_CLOSED"' >/dev/null; then
+  echo -e "${RED}FAIL: OIS sidecar security must declare evaluationPolicy FAIL_CLOSED${NC}"
+  exit 1
+fi
+echo -e "OIS Source Instance:    ${GREEN}$(echo "$OIS_JSON" | jq -r '.source.instance')${NC}"
+echo -e "OIS Provenance Job:     ${GREEN}$(echo "$OIS_JSON" | jq -r '.metadata["ois:provenance"].jobId')${NC}"
 
 echo -e "${GREEN}PASSED: Companion OIS JSON metadata sidecar and Zero-Trust ACLs verified!${NC}"
 
@@ -484,19 +566,19 @@ echo -e "${YELLOW}==============================================================
 HTTP_STATUS="000"
 ELAPSED=0
 TIMEOUT=60
-until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $TIMEOUT ]; do
+until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "400" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $TIMEOUT ]; do
   HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/mcp 2>/dev/null || echo "")
   if [ -z "$HTTP_STATUS" ] || [ "$HTTP_STATUS" == "000" ]; then
     HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/ 2>/dev/null || echo "000")
   fi
-  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
     sleep 2
     ELAPSED=$((ELAPSED + 2))
   fi
 done
 echo -e "MCP Server HTTP Status: ${GREEN}$HTTP_STATUS${NC}"
 
-if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
   echo -e "${RED}Decoupled integration test failed: MCP Server returned unexpected status $HTTP_STATUS${NC}"
   compose logs oc-mcp-server
   exit 1
@@ -587,7 +669,7 @@ if [ "$LARGE_FILE_MB" -gt 0 ]; then
   if [ -z "$LARGE_KEY" ]; then echo -e "${RED}FAIL: ${LARGE_NAME} not found in the target bucket${NC}"; exit 1; fi
   TARGET_SHA256=$(docker exec target-ozone-om ozone sh key cat "/s3v/migration-target/$LARGE_KEY" 2>/dev/null | sha256_stdin)
   SIDECAR_SHA256=$(docker exec target-ozone-om ozone sh key cat "/s3v/migration-target/${LARGE_KEY}.ois.json" 2>/dev/null \
-    | jq -r '.contentRef.checksumSha256 // empty')
+    | jq -r '.content.sha256 // empty')
   if [ "$TARGET_SHA256" != "$LARGE_SHA256" ] || [ "$SIDECAR_SHA256" != "$LARGE_SHA256" ]; then
     echo -e "${RED}FAIL: large binary checksum mismatch${NC}"
     echo -e "  source:  $LARGE_SHA256\n  target:  $TARGET_SHA256\n  sidecar: $SIDECAR_SHA256"; exit 1
@@ -660,8 +742,8 @@ if [ "$LOAD_DOCS" -gt 0 ]; then
 
   # Every generated document must be in the target (binary + sidecar)
   LOAD_KEYS=$(docker exec target-ozone-om ozone sh key list -l 1000000 /s3v/migration-target 2>/dev/null || echo "[]")
-  LOAD_BINARIES=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("/load/doc-[0-9]+\\.bin$"))] | length')
-  LOAD_SIDECARS=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("/load/doc-[0-9]+\\.bin\\.ois\\.json$"))] | length')
+  LOAD_BINARIES=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("(^|/)load/doc-[0-9]+\\.bin$"))] | length')
+  LOAD_SIDECARS=$(echo "$LOAD_KEYS" | jq '[.[].name | select(test("(^|/)load/doc-[0-9]+\\.bin\\.ois\\.json$"))] | length')
   if [ "$LOAD_BINARIES" -ne "$LOAD_DOCS" ] || [ "$LOAD_SIDECARS" -ne "$LOAD_DOCS" ]; then
     echo -e "${RED}FAIL: target has ${LOAD_BINARIES} binaries / ${LOAD_SIDECARS} sidecars, expected ${LOAD_DOCS} each${NC}"; exit 1
   fi

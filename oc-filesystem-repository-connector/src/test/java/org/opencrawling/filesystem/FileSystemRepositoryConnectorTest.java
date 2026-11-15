@@ -58,6 +58,10 @@ class FileSystemRepositoryConnectorTest {
                     assertThat(doc.metadata().get("file_name")).containsExactly("test-document.txt");
                     assertThat(doc.metadata()).containsKey("file_path");
                     assertThat(doc.metadata().get("file_path")).containsExactly(testFile.toAbsolutePath().toString());
+                    assertThat(doc.metadata()).containsKey("relativePath");
+                    assertThat(doc.metadata().get("relativePath")).containsExactly("subfolder");
+                    assertThat(doc.metadata()).containsKey("relative_path");
+                    assertThat(doc.metadata().get("relative_path")).containsExactly("subfolder");
                     assertThat(doc.metadata()).containsKey("file_size");
                     assertThat(doc.metadata()).containsKey("extension");
                     assertThat(doc.metadata().get("extension")).containsExactly("txt");

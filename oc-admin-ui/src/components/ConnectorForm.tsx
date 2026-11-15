@@ -16,7 +16,6 @@
 import { useForm } from 'react-hook-form'
 import { 
   Save, 
-  X, 
   Plus, 
   Trash2, 
   Plug2,
@@ -35,7 +34,8 @@ import {
   Network,
   Layers,
   Globe,
-  Archive
+  Archive,
+  Cloud
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { connectorApi } from '../lib/api'
@@ -107,8 +107,17 @@ const getConnectorIconInfo = (className: string) => {
   if (className.toLowerCase().includes('ozone')) {
     return { icon: Archive, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
   }
+  if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
+    return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
+  }
+  if (className.includes('web.WebRepositoryConnector')) {
+    return { icon: Globe, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
+  if (className.includes('GrpcPush') || className.includes('grpc-push') || className.includes('grpcPush')) {
+    return { icon: Network, color: 'text-violet-400', bg: 'bg-violet-400/10', border: 'border-violet-500/20' }
   }
   if (className.includes('Ollama')) {
     return { icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-500/20' }
@@ -122,8 +131,90 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('LDAP')) {
     return { icon: Key, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
   }
+  if (className.includes('openarch') || className.includes('OpenArch')) {
+    return { icon: Layers, color: 'text-indigo-400', bg: 'bg-indigo-400/10', border: 'border-indigo-500/20' }
+  }
+  if (className.includes('hyland.cic') || className.includes('HylandCic')) {
+    return { icon: Cloud, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
   return { icon: Plug2, color: 'text-muted-foreground', bg: 'bg-muted-foreground/10', border: 'border-muted-foreground/20' }
 }
+
+interface S3HeaderPair {
+  key: string
+  value: string
+}
+
+interface S3VendorPreset {
+  id: string
+  name: string
+  description: string
+  headers: S3HeaderPair[]
+}
+
+const S3_VENDOR_PRESETS: S3VendorPreset[] = [
+  {
+    id: 'ecs-full',
+    name: 'Dell EMC ECS (Metadata Search & Multi-Tenancy)',
+    description: 'Real-time metadata search indexing, tenant namespace routing, and retention',
+    headers: [
+      { key: 'x-emc-metadata-search', value: 'Department=${metadata.department},Classification=${metadata.classification}' },
+      { key: 'x-emc-namespace', value: 'default-namespace' },
+      { key: 'x-emc-retention-period', value: '31536000' }
+    ]
+  },
+  {
+    id: 'ecs-namespace',
+    name: 'Dell EMC ECS (Tenant Namespace only)',
+    description: 'Directs object ingestion to a dedicated ECS tenant namespace',
+    headers: [
+      { key: 'x-emc-namespace', value: 'finance-tenant' }
+    ]
+  },
+  {
+    id: 'ibm-cos',
+    name: 'IBM Cloud Object Storage (Key Protect SSE)',
+    description: 'Enforces IBM Key Protect customer-root-key envelope encryption',
+    headers: [
+      { key: 'ibm-sse-kp-customer-root-key-crn', value: 'crn:v1:bluemix:public:kms:us-south:a/account-id:key-id' },
+      { key: 'ibm-sse-kp-encryption-algorithm', value: '256' }
+    ]
+  },
+  {
+    id: 'hitachi-hcp',
+    name: 'Hitachi Content Platform (HCP Retention & Shredding)',
+    description: 'Enforces HCP regulatory retention hold and cryptographic shredding',
+    headers: [
+      { key: 'x-hcp-retention', value: '0' },
+      { key: 'x-hcp-shred', value: 'true' }
+    ]
+  },
+  {
+    id: 'netapp-sg',
+    name: 'NetApp StorageGRID (Compliance Retention)',
+    description: 'Applies NetApp StorageGRID regulatory compliance retention lock',
+    headers: [
+      { key: 'x-ntap-sg-compliance-retention', value: '2030-12-31T23:59:59Z' }
+    ]
+  },
+  {
+    id: 'cloudflare-r2',
+    name: 'Cloudflare R2 (Jurisdiction Placement)',
+    description: 'Directs data localization to European Union or specific jurisdiction',
+    headers: [
+      { key: 'cf-placement', value: 'eu' }
+    ]
+  },
+  {
+    id: 'standard-s3-meta',
+    name: 'Standard S3 / MinIO (Custom User Metadata)',
+    description: 'Attaches custom x-amz-meta-* user headers with document and metadata variables',
+    headers: [
+      { key: 'x-amz-meta-source-id', value: '${document.id}' },
+      { key: 'x-amz-meta-department', value: '${metadata.department | Unknown}' }
+    ]
+  }
+]
 
 export default function ConnectorForm() {
   const [activeTab, setActiveTab] = useState<ConnectorType>('repository')
@@ -131,6 +222,52 @@ export default function ConnectorForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null)
+
+  const [s3CustomHeaders, setS3CustomHeaders] = useState<S3HeaderPair[]>([])
+  const [selectedPreset, setSelectedPreset] = useState<string>('')
+  const [newHeaderKey, setNewHeaderKey] = useState('')
+  const [newHeaderValue, setNewHeaderValue] = useState('')
+
+  const updateS3Headers = (headers: S3HeaderPair[]) => {
+    setS3CustomHeaders(headers)
+    const map: Record<string, string> = {}
+    headers.forEach(h => {
+      if (h.key && h.key.trim()) {
+        map[h.key.trim()] = h.value || ''
+      }
+    })
+    setValue('configuration.customHeaders', JSON.stringify(map))
+  }
+
+  const handleApplyPreset = (presetId: string) => {
+    const preset = S3_VENDOR_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+    const existingMap = new Map<string, string>(s3CustomHeaders.map(h => [h.key, h.value]))
+    preset.headers.forEach(h => existingMap.set(h.key, h.value))
+    const merged = Array.from(existingMap.entries()).map(([key, value]) => ({ key, value }))
+    updateS3Headers(merged)
+    setSelectedPreset('')
+  }
+
+  const handleAddCustomHeader = () => {
+    if (!newHeaderKey.trim()) return
+    const existing = s3CustomHeaders.filter(h => h.key !== newHeaderKey.trim())
+    const updated = [...existing, { key: newHeaderKey.trim(), value: newHeaderValue }]
+    updateS3Headers(updated)
+    setNewHeaderKey('')
+    setNewHeaderValue('')
+  }
+
+  const handleRemoveCustomHeader = (keyToRemove: string) => {
+    const updated = s3CustomHeaders.filter(h => h.key !== keyToRemove)
+    updateS3Headers(updated)
+  }
+
+  const handleHeaderChange = (index: number, field: 'key' | 'value', val: string) => {
+    const updated = [...s3CustomHeaders]
+    updated[index] = { ...updated[index], [field]: val }
+    updateS3Headers(updated)
+  }
 
   const [isCheckingConnection, setIsCheckingConnection] = useState(false)
   const [checkResult, setCheckResult] = useState<{ success: boolean; message: string; details?: string } | null>(null)
@@ -152,6 +289,16 @@ export default function ConnectorForm() {
   const vespaTlsEnabledBool = vespaTlsEnabled === true || vespaTlsEnabled === 'true'
   const vespaEndpointValue = watch('configuration.vespaEndpoint')
   const solrMode = watch('configuration.solrMode') || 'standalone'
+  const doxisAuthType = watch('configuration.authType') || 'basic'
+  const sharePointCrawlMode = watch('configuration.crawlMode') || 'delta'
+  const mfilesAuthType = watch('configuration.authType') || 'token'
+  const mfilesCrawlMode = watch('configuration.crawlMode') || 'search'
+  const filenetAuthType = watch('configuration.authType') || 'basic'
+  const filenetCrawlMode = watch('configuration.crawlMode') || 'query'
+  const documentumAuthType = watch('configuration.authType') || 'basic'
+  const documentumCrawlMode = watch('configuration.crawlMode') || 'dql'
+  const openarchCrawlMode = watch('configuration.crawlMode') || 'QUERY'
+  const camundaAuthType = watch('configuration.authType') || 'basic'
 
   const fetchConnectors = async () => {
     setIsLoading(true)
@@ -174,6 +321,10 @@ export default function ConnectorForm() {
   const handleReset = () => {
     setSelectedConnector(null)
     setCheckResult(null)
+    setS3CustomHeaders([])
+    setSelectedPreset('')
+    setNewHeaderKey('')
+    setNewHeaderValue('')
     reset({ 
       name: '', 
       description: '', 
@@ -187,7 +338,34 @@ export default function ConnectorForm() {
   const handleSelectConnector = (connector: ConnectorFormData) => {
     setSelectedConnector(connector.name)
     setCheckResult(null)
+    setSelectedPreset('')
+    setNewHeaderKey('')
+    setNewHeaderValue('')
     reset(connector)
+
+    if (connector.className === 'org.opencrawling.s3.S3OutputConnector' && connector.configuration) {
+      if (connector.configuration.customHeaders) {
+        try {
+          const parsed = typeof connector.configuration.customHeaders === 'string'
+            ? JSON.parse(connector.configuration.customHeaders as string)
+            : connector.configuration.customHeaders
+          const list = Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) }))
+          setS3CustomHeaders(list)
+        } catch {
+          setS3CustomHeaders([])
+        }
+      } else {
+        const list: S3HeaderPair[] = []
+        Object.entries(connector.configuration).forEach(([k, v]) => {
+          if (k.startsWith('customHeader.')) {
+            list.push({ key: k.substring('customHeader.'.length), value: String(v) })
+          }
+        })
+        setS3CustomHeaders(list)
+      }
+    } else {
+      setS3CustomHeaders([])
+    }
   }
 
   const handleCheckConnection = async () => {
@@ -243,9 +421,18 @@ export default function ConnectorForm() {
       { label: 'Flowable Repository Connector', value: 'org.opencrawling.flowable.FlowableRepositoryConnector' },
       { label: 'Camunda Repository Connector', value: 'org.opencrawling.camunda.CamundaRepositoryConnector' },
       { label: 'Alfresco Process Services (APS) Repository', value: 'org.opencrawling.aps.ApsRepositoryConnector' },
+      { label: 'Web Crawler (HTTP/HTTPS)', value: 'org.opencrawling.web.WebRepositoryConnector' },
       { label: 'Apache StormCrawler Web Engine', value: 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector' },
       { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
+      { label: 'Doxis Repository (Intelligent Content Automation)', value: 'org.opencrawling.doxis.DoxisRepositoryConnector' },
+      { label: 'Microsoft SharePoint (Microsoft Graph API)', value: 'org.opencrawling.sharepoint.SharePointRepositoryConnector' },
+      { label: 'M-Files Repository (Knowledge Work Automation)', value: 'org.opencrawling.mfiles.MFilesRepositoryConnector' },
+      { label: 'IBM FileNet P8 (Content Platform Engine)', value: 'org.opencrawling.filenet.FileNetRepositoryConnector' },
+      { label: 'OpenText Documentum (REST Services)', value: 'org.opencrawling.documentum.DocumentumRepositoryConnector' },
       { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
+      { label: 'gRPC Push Ingestion Connector', value: 'org.opencrawling.push.grpc.GrpcPushRepositoryConnector' },
+      { label: 'Hyland OpenArch Federated Repository', value: 'org.opencrawling.openarch.repository.OpenArchRepositoryConnector' },
+      { label: 'Hyland Content Innovation Cloud (HXP REST API)', value: 'org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector' },
     ],
     transformation: [
       { label: 'Ollama Embedding', value: 'org.opencrawling.embedding.OllamaEmbeddingConnector' },
@@ -257,12 +444,18 @@ export default function ConnectorForm() {
       { label: 'Qdrant Vector Store', value: 'org.opencrawling.qdrant.QdrantOutputConnector' },
       { label: 'OpenSearch 2.x Output Connector', value: 'org.opencrawling.opensearch2.OpenSearch2OutputConnector' },
       { label: 'OpenSearch 3.x Output Connector', value: 'org.opencrawling.opensearch3.OpenSearch3OutputConnector' },
+      { label: 'Elasticsearch 8.x/9.x Output Connector', value: 'org.opencrawling.elasticsearch.ElasticsearchOutputConnector' },
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
       { label: 'Doxis 4 ECM Archive (CSB REST API)', value: 'org.opencrawling.doxis.output.DoxisOutputConnector' },
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
       { label: 'Apache Ozone (Migration Mode only)', value: 'org.opencrawling.ozone.OzoneOutputConnector' },
+      { label: 'AWS S3 (Migration Mode only)', value: 'org.opencrawling.s3.S3OutputConnector' },
+      { label: 'Alfresco Content Services (Migration Mode only)', value: 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' },
+      { label: 'Hyland OpenArch Federated Ingestion & Parquet Vector Bridge', value: 'org.opencrawling.openarch.output.OpenArchOutputConnector' },
+      { label: 'Hyland Content Innovation Cloud (HXP Output)', value: 'org.opencrawling.hyland.cic.output.HylandCicOutputConnector' },
+      { label: 'Apache Iceberg Lakehouse Output Connector', value: 'org.opencrawling.iceberg.output.IcebergOutputConnector' },
     ],
     authority: [
       { label: 'Active Directory', value: 'org.opencrawling.authorities.authorities.activedirectory.ActiveDirectoryAuthority' },
@@ -510,8 +703,8 @@ export default function ConnectorForm() {
                         <label className="text-sm font-medium">Alfresco API URL</label>
                         <input 
                           {...register('configuration.url', { required: true })}
-                          placeholder="http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1"
-                          defaultValue="http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1"
+                          placeholder="http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1"
+                          defaultValue="http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
@@ -772,31 +965,93 @@ export default function ConnectorForm() {
                   {selectedClass === 'org.opencrawling.camunda.CamundaRepositoryConnector' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">Camunda REST API Base URL</label>
+                        <label className="text-sm font-medium">Camunda 8 REST API Base URL</label>
                         <input 
                           {...register('configuration.url', { required: true })}
-                          placeholder="http://localhost:8080/engine-rest"
-                          defaultValue="http://localhost:8080/engine-rest"
+                          placeholder="http://localhost:8080/v2"
+                          defaultValue="http://localhost:8080/v2"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Username</label>
-                        <input 
-                          {...register('configuration.username')}
-                          placeholder="demo"
-                          defaultValue="demo"
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select 
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
+                        >
+                          <option value="basic">Basic Authentication (Local / Self-Managed)</option>
+                          <option value="oauth2">OAuth2 / OIDC Client Credentials (Keycloak / Camunda SaaS)</option>
+                        </select>
                       </div>
+
+                      {camundaAuthType === 'basic' ? (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Username</label>
+                            <input 
+                              {...register('configuration.username')}
+                              placeholder="demo"
+                              defaultValue="demo"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Password</label>
+                            <input 
+                              type="password"
+                              {...register('configuration.password')}
+                              placeholder="demo"
+                              defaultValue="demo"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">OAuth2 Token Endpoint URL</label>
+                            <input 
+                              {...register('configuration.oauthTokenUrl')}
+                              placeholder="https://login.cloud.camunda.io/oauth/token"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Client ID</label>
+                            <input 
+                              {...register('configuration.clientId')}
+                              placeholder="Client ID"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Client Secret</label>
+                            <input 
+                              type="password"
+                              {...register('configuration.clientSecret')}
+                              placeholder="Client Secret"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">Audience</label>
+                            <input 
+                              {...register('configuration.audience')}
+                              placeholder="zeebe-api"
+                              defaultValue="zeebe-api"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        </>
+                      )}
+
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Password</label>
+                        <label className="text-sm font-medium">Tenant ID (Optional)</label>
                         <input 
-                          type="password"
-                          {...register('configuration.password')}
-                          placeholder="demo"
-                          defaultValue="demo"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          {...register('configuration.tenantId')}
+                          placeholder="e.g. <default> or tenant-1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
                       <div className="space-y-2">
@@ -809,10 +1064,10 @@ export default function ConnectorForm() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Process Definition Key (Optional)</label>
+                        <label className="text-sm font-medium">Process Definition Key / BPMN ID (Optional)</label>
                         <input 
                           {...register('configuration.processDefinitionKey')}
-                          placeholder="e.g. invoice-process"
+                          placeholder="e.g. order-process"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
@@ -823,9 +1078,10 @@ export default function ConnectorForm() {
                           defaultValue="all"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
-                          <option value="all">All (Active & Completed)</option>
+                          <option value="all">All (Active &amp; Completed)</option>
                           <option value="completed">Completed Only</option>
                           <option value="active">Active Only</option>
+                          <option value="canceled">Canceled Only</option>
                         </select>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">
@@ -837,7 +1093,31 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeVariablesCamunda" className="text-sm font-medium cursor-pointer">
-                          Include Historic BPMN Variables
+                          Include BPMN Variables
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeUserTasksCamunda"
+                          {...register('configuration.includeUserTasks')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeUserTasksCamunda" className="text-sm font-medium cursor-pointer">
+                          Include User Tasks
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeIncidentsCamunda"
+                          {...register('configuration.includeIncidents')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeIncidentsCamunda" className="text-sm font-medium cursor-pointer">
+                          Include Incidents
                         </label>
                       </div>
                       <div className="space-y-2 flex items-center gap-2 pt-6">
@@ -849,15 +1129,15 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeAclsCamunda" className="text-sm font-medium cursor-pointer">
-                          Include Identity Links & Zero-Trust ACLs
+                          Include Zero-Trust ACLs (Candidate Users/Groups)
                         </label>
                       </div>
 
                       <div className="col-span-2 p-3 bg-rose-500/10 border border-rose-500/20 rounded-md text-xs text-rose-300 flex items-start gap-2">
                         <ShieldCheck className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
                         <div>
-                          <span className="font-semibold text-rose-200">Collocated Workflow Pushdown: </span>
-                          Stamps <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_process_instance_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_users</code>, and <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_groups</code>. Enables zero-lag joins against <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">ACT_HI_IDENTITYLINK</code>.
+                          <span className="font-semibold text-rose-200">Camunda 8 (Zeebe &amp; REST v2): </span>
+                          Stamps <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda8_process_instance_key</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda8_bpmn_process_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_proc_inst_id</code>, <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_users</code>, and <code className="bg-rose-900/40 px-1 py-0.5 rounded text-rose-200">camunda_identity_groups</code>.
                         </div>
                       </div>
                     </div>
@@ -1007,6 +1287,81 @@ export default function ConnectorForm() {
                           Stamps <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_process_instance_id</code>, <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_identity_users</code>, and <code className="bg-amber-900/40 px-1 py-0.5 rounded text-amber-200">aps_identity_groups</code> for enterprise process authorization pushdown.
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Web Crawler: defaults for every job using this connector; a job's crawlSpec overrides them */}
+                  {selectedClass === 'org.opencrawling.web.WebRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">User Agent</label>
+                        <input
+                          {...register('configuration.userAgent', { required: true })}
+                          defaultValue="OpenCrawlingBot/1.0 (+https://opencrawling.github.io)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted">Must include a contact URL or email address so site owners can reach you.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Depth</label>
+                        <input type="number" {...register('configuration.maxDepth')} defaultValue={3} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Politeness Delay (ms)</label>
+                        <input type="number" {...register('configuration.delayMs')} defaultValue={1000} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Crawled Pages</label>
+                        <input type="number" {...register('configuration.maxPages')} defaultValue={1000} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Access Control</label>
+                        <select {...register('configuration.aclMode')} defaultValue="public" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none">
+                          <option value="public">Public: everyone can search the content</option>
+                          <option value="static">Restricted to one user or group</option>
+                        </select>
+                      </div>
+                      {watch('configuration.aclMode') === 'static' && (
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Allowed User or Group</label>
+                          <input {...register('configuration.aclIdentity', { required: true })} placeholder="e.g. employees" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Include Patterns (one regex per line)</label>
+                        <textarea {...register('configuration.includePatterns')} rows={3} placeholder="^/docs/" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Exclude Patterns (one regex per line)</label>
+                        <textarea {...register('configuration.excludePatterns')} rows={3} placeholder="\.(png|jpe?g|gif|css|js)$" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="webStayOnDomain" {...register('configuration.stayOnDomain')} defaultChecked={true} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webStayOnDomain" className="text-sm font-medium cursor-pointer">Stay on the seed domain</label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="webRespectRobots" {...register('configuration.respectRobots')} defaultChecked={true} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webRespectRobots" className="text-sm font-medium cursor-pointer">Respect robots.txt (turn off only for sites you own)</label>
+                      </div>
+                      <div className="flex items-center gap-2 col-span-2">
+                        <input type="checkbox" id="webAllowPrivate" {...register('configuration.allowPrivateNetworks')} defaultChecked={false} className="rounded border-border text-primary focus:ring-primary/50" />
+                        <label htmlFor="webAllowPrivate" className="text-sm font-medium cursor-pointer">Allow crawling private networks (intranets)</label>
+                      </div>
+                      {watch('configuration.allowPrivateNetworks') && (
+                        <>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">Private Network Allowlist</label>
+                            <input {...register('configuration.privateAllowlist', { required: true })} placeholder="intranet.example.com, 10.20.0.0/16" className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                            <p className="text-xs text-muted">Host names or CIDR ranges the crawler may reach. Everything else on internal networks stays blocked.</p>
+                          </div>
+                          {watch('configuration.aclMode') !== 'static' && (
+                            <div className="flex items-center gap-2 col-span-2">
+                              <input type="checkbox" id="webConfirmPublic" {...register('configuration.confirmPublicExposure')} className="rounded border-border text-primary focus:ring-primary/50" />
+                              <label htmlFor="webConfirmPublic" className="text-sm font-medium cursor-pointer">I confirm this private content may be searchable by everyone</label>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -1290,6 +1645,1621 @@ export default function ConnectorForm() {
                           <span className="font-semibold text-teal-200">Zero-Trust ACL & Collocated Pushdown: </span>
                           Stamps <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_object_id</code>, <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_repository_id</code>, <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_identity_users</code>, and <code className="bg-teal-900/40 px-1 py-0.5 rounded text-teal-200">cmis_identity_groups</code>. Pre-populates security permissions for collocated CMIS/Alfresco repository filtering and OIS envelopes.
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Doxis 4 CSB Repository Connector */}
+                  {selectedClass === 'org.opencrawling.doxis.DoxisRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a valid, licensed Doxis 4 installation (SER Group).</span>{' '}
+                          OpenCrawling does not include Doxis or any Doxis licence. Your licence must allow API (technical-user)
+                          sessions, and you need a reachable CSB 14.4+ with its REST API and a technical user with read rights.
+                          See the connector&apos;s README, section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Doxis CSB REST API URL</label>
+                        <input 
+                          {...register('configuration.url', { required: true })}
+                          placeholder="http://localhost:8080/restws/publicws/rest/api/v1"
+                          defaultValue="http://localhost:8080/restws/publicws/rest/api/v1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select 
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">Basic (CSB user name + password login)</option>
+                          <option value="ticket">CSB Session Ticket</option>
+                          <option value="oauth2">OAuth2 / OIDC Access Token</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Customer (Tenant)</label>
+                        <input 
+                          {...register('configuration.customerName')}
+                          placeholder="e.g. DX4"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.username')}
+                          placeholder="Supervisor"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {doxisAuthType === 'ticket' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Session Ticket</label>
+                          <input
+                            type="password"
+                            {...register('configuration.sessionTicket')}
+                            placeholder="CSB session ticket"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
+                      {doxisAuthType === 'oauth2' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Token URL</label>
+                          <input
+                            {...register('configuration.oauth2TokenUrl')}
+                            placeholder="https://auth.example.com/oauth/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.oauth2ClientId')}
+                            placeholder="opencrawling-client"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2ClientSecret')}
+                            placeholder="client secret"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                          <input
+                            {...register('configuration.oauth2Scope')}
+                            placeholder="doxis.read"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Access Token (Optional, Instead of Client Credentials)</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2AccessToken')}
+                            placeholder="eyJ…"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Role</label>
+                        <input 
+                          {...register('configuration.role')}
+                          placeholder="admins"
+                          defaultValue="admins"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Repository / Archive ID</label>
+                        <input 
+                          {...register('configuration.repositoryId')}
+                          placeholder="e.g. DB1 or the repository UUID"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select 
+                          {...register('configuration.crawlMode')}
+                          defaultValue="search"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="search">Document Class & Search Query (CQL)</option>
+                          <option value="folder">Electronic File / Folder Traversal</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Mode</label>
+                        <select 
+                          {...register('configuration.versionMode')}
+                          defaultValue="latest_only"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="latest_only">Latest Version Only</option>
+                          <option value="all_versions">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Document Classes (Comma-separated)</label>
+                        <input 
+                          {...register('configuration.documentClasses')}
+                          placeholder="TX_MigratedDocument,TX_LargeExternalDocument"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root E-File ID (Folder Mode)</label>
+                        <input 
+                          {...register('configuration.rootFolderId')}
+                          placeholder="e-file (record) UUID"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Search Query / Descriptors Filter (CQL WHERE)</label>
+                        <input 
+                          {...register('configuration.searchQuery')}
+                          placeholder="OBJECTNUMBER2 LIKE 'contracts-2026*'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Descriptor Metadata Prefix (Optional)</label>
+                        <input 
+                          {...register('configuration.descriptorPrefix')}
+                          placeholder="empty = Doxis names as-is, or doxis_desc_"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback Readers (No Instance ACEs)</label>
+                        <input 
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="e.g. group:Legal, everybody"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.batchSize', { valueAsNumber: true })}
+                          placeholder="100"
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallel Documents</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.parallelism', { valueAsNumber: true })}
+                          placeholder="2"
+                          defaultValue={2}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.maxContentSizeBytes', { valueAsNumber: true })}
+                          placeholder="52428800"
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (Seconds)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.timeoutSeconds', { valueAsNumber: true })}
+                          placeholder="120"
+                          defaultValue={120}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeSubfoldersDoxis"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Child Folders & Sub-E-Files
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeContentStreamDoxis"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeDescriptorsDoxis"
+                          {...register('configuration.includeDescriptors')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeDescriptorsDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Descriptors
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="includeAclsDoxis"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsDoxis" className="text-sm font-medium cursor-pointer">
+                          Include Security & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="emitLogicalDeletesDoxis"
+                          {...register('configuration.emitLogicalDeletes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="emitLogicalDeletesDoxis" className="text-sm font-medium cursor-pointer">
+                          Send Deletes for Logically Removed Documents
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="incrementalDoxis"
+                          {...register('configuration.incremental')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalDoxis" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Skip Unchanged, Detect Deletes; Search Mode)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="tenantIsolationDoxis"
+                          {...register('configuration.tenantIsolation')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="tenantIsolationDoxis" className="text-sm font-medium cursor-pointer">
+                          Tenant Isolation (Qualify Readers with the Customer, e.g. DX4/Legal)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input 
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/doxis-state"
+                          defaultValue="data/doxis-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Microsoft SharePoint (Microsoft Graph API) */}
+                  {selectedClass === 'org.opencrawling.sharepoint.SharePointRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a Microsoft Entra ID app registration.</span>{' '}
+                          Grant it the Microsoft Graph application permission Sites.Read.All (or Sites.Selected with read access
+                          to this site), have an administrator consent, and create a client secret. See the connector&apos;s
+                          README, section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">SharePoint Site URL</label>
+                        <input
+                          {...register('configuration.siteUrl', { required: true })}
+                          placeholder="https://contoso.sharepoint.com/sites/engineering"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Entra ID Tenant ID</label>
+                        <input
+                          {...register('configuration.tenantId', { required: true })}
+                          placeholder="72f988bf-86f1-41af-91ab-2d7cd011db47"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Application (Client) ID</label>
+                        <input
+                          {...register('configuration.clientId', { required: true })}
+                          placeholder="00000000-0000-0000-0000-000000000000"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Client Secret</label>
+                        <input
+                          type="password"
+                          {...register('configuration.clientSecret')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Document Libraries (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.driveNames')}
+                          placeholder="empty = every document library, e.g. Documents,Contracts"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="delta"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="delta">Delta Query (Incremental)</option>
+                          <option value="tree">Folder Tree Traversal (Permission Reconciliation)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">User Identities</label>
+                        <select
+                          {...register('configuration.userIdentity')}
+                          defaultValue="email"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="email">E-Mail / User Principal Name</option>
+                          <option value="id">Entra Object ID</option>
+                        </select>
+                      </div>
+                      {sharePointCrawlMode === 'tree' && (
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Root Folder Path</label>
+                          <input
+                            {...register('configuration.rootFolderPath')}
+                            placeholder="/ or /Specs/2026"
+                            defaultValue="/"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      )}
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Fallback Readers (When No Permissions Are Readable)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="empty = nobody, or group:records,user:auditor@contoso.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="col-span-2 pt-2">
+                        <p className="text-sm font-medium">Broad Access Grants</p>
+                        <p className="text-xs text-muted-foreground">
+                          Leave empty to grant nothing through them. Enter an identity your callers carry, or public to make
+                          such files readable by every caller.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">“Everyone Except External Users” Identity</label>
+                        <input
+                          {...register('configuration.everyoneExceptExternalIdentity')}
+                          placeholder="e.g. contoso-employees"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">“Everyone” Identity</label>
+                        <input
+                          {...register('configuration.everyoneIdentity')}
+                          placeholder="e.g. contoso-everyone"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Organization Sharing Links Identity</label>
+                        <input
+                          {...register('configuration.organizationLinkIdentity')}
+                          placeholder="e.g. contoso-employees"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Anonymous Sharing Links Identity</label>
+                        <input
+                          {...register('configuration.anonymousLinkIdentity')}
+                          placeholder="empty recommended"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Page Size</label>
+                        <input
+                          type="number"
+                          {...register('configuration.batchSize')}
+                          placeholder="100"
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallelism</label>
+                        <input
+                          type="number"
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue={4}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max File Size (Bytes)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.maxFileSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (Seconds)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.timeoutSeconds')}
+                          placeholder="30"
+                          defaultValue={30}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeContentStreamSharePoint"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamSharePoint" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeCustomFieldsSharePoint"
+                          {...register('configuration.includeCustomFields')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomFieldsSharePoint" className="text-sm font-medium cursor-pointer">
+                          Include Custom List Item Fields
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeAclsSharePoint"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsSharePoint" className="text-sm font-medium cursor-pointer">
+                          Include Entra ID Permissions & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeSubfoldersSharePoint"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersSharePoint" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders (Tree Mode)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="incrementalSharePoint"
+                          {...register('configuration.incremental')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalSharePoint" className="text-sm font-medium cursor-pointer">
+                          Incremental (Keep Delta Link and Item State)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">State Directory</label>
+                        <input
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/sharepoint-state"
+                          defaultValue="data/sharepoint-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Microsoft Graph URL (Sovereign Clouds)</label>
+                        <input
+                          {...register('configuration.graphUrl')}
+                          placeholder="https://graph.microsoft.com/v1.0"
+                          defaultValue="https://graph.microsoft.com/v1.0"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Entra ID Authority URL (Sovereign Clouds)</label>
+                        <input
+                          {...register('configuration.authorityUrl')}
+                          placeholder="https://login.microsoftonline.com"
+                          defaultValue="https://login.microsoftonline.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* M-Files Vault Repository Connector */}
+                  {selectedClass === 'org.opencrawling.mfiles.MFilesRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a licensed M-Files Server (M-Files Corporation).</span>{' '}
+                          OpenCrawling does not include M-Files or any M-Files licence. The M-Files Web Service (REST API) must be
+                          enabled, and the crawl account needs read access to the vault. See the connector&apos;s README, section
+                          Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">M-Files Web Service URL</label>
+                        <input
+                          {...register('configuration.url', { required: true })}
+                          placeholder="https://localhost/REST"
+                          defaultValue="https://localhost/REST"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Vault GUID</label>
+                        <input
+                          {...register('configuration.vaultGuid', { required: true })}
+                          placeholder="{C0B3B52E-6512-4BD8-8F2B-2A8E9A349201}"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="token">Authentication Token (Username / Password)</option>
+                          <option value="basic">Credentials on Every Request (X-Username / X-Password)</option>
+                          <option value="oauth2">OAuth2 / Entra ID Bearer Token</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Windows Domain (Optional)</label>
+                        <input
+                          {...register('configuration.domain')}
+                          placeholder="e.g. CORP"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {mfilesAuthType !== 'oauth2' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input
+                            {...register('configuration.username')}
+                            placeholder="mfiles_service_user"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input
+                            type="password"
+                            {...register('configuration.password')}
+                            placeholder=""
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
+                      {mfilesAuthType === 'oauth2' && (
+                        <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Token URL</label>
+                          <input
+                            {...register('configuration.oauth2TokenUrl')}
+                            placeholder="https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.oauth2ClientId')}
+                            placeholder="opencrawling-client-id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2ClientSecret')}
+                            placeholder="client secret"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                          <input
+                            {...register('configuration.oauth2Scope')}
+                            placeholder="api://m-files/.default"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Access Token (Optional, Instead of Client Credentials)</label>
+                          <input
+                            type="password"
+                            {...register('configuration.oauth2AccessToken')}
+                            placeholder="eyJ…"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="search"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="search">Metadata & Class Search</option>
+                          <option value="view">Predefined View</option>
+                          <option value="all_objects">All Vault Objects</option>
+                          <option value="vaf">Vault Application (VAF) Change Feed</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Object Type ID</label>
+                        <input
+                          {...register('configuration.objectType')}
+                          placeholder="0 = Document, -1 = all types"
+                          defaultValue={0}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Class IDs Filter (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.classIds')}
+                          placeholder="e.g. 14,22,5 (empty = all classes)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {mfilesCrawlMode === 'search' && (
+                        <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Search Conditions (MFWS)</label>
+                        <input
+                          {...register('configuration.searchQuery')}
+                          placeholder="e.g. p1020=5 or q=contract"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      {mfilesCrawlMode === 'view' && (
+                        <div className="space-y-2">
+                        <label className="text-sm font-medium">View ID or Path</label>
+                        <input
+                          {...register('configuration.viewId')}
+                          placeholder="e.g. 101 or v101/L5"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      {mfilesCrawlMode === 'vaf' && (
+                        <div className="space-y-2">
+                        <label className="text-sm font-medium">VAF Base Path</label>
+                        <input
+                          {...register('configuration.vafBasePath')}
+                          placeholder="/vaf/<app>"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Mode</label>
+                        <select
+                          {...register('configuration.versionMode')}
+                          defaultValue="latest_only"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="latest_only">Latest Version Only</option>
+                          <option value="all_versions">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Permission Identities</label>
+                        <select
+                          {...register('configuration.principalFormat')}
+                          defaultValue="token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="token">Tokens (mfiles:user:&lt;id&gt;, mfiles:group:&lt;id&gt;)</option>
+                          <option value="name">User and Group Names</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Fallback Readers (When No Permissions Are Readable)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="empty = nobody, or group:records,user:auditor"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Modified After (Optional)</label>
+                        <input
+                          {...register('configuration.modifiedAfter')}
+                          placeholder="2026-01-01T00:00:00Z"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size (Results per Search Request)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.batchSize')}
+                          placeholder="500"
+                          defaultValue={500}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallelism</label>
+                        <input
+                          type="number"
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue={4}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max File Size (Bytes)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.maxFileSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (Seconds)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.timeoutSeconds')}
+                          placeholder="30"
+                          defaultValue={30}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeFilesMFiles"
+                          {...register('configuration.includeFiles')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeFilesMFiles" className="text-sm font-medium cursor-pointer">
+                          Include Files & Attachments
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includePropertiesMFiles"
+                          {...register('configuration.includeProperties')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includePropertiesMFiles" className="text-sm font-medium cursor-pointer">
+                          Include Metadata Properties
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeAclsMFiles"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsMFiles" className="text-sm font-medium cursor-pointer">
+                          Include Permissions & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="emitDeletesMFiles"
+                          {...register('configuration.emitDeletes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="emitDeletesMFiles" className="text-sm font-medium cursor-pointer">
+                          Send Tombstones for Deleted Objects
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="incrementalEnabledMFiles"
+                          {...register('configuration.incrementalEnabled')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalEnabledMFiles" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Watermark, Skip Unchanged)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="qualifyPrincipalsMFiles"
+                          {...register('configuration.qualifyPrincipals')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="qualifyPrincipalsMFiles" className="text-sm font-medium cursor-pointer">
+                          Qualify Identities with the Vault GUID
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/mfiles-state"
+                          defaultValue="data/mfiles-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* IBM FileNet P8 Repository Connector */}
+                  {selectedClass === 'org.opencrawling.filenet.FileNetRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a licensed IBM FileNet P8 Content Platform Engine.</span>{' '}
+                          OpenCrawling does not include IBM FileNet or any IBM licence. The Content Services GraphQL API must be
+                          deployed, and the crawl account needs read access to the object store. See the connector&apos;s README,
+                          section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Content Services GraphQL Endpoint</label>
+                        <input
+                          {...register('configuration.url', { required: true })}
+                          placeholder="https://cpe.example.com/content-services-graphql/graphql"
+                          defaultValue="https://localhost:9443/content-services-graphql/graphql"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Object Store (Symbolic Name or ID)</label>
+                        <input
+                          {...register('configuration.objectStore', { required: true })}
+                          placeholder="OS1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">Basic (Username / Password)</option>
+                          <option value="oauth2">OAuth2 Client Credentials (IAM / Zen)</option>
+                          <option value="bearer">Bearer Access Token</option>
+                          <option value="ltpa">LTPA Token (WebSphere Liberty)</option>
+                        </select>
+                      </div>
+                      {filenetAuthType === 'basic' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input
+                          {...register('configuration.username')}
+                          placeholder="p8crawler"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {filenetAuthType === 'oauth2' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Token URL</label>
+                        <input
+                          {...register('configuration.oauth2TokenUrl')}
+                          placeholder="https://cpd.example.com/idprovider/v1/auth/identitytoken"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client ID</label>
+                        <input
+                          {...register('configuration.oauth2ClientId')}
+                          placeholder="opencrawling-filenet-client"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2ClientSecret')}
+                          placeholder="client secret"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2Scope')}
+                          placeholder="openid"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {filenetAuthType === 'bearer' && (
+                        <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Access Token</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2AccessToken')}
+                          placeholder="eyJ…"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      {filenetAuthType === 'ltpa' && (
+                        <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">LtpaToken2 Cookie Value</label>
+                        <input
+                          type="password"
+                          {...register('configuration.ltpaToken')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="query"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="query">FileNet SQL Query (Document Classes)</option>
+                          <option value="folder">Folder Containment (INSUBFOLDER)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Policy</label>
+                        <select
+                          {...register('configuration.versionMode')}
+                          defaultValue="current"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="current">Current Version Only</option>
+                          <option value="released">Latest Released (Major) Version</option>
+                          <option value="all">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Document Classes (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.documentClasses')}
+                          placeholder="Document, LoanDocument"
+                          defaultValue="Document"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {filenetCrawlMode === 'folder' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder Path</label>
+                        <input
+                          {...register('configuration.rootFolderPath')}
+                          placeholder="/Mortgages"
+                          defaultValue="/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeSubfoldersFileNet"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersFileNet" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders
+                        </label>
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Additional CE SQL Condition (Optional)</label>
+                        <input
+                          {...register('configuration.where')}
+                          placeholder="[DocumentTitle] LIKE 'Loan%' AND [DateCreated] > 20260101T000000Z"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Full FileNet SQL Statement (Optional, Replaces the Classes)</label>
+                        <input
+                          {...register('configuration.sqlQuery')}
+                          placeholder="SELECT Id FROM LoanDocument WHERE [LoanStatus] = 'ACTIVE'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Read Access Mask</label>
+                        <input
+                          {...register('configuration.readAccessMask')}
+                          placeholder="131201 = view content level"
+                          defaultValue="131201"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">#AUTHENTICATED-USERS Identity</label>
+                        <input
+                          {...register('configuration.authenticatedUsersIdentity')}
+                          placeholder="#authenticated-users"
+                          defaultValue="#authenticated-users"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Principal Format</label>
+                        <select
+                          {...register('configuration.principalFormat')}
+                          defaultValue="name"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="name">Grantee Names as Returned (Lower-Cased)</option>
+                          <option value="short">Short Names (cn=Finance,… → finance)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Documents with Markings</label>
+                        <select
+                          {...register('configuration.markedDocuments')}
+                          defaultValue="exclude"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="exclude">Leave Out (Safe Default)</option>
+                          <option value="index">Index, Applying Marking Denies from Permissions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback Principals (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="granted read when no permission is readable; empty = nobody"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Deletion Tracking</label>
+                        <select
+                          {...register('configuration.deletionTracking')}
+                          defaultValue="reconcile"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="reconcile">Reconcile Current Ids (No Auditing Needed)</option>
+                          <option value="audit">DeletionEvent Audit Log</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size (Page Size)</label>
+                        <input
+                          {...register('configuration.batchSize')}
+                          placeholder="100"
+                          defaultValue="100"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallel Documents</label>
+                        <input
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue="4"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input
+                          {...register('configuration.maxContentSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue="52428800"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeContentStreamFileNet"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamFileNet" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeAclsFileNet"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsFileNet" className="text-sm font-medium cursor-pointer">
+                          Include Permissions & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeCustomPropertiesFileNet"
+                          {...register('configuration.includeCustomProperties')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomPropertiesFileNet" className="text-sm font-medium cursor-pointer">
+                          Include Class Properties
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="incrementalEnabledFileNet"
+                          {...register('configuration.incrementalEnabled')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalEnabledFileNet" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Watermark, Skip Unchanged)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/filenet-state"
+                          defaultValue="data/filenet-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OpenText Documentum Repository Connector */}
+                  {selectedClass === 'org.opencrawling.documentum.DocumentumRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                        <p>
+                          <span className="font-medium">Requires a licensed OpenText Documentum Content Server.</span>{' '}
+                          OpenCrawling does not include OpenText Documentum or any OpenText licence. Documentum REST Services must be
+                          deployed, and the crawl account must be able to read the documents (a superuser, or READ on them). See the
+                          connector&apos;s README, section Prerequisites.
+                        </p>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Documentum REST Services URL</label>
+                        <input
+                          {...register('configuration.url', { required: true })}
+                          placeholder="https://dctm.example.com/dctm-rest"
+                          defaultValue="https://localhost:8443/dctm-rest"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Repository (Docbase) Name</label>
+                        <input
+                          {...register('configuration.repositoryName', { required: true })}
+                          placeholder="corp_repo"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">Basic (Username / Password or Login Ticket)</option>
+                          <option value="oauth2">OAuth2 Client Credentials (OTDS)</option>
+                          <option value="bearer">Bearer Access Token</option>
+                        </select>
+                      </div>
+                      {documentumAuthType === 'basic' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input
+                          {...register('configuration.username')}
+                          placeholder="dctm_crawler"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {documentumAuthType === 'oauth2' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Token URL</label>
+                        <input
+                          {...register('configuration.oauth2TokenUrl')}
+                          placeholder="https://otds.example.com/otdsws/oauth2/token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client ID</label>
+                        <input
+                          {...register('configuration.oauth2ClientId')}
+                          placeholder="opencrawling-documentum-client"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2ClientSecret')}
+                          placeholder="client secret"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2Scope')}
+                          placeholder="openid"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      {documentumAuthType === 'bearer' && (
+                        <>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Access Token</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2AccessToken')}
+                          placeholder="eyJ…"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="dql"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="dql">DQL Query (Object Types)</option>
+                          <option value="folder">Cabinet / Folder (FOLDER … DESCEND)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Policy</label>
+                        <select
+                          {...register('configuration.versionMode')}
+                          defaultValue="current_only"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="current_only">CURRENT Version Only</option>
+                          <option value="latest_major">Latest Major Version (n.0)</option>
+                          <option value="all_versions">All Versions</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Object Types (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.objectTypes')}
+                          placeholder="dm_document, my_contract"
+                          defaultValue="dm_document"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {documentumCrawlMode === 'folder' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Cabinet / Folder Path</label>
+                        <input
+                          {...register('configuration.rootCabinetPath')}
+                          placeholder="/Regulatory/Submissions"
+                          defaultValue="/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeSubfoldersDocumentum"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders
+                        </label>
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Additional DQL Condition (Optional)</label>
+                        <input
+                          {...register('configuration.where')}
+                          placeholder="a_status = 'Approved' AND r_creation_date > DATE('2026/01/01','yyyy/mm/dd')"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Full DQL Statement (Optional, Replaces the Types)</label>
+                        <input
+                          {...register('configuration.dqlQuery')}
+                          placeholder="SELECT r_object_id FROM my_contract WHERE ANY regions = 'EMEA'"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Preferred Rendition Format (Optional)</label>
+                        <input
+                          {...register('configuration.preferRendition')}
+                          placeholder="pdf (empty = primary content)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">dm_world Identity</label>
+                        <input
+                          {...register('configuration.worldIdentity')}
+                          placeholder="dm_world"
+                          defaultValue="dm_world"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Principal Format</label>
+                        <select
+                          {...register('configuration.principalFormat')}
+                          defaultValue="name"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="name">User Names as Stored (user_name, Lower-Cased)</option>
+                          <option value="login">Login Names (user_login_name)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Documents with Required Groups</label>
+                        <select
+                          {...register('configuration.requiredGroupDocuments')}
+                          defaultValue="exclude"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="exclude">Leave Out (Safe Default)</option>
+                          <option value="fallback">Index for Fallback Principals Only</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback Principals (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="granted read when no permission is readable; empty = nobody"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Deletion Tracking</label>
+                        <select
+                          {...register('configuration.deletionTracking')}
+                          defaultValue="reconcile"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="reconcile">Reconcile Current Ids (No Auditing Needed)</option>
+                          <option value="audit">dm_audittrail Events (dm_destroy, dm_prune)</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Server Time Zone</label>
+                        <input
+                          {...register('configuration.serverTimeZone')}
+                          placeholder="auto, or e.g. Europe/Berlin"
+                          defaultValue="auto"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Batch Size (Rows per DQL Page, Max 1000)</label>
+                        <input
+                          {...register('configuration.batchSize')}
+                          placeholder="100"
+                          defaultValue="100"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallel Documents</label>
+                        <input
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue="4"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                        <input
+                          {...register('configuration.maxContentSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue="52428800"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeContentStreamDocumentum"
+                          {...register('configuration.includeContentStream')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeContentStreamDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Content Streams
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeAclsDocumentum"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Permissions & ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="includeCustomAttributesDocumentum"
+                          {...register('configuration.includeCustomAttributes')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomAttributesDocumentum" className="text-sm font-medium cursor-pointer">
+                          Include Custom Type Attributes
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                        <input
+                          type="checkbox"
+                          id="incrementalEnabledDocumentum"
+                          {...register('configuration.incrementalEnabled')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalEnabledDocumentum" className="text-sm font-medium cursor-pointer">
+                          Incremental Crawl (Watermark, Skip Unchanged)
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Incremental State Directory</label>
+                        <input
+                          {...register('configuration.stateDirectory')}
+                          placeholder="data/documentum-state"
+                          defaultValue="data/documentum-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
                       </div>
                     </div>
                   )}
@@ -1592,7 +3562,436 @@ export default function ConnectorForm() {
                     </div>
                   )}
 
+                  {/* gRPC Push Repository Connector */}
+                  {selectedClass === 'org.opencrawling.push.grpc.GrpcPushRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-sans text-foreground">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Listener Port</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.port', { required: true })}
+                          placeholder="9096"
+                          defaultValue="9096"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max Message Size (MB)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.maxMessageSizeMb', { required: true })}
+                          placeholder="64"
+                          defaultValue="64"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Inline Binary Threshold (KB)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.inlineBinaryThresholdKb')}
+                          placeholder="512"
+                          defaultValue="512"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Token (Optional Bearer Token)</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.token')}
+                          placeholder="Bearer authentication token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Require Client Auth (mTLS)</label>
+                        <select 
+                          {...register('configuration.clientAuth')}
+                          defaultValue="NONE"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="NONE">NONE - Plain TLS or Unauthenticated</option>
+                          <option value="OPTIONAL">OPTIONAL - Validate Client Cert if Presented</option>
+                          <option value="REQUIRE">REQUIRE - Enforce Mutual TLS (mTLS)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2 flex items-center pt-6">
+                        <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                          <input 
+                            type="checkbox"
+                            {...register('configuration.tlsEnabled')}
+                            className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                          />
+                          Enable TLS Transport Encryption
+                        </label>
+                      </div>
 
+                      <div className="col-span-2 p-3 bg-violet-500/10 border border-violet-500/20 rounded-md text-xs text-violet-300 flex items-start gap-2">
+                        <Network className="w-4 h-4 flex-shrink-0 mt-0.5 text-violet-400" />
+                        <div>
+                          <p className="font-semibold text-violet-200">High-Throughput Binary Protobuf Ingestion</p>
+                          <p className="mt-0.5 opacity-90">
+                            The gRPC Push Connector accepts unary, client-streaming, and bi-directional streaming OIS Protobuf messages over HTTP/2.
+                            Incoming payloads exceeding the inline threshold are automatically offloaded to the ClaimCheckStore.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleCheckConnection}
+                          disabled={isCheckingConnection}
+                          className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-violet-500/30 text-violet-300 hover:bg-violet-500/10"
+                        >
+                          {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-violet-400" />}
+                          Run Live Ping Diagnostic Test
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hyland OpenArch Federated Repository Connector */}
+                  {selectedClass === 'org.opencrawling.openarch.repository.OpenArchRepositoryConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">OpenArch Endpoint URL</label>
+                          <input 
+                            {...register('configuration.endpointUrl', { required: true })}
+                            placeholder="http://localhost:8080"
+                            defaultValue="http://localhost:8080"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Repository ID</label>
+                          <input 
+                            {...register('configuration.repositoryId')}
+                            defaultValue="default"
+                            placeholder="default"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Crawl Mode</label>
+                          <select 
+                            {...register('configuration.crawlMode')}
+                            defaultValue="QUERY"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="QUERY">HXQL Query Mode</option>
+                            <option value="FOLDER">Folder Hierarchy Mode</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.username')}
+                            defaultValue="Administrator"
+                            placeholder="Administrator"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.password')}
+                            defaultValue="Administrator"
+                            placeholder="Administrator"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        {openarchCrawlMode === 'QUERY' ? (
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">HXQL Query</label>
+                            <input 
+                              {...register('configuration.hxqlQuery')}
+                              defaultValue="SELECT * FROM SysFile"
+                              placeholder="SELECT * FROM SysFile"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium">Root Folder ID</label>
+                              <input 
+                                {...register('configuration.rootFolderId')}
+                                defaultValue="00000000-0000-0000-0000-000000000000"
+                                placeholder="00000000-0000-0000-0000-000000000000"
+                                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                              />
+                            </div>
+                            <div className="space-y-2 flex items-center pt-6">
+                              <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                                <input 
+                                  type="checkbox"
+                                  {...register('configuration.includeSubfolders')}
+                                  defaultChecked={true}
+                                  className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                                />
+                                Include Subfolders Recursively
+                              </label>
+                            </div>
+                          </>
+                        )}
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Batch Size (Pages)</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.batchSize')}
+                            defaultValue={100}
+                            placeholder="100"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.incremental')}
+                              defaultChecked={false}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Incremental Crawling (sys_modified filtering)
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.includeAcls')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Extract &amp; Map Zero-Trust ACLs
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.includeContentStream')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Stream Binary Blobs (/api/download)
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-xs text-indigo-300 flex items-start gap-2">
+                          <Layers className="w-4 h-4 flex-shrink-0 mt-0.5 text-indigo-400" />
+                          <div>
+                            <p className="font-semibold text-indigo-200">Hyland OpenArch Federated Source</p>
+                            <p className="mt-0.5 opacity-90">
+                              Harvesters query OpenArch repository records via HXQL or folder traversal, preserving Zero-Trust ACLs and offloading binaries via Java 25 Virtual Threads.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />}
+                            Test OpenArch Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hyland Content Innovation Cloud (HXP) Repository Connector */}
+                  {selectedClass === 'org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland CIC / HXP API Base URL</label>
+                          <input
+                            {...register('configuration.baseUrl')}
+                            defaultValue="https://api.content.hylandcloud.com"
+                            placeholder="https://api.content.hylandcloud.com"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland IdP OAuth2 Token Endpoint</label>
+                          <input
+                            {...register('configuration.idpTokenUrl')}
+                            defaultValue="https://identity.hylandcloud.com/connect/token"
+                            placeholder="https://identity.hylandcloud.com/connect/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.clientId')}
+                            placeholder="hxp-client-id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.clientSecret')}
+                            placeholder="••••••••••••"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scopes</label>
+                          <input
+                            {...register('configuration.scopes')}
+                            defaultValue="hxp hxp.integrations hxp.content"
+                            placeholder="hxp hxp.integrations hxp.content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Tenant ID (Optional)</label>
+                          <input
+                            {...register('configuration.tenantId')}
+                            placeholder="tenant-uuid-or-slug"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Root Folder Path</label>
+                          <input
+                            {...register('configuration.rootFolderPath')}
+                            defaultValue="/"
+                            placeholder="/"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Root Folder ID (Overrides Path if set)</label>
+                          <input
+                            {...register('configuration.rootFolderId')}
+                            placeholder="folder-uuid"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Search Query (Optional, overrides folder crawl)</label>
+                          <input
+                            {...register('configuration.query')}
+                            placeholder="contentType eq 'FinancialReport'"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Batch Size (Pagination)</label>
+                          <input
+                            type="number"
+                            {...register('configuration.batchSize')}
+                            defaultValue={100}
+                            min={1}
+                            max={1000}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Max Content Size (Bytes)</label>
+                          <input
+                            type="number"
+                            {...register('configuration.maxContentSizeBytes')}
+                            defaultValue={52428800}
+                            min={1}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input
+                            type="checkbox"
+                            id="includeSubfoldersHxp"
+                            {...register('configuration.includeSubfolders')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeSubfoldersHxp" className="text-sm font-medium cursor-pointer">
+                            Include Subfolders Recursively
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input
+                            type="checkbox"
+                            id="includeAclsHxp"
+                            {...register('configuration.includeAcls')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeAclsHxp" className="text-sm font-medium cursor-pointer">
+                            Sync Zero-Trust ACLs & Permissions
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center gap-2 pt-4 col-span-2">
+                          <input
+                            type="checkbox"
+                            id="includeContentStreamHxp"
+                            {...register('configuration.includeContentStream')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="includeContentStreamHxp" className="text-sm font-medium cursor-pointer">
+                            Stream &amp; Extract Binary Payloads
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Cloud className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Hyland Content Innovation Cloud (HXP) Microservices Platform</p>
+                            <p className="mt-0.5 opacity-90">
+                              Direct cloud-native ingestion via Content REST API and IdP OAuth2 token exchange with Zero-Trust ACL security mapping and virtual thread streaming.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test HXP Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* PGVector Store */}
                   {selectedClass === 'org.opencrawling.vector.VectorOutputConnector' && (
@@ -1937,6 +4336,105 @@ export default function ConnectorForm() {
                             defaultValue={1024}
                             className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                           />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Elasticsearch 8.x / 9.x Output Store */}
+                  {selectedClass === 'org.opencrawling.elasticsearch.ElasticsearchOutputConnector' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Elasticsearch URIs</label>
+                          <input
+                            {...register('configuration.elasticsearchUris')}
+                            placeholder="http://localhost:9200"
+                            defaultValue="http://localhost:9200"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">One node or a comma-separated list.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Index Name</label>
+                          <input
+                            {...register('configuration.elasticsearchIndexName')}
+                            placeholder="enterprise_kb"
+                            defaultValue="enterprise_kb"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">API Key</label>
+                          <input
+                            type="password"
+                            {...register('configuration.elasticsearchApiKey')}
+                            placeholder="Base64 API key (Elastic Cloud)"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">Takes precedence over username/password.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input
+                            {...register('configuration.elasticsearchUsername')}
+                            placeholder="elastic"
+                            defaultValue="elastic"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input
+                            type="password"
+                            {...register('configuration.elasticsearchPassword')}
+                            placeholder="Leave blank when security is disabled"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Dimensions</label>
+                          <input
+                            type="number"
+                            {...register('configuration.elasticsearchDimensions', { valueAsNumber: true })}
+                            placeholder="1024"
+                            defaultValue={1024}
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Similarity Metric</label>
+                          <select
+                            {...register('configuration.elasticsearchSimilarity')}
+                            defaultValue="cosine"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="cosine">Cosine</option>
+                            <option value="dot_product">Dot Product</option>
+                            <option value="l2_norm">L2 Norm</option>
+                            <option value="max_inner_product">Max Inner Product</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Vector Index Type</label>
+                          <select
+                            {...register('configuration.elasticsearchIndexType')}
+                            defaultValue="hnsw"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="hnsw">HNSW (float32)</option>
+                            <option value="int8_hnsw">INT8 HNSW (~75% less memory)</option>
+                            <option value="int4_hnsw">INT4 HNSW</option>
+                            <option value="bbq_hnsw">BBQ HNSW (binary quantized)</option>
+                            <option value="flat">Flat (exact)</option>
+                            <option value="int8_flat">INT8 Flat</option>
+                          </select>
                         </div>
                       </div>
                     </div>
@@ -2995,6 +5493,885 @@ export default function ConnectorForm() {
                             <option value="DELETE_KEY">DELETE_KEY (purge binary + sidecar)</option>
                             <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (purge + keep OIS tombstone)</option>
                           </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* AWS S3 Output Connector (Migration Mode only) */}
+                  {selectedClass === 'org.opencrawling.s3.S3OutputConnector' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-md px-3 py-2">
+                        This connector only runs in Migration Mode: binaries are streamed as-is to Amazon S3 with companion OIS JSON metadata sidecars. Jobs using it must select Migration Mode.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label htmlFor="s3-bucket" className="text-sm font-medium">S3 Bucket Name</label>
+                          <input id="s3-bucket" {...register('configuration.bucket', { required: true })} defaultValue="enterprise-migration-lake" placeholder="enterprise-migration-lake"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-region" className="text-sm font-medium">AWS Region</label>
+                          <input id="s3-region" {...register('configuration.region')} defaultValue="us-east-1" placeholder="us-east-1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-endpoint" className="text-sm font-medium">Endpoint Override (Optional for LocalStack / MinIO)</label>
+                          <input id="s3-endpoint" type="url" {...register('configuration.endpointOverride')} placeholder="http://localhost:4566"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-path-style" className="text-sm font-medium">Path Style Access</label>
+                          <select id="s3-path-style" {...register('configuration.pathStyleAccess')} defaultValue="false"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="false">Virtual-Hosted Style (bucket.s3.amazonaws.com)</option>
+                            <option value="true">Path Style (endpoint/bucket - MinIO / LocalStack)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-creds-strategy" className="text-sm font-medium">Credentials Strategy</label>
+                          <select id="s3-creds-strategy" {...register('configuration.credentialsStrategy')} defaultValue="DEFAULT_CHAIN"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="DEFAULT_CHAIN">DEFAULT_CHAIN (IRSA / IAM / Env / Profile)</option>
+                            <option value="STATIC">STATIC (Access & Secret Keys)</option>
+                            <option value="ASSUME_ROLE">ASSUME_ROLE (STS Cross-Account)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-access-key" className="text-sm font-medium">Access Key ID</label>
+                          <input id="s3-access-key" {...register('configuration.accessKey')} placeholder="AKIA..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-secret-key" className="text-sm font-medium">Secret Access Key</label>
+                          <input id="s3-secret-key" type="password" {...register('configuration.secretKey')} placeholder="Secret..." autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-session-token" className="text-sm font-medium">Session Token (Optional)</label>
+                          <input id="s3-session-token" type="password" {...register('configuration.sessionToken')} placeholder="Session token..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-role-arn" className="text-sm font-medium">AssumeRole ARN (for ASSUME_ROLE)</label>
+                          <input id="s3-role-arn" {...register('configuration.assumeRoleArn')} placeholder="arn:aws:iam::123456789012:role/MigrationRole"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-role-ext-id" className="text-sm font-medium">AssumeRole External ID</label>
+                          <input id="s3-role-ext-id" {...register('configuration.assumeRoleExternalId')} placeholder="Optional External ID"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-key-strategy" className="text-sm font-medium">Key Strategy</label>
+                          <select id="s3-key-strategy" {...register('configuration.keyStrategy')} defaultValue="HIERARCHICAL"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="HIERARCHICAL">HIERARCHICAL (preserve folder structure)</option>
+                            <option value="FLAT">FLAT (sanitized_id_filename)</option>
+                            <option value="DATE_PARTITIONED">DATE_PARTITIONED (YYYY/MM/dd/id_filename)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-key-prefix" className="text-sm font-medium">Key Prefix</label>
+                          <input id="s3-key-prefix" {...register('configuration.keyPrefix')} defaultValue="migration/v1/" placeholder="migration/v1/"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-storage-class" className="text-sm font-medium">Storage Class</label>
+                          <select id="s3-storage-class" {...register('configuration.storageClass')} defaultValue="INTELLIGENT_TIERING"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="INTELLIGENT_TIERING">INTELLIGENT_TIERING (Recommended)</option>
+                            <option value="STANDARD">STANDARD</option>
+                            <option value="STANDARD_IA">STANDARD_IA (Infrequent Access)</option>
+                            <option value="GLACIER_IR">GLACIER_IR (Instant Retrieval)</option>
+                            <option value="GLACIER">GLACIER (Flexible Retrieval)</option>
+                            <option value="DEEP_ARCHIVE">DEEP_ARCHIVE (Cold Storage)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-encryption" className="text-sm font-medium">Server-Side Encryption</label>
+                          <select id="s3-encryption" {...register('configuration.serverSideEncryption')} defaultValue="SSE_S3"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="SSE_S3">SSE_S3 (Amazon S3-Managed AES-256)</option>
+                            <option value="SSE_KMS">SSE_KMS (AWS Key Management Service)</option>
+                            <option value="NONE">NONE</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-kms-key-id" className="text-sm font-medium">KMS Key ID / ARN (for SSE_KMS)</label>
+                          <input id="s3-kms-key-id" {...register('configuration.kmsKeyId')} placeholder="arn:aws:kms:..."
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="s3-tombstone-action" className="text-sm font-medium">On OIS DELETE</label>
+                          <select id="s3-tombstone-action" {...register('configuration.tombstoneAction')} defaultValue="DELETE_OBJECTS"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="DELETE_OBJECTS">DELETE_OBJECTS (purge binary + sidecar)</option>
+                            <option value="ARCHIVE_TOMBSTONE">ARCHIVE_TOMBSTONE (keep OIS tombstone)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Hidden registered input for form submission */}
+                      <input type="hidden" {...register('configuration.customHeaders')} />
+
+                      {/* Custom HTTP Request Headers & Multi-Vendor Storage Presets */}
+                      <div className="space-y-3 pt-4 border-t border-border">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                              <Settings2 className="h-4 w-4 text-orange-400" />
+                              Custom HTTP Request Headers & Storage Presets
+                            </h4>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Configure proprietary HTTP headers for Dell EMC ECS, IBM COS, Hitachi HCP, NetApp StorageGRID, or Cloudflare R2.
+                            </p>
+                          </div>
+
+                          {/* Quick Preset Selector */}
+                          <div className="flex items-center gap-2">
+                            <select
+                              id="s3-vendor-preset-select"
+                              value={selectedPreset}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setSelectedPreset(val)
+                                if (val) {
+                                  handleApplyPreset(val)
+                                }
+                              }}
+                              className="bg-background border border-border rounded-md px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            >
+                              <option value="">-- Apply Vendor Preset --</option>
+                              {S3_VENDOR_PRESETS.map((preset) => (
+                                <option key={preset.id} value={preset.id}>
+                                  {preset.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Dynamic Key-Value Table */}
+                        <div className="space-y-2">
+                          {s3CustomHeaders.length > 0 && (
+                            <div className="border border-border rounded-md overflow-hidden bg-card/40">
+                              <table className="w-full text-xs">
+                                <thead className="bg-muted/50 border-b border-border">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-2/5">Header Name</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-1/2">Header Value / Template</th>
+                                    <th className="px-2 py-2 text-center font-medium text-muted-foreground w-[10%]">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border">
+                                  {s3CustomHeaders.map((header, idx) => (
+                                    <tr key={idx} className="hover:bg-muted/20">
+                                      <td className="p-2">
+                                        <input
+                                          type="text"
+                                          value={header.key}
+                                          onChange={(e) => handleHeaderChange(idx, 'key', e.target.value)}
+                                          placeholder="e.g. x-emc-metadata-search"
+                                          className="w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/50"
+                                        />
+                                      </td>
+                                      <td className="p-2">
+                                        <input
+                                          type="text"
+                                          value={header.value}
+                                          onChange={(e) => handleHeaderChange(idx, 'value', e.target.value)}
+                                          placeholder="e.g. Dept=${metadata.department}"
+                                          className="w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/50"
+                                        />
+                                      </td>
+                                      <td className="p-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveCustomHeader(header.key)}
+                                          className="p-1 hover:text-red-400 text-muted-foreground transition-colors"
+                                          title="Remove header"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* Add New Header Input Row */}
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                            <input
+                              type="text"
+                              value={newHeaderKey}
+                              onChange={(e) => setNewHeaderKey(e.target.value)}
+                              placeholder="New Header Name (e.g. x-emc-metadata-search)"
+                              className="flex-1 bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                            <input
+                              type="text"
+                              value={newHeaderValue}
+                              onChange={(e) => setNewHeaderValue(e.target.value)}
+                              placeholder="Header Value / Template (e.g. Department=${metadata.dept})"
+                              className="flex-1 bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddCustomHeader}
+                              disabled={!newHeaderKey.trim()}
+                              className="inline-flex items-center justify-center gap-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add Header
+                            </button>
+                          </div>
+
+                          {/* Helper container explaining dynamic placeholders with high contrast chips */}
+                          <div className="bg-card/70 border border-border/80 rounded-md p-2.5 space-y-1.5 mt-2">
+                            <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                              <span className="text-orange-400 font-bold">Template Variables Reference:</span>
+                            </div>
+                            <p className="text-xs text-foreground/80 leading-relaxed">
+                              Values are resolved dynamically per document. Use any of the following tokens in your header values:
+                            </p>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;metadata.&lt;key&gt;&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;metadata.&lt;key&gt; | fallback&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.id&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.uri&#125;
+                              </code>
+                              <code className="bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono text-xs px-2 py-0.5 rounded">
+                                &#36;&#123;document.action&#125;
+                              </code>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alfresco Content Services Output Connector (Migration Mode only) */}
+                  {selectedClass === 'org.opencrawling.alfresco.output.AlfrescoOutputConnector' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2">
+                        This connector only runs in Migration Mode: binaries, folder hierarchies, properties, and Zero-Trust ACLs are streamed as-is directly into Alfresco Content Services. Jobs using it must select Migration Mode.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <div className="flex items-center justify-between">
+                            <label htmlFor="alfresco-out-url" className="text-sm font-medium">Alfresco Base URL</label>
+                            <span className="text-xs text-muted-foreground">Default port: 8081 (avoids port 8080 used by OpenCrawling)</span>
+                          </div>
+                          <input id="alfresco-out-url" type="url" {...register('configuration.url', { required: true })} defaultValue="http://localhost:8081/alfresco" placeholder="http://localhost:8081/alfresco"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-auth-type" className="text-sm font-medium">Authentication Type</label>
+                          <select id="alfresco-out-auth-type" {...register('configuration.authType')} defaultValue="basic"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="basic">Basic Authentication (Username/Password)</option>
+                            <option value="bearer">Bearer Token (OAuth2 / Identity Service / Keycloak)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-username" className="text-sm font-medium">Username</label>
+                          <input id="alfresco-out-username" {...register('configuration.username')} defaultValue="admin" placeholder="admin"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-password" className="text-sm font-medium">Password</label>
+                          <input id="alfresco-out-password" type="password" {...register('configuration.password')} defaultValue="admin" placeholder="Password..." autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-bearer" className="text-sm font-medium">Bearer Token (for Bearer auth)</label>
+                          <input id="alfresco-out-bearer" type="password" {...register('configuration.bearerToken')} placeholder="eyJhbGci..." autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-target-parent" className="text-sm font-medium">Target Parent Node ID</label>
+                          <input id="alfresco-out-target-parent" {...register('configuration.targetParentNodeId')} defaultValue="-root-" placeholder="-root- or GUID"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-prefix" className="text-sm font-medium">Target Path Prefix</label>
+                          <input id="alfresco-out-prefix" {...register('configuration.targetPathPrefix')} defaultValue="MigratedContent/v1" placeholder="MigratedContent/v1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-strategy" className="text-sm font-medium">Folder Path Strategy</label>
+                          <select id="alfresco-out-strategy" {...register('configuration.pathStrategy')} defaultValue="HIERARCHICAL"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="HIERARCHICAL">HIERARCHICAL (recreate source folder structure as cm:folder)</option>
+                            <option value="FLAT">FLAT (upload directly to target parent)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-nodetype" className="text-sm font-medium">Node Type</label>
+                          <input id="alfresco-out-nodetype" {...register('configuration.nodeType')} defaultValue="cm:content" placeholder="cm:content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-conflict" className="text-sm font-medium">Conflict Strategy</label>
+                          <select id="alfresco-out-conflict" {...register('configuration.conflictStrategy')} defaultValue="OVERWRITE"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="OVERWRITE">OVERWRITE (update existing node content version)</option>
+                            <option value="AUTO_RENAME">AUTO_RENAME (append index if node exists)</option>
+                            <option value="FAIL">FAIL (throw error if node exists)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-default-role" className="text-sm font-medium">Default Permission Role</label>
+                          <input id="alfresco-out-default-role" {...register('configuration.defaultPermissionRole')} defaultValue="Consumer" placeholder="Consumer"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-tombstone" className="text-sm font-medium">On OIS DELETE (Tombstone)</label>
+                          <select id="alfresco-out-tombstone" {...register('configuration.tombstoneAction')} defaultValue="MOVE_TO_TRASH"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="MOVE_TO_TRASH">MOVE_TO_TRASH (move to Alfresco trashcan)</option>
+                            <option value="PERMANENT_DELETE">PERMANENT_DELETE (purge immediately)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-val-mode" className="text-sm font-medium">Authority Validation Mode</label>
+                          <select id="alfresco-out-val-mode" {...register('configuration.authorityValidationMode')} defaultValue="IN_FLIGHT"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="IN_FLIGHT">IN_FLIGHT (Verify via target Alfresco REST API with cache during upload)</option>
+                            <option value="PRE_FLIGHT">PRE_FLIGHT (Pre-flight audit validation before processing)</option>
+                            <option value="BOTH">BOTH (Pre-flight audit + In-flight cached verification)</option>
+                            <option value="DISABLED">DISABLED (Skip authority check)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label htmlFor="alfresco-out-missing-action" className="text-sm font-medium">Missing Authority Action</label>
+                          <select id="alfresco-out-missing-action" {...register('configuration.missingAuthorityAction')} defaultValue="SKIP"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono">
+                            <option value="SKIP">SKIP (Log to gap report ledger & skip missing authority)</option>
+                            <option value="FAIL">FAIL (Strict Zero-Trust: fail document migration & record in ledger)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <label htmlFor="alfresco-out-gap-path" className="text-sm font-medium">Authority Gap Report Path</label>
+                          <input id="alfresco-out-gap-path" {...register('configuration.authorityGapReportPath')} defaultValue="reports/alfresco-authority-gap.json" placeholder="reports/alfresco-authority-gap.json"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono" />
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-sync-perm" type="checkbox" {...register('configuration.syncPermissions')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-sync-perm" className="text-sm font-medium">Sync Zero-Trust Permissions & ACLs</label>
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-val-perm" type="checkbox" {...register('configuration.validateAuthorities')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-val-perm" className="text-sm font-medium">Validate Authorities on Target Instance</label>
+                        </div>
+                        <div className="space-y-2 flex items-center gap-2 pt-4">
+                          <input id="alfresco-out-inherit-perm" type="checkbox" {...register('configuration.isInheritanceEnabled')} defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary" />
+                          <label htmlFor="alfresco-out-inherit-perm" className="text-sm font-medium">Inherit Parent Permissions</label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hyland OpenArch Output Connector */}
+                  {selectedClass === 'org.opencrawling.openarch.output.OpenArchOutputConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">OpenArch Endpoint URL</label>
+                          <input 
+                            {...register('configuration.endpointUrl', { required: true })}
+                            placeholder="http://localhost:8080"
+                            defaultValue="http://localhost:8080"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Repository ID</label>
+                          <input 
+                            {...register('configuration.repositoryId')}
+                            defaultValue="default"
+                            placeholder="default"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Target Root Folder ID</label>
+                          <input 
+                            {...register('configuration.rootFolderId')}
+                            defaultValue="00000000-0000-0000-0000-000000000000"
+                            placeholder="00000000-0000-0000-0000-000000000000"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <input 
+                            {...register('configuration.username')}
+                            defaultValue="Administrator"
+                            placeholder="Administrator"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.password')}
+                            defaultValue="Administrator"
+                            placeholder="Administrator"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Parquet Vector Batch Threshold</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.parquetBatchThreshold')}
+                            defaultValue={50}
+                            placeholder="50"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Embeddings Model Name / Type</label>
+                          <input 
+                            {...register('configuration.embeddingsType')}
+                            defaultValue="mxbai-embed-large"
+                            placeholder="mxbai-embed-large"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Embedding Vector Dimensions</label>
+                          <input 
+                            type="number"
+                            {...register('configuration.dimensions')}
+                            defaultValue={1024}
+                            placeholder="1024"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.upsert')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Upsert (Overwrite Existing Docs)
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.syncAcls')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Zero-Trust ACL Synchronization
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.uploadBinaries')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Upload Document Binaries (/api/upload)
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-xs text-indigo-300 flex items-start gap-2">
+                          <Layers className="w-4 h-4 flex-shrink-0 mt-0.5 text-indigo-400" />
+                          <div>
+                            <p className="font-semibold text-indigo-200">Parquet Vector Bridging &amp; OpenArch Indexing</p>
+                            <p className="mt-0.5 opacity-90">
+                              Emits binary embeddings formatted as Apache Parquet files conforming to OpenArch schema (<code className="text-indigo-200">embedding.avsc</code>) and indexes document objects into OpenArch with Zero-Trust permissions.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />}
+                            Test OpenArch Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hyland Content Innovation Cloud (HXP) Output Connector */}
+                  {selectedClass === 'org.opencrawling.hyland.cic.output.HylandCicOutputConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland CIC / HXP API Base URL</label>
+                          <input
+                            {...register('configuration.baseUrl')}
+                            defaultValue="https://api.content.hylandcloud.com"
+                            placeholder="https://api.content.hylandcloud.com"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Hyland IdP OAuth2 Token Endpoint</label>
+                          <input
+                            {...register('configuration.idpTokenUrl')}
+                            defaultValue="https://identity.hylandcloud.com/connect/token"
+                            placeholder="https://identity.hylandcloud.com/connect/token"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client ID</label>
+                          <input
+                            {...register('configuration.clientId')}
+                            placeholder="hxp-client-id"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                          <input
+                            type="password"
+                            {...register('configuration.clientSecret')}
+                            placeholder="••••••••••••"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">OAuth2 Scopes</label>
+                          <input
+                            {...register('configuration.scopes')}
+                            defaultValue="hxp hxp.integrations hxp.content"
+                            placeholder="hxp hxp.integrations hxp.content"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Tenant ID (Optional)</label>
+                          <input
+                            {...register('configuration.tenantId')}
+                            placeholder="tenant-uuid-or-slug"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Target Folder Path</label>
+                          <input
+                            {...register('configuration.targetFolderPath')}
+                            defaultValue="/Enterprise_Ingestion/Automated_Archive"
+                            placeholder="/Enterprise_Ingestion/Automated_Archive"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Target Folder ID (Overrides Path if set)</label>
+                          <input
+                            {...register('configuration.targetFolderId')}
+                            placeholder="folder-uuid"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Default Content Type</label>
+                          <input
+                            {...register('configuration.defaultContentType')}
+                            defaultValue="ArchivedDocument"
+                            placeholder="ArchivedDocument"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Conflict Resolution Policy</label>
+                          <select
+                            {...register('configuration.conflictResolution')}
+                            defaultValue="create-version"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                          >
+                            <option value="create-version">Create New Version</option>
+                            <option value="overwrite">Overwrite Existing</option>
+                            <option value="skip">Skip If Exists</option>
+                          </select>
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Cloud className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Hyland Content Innovation Cloud (HXP) Output Connector</p>
+                            <p className="mt-0.5 opacity-90">
+                              Uploads, versions, and archives crawled documents into HXP repositories and dossiers with metadata mapping and multi-tenant security.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test HXP Output Connectivity
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Apache Iceberg Lakehouse Output Connector */}
+                  {selectedClass === 'org.opencrawling.iceberg.output.IcebergOutputConnector' && (
+                    <div className="space-y-4 font-sans text-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog Type</label>
+                          <select 
+                            {...register('configuration.catalogType', { required: true })}
+                            defaultValue="rest"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="rest">REST Catalog</option>
+                            <option value="hive">Hive Metastore (Thrift)</option>
+                            <option value="hadoop">Hadoop Catalog (Local/HDFS)</option>
+                            <option value="glue">AWS Glue</option>
+                            <option value="jdbc">JDBC Catalog</option>
+                            <option value="in-memory">In-Memory (Local Testing)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog URI</label>
+                          <input 
+                            {...register('configuration.catalogUri')}
+                            placeholder="e.g. http://localhost:8181 or thrift://localhost:9083"
+                            defaultValue="http://localhost:8181"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Catalog Name</label>
+                          <input 
+                            {...register('configuration.catalogName')}
+                            placeholder="opencrawling_catalog"
+                            defaultValue="opencrawling_catalog"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Warehouse Location</label>
+                          <input 
+                            {...register('configuration.warehouse', { required: true })}
+                            placeholder="s3://warehouse or local path"
+                            defaultValue="s3://warehouse"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Namespace / Database</label>
+                          <input 
+                            {...register('configuration.namespace')}
+                            placeholder="enterprise_data"
+                            defaultValue="enterprise_data"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Name</label>
+                          <input 
+                            {...register('configuration.tableName')}
+                            placeholder="documents"
+                            defaultValue="documents"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Table Strategy</label>
+                          <select 
+                            {...register('configuration.tableStrategy')}
+                            defaultValue="UNIFIED"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="UNIFIED">UNIFIED (Single Table for All Documents)</option>
+                            <option value="PER_DOCUMENT_TYPE">PER_DOCUMENT_TYPE (Partitioned Tables per Document Type)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Partition Strategy</label>
+                          <select 
+                            {...register('configuration.partitionStrategy')}
+                            defaultValue="YEAR_MONTH"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="YEAR_MONTH">YEAR_MONTH (Partition by Ingestion Year &amp; Month)</option>
+                            <option value="SOURCE_AND_DATE">SOURCE_AND_DATE (Partition by Repository Source &amp; Date)</option>
+                            <option value="NONE">NONE (Unpartitioned Table)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Write Format</label>
+                          <select 
+                            {...register('configuration.writeFormat')}
+                            defaultValue="parquet"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="parquet">Apache Parquet (.parquet)</option>
+                            <option value="orc">Apache ORC (.orc)</option>
+                            <option value="avro">Apache Avro (.avro)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Compression Codec</label>
+                          <select 
+                            {...register('configuration.compressionCodec')}
+                            defaultValue="zstd"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none bg-card"
+                          >
+                            <option value="zstd">Zstandard (zstd)</option>
+                            <option value="snappy">Snappy</option>
+                            <option value="gzip">Gzip</option>
+                            <option value="none">Uncompressed</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.autoSchemaEvolution')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Automatic Schema Evolution
+                          </label>
+                        </div>
+
+                        <div className="space-y-2 flex items-center pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                            <input 
+                              type="checkbox"
+                              {...register('configuration.autoCreateTable')}
+                              defaultChecked={true}
+                              className="rounded border-border text-primary focus:ring-primary w-4 h-4 bg-background"
+                            />
+                            Auto Create Table If Not Exists
+                          </label>
+                        </div>
+
+                        <div className="col-span-2 border-t border-border/50 pt-3 mt-1">
+                          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">S3 / MinIO / Object Storage Options</h4>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Endpoint URL (Optional)</label>
+                          <input 
+                            {...register('configuration.s3Endpoint')}
+                            placeholder="http://localhost:9000"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Region</label>
+                          <input 
+                            {...register('configuration.s3Region')}
+                            placeholder="us-east-1"
+                            defaultValue="us-east-1"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Access Key ID</label>
+                          <input 
+                            {...register('configuration.s3AccessKeyId')}
+                            placeholder="admin"
+                            autoComplete="off"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">S3 Secret Access Key</label>
+                          <input 
+                            type="password"
+                            {...register('configuration.s3SecretAccessKey')}
+                            placeholder="••••••••••••"
+                            autoComplete="new-password"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+
+                        <div className="col-span-2 p-3 bg-sky-500/10 border border-sky-500/20 rounded-md text-xs text-sky-300 flex items-start gap-2">
+                          <Database className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-400" />
+                          <div>
+                            <p className="font-semibold text-sky-200">Apache Iceberg Lakehouse Table Sink</p>
+                            <p className="mt-0.5 opacity-90">
+                              Streams enriched content documents and metadata directly into Apache Iceberg ACID tables formatted as columnar Apache Parquet. Supports partition pruning, time-travel audits, schema evolution, and zero-copy queries from query engines like Trino, StarRocks, and Apache Spark.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleCheckConnection}
+                            disabled={isCheckingConnection}
+                            className="btn-secondary flex items-center gap-2 text-xs py-1.5 px-3 border border-sky-500/30 text-sky-300 hover:bg-sky-500/10"
+                          >
+                            {isCheckingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />}
+                            Test Iceberg Catalog Connectivity
+                          </button>
                         </div>
                       </div>
                     </div>

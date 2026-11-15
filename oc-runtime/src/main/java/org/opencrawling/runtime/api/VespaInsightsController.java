@@ -27,6 +27,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "Vespa Insights", description = "Vespa cluster health, document counts, search query testing, and schema deployments")
 @RestController
 @RequestMapping("/api/vespa")
 public class VespaInsightsController {
@@ -38,33 +45,53 @@ public class VespaInsightsController {
         this.insightsService = insightsService;
     }
 
+    @Operation(summary = "Check Vespa cluster health", description = "Checks whether the Vespa container endpoint is reachable and healthy.")
+    @ApiResponse(responseCode = "200", description = "Vespa cluster health status")
     @GetMapping("/health")
-    public VespaHealthResult getHealth(@RequestParam String endpoint) {
+    public VespaHealthResult getHealth(
+            @Parameter(description = "Vespa container endpoint URL", example = "http://localhost:8080") @RequestParam String endpoint) {
         return insightsService.checkHealth(endpoint);
     }
 
+    @Operation(summary = "Get document counts per type", description = "Retrieves indexed document counts grouped by Vespa document type.")
+    @ApiResponse(responseCode = "200", description = "List of document counts per document type")
     @GetMapping("/document-counts")
-    public List<DocumentTypeCount> getDocumentCounts(@RequestParam String endpoint) {
+    public List<DocumentTypeCount> getDocumentCounts(
+            @Parameter(description = "Vespa container endpoint URL", example = "http://localhost:8080") @RequestParam String endpoint) {
         return insightsService.getDocumentCounts(endpoint);
     }
 
+    @Operation(summary = "Run test search query against Vespa", description = "Executes a test search query with a specified rank profile against Vespa.")
+    @ApiResponse(responseCode = "200", description = "Query results with matching hits")
     @PostMapping("/query")
     public VespaQueryResult runQuery(@RequestBody VespaQueryRequest request) {
         return insightsService.runQuery(request.endpoint(), request.documentType(), request.queryText(), request.rankProfile());
     }
 
+    @Operation(summary = "Deploy bundled schema to Vespa", description = "Deploys OpenCrawling's built-in application package schema to the Vespa config server.")
+    @ApiResponse(responseCode = "200", description = "Deployment result with status and session ID")
     @PostMapping("/deploy/bundled")
     public VespaDeployResult deployBundledSchema(@RequestBody DeployBundledRequest request) {
         return insightsService.deployBundledSchema(request.configEndpoint());
     }
 
+    @Operation(summary = "Deploy custom schema to Vespa", description = "Uploads and deploys a custom Vespa application package zip file.")
+    @ApiResponse(responseCode = "200", description = "Deployment result with status and session ID")
     @PostMapping(value = "/deploy/custom", consumes = "multipart/form-data")
-    public VespaDeployResult deployCustomSchema(@RequestParam("configEndpoint") String configEndpoint,
-                                                 @RequestParam("file") MultipartFile file) throws IOException {
+    public VespaDeployResult deployCustomSchema(
+            @Parameter(description = "Vespa configuration server endpoint URL", example = "http://localhost:19071") @RequestParam("configEndpoint") String configEndpoint,
+            @Parameter(description = "Vespa application package zip file") @RequestParam("file") MultipartFile file) throws IOException {
         return insightsService.deployCustomSchema(configEndpoint, file.getBytes(), file.getContentType());
     }
 
-    public record VespaQueryRequest(String endpoint, String documentType, String queryText, String rankProfile) {}
+    @Schema(description = "Vespa test query request")
+    public record VespaQueryRequest(
+            @Schema(description = "Vespa container endpoint URL", example = "http://localhost:8080") String endpoint,
+            @Schema(description = "Vespa document type name", example = "opencrawling") String documentType,
+            @Schema(description = "Free-text or YQL query string", example = "enterprise documentation") String queryText,
+            @Schema(description = "Rank profile to use for scoring", example = "default") String rankProfile) {}
 
-    public record DeployBundledRequest(String configEndpoint) {}
+    @Schema(description = "Deploy bundled schema request")
+    public record DeployBundledRequest(
+            @Schema(description = "Vespa configuration server endpoint URL", example = "http://localhost:19071") String configEndpoint) {}
 }

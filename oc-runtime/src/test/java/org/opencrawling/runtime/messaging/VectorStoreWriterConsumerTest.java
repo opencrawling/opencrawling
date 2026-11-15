@@ -21,6 +21,8 @@ import org.mockito.ArgumentCaptor;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.vector.config.PrecomputedEmbeddingModel;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 
 import java.util.List;
@@ -75,10 +77,58 @@ class VectorStoreWriterConsumerTest {
     }
 
     @Test
-    void testConsumeDeleteTombstonePurgesAllVectorStores() {
+    void testConsumePopulatesSecurityAllowedReadWhenMissing() {
+        float[] vector1024 = new float[1024];
+        DocumentEmbeddedMessage message = new DocumentEmbeddedMessage(
+                "doc-multi",
+                "chunk-multi-0",
+                "Text content",
+                Map.of("acl", "mfiles:user:12,mfiles:group:5"),
+                vector1024
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        doNothing().when(store1024).add(captor.capture());
+
+        consumer.consume(message);
+
+        List<Document> saved = captor.getValue();
+        assertEquals(1, saved.size());
+        assertEquals(List.of("mfiles:user:12", "mfiles:group:5"), saved.get(0).getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("u:mfiles:user:12", "g:mfiles:user:12", "u:mfiles:group:5", "g:mfiles:group:5"),
+                saved.get(0).getMetadata().get("security_read_keys"));
+    }
+
+    @Test
+    void testConsumeWithEmptyPermissionsStoresEmptySecurityAllowedRead() {
+        float[] vector1024 = new float[1024];
+        DocumentEmbeddedMessage message = new DocumentEmbeddedMessage(
+                "doc-empty-perms",
+                "chunk-empty-0",
+                "Text content",
+                Map.of("acl", "", "security", Map.of("permissions", List.of())),
+                vector1024
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        doNothing().when(store1024).add(captor.capture());
+
+        consumer.consume(message);
+
+        List<Document> saved = captor.getValue();
+        assertEquals(1, saved.size());
+        assertEquals(List.of(), saved.get(0).getMetadata().get("security_allowed_read"));
+        assertEquals(List.of(), saved.get(0).getMetadata().get("security_read_keys"));
+    }
+
+    @Test
+    void testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores() {
+        String documentId = "http://example.com/gone.html";
         DocumentEmbeddedMessage tombstone = new DocumentEmbeddedMessage(
-                "doc-delete-1",
-                "doc-delete-1",
+                documentId,
+                documentId,
                 "",
                 Map.of(),
                 new float[0],
@@ -87,9 +137,93 @@ class VectorStoreWriterConsumerTest {
 
         consumer.consume(tombstone);
 
-        verify(defaultStore).delete(List.of("doc-delete-1"));
-        verify(store384).delete(List.of("doc-delete-1"));
-        verify(store768).delete(List.of("doc-delete-1"));
-        verify(store1024).delete(List.of("doc-delete-1"));
+        Filter.Expression byDocument = new FilterExpressionBuilder().eq("documentId", documentId).build();
+        for (PgVectorStore store : List.of(defaultStore, store384, store768, store1024)) {
+            verify(store).delete(byDocument);
+            verify(store, never()).delete(anyList());
+        }
+    }
+
+    @Test
+    void aFailedWriteIsRethrownSoKafkaRetriesIt() {
+        doThrow(new RuntimeException("database unavailable")).when(store1024).add(anyList());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-1", "chunk-1", "text", Map.of(), new float[1024])));
+        assertTrue(thrown.getMessage().contains("chunk-1"));
+    }
+
+    @Test
+    void aFailedPurgeIsRethrownSoKafkaRetriesTheTombstone() {
+        doThrow(new RuntimeException("database unavailable")).when(store768).delete(any(Filter.Expression.class));
+
+        assertThrows(IllegalStateException.class, () -> consumer.consume(new DocumentEmbeddedMessage("doc-1", "doc-1",
+                "", Map.of(), new float[0], org.opencrawling.core.document.DocumentAction.DELETE)));
+    }
+
+    @Test
+    void testFirstChunkPurgesTheChunksBeyondTheDocumentsNewLength() {
+        String documentId = "http://example.com/shrunk.html";
+        DocumentEmbeddedMessage firstChunk = new DocumentEmbeddedMessage(
+                documentId,
+                "chunk-0",
+                "The only chunk left",
+                Map.of("documentId", documentId, "chunk_index", 0, "total_chunks", 1),
+                new float[1024]
+        );
+
+        consumer.consume(firstChunk);
+
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
+        Filter.Expression beyondNewLength = b.and(b.eq("documentId", documentId), b.gte("chunk_index", 1)).build();
+        verify(store1024).add(anyList());
+        verify(store1024).delete(beyondNewLength);
+    }
+
+    @Test
+    void testLaterChunksDoNotPurge() {
+        String documentId = "http://example.com/page.html";
+        DocumentEmbeddedMessage secondChunk = new DocumentEmbeddedMessage(
+                documentId,
+                "chunk-1",
+                "Second chunk",
+                Map.of("documentId", documentId, "chunk_index", 1, "total_chunks", 3),
+                new float[1024]
+        );
+
+        consumer.consume(secondChunk);
+
+        verify(store1024).add(anyList());
+        verify(store1024, never()).delete(any(Filter.Expression.class));
+    }
+
+    @Test
+    void testConsumeWithFlowableCollocatedSchemaUpdatesColumns() {
+        org.springframework.jdbc.core.JdbcTemplate mockJdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        VectorStoreWriterConsumer collocatedConsumer = new VectorStoreWriterConsumer(
+                defaultStore, store384, store768, store1024, null, mockJdbc, true
+        );
+
+        DocumentEmbeddedMessage message = new DocumentEmbeddedMessage(
+                "proc-inst-123",
+                "chunk-flowable-1",
+                "Flowable process instance text",
+                Map.of(
+                        "flowable_scope_id", List.of("proc-inst-123"),
+                        "flowable_scope_type", List.of("bpmn"),
+                        "acl", "public"
+                ),
+                new float[1024]
+        );
+
+        collocatedConsumer.consume(message);
+
+        verify(store1024).add(anyList());
+        verify(mockJdbc).update(
+                eq("UPDATE vector_store_1024 SET scope_id_ = ?, scope_type_ = ? WHERE id = ?::uuid"),
+                eq("proc-inst-123"),
+                eq("bpmn"),
+                eq("chunk-flowable-1")
+        );
     }
 }

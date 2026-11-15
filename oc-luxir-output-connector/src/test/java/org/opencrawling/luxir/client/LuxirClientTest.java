@@ -144,4 +144,29 @@ class LuxirClientTest {
         String body = req.getBody().readUtf8();
         assertTrue(body.contains("commit"));
     }
+
+    @Test
+    void testSearchSuccess() throws Exception {
+        String jsonResponse = "{\"found\": 1, \"docs\": [{\"id\": \"doc-1\", \"text_t\": \"Hello world\", \"uri_s\": \"http://example.com/1\"}]}";
+        server.enqueue(new MockResponse().setResponseCode(200).setBody(jsonResponse));
+
+        Map<String, Object> query = Map.of("query", Map.of("knn", Map.of("field", "embedding_v", "k", 5)));
+        LuxirClient.LuxirSearchResult result = client.search("opencrawling", query);
+
+        RecordedRequest req = server.takeRequest();
+        assertEquals("POST", req.getMethod());
+        assertEquals("/collections/opencrawling/_search", req.getPath());
+        assertEquals("application/json", req.getHeader("Content-Type"));
+        assertEquals(1, result.found());
+        assertEquals(1, result.docs().size());
+        assertEquals("doc-1", result.docs().get(0).get("id"));
+        assertEquals("Hello world", result.docs().get(0).get("text_t"));
+    }
+
+    @Test
+    void testSearchErrorThrowsIOException() {
+        server.enqueue(new MockResponse().setResponseCode(500).setBody("Internal Server Error"));
+        Map<String, Object> query = Map.of("query", "*:*");
+        assertThrows(java.io.IOException.class, () -> client.search("opencrawling", query));
+    }
 }

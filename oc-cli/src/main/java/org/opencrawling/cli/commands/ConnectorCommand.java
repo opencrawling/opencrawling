@@ -24,6 +24,7 @@ import org.opencrawling.sdk.models.ConnectorRequest;
 import org.opencrawling.sdk.models.ConnectorResponse;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -49,7 +50,7 @@ public class ConnectorCommand implements Runnable {
         System.out.println(AnsiColors.yellow("Please specify a subcommand: list, check, create, delete"));
     }
 
-    @Command(name = "list", description = "List all available connectors (repository, output, transformation)")
+    @Command(name = "list", mixinStandardHelpOptions = true, description = "List all available connectors (repository, output, transformation)")
     public static class ConnectorListCommand implements Callable<Integer> {
 
         @Option(names = {"--type"}, description = "Filter by type: repository, output, transformation", defaultValue = "repository")
@@ -88,14 +89,23 @@ public class ConnectorCommand implements Runnable {
         }
     }
 
-    @Command(name = "check", description = "Test connection health against a target repository or output connector")
+    @Command(name = "check", aliases = {"test"}, mixinStandardHelpOptions = true, description = "Test connection health against a target repository or output connector")
     public static class ConnectorCheckCommand implements Callable<Integer> {
 
-        @Option(names = {"--name"}, required = true, description = "Connector name to check")
+        @Option(names = {"--name"}, description = "Connector name to check")
         private String name;
+
+        @Parameters(index = "0", arity = "0..1", description = "Optional connector name to check as positional argument")
+        private String positionalName;
 
         @Option(names = {"--type"}, description = "Connector type: repository, output, transformation", defaultValue = "output")
         private String type;
+
+        @Option(names = {"--class-name"}, description = "Optional connector Java class name override (e.g. org.opencrawling.push.grpc.GrpcPushRepositoryConnector)")
+        private String className;
+
+        @Option(names = {"--config"}, description = "Optional connector configuration key=value override (repeatable)")
+        private List<String> configEntries;
 
         @Option(names = {"--url"}, description = "Override OpenCrawling server URL")
         private String serverUrl;
@@ -106,9 +116,28 @@ public class ConnectorCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
+                String targetName = (name != null && !name.isBlank()) ? name : positionalName;
+                if (targetName == null || targetName.isBlank()) {
+                    System.err.println(AnsiColors.red("Connector name is required (pass as --name <name> or positional argument)"));
+                    return 1;
+                }
+
+                java.util.Map<String, String> configMap = null;
+                if (configEntries != null && !configEntries.isEmpty()) {
+                    configMap = new java.util.LinkedHashMap<>();
+                    for (String kv : configEntries) {
+                        int eq = kv.indexOf('=');
+                        if (eq > 0) {
+                            configMap.put(kv.substring(0, eq).trim(), kv.substring(eq + 1).trim());
+                        }
+                    }
+                }
+
                 ConnectorRequest req = ConnectorRequest.builder()
-                        .name(name)
+                        .name(targetName)
                         .type(type)
+                        .className(className)
+                        .configuration(configMap)
                         .build();
 
                 ConnectionCheckResponse check = client.connectors().checkConnection(req);

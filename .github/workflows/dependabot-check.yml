@@ -1,8 +1,6 @@
 name: Dependency & Vulnerability Review
 
 on:
-  push:
-    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   pull_request_target:

@@ -56,6 +56,7 @@ spring:
       server:
         name: "opencrawling-secure-vector-mcp"
         version: "1.0.0"
+        protocol: ${SPRING_AI_MCP_SERVER_PROTOCOL:STREAMABLE}
         transport: STREAMABLE_HTTP
         annotation-scanner:
           enabled: true
@@ -117,6 +118,20 @@ opencrawling:
 
 server:
   port: 8080
+
+springdoc:
+  api-docs:
+    path: ${SPRINGDOC_API_DOCS_PATH:/v3/api-docs}
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: ${SPRINGDOC_SWAGGER_UI_PATH:/swagger-ui.html}
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+    display-request-duration: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: none
+  show-actuator: false
 
 logging:
   level:

@@ -1,7 +1,8 @@
 # OpenCrawling
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/opencrawling/opencrawling?style=flat&logo=github)](https://github.com/opencrawling/opencrawling/stargazers)
+[![End-to-End Integration Tests](https://github.com/opencrawling/opencrawling/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/opencrawling/opencrawling/actions/workflows/integration-tests.yml)
+[![GitHub Stars](https://img.shields.io/github/stars/opencrawling/opencrawling?style=flat&logo=github&color=blue)](https://github.com/opencrawling/opencrawling/stargazers)
 [![GitHub Issues](https://img.shields.io/github/issues/opencrawling/opencrawling.svg?style=flat&logo=github)](https://github.com/opencrawling/opencrawling/issues)
 [![GitHub Commit Activity](https://img.shields.io/github/commit-activity/m/opencrawling/opencrawling.svg?style=flat&logo=github)](https://github.com/opencrawling/opencrawling/commits/main)
 [![Slack Community](https://img.shields.io/badge/Slack-Join_Community-4A154B.svg?style=flat&logo=slack&logoColor=white)](https://join.slack.com/t/opencrawling/shared_invite/zt-43r2anb6q-YLoBsOrxCCcBWU5Up3P1rw)
@@ -12,12 +13,19 @@
 [![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-Supported-black.svg?style=flat&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
 [![Apache Iceberg](https://img.shields.io/badge/Apache_Iceberg-1.11.0-3a6bc8.svg?style=flat&logo=apache&logoColor=white)](https://iceberg.apache.org/)
 [![Apache Ozone](https://img.shields.io/badge/Apache_Ozone-2.2.0-FF6600.svg?style=flat&logo=apache&logoColor=white)](https://ozone.apache.org/)
-[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.1.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
+[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
+[![Apache Tika](https://img.shields.io/badge/Apache_Tika-4.2.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://tika.apache.org/)
 [![Apache Solr](https://img.shields.io/badge/Apache_Solr-10-D9411E.svg?style=flat&logo=apachesolr&logoColor=white)](https://solr.apache.org/)
 [![Apache ManifoldCF](https://img.shields.io/badge/Apache_ManifoldCF-Supported-D22128.svg?style=flat&logo=apache&logoColor=white)](https://manifoldcf.apache.org/)
 [![Alfresco](https://img.shields.io/badge/Alfresco_Content_Services-Supported-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)
 [![Alfresco Process Services](https://img.shields.io/badge/Alfresco_Process_Services-26.2.0-0090DF.svg?style=flat&logo=alfresco&logoColor=white)](https://www.alfresco.com/)
 [![OASIS CMIS](https://img.shields.io/badge/OASIS_CMIS-1.0%20%7C%201.1-0052CC.svg?style=flat)](https://www.oasis-open.org/committees/cmis/)
+[![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
+[![M-Files](https://img.shields.io/badge/M--Files-MFWS_REST-0072CE.svg?style=flat)](https://www.m-files.com/)
+[![SharePoint](https://img.shields.io/badge/SharePoint_Online-Microsoft_Graph_v1.0-0078D4.svg?style=flat)](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint)
+[![IBM FileNet P8](https://img.shields.io/badge/IBM_FileNet_P8-Content_Services_GraphQL-0F62FE.svg?style=flat)](https://www.ibm.com/products/filenet-content-manager)
+[![OpenText Documentum](https://img.shields.io/badge/OpenText_Documentum-REST_Services-1A2B6D.svg?style=flat)](https://www.opentext.com/products/documentum-content-management)
+[![Hyland OpenArch](https://img.shields.io/badge/Hyland_OpenArch-Supported-4F46E5.svg?style=flat)](docs/Hyland-OpenArch-Integration.md)
 [![Flowable](https://img.shields.io/badge/Flowable_BPMN-Supported-007ACC.svg?style=flat&logo=flowable&logoColor=white)](https://www.flowable.com/)
 [![Camunda](https://img.shields.io/badge/Camunda_BPM-Supported-E10076.svg?style=flat&logo=camunda&logoColor=white)](https://camunda.com/)
 [![Apache StormCrawler](https://img.shields.io/badge/Apache_StormCrawler-3.7.0-007396.svg?style=flat&logo=apache&logoColor=white)](https://stormcrawler.apache.org/)
@@ -25,20 +33,23 @@
 [![Milvus](https://img.shields.io/badge/Milvus-2.4.5-00A1EA.svg?style=flat&logo=milvus&logoColor=white)](https://milvus.io/)
 [![Qdrant](https://img.shields.io/badge/Qdrant-1.12-DC244C.svg?style=flat&logo=qdrant&logoColor=white)](https://qdrant.tech/)
 [![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x%20%7C%203.x-005EB8.svg?style=flat&logo=opensearch&logoColor=white)](https://opensearch.org/)
+[![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8.x%20%7C%209.x-005571.svg?style=flat&logo=elasticsearch&logoColor=white)](https://www.elastic.co/elasticsearch)
 [![Vespa](https://img.shields.io/badge/Vespa-8-4E9BFA.svg?style=flat&logo=vespa&logoColor=white)](https://vespa.ai/)
 [![Luxir](https://img.shields.io/badge/Luxir-Search_Engine-00ADD8.svg?style=flat&logo=search&logoColor=white)](https://luxir.org/)
-[![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
 [![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
 [![Redis](https://img.shields.io/badge/Redis-Supported-red.svg?style=flat&logo=redis&logoColor=white)](https://redis.io/)
-[![Ollama](https://img.shields.io/badge/Ollama-0.23.4-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-0.40.5-white.svg?style=flat&logo=ollama&logoColor=black)](https://ollama.com/)
 [![OIS](https://img.shields.io/badge/OIS-Open_Ingestion_Standard-0052CC.svg?style=flat)](https://github.com/opencrawling/open-ingestion-standard)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-8A2BE2.svg?style=flat&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io/)
 [![gRPC Transport](https://img.shields.io/badge/gRPC-Internal_Transport-4285F4.svg?style=flat&logo=grpc&logoColor=white)](#-grpc-high-performance-internal-transport)
+[![gRPC Push Connector](https://img.shields.io/badge/gRPC-Push_Connector-4285F4.svg?style=flat&logo=grpc&logoColor=white)](https://github.com/opencrawling/opencrawling/wiki/gRPC-Push-Repository-Connector)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-AIOps-7B42BC.svg?style=flat&logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
+[![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539.svg?style=flat&logo=openapiinitiative&logoColor=white)](#-openapi-31--interactive-swagger-ui)
 [![Maven Archetypes](https://img.shields.io/badge/Maven_Archetypes-Supported-C71A36.svg?style=flat&logo=apachemaven&logoColor=white)](#-custom-connectors-maven-archetypes-suite)
 [![CLI](https://img.shields.io/badge/CLI-oc--cli-4B0082.svg?style=flat&logo=gnu-bash&logoColor=white)](#-opencrawling-cli-oc)
 [![Maven Central](https://img.shields.io/maven-central/v/org.opencrawling.archetypes/opencrawling-connector-archetypes.svg?style=flat&logo=apachemaven&logoColor=white)](https://central.sonatype.com/artifact/org.opencrawling.archetypes/opencrawling-connector-archetypes)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/opencrawling/opencrawling/badge)](https://scorecard.dev/viewer/?uri=github.com/opencrawling/opencrawling)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16194/badge)](https://www.bestpractices.dev/projects/16194)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-AI_Documentation-blue.svg?style=flat)](https://deepwiki.com/opencrawling/opencrawling)
 
 **OpenCrawling** is the reference Java and Spring Framework implementation of the **[Open Ingestion Standard (OIS)](https://github.com/opencrawling/open-ingestion-standard)**. It provides a secure, decoupled, and vendor-neutral enterprise data integration platform leveraging modern Java 25 features (such as Structured Concurrency and Virtual Threads), Spring Boot, Spring AI, and vector search infrastructure to orchestrate data flows from various repository connectors to vector search outputs.
@@ -72,10 +83,17 @@ graph TD
         ACS_Conn[Alfresco Repository - oc-alfresco-repository-connector]
         APS_Conn[Alfresco Process Services - oc-aps-repository-connector]
         CMIS_Conn[OASIS CMIS Repository - oc-cmis-repository-connector]
+        Doxis_Repo_Conn[Doxis 4 Repository - oc-doxis-repository-connector]
+        SharePoint_Conn[SharePoint Online Repository - oc-sharepoint-repository-connector]
+        MFiles_Repo_Conn[M-Files Vault - oc-mfiles-repository-connector]
+        FileNet_Repo_Conn[IBM FileNet P8 Object Store - oc-filenet-repository-connector]
+        Documentum_Repo_Conn[OpenText Documentum Repository - oc-documentum-repository-connector]
+        OpenArch_Repo_Conn[Hyland OpenArch Repository - oc-openarch-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]
         Camunda_Conn[Camunda Repository - oc-camunda-repository-connector]
         StormCrawler_Conn[StormCrawler Web Engine - oc-stormcrawler-repository-connector]
+        gRPC_Push_Conn[gRPC Push Ingestion Gateway - oc-grpc-push-connector]
         
         Ing_Cons[Ingestion Consumer - IngestionConsumer]
         Tika[Apache Tika Text Extractor]
@@ -83,12 +101,13 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Luxir / Doxis 4 / Apache SeaTunnel]
+        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Elasticsearch / Luxir / OpenArch / Doxis 4 / Apache SeaTunnel]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
         Core --> FS_Conn
         Core -->|Publish IngestionMessage| Ingest_Topic[(Kafka Topic: opencrawling-ingestion)]
+        gRPC_Push_Conn -->|Push IngestionMessage| Ingest_Topic
         
         Ingest_Topic -->|Consume IngestionMessage| Ing_Cons
         Ing_Cons -->|Extract Text| Tika
@@ -160,7 +179,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 
 #### ⚙️ Ingestion & Embedding Mappings
 ![Ingestion & Embedding Settings](images/screenshots/ui-ingestion-and-embedding-settings.png)
-*Configure target models (e.g., Ollama, OpenAI) and tune text chunk sizes/overlap boundaries dynamically.*
+*Configure target models (e.g., Ollama, OpenAI) and tune the default text chunk size dynamically.*
 
 #### 🪵 Real-Time Ingestion Logs
 ![Real-Time Activity Logs](images/screenshots/ui-real-time-activity-logs.png)
@@ -178,7 +197,7 @@ The **OpenCrawling CLI** (`oc-cli`, binary `oc`) is a terminal-native, enterpris
 mvn clean package -pl oc-cli
 
 # Run CLI commands
-java --enable-preview -jar oc-cli/target/oc-cli-1.0.0-SNAPSHOT.jar system status
+java --enable-preview -jar oc-cli/target/oc-cli-1.0.4-SNAPSHOT.jar system status
 ```
 
 ### 🐳 Docker Container Execution
@@ -190,7 +209,8 @@ docker run --rm --network host ghcr.io/opencrawling/oc-cli:latest system status
 ### 🍺 Homebrew Installation (macOS / Linux)
 ```bash
 brew tap opencrawling/tap
-brew install oc
+brew trust opencrawling/tap   # Required on Homebrew 7+
+brew install opencrawling/tap/oc
 oc --version
 ```
 
@@ -205,6 +225,9 @@ oc --version
 | `oc copilot` | `narrativize`, `mock` | Generate natural language Mustache templates from schemas. |
 | `oc archetype` | `init` | Scaffold custom repository/output connector Maven projects. |
 | `oc schema` | `validate` | Validate Open Ingestion Standard (OIS) schemas offline. |
+| `oc report` | `list`, `get`, `ledger`, `export`, `query` | Post-job audit reporting, Parquet ledger downloads, and DuckDB OLAP querying. |
+| `oc openapi` | `status`, `export`, `tools`, `diff`, `ui`, `validate` | OpenAPI 3.1 specification introspection, AI agent tool export, and contract diff. |
+| `oc discovery` | `connectors`, `tree`, `dry-run` | Pre-crawl repository discovery, live hierarchy exploration, and dry-run preview. |
 | `oc config` | `set`, `get`, `context` | Manage active server URL contexts and credentials. |
 
 > For complete flag details, environment variables, and GitHub Actions workflow integration examples, visit the [OpenCrawling CLI Wiki Documentation](https://github.com/opencrawling/opencrawling/wiki/OpenCrawling-CLI).
@@ -254,6 +277,32 @@ service InternalPayloadService {
 
 > [!TIP]
 > See [gRPC Internal Transport](https://github.com/opencrawling/opencrawling/wiki/gRPC-Internal-Transport) in the Wiki for full Protobuf schema definitions, YAML properties, and environment variables.
+
+---
+
+## 📖 OpenAPI 3.1 & Interactive Swagger UI
+
+OpenCrawling provides native, platform-wide **OpenAPI 3.1** specification generation and an interactive **Swagger UI** explorer bundled directly within `oc-runtime`.
+
+### Endpoints
+- **Interactive Swagger UI**: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+- **OpenAPI 3.1 JSON Specification**: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
+
+### Core Capabilities
+- **Strict OpenAPI 3.1 Compatibility**: Leveraging `springdoc-openapi` 3.0+ optimized for Java 25 and Spring Boot 4.
+- **Complete Domain Coverage**: Comprehensive `@Operation`, `@ApiResponse`, and `@Parameter` annotations across all 10 logical platform domains:
+  - `Pipeline & Jobs`: Lifecycle orchestration (`POST /api/jobs/{id}/start`, `stop`, `pause`, `resume`, pagination, status).
+  - `Connectors`: Dynamic repository, transformation, and output connector discovery and connection checks.
+  - `OIS Direct Ingestion`: High-throughput, token-secured direct document ingestion (`POST /api/ois/ingest`).
+  - `Reports & Lakehouse Audit`: Job summaries, Parquet Lakehouse audit trails, DuckDB/Iceberg query executions.
+  - `Observability & AIOps`: Live pipeline telemetry, trace timeline visualizer, metrics, and error logs.
+  - `System & Settings`: System settings and runtime configuration management.
+  - `Transport Settings`: High-performance internal transport configuration and live gRPC diagnostic ping probes.
+  - `ManifoldCF Migration`: Automated Apache ManifoldCF job and connector definition conversion.
+  - `Vespa Insights`: Vespa cluster connectivity diagnostics, document counts, BM25 text queries, and schema deployments.
+  - `Auto-Narrativization Copilot`: AI-driven Mustache narrative template generation from structured schema definitions.
+- **Security Schemes**: Includes explicit documentation for `OisTokenAuth` HTTP Bearer token authentication on secure endpoints.
+- **Client SDK Generation**: The generated `/v3/api-docs` spec can be directly consumed by OpenAPI Generator to synthesize typed clients in TypeScript, Python, Go, or Rust.
 
 ---
 
@@ -415,30 +464,30 @@ OpenCrawling provides an official suite of **Maven Archetypes** under `opencrawl
 mvn archetype:generate \
   -DarchetypeGroupId=org.opencrawling.archetypes \
   -DarchetypeArtifactId=opencrawling-archetype-repository-connector \
-  -DarchetypeVersion=1.0.0-SNAPSHOT \
+  -DarchetypeVersion=1.0.4-SNAPSHOT \
   -DgroupId=org.opencrawling.connectors \
   -DartifactId=opencrawling-repository-sample \
-  -Dversion=1.0.0-SNAPSHOT \
+  -Dversion=1.0.4-SNAPSHOT \
   -DconnectorName=SampleRepositoryConnector
 
 # Generate an Output Connector (Vector Store / Destination)
 mvn archetype:generate \
   -DarchetypeGroupId=org.opencrawling.archetypes \
   -DarchetypeArtifactId=opencrawling-archetype-output-connector \
-  -DarchetypeVersion=1.0.0-SNAPSHOT \
+  -DarchetypeVersion=1.0.4-SNAPSHOT \
   -DgroupId=org.opencrawling.connectors \
   -DartifactId=opencrawling-output-sample \
-  -Dversion=1.0.0-SNAPSHOT \
+  -Dversion=1.0.4-SNAPSHOT \
   -DconnectorName=SampleOutputConnector
 
 # Generate a Transformation Connector (Data Processing / Enrichment)
 mvn archetype:generate \
   -DarchetypeGroupId=org.opencrawling.archetypes \
   -DarchetypeArtifactId=opencrawling-archetype-transformation-connector \
-  -DarchetypeVersion=1.0.0-SNAPSHOT \
+  -DarchetypeVersion=1.0.4-SNAPSHOT \
   -DgroupId=org.opencrawling.connectors \
   -DartifactId=opencrawling-transformation-sample \
-  -Dversion=1.0.0-SNAPSHOT \
+  -Dversion=1.0.4-SNAPSHOT \
   -DconnectorName=SampleTransformationConnector
 ```
 
@@ -475,14 +524,17 @@ docker compose -f docker/docker-compose.dist.yml -f docker/docker-compose.overri
 - **gRPC High-Performance Binary Transport**: Protobuf-backed binary payload channel (Port 9095) with automatic HTTP/REST fallback, TLS/mTLS encryption, and live Admin UI diagnostic ping testing.
 - **OpenTelemetry & Micrometer AIOps**: Automated Root Cause Analysis (RCA) and correlated distributed span telemetry.
 - **Model Context Protocol (MCP)**: System tools exposing vector search and OTel telemetry to LLMs.
+- **OpenFGA (optional)**: Relationship-based document authorization; one access gate for every store, with `shadow` and `intersection` modes for a safe rollout.
 - **Apache Kafka**: Decoupled, event-driven document processing using the **Claim Check Pattern**.
 - **Apache Ozone 2.2.0**: High-performance distributed object store offloading large document payloads with dual client strategy:
   - **Native Ozone Client (`ofs` / `o3fs`)**: Direct gRPC/RPC transport to DataNodes & Ozone Manager (OM) for maximum throughput.
   - **S3 Gateway Client (`s3g`)**: Standard AWS S3 SDK integration hitting Ozone's S3 Gateway endpoint for maximum cloud versatility.
-- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, Apache Iceberg, Flowable BPMN, Camunda, and Apache StormCrawler.
+- **Repository Connectors**: Multi-source connectors for Filesystem, Alfresco Content Services (ACS), **Alfresco Process Services (APS)**, **OASIS CMIS (1.0/1.1)**, **Doxis 4 (CSB REST)**, **SharePoint Online (Microsoft Graph)**, **M-Files Vault (MFWS REST)**, **IBM FileNet P8 (Content Services GraphQL)**, **OpenText Documentum (REST Services)**, **Hyland OpenArch**, Apache Iceberg, Flowable BPMN, Camunda, Apache StormCrawler, and **gRPC Push Ingestion Gateway**.
+- **Hyland OpenArch & Parquet Vector Bridging**: Native bidirectional integration supporting paged HXQL harvesting, binary blob offloading via Java 25 Virtual Threads, Parquet vector serialization (`embedding.avsc`), Zero-Trust ACL preservation, and MCP search/fetch tools (`openarch_search`, `openarch_fetch_document`).
 - **pgvector**: High-dimensional vector similarity search in PostgreSQL.
 - **Milvus**: High-performance, distributed vector database for large-scale enterprise vector indexing.
 - **Qdrant**: Rust-based vector search engine with payload-indexed ACL pre-filtering and optional scalar/binary quantization.
+- **Elasticsearch 8.x / 9.x**: `dense_vector` HNSW indexing (optionally `int8_hnsw` / `bbq_hnsw` quantized) through the official Elastic Java client, with ACL read-key pre-filtering inside kNN queries.
 - **Vespa**: Hybrid ANN vector search and BM25 lexical ranking engine, combining `nearestNeighbor` and full-text queries in a single rank profile for enterprise-scale RAG retrieval.
 - **Redis Stack**: Lightweight caching and session management.
 - **Ollama & OpenAI**: Dynamic embedding generation via local and cloud-based AI engines.
@@ -499,6 +551,58 @@ Ensure you have the following installed on your machine:
 - **Maven 3.9+**
 - **Docker & Docker Compose**
 - **Node.js 18+ & npm** (for the UI)
+
+---
+
+### Quick Start with `run.sh` / `run.bat`
+
+For the fastest local developer experience on **macOS / Linux** (`./run.sh`) and **Windows CMD** (`run.bat`), use the root developer CLI convenience wrappers. They encapsulate BuildKit `~/.m2` cache mounts, containerized Maven builds (`oc-maven-builder`), Docker Compose stack lifecycles, testing, and Admin UI commands:
+
+```bash
+# macOS / Linux
+./run.sh help              # View all available commands
+./run.sh build             # Compile all modules via oc-maven-builder using host ~/.m2 cache
+./run.sh decoupled:up      # Build & start the decoupled stack with BuildKit ~/.m2 cache mounts
+./run.sh apps:up           # Build & start the monolith apps stack (backend, embedding, UI)
+./run.sh status            # Inspect running containers and port bindings
+./run.sh logs oc-crawler   # Stream container logs
+./run.sh ui:dev            # Start the React Admin UI Vite dev server on :5173
+./run.sh down              # Stop all active local stacks
+```
+
+```bat
+REM Windows Command Prompt (CMD)
+run.bat help
+run.bat build
+run.bat decoupled:up
+run.bat apps:up
+run.bat status
+run.bat down
+```
+
+| Category | Command (`./run.sh` or `run.bat`) | Description |
+|---|---|---|
+| **Build & Maven** | `build` / `mvn:build` | Compile all modules via containerized `oc-maven-builder` (`-DskipTests`) |
+| | `build:offline` | Fast offline build via `oc-maven-builder` (`-o -DskipTests`) |
+| | `build:host` / `build:native` | Build using host JDK 25 & Maven (`mvn clean package -DskipTests`) |
+| | `build:clean` | Full clean build with unit tests via `oc-maven-builder` |
+| | `mvn <args...>` | Run custom arbitrary Maven goals inside `oc-maven-builder` |
+| **Docker Stacks** | `decoupled:up` / `decoupled:local` | Start standalone decoupled stack with local BuildKit cache mounts |
+| | `decoupled:override` | Start decoupled stack via `docker-compose-decoupled.local.yml` overlay |
+| | `decoupled:down` | Stop decoupled local stack |
+| | `apps:up` / `apps:local` | Start standalone apps stack (backend, embedding, UI) with local Dockerfiles |
+| | `apps:override` | Start apps stack via `docker-compose-apps.local.yml` overlay |
+| | `apps:down` | Stop apps local stack |
+| | `infra:up` / `infra:down` | Start or stop core infrastructure only (PostgreSQL/pgvector, Redis, Ollama, Kafka) |
+| | `down` / `stop` | Stop all active local OpenCrawling stacks |
+| **Productivity** | `status` / `ps` | Show status and port bindings of running local containers |
+| | `logs [service...]` | Follow container logs (optionally filtered by service) |
+| | `test:unit [args...]` | Run unit tests via `oc-maven-builder` |
+| | `test:it [filter...]` | Run integration tests with local BuildKit cache overlay |
+| | `test:local-dev` | Run dedicated local Docker build acceleration test suite |
+| | `ui:dev` / `ui:build` | Start Vite dev server (`:5173`) or build React Admin UI bundle |
+| | `license:format` / `format` | Apply Apache 2.0 license headers across project files |
+| | `clean [--prune]` | Clean Maven `target/` folders (and optionally prune Docker build cache) |
 
 ---
 
@@ -602,6 +706,85 @@ To run the complete decoupled pipeline using pre-built images published to Docke
    ```
 
 This spins up the entire backing infrastructure (Postgres, Redis, Kafka, Ollama, OpenTelemetry stack) and all five decoupled OpenCrawling services instantly using Docker Hub images.
+
+---
+
+### Option A.2.c: Fast Local Development Builds & `oc-maven-builder` (Local Maven Cache `~/.m2`)
+
+In CI workflows (GitHub Actions), container images are built from scratch to guarantee clean, hermetic builds. However, for local development, downloading all dependencies repeatedly across multi-service builds (`oc-crawler`, `oc-ingestion-consumer`, `oc-embedding-consumer`, `oc-writer-consumer`, `oc-mcp-server`) creates significant network overhead.
+
+To improve the local development experience, OpenCrawling provides dedicated local configurations that preserve the CI Dockerfiles untouched while leveraging the developer's local Maven repository cache (`<USER_HOME>/.m2`).
+
+#### 1. The `oc-maven-builder` Service (Host `~/.m2` Volume Mount)
+
+The `oc-maven-builder` service (defined in `docker-compose-maven-builder.yml` and included across local compose files) runs the official `maven:3-eclipse-temurin-25` container with two crucial volume mounts:
+* **Host Maven Cache Mount (`${HOME}/.m2:/root/.m2`)**: Any dependency downloaded by Maven is stored directly on your host machine's `~/.m2` folder. Existing dependencies on your machine are reused immediately with zero download time.
+* **Workspace Mount (`.:/app`)**: Compiles and outputs JAR artifacts (`target/*.jar`) directly into your host workspace.
+* **Zero-Host-Prerequisites**: Developers do not need JDK 25 or Maven installed on their host machine; builds execute inside the exact containerized Java 25 environment.
+* **Docker Compose Profile (`profiles: ["build"]`)**: It is marked with `profiles: ["build"]`, so it never starts as an unwanted background daemon during `docker compose up -d`. It only runs on-demand when called with `run --rm`.
+
+#### 2. Usage with Decoupled Pipeline Stack
+
+To compile and launch the decoupled microservices:
+
+```bash
+# 1. Compile all project modules using host ~/.m2
+docker compose -f docker-compose-decoupled-local.yml run --rm oc-maven-builder
+
+# 2. Start the decoupled microservices
+docker compose -f docker-compose-decoupled-local.yml up -d
+```
+
+You can also use the local override on top of `docker-compose-decoupled.yml`:
+```bash
+docker compose -f docker-compose-decoupled.yml -f docker-compose-decoupled.local.yml up -d --build
+```
+
+#### 3. Usage with Monolith Apps Stack (Backend + UI)
+
+```bash
+# 1. Compile modules using host ~/.m2
+docker compose -f docker-compose-apps-local.yml run --rm oc-maven-builder
+
+# 2. Start the backend, embedding service, and React UI
+docker compose -f docker-compose-apps-local.yml up -d
+```
+
+#### 4. Usage with Any Specialized Connector Stack
+
+Because `docker-compose-maven-builder.yml` is located at the root of the repository, it can be used to compile artifacts before launching any specialized connector compose stack (Vespa, Solr, Luxir, Milvus, Qdrant, SeaTunnel, Ozone):
+
+```bash
+# 1. Compile project modules
+docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder
+
+# 2. Launch the target connector stack (e.g. Vespa)
+docker compose -f oc-vespa-output-connector/docker/docker-compose-decoupled-with-vespa.yml up -d
+```
+
+#### 5. Running Custom Maven Goals and Module Testing
+
+You can pass arbitrary Maven commands to `oc-maven-builder`:
+
+```bash
+# Run unit tests for oc-runtime only
+docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn test -pl oc-runtime
+
+# Fast offline build (skipping remote dependency repository lookups)
+docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn clean package -o -DskipTests
+
+# Inspect connector dependency tree
+docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn dependency:tree -pl oc-vector-output-connector
+```
+
+#### 6. Transparent Fast Builds for Existing Integration Test Scripts
+
+To run integration test scripts under `scripts/` using the fast local cache Dockerfiles without modifying any script file:
+
+```bash
+export COMPOSE_FILE="docker-compose-decoupled.yml:docker-compose-decoupled.local.yml"
+./scripts/test-ois-ingest-decoupled.sh
+```
 
 ---
 
@@ -741,7 +924,178 @@ To run the complete decoupled pipeline configured to use Luxir instead of Postgr
 
 This starts a standalone Luxir search engine instance alongside the decoupled OpenCrawling services. Key configuration properties (see `spring.opencrawling.output.luxir.*`): `endpoint`, `collection`, `vector-field` (`embedding_v`), `dimensions` (`384` / `768` / `1024`), `similarity` (`cosine`), and `auto-commit` (`true`). Luxir automatically handles dense vector kNN search, dynamic typing schemas (`_t`, `_s`, `_ss`, `_v`), OIS v1.1 tombstone deletions via `delete_ids`, and zero-trust ACL token filtering.
 
-### Option A.9: Doxis 4 ECM Archiving
+### Option A.8.b: Doxis 4 Repository Crawling
+
+[![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
+
+To crawl a [Doxis 4](https://www.doxis.com/en/) DMS repository, select the Doxis repository connector and point it at a Doxis CSB:
+
+> **Prerequisites:** you need a valid Doxis licence that allows API (technical-user) sessions, and a reachable Doxis 4 CSB
+> 14.4+ with its REST API enabled. You also need a technical user and role with read rights on the repository, its classes,
+> e-files and users/groups/roles, and an existing DMS repository. OpenCrawling doesn't include Doxis or any Doxis licence.
+> See the [full prerequisites](oc-doxis-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=doxis \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=doxis \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_URL=http://<csb-host>:8080/restws/publicws/rest/api/v1 \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_CUSTOMER_NAME=<customer> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_REPOSITORY_ID=<repository> \
+SPRING_OPENCRAWLING_CONNECTOR_DOXIS_SEARCH_QUERY="OBJECTNAME LIKE 'Contract*'" \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`DoxisRepositoryConnector` reads documents through the Doxis CSB REST API.
+- **What it crawls:** either one CQL search (`crawl-mode: search`) or an e-file (*Akte*) and its folder nodes (`crawl-mode: folder`).
+- **What each document carries:** its descriptors, the content of its default representation, and the document and e-file ACLs as OIS permissions.
+- **Deletes:** logically removed documents become `DELETE` tombstones.
+- **Sessions:** a scan uses one CSB session and always logs out.
+
+In the Admin UI it is the **Doxis Repository** repository connector. See
+[oc-doxis-repository-connector/README.md](oc-doxis-repository-connector/README.md).
+
+### Option A.8.c: M-Files Vault Crawling
+
+[![M-Files](https://img.shields.io/badge/M--Files-MFWS_REST-0072CE.svg?style=flat)](https://www.m-files.com/)
+
+To crawl an [M-Files](https://www.m-files.com/) vault, select the M-Files repository connector and point it at the
+M-Files Web Service (MFWS):
+
+> **Prerequisites:** you need a licensed M-Files Server with the M-Files Web Service (REST API) enabled, and an M-Files
+> account with read access to the vault (or an OAuth2 / Entra ID client the vault accepts). OpenCrawling doesn't include
+> M-Files or any M-Files licence. See the [full prerequisites](oc-mfiles-repository-connector/README.md#prerequisites)
+> before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=mfiles \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=mfiles \
+SPRING_OPENCRAWLING_CONNECTOR_MFILES_URL=https://<mfiles-host>/REST \
+SPRING_OPENCRAWLING_CONNECTOR_MFILES_VAULT_GUID="{<vault-guid>}" \
+SPRING_OPENCRAWLING_CONNECTOR_MFILES_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_MFILES_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_MFILES_CLASS_IDS=14,22 \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`MFilesRepositoryConnector` reads objects through the MFWS REST API.
+- **What it crawls:** MFWS searches by object type, class and conditions (`crawl-mode: search` / `all_objects`), an
+  M-Files view (`view`), or the change feed of a Vault Application Framework app (`vaf`).
+- **What each document carries:** the object's typed property values, its file (one OIS document per file for a
+  multi-file document), and its permissions as OIS permissions, deny by default.
+- **Deletes:** deleted objects become `DELETE` tombstones; incremental crawls also purge files an object no longer has.
+- **Sessions:** a scan uses one MFWS session and always ends it.
+
+In the Admin UI it is the **M-Files Repository** repository connector. See
+[oc-mfiles-repository-connector/README.md](oc-mfiles-repository-connector/README.md).
+
+### Option A.8.d: SharePoint Online Repository Crawling
+
+[![SharePoint](https://img.shields.io/badge/SharePoint_Online-Microsoft_Graph_v1.0-0078D4.svg?style=flat)](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint)
+
+To crawl the document libraries of a SharePoint Online site, select the SharePoint repository connector and give it an
+Entra ID app registration:
+
+> **Prerequisites:** a Microsoft Entra ID app registration with a client secret and the admin-consented Microsoft Graph
+> application permission `Sites.Read.All` (or `Sites.Selected` with read access to the site). See the
+> [full prerequisites](oc-sharepoint-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=sharepoint \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=sharepoint \
+SPRING_OPENCRAWLING_CONNECTOR_SHAREPOINT_TENANT_ID=<tenant-id> \
+SPRING_OPENCRAWLING_CONNECTOR_SHAREPOINT_CLIENT_ID=<client-id> \
+SPRING_OPENCRAWLING_CONNECTOR_SHAREPOINT_CLIENT_SECRET=<client-secret> \
+SPRING_OPENCRAWLING_CONNECTOR_SHAREPOINT_SITE_URL=https://<tenant>.sharepoint.com/sites/<site> \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`SharePointRepositoryConnector` reads files through Microsoft Graph v1.0.
+- **What it crawls:** every document library of the site, or the ones named in `drive-names`, through Graph delta
+  queries (`crawl-mode: delta`, incremental) or a folder traversal (`crawl-mode: tree`).
+- **What each file carries:** its list item columns, its content, and its Graph permissions as OIS permissions. Files
+  without readers stay closed.
+- **Deletes:** deleted files and folders become `DELETE` tombstones.
+- **Permission-only changes:** a periodic tree crawl picks them up.
+
+In the Admin UI it is the **Microsoft SharePoint (Microsoft Graph API)** repository connector. The
+[Graph mock](oc-sharepoint-repository-connector/graph-mock/README.md) emulates a tenant for local testing. See
+[oc-sharepoint-repository-connector/README.md](oc-sharepoint-repository-connector/README.md).
+
+### Option A.8.e: IBM FileNet P8 Crawling
+
+[![IBM FileNet P8](https://img.shields.io/badge/IBM_FileNet_P8-Content_Services_GraphQL-0F62FE.svg?style=flat)](https://www.ibm.com/products/filenet-content-manager)
+
+To crawl an object store of an [IBM FileNet P8](https://www.ibm.com/products/filenet-content-manager) Content Platform
+Engine, select the FileNet repository connector and point it at the Content Services GraphQL API:
+
+> **Prerequisites:** you need a licensed IBM FileNet P8 installation with the Content Services GraphQL API deployed, and
+> an account with read access to the object store (Basic, OAuth2 / Cloud Pak IAM, a bearer token or an LTPA token).
+> OpenCrawling doesn't include IBM FileNet or any IBM licence. See the
+> [full prerequisites](oc-filenet-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=filenet \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=filenet \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_URL=https://<cpe-host>/content-services-graphql/graphql \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_OBJECT_STORE=OS1 \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_FILENET_DOCUMENT_CLASSES=LoanApplicationDocument \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`FileNetRepositoryConnector` reads documents through the Content Services GraphQL API.
+- **What it crawls:** documents of the configured classes (subclasses included) matching an optional CE SQL condition
+  (`crawl-mode: query`), or below a folder (`folder`); the current, the latest released, or every version.
+- **What each document carries:** its class properties, every content element as its own OIS document, the folders it is
+  filed in, and its effective access permissions as OIS permissions, deny by default (a deny of view content alone is a
+  deny).
+- **Incremental crawls and deletes:** a `DateLastModified` watermark skips unchanged versions; deleted documents are found
+  by reconciling the current ids (no auditing needed) or from the `DeletionEvent` audit log, and become `DELETE`
+  tombstones.
+
+In the Admin UI it is the **IBM FileNet P8 (Content Platform Engine)** repository connector. See
+[oc-filenet-repository-connector/README.md](oc-filenet-repository-connector/README.md).
+
+### Option A.8.f: OpenText Documentum Crawling
+
+[![OpenText Documentum](https://img.shields.io/badge/OpenText_Documentum-REST_Services-1A2B6D.svg?style=flat)](https://www.opentext.com/products/documentum-content-management)
+
+To crawl a repository of an [OpenText Documentum](https://www.opentext.com/products/documentum-content-management)
+Content Server, select the Documentum repository connector and point it at Documentum REST Services:
+
+> **Prerequisites:** you need a licensed OpenText Documentum installation with Documentum REST Services deployed, and an
+> account that can read the documents to crawl (Basic with a password or login ticket, OAuth2 / OTDS, or a bearer token).
+> OpenCrawling doesn't include OpenText Documentum or any OpenText licence. See the
+> [full prerequisites](oc-documentum-repository-connector/README.md#prerequisites) before configuring a crawl.
+
+```bash
+SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=documentum \
+SPRING_OPENCRAWLING_CONNECTOR_TYPE=documentum \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_URL=https://<rest-host>/dctm-rest \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_REPOSITORY_NAME=<repository> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_USERNAME=<user> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_PASSWORD=<password> \
+SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_OBJECT_TYPES=my_contract \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`DocumentumRepositoryConnector` reads documents through Documentum REST Services and DQL.
+- **What it crawls:** objects of the configured types (subtypes included) matching an optional DQL condition
+  (`crawl-mode: dql`), or below a cabinet or folder (`folder`); the CURRENT, the latest major, or every version.
+- **What each document carries:** its attributes, including the single and repeating attributes of custom types, its
+  primary content or a preferred rendition (such as PDF), its folder paths, and its permission set as OIS permissions,
+  deny by default (access restrictions become denies; documents with required groups are left out).
+- **Incremental crawls and deletes:** an `r_modify_date` watermark with keyset paging skips unchanged documents; edited
+  permission sets are detected; destroyed documents are found by reconciling the current ids (no auditing needed) or from
+  the `dm_audittrail`, and become `DELETE` tombstones.
+
+In the Admin UI it is the **OpenText Documentum (REST Services)** repository connector. See
+[oc-documentum-repository-connector/README.md](oc-documentum-repository-connector/README.md).
+
+### Option A.8.g: Doxis 4 ECM Archiving (Output)
 
 [![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
 
@@ -765,7 +1119,7 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 
 Every write is verified by reading back the content object's length and SHA-256. Files above `opencrawling.ingestion.max-extract-bytes` skip text extraction and embedding but are still archived. See [oc-doxis-output-connector/README.md](oc-doxis-output-connector/README.md).
 
-### Option A.10: Decoupled Apache SeaTunnel-Based Deployment
+### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
 
 [![Apache SeaTunnel](https://img.shields.io/badge/Apache_SeaTunnel-v2.3.13-0099FF.svg?style=flat&logo=apache&logoColor=white)](https://seatunnel.apache.org/)
 
@@ -777,6 +1131,21 @@ To run the complete decoupled pipeline configured to fan out document chunks, de
    ```
 
 This launches a SeaTunnel Zeta cluster alongside OpenCrawling's streaming pipeline. OpenCrawling emits Open Ingestion Standard (OIS) embedded chunks to Apache Kafka (`opencrawling-embedded`), while `SeaTunnelOutputConnector` dynamically synthesizes and submits HOCON streaming execution jobs to the SeaTunnel Zeta cluster via its HTTP REST API v2 (`http://<master>:8080/submit-job`). SeaTunnel fans out document chunks, dense vectors, and security ACLs across target sinks (ClickHouse, Apache Iceberg, Milvus, Qdrant, StarRocks, etc.) with automatic Change Data Capture (`RowKind.DELETE`) for tombstone purges. Key configuration properties (see `spring.opencrawling.output.seatunnel.*`): `rest-url`, `job-name`, `job-mode` (`STREAMING` / `BATCH`), `checkpoint-interval-ms` (`5000`), `parallelism` (`4`), `kafka-bootstrap-servers`, `kafka-topic`, and `target-sinks`.
+
+---
+
+### Option A.10: Decoupled AWS S3 Migration Deployment
+
+[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Supported-FF9900.svg?style=flat&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
+
+To run the complete decoupled microservice pipeline in **Migration Mode** streaming original document binaries and companion Zero-Trust OIS JSON sidecars (`.ois.json`) into Amazon S3 or S3-compatible cloud object stores (MinIO, Ceph, Cloudflare R2):
+
+1. **Start the decoupled stack with S3/MinIO**:
+   ```bash
+   docker compose -f oc-s3-output-connector/docker/docker-compose-decoupled-with-s3.yml up -d
+   ```
+
+This launches the decoupled crawler, ingestion consumer, writer consumer (`S3MigrationWriterConsumer`), and Secure MCP server with MinIO S3 and Kafka. In Migration Mode, text parsing and vector embeddings are completely bypassed, streaming pristine binaries and writing OIS JSON sidecars with custom HTTP request headers, dynamic template placeholders, and parallel multipart uploads.
 
 ---
 
@@ -801,6 +1170,12 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-ozone-decoupled.sh
     ```
     This script tests the decoupled architecture using Apache Ozone 2.2.0 (SCM, OM, Datanode, S3 Gateway) as the Claim Check Object Store for large document payloads.
+
+*   **AWS S3 Migration Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-s3-migration-decoupled.sh
+    ```
+    This script tests the decoupled architecture in Migration Mode against MinIO / AWS S3, asserting bit-for-bit SHA-256 binary fidelity, companion OIS Zero-Trust JSON sidecars (`.ois.json`), RAG bypass (0 vector records in pgvector), parallel multipart uploads, custom request headers with dynamic template engine, and OIS tombstone deletions.
 
 *   **Qdrant Decoupled Pipeline**:
     ```bash
@@ -837,6 +1212,30 @@ We provide fully automated end-to-end integration test scripts that build, boot,
     ./scripts/test-observability.sh
     ```
     This script tests the telemetry ingestion pipeline, spinning up Jaeger, the OTel Collector, and Prometheus, executing a JUnit-based trace emitter, and verifying trace propagation using Jaeger's query API.
+
+*   **Secure Model Context Protocol (MCP) Server Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-mcp-decoupled.sh
+    ```
+    This script tests the entire Secure MCP Server capabilities in decoupled deployment mode, validating Streamable HTTP transport handshakes (JSON-RPC 2.0 initialize, session negotiation, ping), tool discovery (`tools/list`), AIOps observability tools (`fetchJobTraces`, `getErrorLogs`, `queryThroughputMetrics`), Zero-Trust ACL evaluation (`secureVectorSearch`) with explicit deny precedence, document content retrieval (`getDocumentContent`), accessible sources cataloging (`listAccessibleSources`), multi-dimension querying, and OIS tombstone deletions.
+
+*   **OpenFGA Document Authorization Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-openfga-decoupled.sh
+    ```
+    This script runs the decoupled stack with OpenFGA (`oc-mcp-server` in `openfga` mode) and verifies that permissions ingested through the OIS endpoint are mirrored into OpenFGA, that MCP secure search returns to each caller exactly what OpenFGA allows, that a group membership written to OpenFGA grants and revokes access without re-indexing, that permission changes and tombstones move the tuples, that search fails closed while OpenFGA is down, and that the `oc.authz.*` metrics are published. See [Document Authorization](docs/Document-Authorization.md).
+
+*   **Hyland OpenArch Integration Test Suite**:
+    ```bash
+    ./scripts/test-openarch-integration.sh
+    ```
+    This script verifies bidirectional OpenArch harvesting, Parquet vector bridging conforming to `embedding.avsc`, Zero-Trust ACL preservation, and MCP search/fetch backend tools.
+
+*   **Hyland OpenArch Decoupled Pipeline**:
+    ```bash
+    ./scripts/test-openarch-decoupled.sh
+    ```
+    This script tests the entire decoupled architecture with Hyland OpenArch, validating document ingestion, Parquet vector bridging conforming to `embedding.avsc`, Kafka consumers (`oc-crawler`, `oc-ingestion-consumer`, `oc-embedding-consumer`, `oc-writer-consumer`), paged HXQL harvesting with Java 25 Virtual Threads, Secure MCP Server endpoints (`openarch_search`, `openarch_fetch_document`), and OIS tombstone deletions.
 
 *   **OpenCrawling CLI (oc) Integration Test Suites**:
     ```bash

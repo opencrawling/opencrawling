@@ -1,0 +1,24 @@
+{
+  "ObjVer": {
+    "ID": 48192,
+    "Type": 0,
+    "Version": 3
+  },
+  "Title": "Global Vendor NDA - Final Signed",
+  "DisplayID": "48192",
+  "Class": 14,
+  "Deleted": false,
+  "CreatedUtc": "2026-04-10T10:30:00Z",
+  "LastModifiedUtc": "2026-09-27T15:20:00Z",
+  "ObjectCheckedOut": false,
+  "Files": [
+    {
+      "ID": 7,
+      "Name": "Global Vendor NDA - Final Signed",
+      "Extension": "pdf",
+      "Version": 1,
+      "ChangeTimeUtc": "2026-09-27T15:20:00Z"
+    }
+  ],
+  "SingleFile": true
+}

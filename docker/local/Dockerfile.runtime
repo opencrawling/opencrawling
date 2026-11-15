@@ -1,0 +1,154 @@
+# syntax=docker/dockerfile:1
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Local development Dockerfile for OpenCrawling Backend Runtime
+# Leverages BuildKit Maven cache mount (~/.m2) for fast local builds.
+
+# Build stage
+FROM maven:3-eclipse-temurin-25 AS builder
+WORKDIR /app
+
+# Copy the parent pom and module definitions to cache dependencies
+COPY pom.xml .
+COPY oc-grpc-api/pom.xml oc-grpc-api/
+COPY oc-core/pom.xml oc-core/
+COPY oc-observability/pom.xml oc-observability/
+COPY oc-filesystem-repository-connector/pom.xml oc-filesystem-repository-connector/
+COPY oc-alfresco-repository-connector/pom.xml oc-alfresco-repository-connector/
+COPY oc-iceberg-repository-connector/pom.xml oc-iceberg-repository-connector/
+COPY oc-flowable-repository-connector/pom.xml oc-flowable-repository-connector/
+COPY oc-camunda-repository-connector/pom.xml oc-camunda-repository-connector/
+COPY oc-web-repository-connector/pom.xml oc-web-repository-connector/
+COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
+COPY oc-cmis-repository-connector/pom.xml oc-cmis-repository-connector/
+COPY oc-doxis-repository-connector/pom.xml oc-doxis-repository-connector/
+COPY oc-sharepoint-repository-connector/pom.xml oc-sharepoint-repository-connector/
+COPY oc-mfiles-repository-connector/pom.xml oc-mfiles-repository-connector/
+COPY oc-filenet-repository-connector/pom.xml oc-filenet-repository-connector/
+COPY oc-documentum-repository-connector/pom.xml oc-documentum-repository-connector/
+COPY oc-jdbc-repository-connector/pom.xml oc-jdbc-repository-connector/
+COPY oc-stormcrawler-bolt/pom.xml oc-stormcrawler-bolt/
+COPY oc-stormcrawler-repository-connector/pom.xml oc-stormcrawler-repository-connector/
+COPY oc-vector-output-connector/pom.xml oc-vector-output-connector/
+COPY oc-milvus-output-connector/pom.xml oc-milvus-output-connector/
+COPY oc-opensearch2-output-connector/pom.xml oc-opensearch2-output-connector/
+COPY oc-opensearch3-output-connector/pom.xml oc-opensearch3-output-connector/
+COPY oc-elasticsearch-output-connector/pom.xml oc-elasticsearch-output-connector/
+COPY oc-qdrant-output-connector/pom.xml oc-qdrant-output-connector/
+COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
+COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
+COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
+COPY oc-doxis-client/pom.xml oc-doxis-client/
+COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
+COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
+COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
+COPY oc-iceberg-output-connector/pom.xml oc-iceberg-output-connector/
+COPY oc-alfresco-output-connector/pom.xml oc-alfresco-output-connector/
+COPY oc-grpc-push-connector/pom.xml oc-grpc-push-connector/
+COPY oc-openarch-output-connector/pom.xml oc-openarch-output-connector/
+COPY oc-authorization-openfga/pom.xml oc-authorization-openfga/
+COPY oc-openarch-repository-connector/pom.xml oc-openarch-repository-connector/
+COPY oc-hyland-cic-connector/pom.xml oc-hyland-cic-connector/
+COPY oc-admin-ui/pom.xml oc-admin-ui/
+COPY oc-runtime/pom.xml oc-runtime/
+COPY oc-embedding-service/pom.xml oc-embedding-service/
+COPY oc-connector-archetypes/pom.xml oc-connector-archetypes/
+COPY oc-connector-archetypes/opencrawling-archetype-repository-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-repository-connector/
+COPY oc-connector-archetypes/opencrawling-archetype-output-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-output-connector/
+COPY oc-connector-archetypes/opencrawling-archetype-transformation-connector/pom.xml oc-connector-archetypes/opencrawling-archetype-transformation-connector/
+COPY oc-java-client-sdk/pom.xml oc-java-client-sdk/
+COPY oc-cli/pom.xml oc-cli/
+COPY oc-mcf-migrator/pom.xml oc-mcf-migrator/
+
+# Copy dependency modules source code
+COPY oc-grpc-api/src/ /app/oc-grpc-api/src/
+COPY oc-core/src/ /app/oc-core/src/
+COPY oc-observability/src/ /app/oc-observability/src/
+COPY oc-filesystem-repository-connector/src/ /app/oc-filesystem-repository-connector/src/
+COPY oc-alfresco-repository-connector/src/ /app/oc-alfresco-repository-connector/src/
+COPY oc-iceberg-repository-connector/src/ /app/oc-iceberg-repository-connector/src/
+COPY oc-flowable-repository-connector/src/ /app/oc-flowable-repository-connector/src/
+COPY oc-camunda-repository-connector/src/ /app/oc-camunda-repository-connector/src/
+COPY oc-web-repository-connector/src/ /app/oc-web-repository-connector/src/
+COPY oc-aps-repository-connector/src/ /app/oc-aps-repository-connector/src/
+COPY oc-cmis-repository-connector/src/ /app/oc-cmis-repository-connector/src/
+COPY oc-doxis-repository-connector/src/ /app/oc-doxis-repository-connector/src/
+COPY oc-sharepoint-repository-connector/src/ /app/oc-sharepoint-repository-connector/src/
+COPY oc-mfiles-repository-connector/src/ /app/oc-mfiles-repository-connector/src/
+COPY oc-filenet-repository-connector/src/ /app/oc-filenet-repository-connector/src/
+COPY oc-documentum-repository-connector/src/ /app/oc-documentum-repository-connector/src/
+COPY oc-jdbc-repository-connector/src/ /app/oc-jdbc-repository-connector/src/
+COPY oc-stormcrawler-bolt/src/ /app/oc-stormcrawler-bolt/src/
+COPY oc-stormcrawler-repository-connector/src/ /app/oc-stormcrawler-repository-connector/src/
+COPY oc-grpc-push-connector/src/ /app/oc-grpc-push-connector/src/
+COPY oc-vector-output-connector/src/ /app/oc-vector-output-connector/src/
+COPY oc-milvus-output-connector/src/ /app/oc-milvus-output-connector/src/
+COPY oc-opensearch2-output-connector/src/ /app/oc-opensearch2-output-connector/src/
+COPY oc-opensearch3-output-connector/src/ /app/oc-opensearch3-output-connector/src/
+COPY oc-elasticsearch-output-connector/src/ /app/oc-elasticsearch-output-connector/src/
+COPY oc-qdrant-output-connector/src/ /app/oc-qdrant-output-connector/src/
+COPY oc-vespa-output-connector/src/ /app/oc-vespa-output-connector/src/
+COPY oc-vespa-output-connector/vespa-app/ /app/oc-vespa-output-connector/vespa-app/
+COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
+COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
+COPY oc-doxis-client/src/ /app/oc-doxis-client/src/
+COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
+COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
+COPY oc-s3-output-connector/src/ /app/oc-s3-output-connector/src/
+COPY oc-iceberg-output-connector/src/ /app/oc-iceberg-output-connector/src/
+COPY oc-alfresco-output-connector/src/ /app/oc-alfresco-output-connector/src/
+COPY oc-openarch-output-connector/src/ /app/oc-openarch-output-connector/src/
+COPY oc-authorization-openfga/src/ /app/oc-authorization-openfga/src/
+COPY oc-openarch-repository-connector/src/ /app/oc-openarch-repository-connector/src/
+COPY oc-hyland-cic-connector/src/ /app/oc-hyland-cic-connector/src/
+COPY oc-embedding-service/src/ /app/oc-embedding-service/src/
+COPY oc-connector-archetypes/ /app/oc-connector-archetypes/
+COPY oc-java-client-sdk/src/ /app/oc-java-client-sdk/src/
+COPY oc-cli/src/ /app/oc-cli/src/
+COPY oc-mcf-migrator/src/ /app/oc-mcf-migrator/src/
+
+# Copy frontend source files (needed by frontend-maven-plugin in oc-admin-ui)
+COPY oc-admin-ui/src/ /app/oc-admin-ui/src/
+COPY oc-admin-ui/package.json oc-admin-ui/package-lock.json oc-admin-ui/postcss.config.js oc-admin-ui/tailwind.config.js oc-admin-ui/tsconfig.json oc-admin-ui/tsconfig.node.json oc-admin-ui/vite.config.ts oc-admin-ui/index.html /app/oc-admin-ui/
+
+# Copy backend source files
+COPY oc-runtime/src/ /app/oc-runtime/src/
+
+# Build and package the application with Maven cache mount
+RUN --mount=type=cache,target=/root/.m2,id=opencrawling-m2-cache,sharing=shared \
+    mvn clean package -pl oc-runtime -am -DskipTests
+RUN java -Djarmode=tools -jar /app/oc-runtime/target/oc-runtime-*.jar extract --destination /app/extracted
+
+# Runtime stage
+FROM eclipse-temurin:25-jre-alpine
+WORKDIR /app
+
+# Copy the extracted thin jar and dependency libraries from the builder stage
+COPY --from=builder /app/extracted/lib ./lib
+COPY --from=builder /app/extracted/oc-runtime-*.jar app.jar
+
+# Expose the ports the backend runs on (8080 HTTP/REST, 9095 gRPC Transport, 9096 gRPC Push Connector)
+EXPOSE 8080 9095 9096
+
+ENV TIKA_EXTRAS_DIR=/app/lib
+ENV OPENCRAWLING_TIKA_FORK_ENABLED=true
+ENV OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+ENV OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+ENV OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
+
+# Run the Spring Boot application enabling Java 25 preview features
+ENTRYPOINT ["java", "--enable-preview", "--enable-native-access=ALL-UNNAMED", "-Dtika.extras.dir=/app/lib", "-jar", "app.jar"]

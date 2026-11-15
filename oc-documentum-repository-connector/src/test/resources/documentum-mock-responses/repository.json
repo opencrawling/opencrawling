@@ -1,0 +1,1 @@
+{"id":160694,"name":"corp","description":"Test repository","servers":[{"name":"corp","host":"cs1","version":"23.4.0000.0124 Linux64.Postgres","docbroker":"cs1"}],"links":[{"rel":"self","href":"{base}/repositories/corp"},{"rel":"http://identifiers.emc.com/linkrel/dql","hreftemplate":"{base}/repositories/corp{?dql}"}]}

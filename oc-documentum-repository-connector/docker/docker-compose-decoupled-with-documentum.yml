@@ -1,0 +1,381 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- Documentum REST Services emulator (DCTM REST mock): OpenText Documentum has no free container image ---
+  documentum-mock:
+    build:
+      context: ../documentum-mock
+    image: opencrawling/dctm-rest-mock:local
+    container_name: documentum-mock-decoupled-documentum
+    environment:
+      - DCTM_PORT=8080
+      - DCTM_REPOSITORY=corp
+      - DCTM_USERS=dctm_crawler:secret,jdoe:secret
+      - DCTM_DOCUMENT_COUNT=${DCTM_DOCUMENT_COUNT:-40}
+      - DCTM_TZ_OFFSET=${DCTM_TZ_OFFSET:-+02:00}
+      - DCTM_QUIET=true
+    ports:
+      - "8093:8080"
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/dctm-rest/services', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Vector Store (PostgreSQL / pgvector) ---
+  postgres-vector:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-decoupled-documentum
+    environment:
+      POSTGRES_DB: opencrawling
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-pgdata-documentum:/var/lib/postgresql/data
+    networks:
+      opencrawling-network:
+        aliases:
+          - postgres
+          - postgres-vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-documentum
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-documentum:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-decoupled-documentum
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama-model-puller:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-model-puller-decoupled-documentum
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama to become responsive..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 1
+        done
+        echo "Pulling mxbai-embed-large embedding model..."
+        ollama pull mxbai-embed-large
+        echo "Embedding model pulled successfully."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka-decoupled-documentum
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      CLUSTER_ID: '4L62EnnTQKyNxTIfHfN8QA'
+    volumes:
+      - opencrawling-kafkadata-documentum:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  # The crawler reads the DCTM REST mock by default. To crawl a real Documentum repository instead, set DOCUMENTUM_URL
+  # (the REST Services context, e.g. https://dctm.example.com/dctm-rest), DOCUMENTUM_REPOSITORY, DOCUMENTUM_USERNAME and
+  # DOCUMENTUM_PASSWORD (and optionally DOCUMENTUM_AUTH_TYPE, DOCUMENTUM_OBJECT_TYPES, DOCUMENTUM_WHERE,
+  # DOCUMENTUM_CRAWL_MODE, DOCUMENTUM_ROOT_CABINET_PATH, DOCUMENTUM_VERSION_MODE, DOCUMENTUM_PREFER_RENDITION,
+  # DOCUMENTUM_MAX_DOCUMENTS, DOCUMENTUM_FALLBACK_PRINCIPALS, DOCUMENTUM_SERVER_TIME_ZONE) in the environment.
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:${OC_IMAGE_TAG:-latest}
+    container_name: oc-crawler-service-documentum
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=documentum
+      - SPRING_OPENCRAWLING_CONNECTOR_TYPE=documentum
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_URL=${DOCUMENTUM_URL:-http://documentum-mock:8080/dctm-rest}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_REPOSITORY_NAME=${DOCUMENTUM_REPOSITORY:-corp}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_AUTH_TYPE=${DOCUMENTUM_AUTH_TYPE:-basic}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_USERNAME=${DOCUMENTUM_USERNAME:-dctm_crawler}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_PASSWORD=${DOCUMENTUM_PASSWORD:-secret}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_CRAWL_MODE=${DOCUMENTUM_CRAWL_MODE:-dql}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_ROOT_CABINET_PATH=${DOCUMENTUM_ROOT_CABINET_PATH:-/}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_OBJECT_TYPES=${DOCUMENTUM_OBJECT_TYPES:-dm_document}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_WHERE=${DOCUMENTUM_WHERE:-}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_VERSION_MODE=${DOCUMENTUM_VERSION_MODE:-current_only}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_PREFER_RENDITION=${DOCUMENTUM_PREFER_RENDITION:-}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_DELETION_TRACKING=${DOCUMENTUM_DELETION_TRACKING:-reconcile}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_BATCH_SIZE=${DOCUMENTUM_BATCH_SIZE:-20}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_INCLUDE_ACLS=true
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_INCREMENTAL_ENABLED=${DOCUMENTUM_INCREMENTAL_ENABLED:-true}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_STATE_DIRECTORY=/data/documentum-state
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_MAX_DOCUMENTS=${DOCUMENTUM_MAX_DOCUMENTS:-0}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_FALLBACK_PRINCIPALS=${DOCUMENTUM_FALLBACK_PRINCIPALS:-}
+      - SPRING_OPENCRAWLING_CONNECTOR_DOCUMENTUM_SERVER_TIME_ZONE=${DOCUMENTUM_SERVER_TIME_ZONE:-auto}
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=default
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-claims-documentum:/data/claims
+      - opencrawling-reportsdata-documentum:/data/reports
+      - opencrawling-state-documentum:/data/documentum-state
+    depends_on:
+      kafka:
+        condition: service_started
+      documentum-mock:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: "no"
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-ingestion-consumer-service-documentum
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=true
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+    volumes:
+      - opencrawling-claims-documentum:/data/claims
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-embedding-consumer-service-documentum
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=true
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=false
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama-model-puller:
+        condition: service_completed_successfully
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:${OC_IMAGE_TAG:-latest}
+    container_name: oc-writer-consumer-service-documentum
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - OPENCRAWLING_CONSUMER_INGESTION_ENABLED=false
+      - OPENCRAWLING_CONSUMER_EMBEDDING_ENABLED=false
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - OPENCRAWLING_MCP_SERVER_ENABLED=false
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=false
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:${OC_IMAGE_TAG:-latest}
+    container_name: oc-mcp-server-service-documentum
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+      - "9095:9095"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-documentum:/data/reports
+    depends_on:
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  opencrawling-pgdata-documentum:
+    name: opencrawling-pgdata-documentum
+  opencrawling-redisdata-documentum:
+    name: opencrawling-redisdata-documentum
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-kafkadata-documentum:
+    name: opencrawling-kafkadata-documentum
+  opencrawling-claims-documentum:
+    name: opencrawling-claims-documentum
+  opencrawling-reportsdata-documentum:
+    name: opencrawling-reportsdata-documentum
+  opencrawling-state-documentum:
+    name: opencrawling-state-documentum
+

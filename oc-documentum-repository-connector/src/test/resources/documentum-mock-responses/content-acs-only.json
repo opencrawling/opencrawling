@@ -1,0 +1,2 @@
+{"name":"content","properties":{"r_object_id":"060277b680053dcf","rendition":0,"full_format":"pdf","full_content_size":9689.0,"mime_type":"application/pdf","page":[0]},
+ "links":[{"rel":"self","href":"{base}/repositories/corp/objects/090277b6800600a3/contents/content"},{"rel":"enclosure","title":"ACS","href":"http://acs.example.invalid:9080/ACS/servlet/ACS?command=read&version=2.3&docbaseid=0277b6&objectid=090277b6800600a3&format=pdf&pagenum=0&signature=abc&expire_delta=360"}]}

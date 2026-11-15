@@ -374,6 +374,12 @@ public class JdbcRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        // OisMetadata.instanceUri drops any user/password query parameters
+        return url;
+    }
+
+    @Override
     public synchronized void connect() throws Exception {
         if (this.dataSource != null) {
             log.info("JDBC DataSource is already initialized.");

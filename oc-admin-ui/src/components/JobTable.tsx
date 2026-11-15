@@ -19,7 +19,6 @@ import {
   Pause, 
   Square, 
   RefreshCcw, 
-  MoreHorizontal,
   ChevronDown,
   Search,
   Loader2,
@@ -55,9 +54,12 @@ import {
   Check,
   Info,
   Globe,
-  Archive
+  Archive,
+  Cloud
 } from 'lucide-react'
 import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
+import { useAuth } from '../lib/useAuth'
+import type { JobAction } from '../lib/auth'
 
 type JobStatus = 'Running' | 'Paused' | 'Error' | 'Finished' | 'Ready'
 
@@ -66,7 +68,11 @@ type PipelineMode = 'rag' | 'migration'
 
 /** Output connectors that only support Migration Mode (as-is binary + OIS sidecar). */
 const isMigrationOnlyConnector = (className?: string) =>
-  !!className && className.toLowerCase().includes('ozone')
+  !!className && (
+    className.toLowerCase().includes('ozone') ||
+    (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) ||
+    (className.toLowerCase().includes('alfresco') && className.toLowerCase().includes('output'))
+  )
 
 interface NarrativizationConfig {
   enabled: boolean
@@ -117,6 +123,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('Iceberg')) {
     return { icon: Database, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
+  if (className.includes('web.WebRepositoryConnector')) {
+    return { icon: Globe, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
   if (className.includes('StormCrawler') || className.includes('stormcrawler')) {
     return { icon: Globe, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
   }
@@ -156,6 +165,12 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('LDAP')) {
     return { icon: Key, color: 'text-teal-400', bg: 'bg-teal-400/10', border: 'border-teal-500/20' }
   }
+  if (className.toLowerCase().includes('ozone')) {
+    return { icon: Archive, color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-500/20' }
+  }
+  if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
+    return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
+  }
   return null;
 }
 
@@ -178,6 +193,11 @@ interface JobTableProps {
 
 export default function JobTable({ setActiveView }: JobTableProps) {
   const [jobs, setJobs] = useState<Job[]>([])
+  const { me } = useAuth()
+  const authorizationOn = me?.managementAuthorization ?? false
+  const [permissions, setPermissions] = useState<Record<string, JobAction[]>>({})
+  /** Whether the caller may do this with the job; the runtime refuses it either way. */
+  const may = (jobId: string, action: JobAction) => !authorizationOn || (permissions[jobId] ?? []).includes(action)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('All')
   const [isLoading, setIsLoading] = useState(false)
@@ -369,6 +389,36 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: "e.g. /Company Home/Sites, -root-, or TYPE:'cm:content' AND PATH:'/app:company_home//*'",
           description: "Scanning entry point. Provide a folder path, node UUID, or full AFTS search query (e.g. TYPE:'cm:content')."
         };
+      case 'org.opencrawling.sharepoint.SharePointRepositoryConnector':
+        return {
+          label: 'Root Folder Path',
+          placeholder: 'e.g. default, or /Specs/2026',
+          description: 'Use default for the connector configuration. A folder path runs a one-off (non-incremental) tree crawl of that folder in every selected library.'
+        };
+      case 'org.opencrawling.doxis.DoxisRepositoryConnector':
+        return {
+          label: 'CQL Statement / E-File ID',
+          placeholder: "e.g. default, SELECT * FROM DB1 WHERE OBJECTNAME LIKE 'NDA*', or an e-file UUID",
+          description: 'Use default for the connector configuration. A SELECT statement replaces the search; in folder mode an e-file UUID replaces the root e-file.'
+        };
+      case 'org.opencrawling.mfiles.MFilesRepositoryConnector':
+        return {
+          label: 'Search Conditions / Quick Search / View Path',
+          placeholder: 'e.g. default, p1020=5, contract, or v101',
+          description: 'Use default for the connector configuration. MFWS conditions (with =) or plain text (quick search) replace the search; a view path such as v101 crawls that view.'
+        };
+      case 'org.opencrawling.filenet.FileNetRepositoryConnector':
+        return {
+          label: 'Folder Path',
+          placeholder: 'e.g. default, or /Mortgages/Commercial',
+          description: 'Use default for the connector configuration. A folder path runs a one-off (non-incremental) crawl of that folder and its subfolders.'
+        };
+      case 'org.opencrawling.documentum.DocumentumRepositoryConnector':
+        return {
+          label: 'Cabinet / Folder Path',
+          placeholder: 'e.g. default, or /Regulatory/Submissions',
+          description: 'Use default for the connector configuration. A cabinet or folder path runs a one-off (non-incremental) crawl of it and its subfolders.'
+        };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {
           label: 'Iceberg Table Name',
@@ -393,6 +443,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. loanApplication or / for all',
           description: 'Workflow definition key to crawl (e.g. loanApplication) or / to scan all historic workflows.'
         };
+      case 'org.opencrawling.web.WebRepositoryConnector':
+        return {
+          label: 'Seed URLs',
+          placeholder: 'e.g. https://docs.example.com/',
+          description: 'One or more start URLs, separated by spaces or new lines. Crawl limits come from the connector settings.'
+        };
       case 'org.opencrawling.stormcrawler.StormCrawlerRepositoryConnector':
         return {
           label: 'Seed URLs / Crawl Targets',
@@ -413,6 +469,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     try {
       const res = await jobApi.getAll()
       setJobs(res.data || [])
+      if (authorizationOn) {
+        const allowed = await jobApi.permissions()
+        setPermissions(allowed.data || {})
+      }
     } catch (err) {
       console.error("Failed to fetch jobs:", err)
     } finally {
@@ -455,18 +515,6 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       console.error(`Failed to ${action} job ${id}:`, err)
     } finally {
       setActionLoading(null)
-    }
-  }
-
-  const triggerRunAll = async () => {
-    setIsLoading(true)
-    try {
-      await Promise.all(jobs.map(j => jobApi.start(j.id)))
-      await fetchJobs(false)
-    } catch (err) {
-      console.error("Failed to run all jobs:", err)
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -607,13 +655,13 @@ export default function JobTable({ setActiveView }: JobTableProps) {
             <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button 
+          {(me?.canCreateJobs ?? true) && <button 
             onClick={openCreateForm}
             className="btn-primary flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-black border border-cyan-400/25 shadow-lg shadow-cyan-500/20"
           >
             <Plus className="w-4 h-4 text-black" />
             New Pipeline Job
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -805,7 +853,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                       <div className="flex items-center justify-center gap-1">
                         <button 
                           onClick={() => triggerAction(job.id, 'start')}
-                          disabled={job.status === 'Running' || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || job.status === 'Running' || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-cyan-500/10 hover:text-cyan-500 transition-colors disabled:opacity-30" 
                           title="Start crawl job"
                         >
@@ -813,7 +861,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         </button>
                         <button 
                           onClick={() => triggerAction(job.id, 'pause')}
-                          disabled={job.status !== 'Running' || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || job.status !== 'Running' || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-yellow-500/10 hover:text-yellow-500 transition-colors disabled:opacity-30" 
                           title="Pause crawl job"
                         >
@@ -821,7 +869,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         </button>
                         <button 
                           onClick={() => triggerAction(job.id, 'stop')}
-                          disabled={(job.status !== 'Running' && job.status !== 'Paused') || actionLoading !== null}
+                          disabled={!may(job.id, 'EXECUTE') || (job.status !== 'Running' && job.status !== 'Paused') || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-red-500/10 hover:text-red-500 transition-colors disabled:opacity-30" 
                           title="Stop crawl job"
                         >
@@ -838,6 +886,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                           <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
                         </button>
  
+                        {may(job.id, 'MANAGE') && <>
                         <button 
                           onClick={() => openEditForm(job)}
                           className="p-1.5 rounded hover:bg-slate-700 hover:text-foreground transition-colors"
@@ -852,6 +901,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        </>}
                       </div>
                     </td>
                   </tr>
@@ -1012,7 +1062,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                   <div className="space-y-2">
                     <label className="text-sm font-medium flex items-center gap-1.5">
                       <Settings2 className="w-4 h-4 text-emerald-400" />
-                      Output Connector (Target Vector Store)
+                      Output Connector {formPipelineMode === 'migration' ? '(Migration Target Lake / Bucket)' : '(Target Vector Store)'}
                     </label>
                     <select 
                       value={formOutput}

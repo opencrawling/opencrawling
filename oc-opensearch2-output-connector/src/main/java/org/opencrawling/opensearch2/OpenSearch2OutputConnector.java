@@ -19,12 +19,11 @@ import org.apache.hc.client5.http.auth.AuthScope;
 import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
 import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
 import org.apache.hc.core5.http.HttpHost;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
-import org.opencrawling.core.text.PipesForkTextExtractor;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.security.PermissionRule;
 import org.opensearch.client.json.jackson.JacksonJsonpMapper;
 import org.opensearch.client.opensearch.OpenSearchClient;
 import org.opensearch.client.opensearch.core.BulkRequest;
@@ -79,7 +78,7 @@ public class OpenSearch2OutputConnector implements OutputConnector {
         this.client = client;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
-        this.textExtractionService = textExtractionService != null ? textExtractionService : new PipesForkTextExtractor();
+        this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
     }
 
     public OpenSearch2OutputConnector(
@@ -98,7 +97,11 @@ public class OpenSearch2OutputConnector implements OutputConnector {
 
                 final OpenSearchTransport transport = ApacheHttpClient5TransportBuilder
                         .builder(host)
-                        .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider))
+                        // The 2.x transport gunzips responses itself. HttpClient 5.6+ would also ask for gzip and
+                        // decompress first, so the transport then fails with "Not in GZIP format".
+                        .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder
+                                .disableContentCompression()
+                                .setDefaultCredentialsProvider(credentialsProvider))
                         .setMapper(new JacksonJsonpMapper())
                         .build();
 
@@ -197,24 +200,15 @@ public class OpenSearch2OutputConnector implements OutputConnector {
                         embedding[0] = 1.0f;
                     }
 
-                    // Map ACL lists
-                    List<String> allowedRead = new ArrayList<>();
-                    List<String> deniedRead = new ArrayList<>();
-                    boolean inheritanceEnabled = true;
-
-                    if (document.security() != null) {
-                        inheritanceEnabled = document.security().inheritanceEnabled();
-                        for (PermissionRule rule : document.security().permissions()) {
-                            if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                                allowedRead.add(rule.identity());
-                            } else if ("deny".equalsIgnoreCase(rule.access())) {
-                                deniedRead.add(rule.identity());
-                            }
-                        }
-                    }
+                    // Map ACL lists (one normalization for every store, see EffectiveAcl)
+                    EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());
+                    List<String> allowedRead = effectiveAcl.allowedRead();
+                    List<String> deniedRead = effectiveAcl.deniedRead();
+                    boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
                     Map<String, Object> row = new HashMap<>();
                     row.put(OpenSearch2Constants.FIELD_ID, chunkId);
+                    row.put(OpenSearch2Constants.FIELD_DOCUMENT_ID, document.id());
                     row.put(OpenSearch2Constants.FIELD_TEXT, chunk.getText());
                     row.put(OpenSearch2Constants.FIELD_URI, document.uri());
                     row.put(OpenSearch2Constants.FIELD_ACL, document.acl());

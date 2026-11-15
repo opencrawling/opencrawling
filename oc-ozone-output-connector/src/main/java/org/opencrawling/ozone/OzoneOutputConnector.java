@@ -19,6 +19,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.ois.OisMetadata;
+import org.opencrawling.core.ois.OisSidecar;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.core.security.SecurityConfig;
@@ -26,7 +28,6 @@ import org.opencrawling.ozone.client.OzoneNativeStorageClient;
 import org.opencrawling.ozone.client.OzoneS3GatewayStorageClient;
 import org.opencrawling.ozone.client.OzoneStorageClient;
 import org.opencrawling.ozone.config.OzoneOutputProperties;
-import org.opencrawling.ozone.model.OisMigrationDocument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -193,46 +194,36 @@ public class OzoneOutputConnector implements OutputConnector {
         // 2. Build companion OIS JSON metadata sidecar
         String lastMod = document.lastModified() != null ? document.lastModified().toString() : Instant.now().toString();
         String sourceUri = document.uri() != null ? document.uri() : "";
-        String originalPath = firstMetadataValue(document, "path", "relativePath", "file_path", "cmis:path");
-        if (originalPath == null) {
-            originalPath = sourceUri;
-        }
+        String originalPath = resolveOriginalPath(document, sourceUri);
 
-        OisMigrationDocument.SourceRef sourceRef = new OisMigrationDocument.SourceRef(
-                defaultIfNull(firstMetadataValue(document, "source_type", "sourceType"), "repository"),
-                sourceUri,
-                originalPath
-        );
-
-        OisMigrationDocument.ContentRef contentRef = new OisMigrationDocument.ContentRef(
+        String sidecarKey = key + properties.getSidecarSuffix();
+        OisSidecar.Content content = new OisSidecar.Content(
+                mimeType,
+                blankToNull(sourceUri),
+                storedUri + properties.getSidecarSuffix(),
+                sha256Hex,
+                contentLength,
                 key,
                 properties.getVolume(),
                 properties.getBucket(),
-                sourceUri,
+                null,
                 filename,
-                mimeType,
-                contentLength,
-                sha256Hex
+                null,
+                null
         );
 
-        SecurityConfig security = document.security() != null ? document.security() : SecurityConfig.createPublic();
-        String acl = document.acl() != null ? document.acl() : "";
-
-        OisMigrationDocument oisDocument = new OisMigrationDocument(
-                OisMigrationDocument.DEFAULT_SCHEMA,
+        OisSidecar oisDocument = OisSidecar.upsert(
                 document.id(),
-                "UPSERT",
                 storedUri.toString(),
                 lastMod,
-                sourceRef,
-                contentRef,
+                oisSource(document, sourceUri, originalPath),
+                content,
                 document.metadata() != null ? document.metadata() : Map.of(),
-                security,
-                acl
+                document.security() != null ? document.security() : SecurityConfig.none(),
+                document.acl()
         );
 
         // 3. Upload companion OIS JSON sidecar
-        String sidecarKey = key + properties.getSidecarSuffix();
         String jsonPayload = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(oisDocument);
         client.putText(sidecarKey, jsonPayload, "application/json");
 
@@ -255,7 +246,8 @@ public class OzoneOutputConnector implements OutputConnector {
         if ("ARCHIVE_TOMBSTONE".equalsIgnoreCase(properties.getTombstoneAction())) {
             String tombstoneKey = TOMBSTONE_PREFIX + key + properties.getSidecarSuffix();
             String lastMod = document.lastModified() != null ? document.lastModified().toString() : Instant.now().toString();
-            OisMigrationDocument tombstone = OisMigrationDocument.createTombstone(document.id(), document.uri(), lastMod);
+            OisSidecar tombstone = OisSidecar.tombstone(document.id(), document.uri(), lastMod,
+                    oisSource(document, document.uri(), null));
             String jsonPayload = objectMapper.writeValueAsString(tombstone);
             client.putText(tombstoneKey, jsonPayload, "application/json");
             log.info("Created OIS DELETE tombstone in Ozone: {}", tombstoneKey);
@@ -303,7 +295,7 @@ public class OzoneOutputConnector implements OutputConnector {
         }
 
         // Default: HIERARCHICAL strategy preserving the source directory structure when known
-        String sourcePath = firstMetadataValue(document, "relativePath", "file_path");
+        String sourcePath = firstMetadataValue(document, "relativePath", "relative_path", "file_path");
         if (sourcePath == null && document.uri() != null && document.uri().startsWith("file:")) {
             try {
                 sourcePath = URI.create(document.uri()).getPath();
@@ -312,7 +304,31 @@ public class OzoneOutputConnector implements OutputConnector {
             }
         }
         String hierarchical = sanitizePath(sourcePath);
-        return hierarchical != null ? hierarchical : flatKey;
+        if (hierarchical != null) {
+            String explicitFilename = sanitizePath(firstMetadataValue(document, "filename", "fileName", "file_name", "name", "cmis:name"));
+            if (explicitFilename != null
+                    && !hierarchical.equals(explicitFilename)
+                    && !hierarchical.endsWith("/" + explicitFilename)) {
+                hierarchical = hierarchical + "/" + explicitFilename;
+            }
+            return hierarchical;
+        }
+        return flatKey;
+    }
+
+    private String resolveOriginalPath(RepositoryDocument document, String fallbackUri) {
+        String originalPath = firstMetadataValue(document, "path", "relativePath", "relative_path", "file_path", "cmis:path");
+        if (originalPath == null) {
+            return fallbackUri;
+        }
+        String explicitFilename = firstMetadataValue(document, "filename", "fileName", "file_name", "name", "cmis:name");
+        if (explicitFilename != null
+                && !originalPath.equals(explicitFilename)
+                && !originalPath.endsWith("/" + explicitFilename)
+                && !originalPath.endsWith("\\" + explicitFilename)) {
+            return originalPath.replaceAll("/+$", "") + "/" + explicitFilename;
+        }
+        return originalPath;
     }
 
     private String resolveFilename(RepositoryDocument document) {
@@ -326,6 +342,19 @@ public class OzoneOutputConnector implements OutputConnector {
             mimeType = URLConnection.guessContentTypeFromName(filename);
         }
         return mimeType != null ? mimeType : "application/octet-stream";
+    }
+
+    /**
+     * The OIS source block: what the pipeline stamped on the document ({@code ois:source.*}), else the document's
+     * {@code source_type} and a URN naming that type.
+     */
+    private static OisSidecar.Source oisSource(RepositoryDocument document, String originalUri, String originalPath) {
+        String type = defaultIfNull(firstMetadataValue(document, "source_type", "sourceType"), "repository");
+        return OisSidecar.source(document.metadata(), type, OisMetadata.connectorUrn(type), originalUri, originalPath);
+    }
+
+    private static String blankToNull(String value) {
+        return value != null && !value.isBlank() ? value : null;
     }
 
     private static String firstMetadataValue(RepositoryDocument document, String... keys) {

@@ -55,14 +55,27 @@ public class TextExtractionProperties {
 
     /**
      * Restart a forked process after parsing this many files to bound slow leaks.
-     * Default: 10,000.
+     * Default: 100,000.
      */
-    private int maxFilesPerProcess = 10000;
+    private int maxFilesPerProcess = 100000;
 
     /**
      * Whether to extract embedded documents (e.g. zip/tar/attachments).
+     * Default: true (parity with standard Tika recursive extraction).
      */
-    private boolean extractEmbedded = false;
+    private boolean extractEmbedded = true;
+
+    /**
+     * Whether to extract and merge document metadata prefixed with 'tk:'.
+     * Default: false to avoid unnecessary map copying and string allocations.
+     */
+    private boolean extractMetadata = false;
+
+    /**
+     * Standard I/O mode for child Tika server processes ('inherit' or 'discard').
+     * Default: 'inherit' to preserve crash logs and diagnostics in containerized environments.
+     */
+    private String serverStdio = "inherit";
 
     /**
      * JVM arguments for the forked parser process.
@@ -124,6 +137,22 @@ public class TextExtractionProperties {
 
     public void setExtractEmbedded(boolean extractEmbedded) {
         this.extractEmbedded = extractEmbedded;
+    }
+
+    public boolean isExtractMetadata() {
+        return extractMetadata;
+    }
+
+    public void setExtractMetadata(boolean extractMetadata) {
+        this.extractMetadata = extractMetadata;
+    }
+
+    public String getServerStdio() {
+        return serverStdio;
+    }
+
+    public void setServerStdio(String serverStdio) {
+        this.serverStdio = serverStdio;
     }
 
     public List<String> getJvmArgs() {

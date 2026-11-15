@@ -109,9 +109,21 @@ fi
 
 # Step 6: Testing Subcommand Help Displays
 echo -e "${CYAN}[INFO] Step 6: Verifying all subcommand help menus...${NC}"
-for cmd in job connector copilot aiops system config schema mcf; do
+for cmd in job connector push copilot aiops system config schema mcf report openapi discovery; do
     $RUN_CLI $cmd --help > /dev/null
     echo -e "${GREEN}  ✔ oc $cmd --help passed.${NC}"
+done
+for push_sub in ping upsert delete stream; do
+    $RUN_CLI push $push_sub --help > /dev/null
+    echo -e "${GREEN}  ✔ oc push $push_sub --help passed.${NC}"
+done
+for openapi_sub in status export endpoints schema validate diff tools ui; do
+    $RUN_CLI openapi $openapi_sub --help > /dev/null
+    echo -e "${GREEN}  ✔ oc openapi $openapi_sub --help passed.${NC}"
+done
+for discovery_sub in connectors tree dry-run; do
+    $RUN_CLI discovery $discovery_sub --help > /dev/null
+    echo -e "${GREEN}  ✔ oc discovery $discovery_sub --help passed.${NC}"
 done
 
 # Step 7: Testing ManifoldCF Migrator CLI (oc mcf)
@@ -167,8 +179,104 @@ else
     exit 1
 fi
 
-# Step 8: Live REST API Check (if backend is running)
-echo -e "${CYAN}[INFO] Step 8: Testing live REST API integration if runtime is online...${NC}"
+# Step 8: Testing OpenAPI 3.1 Contract CLI (oc openapi)
+echo -e "${CYAN}[INFO] Step 8: Testing OpenAPI 3.1 Contract Management & AI Tool Export CLI (oc openapi)...${NC}"
+TEMP_OPENAPI_JSON="oc-cli/target/test-openapi-31.json"
+TEMP_OPENAPI_YAML="oc-cli/target/test-openapi-31.yaml"
+TEMP_OPENAPI_TOOLS="oc-cli/target/test-openapi-tools.json"
+cat > "$TEMP_OPENAPI_JSON" << 'EOF'
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenCrawling Runtime REST API",
+    "version": "1.0.0",
+    "license": { "name": "Apache License 2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0" }
+  },
+  "tags": [
+    { "name": "Pipeline & Jobs", "description": "Job orchestration" },
+    { "name": "OIS Direct Ingestion", "description": "Direct OIS push" }
+  ],
+  "paths": {
+    "/api/jobs": {
+      "get": {
+        "tags": ["Pipeline & Jobs"],
+        "operationId": "listJobs",
+        "summary": "List all configured jobs",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/v1/ingest/ois/{jobId}": {
+      "post": {
+        "tags": ["OIS Direct Ingestion"],
+        "operationId": "ingestOisDocument",
+        "summary": "Direct Ingestion of OIS Document",
+        "security": [{ "OisTokenAuth": [] }],
+        "responses": { "200": { "description": "Accepted" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OisTokenAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Token" }
+    },
+    "schemas": {
+      "JobDTO": {
+        "type": "object",
+        "description": "Configuration and status for a crawling job",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "description": "Job ID" },
+          "name": { "type": "string", "description": "Job Name" }
+        }
+      }
+    }
+  }
+}
+EOF
+
+$RUN_CLI openapi validate --file "$TEMP_OPENAPI_JSON" --strict > /dev/null
+echo -e "${GREEN}  ✔ oc openapi validate --strict passed.${NC}"
+
+$RUN_CLI openapi export --file "$TEMP_OPENAPI_JSON" --format yaml --output "$TEMP_OPENAPI_YAML" > /dev/null
+if [ -f "$TEMP_OPENAPI_YAML" ]; then
+    echo -e "${GREEN}  ✔ oc openapi export --format yaml passed.${NC}"
+else
+    echo -e "${RED}[ERROR] oc openapi export failed to write $TEMP_OPENAPI_YAML${NC}"
+    exit 1
+fi
+
+ENDPOINTS_OUT=$($RUN_CLI openapi endpoints --file "$TEMP_OPENAPI_YAML" --tag "OIS Direct Ingestion")
+if [[ "$ENDPOINTS_OUT" == *"/api/v1/ingest/ois/{jobId}"* ]]; then
+    echo -e "${GREEN}  ✔ oc openapi endpoints --tag filter passed.${NC}"
+else
+    echo -e "${RED}[ERROR] oc openapi endpoints failed. Output: $ENDPOINTS_OUT${NC}"
+    exit 1
+fi
+
+SCHEMA_INSPECT_OUT=$($RUN_CLI openapi schema --file "$TEMP_OPENAPI_JSON" --name JobDTO)
+if [[ "$SCHEMA_INSPECT_OUT" == *"Job ID"* ]]; then
+    echo -e "${GREEN}  ✔ oc openapi schema --name JobDTO passed.${NC}"
+else
+    echo -e "${RED}[ERROR] oc openapi schema failed. Output: $SCHEMA_INSPECT_OUT${NC}"
+    exit 1
+fi
+
+$RUN_CLI openapi diff --base "$TEMP_OPENAPI_JSON" --target "$TEMP_OPENAPI_YAML" --fail-on-breaking > /dev/null
+echo -e "${GREEN}  ✔ oc openapi diff --fail-on-breaking passed.${NC}"
+
+$RUN_CLI openapi tools --file "$TEMP_OPENAPI_JSON" --provider openai --output "$TEMP_OPENAPI_TOOLS" > /dev/null
+if [ -f "$TEMP_OPENAPI_TOOLS" ]; then
+    echo -e "${GREEN}  ✔ oc openapi tools --provider openai passed.${NC}"
+else
+    echo -e "${RED}[ERROR] oc openapi tools failed to write $TEMP_OPENAPI_TOOLS${NC}"
+    exit 1
+fi
+
+$RUN_CLI openapi ui > /dev/null
+echo -e "${GREEN}  ✔ oc openapi ui passed.${NC}"
+
+# Step 9: Live REST API Check (if backend is running)
+echo -e "${CYAN}[INFO] Step 9: Testing live REST API integration if runtime is online...${NC}"
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/system/status || echo "000")
 
 if [ "$HTTP_CODE" = "200" ]; then
@@ -176,6 +284,9 @@ if [ "$HTTP_CODE" = "200" ]; then
     $RUN_CLI system status
     $RUN_CLI connector list
     $RUN_CLI job list
+    $RUN_CLI openapi status
+    $RUN_CLI discovery connectors || true
+    $RUN_CLI push ping --host 127.0.0.1 --port "${OPENCRAWLING_GRPC_PUSH_PORT:-9096}" || true
     echo -e "${GREEN}  ✔ Live REST API CLI integration tests passed.${NC}"
 else
     echo -e "${YELLOW}[WARN] OpenCrawling Runtime is not running on http://localhost:8080. (Skipping live API call step)${NC}"

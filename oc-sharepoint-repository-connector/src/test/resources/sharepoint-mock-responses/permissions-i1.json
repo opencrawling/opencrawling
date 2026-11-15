@@ -1,0 +1,132 @@
+{
+  "value": [
+    {
+      "id": "p1",
+      "roles": [
+        "read"
+      ],
+      "grantedToV2": {
+        "siteUser": {
+          "id": "7",
+          "displayName": "Adele Vance",
+          "loginName": "i:0#.f|membership|Adele.Vance@contoso.com"
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "roles": [
+        "write"
+      ],
+      "grantedToV2": {
+        "group": {
+          "id": "0D1E6B2A-ENG",
+          "displayName": "Engineering-Core-Team"
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "roles": [
+        "owner"
+      ],
+      "grantedToV2": {
+        "siteGroup": {
+          "id": "3",
+          "displayName": "Engineering Owners",
+          "loginName": "Engineering Owners"
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "roles": [
+        "read"
+      ],
+      "grantedToV2": {
+        "siteUser": {
+          "id": "11",
+          "displayName": "Everyone except external users",
+          "loginName": "c:0-.f|rolemanager|spo-grid-all-users/72f988bf-tenant"
+        }
+      }
+    },
+    {
+      "id": "p5",
+      "roles": [
+        "read"
+      ],
+      "link": {
+        "scope": "organization",
+        "type": "view",
+        "webUrl": "https://contoso.sharepoint.com/:w:/s/x"
+      }
+    },
+    {
+      "id": "p6",
+      "roles": [
+        "read"
+      ],
+      "link": {
+        "scope": "anonymous",
+        "type": "view"
+      }
+    },
+    {
+      "id": "p7",
+      "roles": [
+        "read"
+      ],
+      "link": {
+        "scope": "users",
+        "type": "view"
+      },
+      "grantedToIdentitiesV2": [
+        {
+          "user": {
+            "id": "u-megan",
+            "email": "Megan.Bowen@contoso.com",
+            "displayName": "Megan Bowen"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p8",
+      "roles": [
+        "sp.limitedaccess"
+      ],
+      "grantedToV2": {
+        "user": {
+          "id": "u-x",
+          "email": "limited@contoso.com"
+        }
+      }
+    },
+    {
+      "id": "p9",
+      "roles": [
+        "read"
+      ],
+      "grantedToV2": {
+        "siteUser": {
+          "id": "12",
+          "displayName": "Project X Owners",
+          "loginName": "c:0o.c|federateddirectoryclaimprovider|5f0c1a2b-m365_o"
+        }
+      }
+    },
+    {
+      "id": "p10",
+      "roles": [
+        "read"
+      ],
+      "grantedToV2": {
+        "application": {
+          "id": "app-1",
+          "displayName": "Some App"
+        }
+      }
+    }
+  ]
+}

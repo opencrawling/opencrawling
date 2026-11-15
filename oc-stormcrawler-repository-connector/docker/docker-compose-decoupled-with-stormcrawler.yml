@@ -47,7 +47,7 @@ services:
         aliases:
           - nimbus
     volumes:
-      - ../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.0-SNAPSHOT-topology.jar:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
+      - ${STORMCRAWLER_TOPOLOGY_JAR:-../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.5-SNAPSHOT-topology.jar}:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6627 && exec 3<&- && exec 3>&-' || exit 1"]
       interval: 5s
@@ -69,7 +69,7 @@ services:
         aliases:
           - supervisor
     volumes:
-      - ../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.0-SNAPSHOT-topology.jar:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
+      - ${STORMCRAWLER_TOPOLOGY_JAR:-../../oc-stormcrawler-bolt/target/oc-stormcrawler-bolt-1.0.5-SNAPSHOT-topology.jar}:/apache-storm/extlib/oc-stormcrawler-bolt.jar:ro
 
   storm-ui:
     image: storm:3.1.0
@@ -135,7 +135,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled-stormcrawler
     ports:
       - "11434:11434"
@@ -150,7 +150,7 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-stormcrawler
     entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
     environment:
@@ -211,6 +211,9 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-stormcrawler:/data/reports
     depends_on:
       kafka:
         condition: service_started
@@ -245,6 +248,7 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     depends_on:
       kafka:
         condition: service_started
@@ -328,16 +332,24 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-stormcrawler:/data/reports
     depends_on:
       postgres-vector:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     networks:
       opencrawling-network:
@@ -359,3 +371,6 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata-stormcrawler:
     name: opencrawling-kafkadata-stormcrawler
+  opencrawling-reportsdata-stormcrawler:
+    name: opencrawling-reportsdata-stormcrawler
+

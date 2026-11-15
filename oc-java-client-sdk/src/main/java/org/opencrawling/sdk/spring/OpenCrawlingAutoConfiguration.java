@@ -32,12 +32,17 @@ public class OpenCrawlingAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public OpenCrawlingClient openCrawlingClient(OpenCrawlingClientProperties properties) {
-        return OpenCrawlingClient.builder()
+        OpenCrawlingClient.Builder builder = OpenCrawlingClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .apiKey(properties.getApiKey())
-                .bearerToken(properties.getBearerToken())
                 .connectTimeout(properties.getConnectTimeout())
-                .readTimeout(properties.getReadTimeout())
-                .build();
+                .readTimeout(properties.getReadTimeout());
+        OpenCrawlingClientProperties.OAuth2 oauth2 = properties.getOauth2();
+        if (oauth2.isConfigured()) {
+            builder.clientCredentials(oauth2.getTokenUri(), oauth2.getClientId(), oauth2.getClientSecret(), oauth2.getScope());
+        } else {
+            builder.bearerToken(properties.getBearerToken());
+        }
+        return builder.build();
     }
 }

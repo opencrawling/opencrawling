@@ -89,6 +89,21 @@ spring:
           target: "static://127.0.0.1:9095"
 
 opencrawling:
+  connector:
+    grpc-push:
+      enabled: ${OPENCRAWLING_GRPC_PUSH_ENABLED:true}
+      port: ${OPENCRAWLING_GRPC_PUSH_PORT:9096}
+      max-message-size-mb: ${OPENCRAWLING_GRPC_PUSH_MAX_MESSAGE_MB:64}
+      inline-binary-threshold-kb: 512
+      token: ${OPENCRAWLING_GRPC_PUSH_TOKEN:}
+      tls:
+        enabled: ${OPENCRAWLING_GRPC_PUSH_TLS_ENABLED:false}
+        cert-chain-path: ""
+        private-key-path: ""
+        trust-cert-path: ""
+        client-auth: ${OPENCRAWLING_GRPC_PUSH_TLS_CLIENT_AUTH:NONE}
+      reflection:
+        enabled: true
   transport:
     mode: AUTO # Options: AUTO, GRPC, REST
     grpc:
@@ -100,3 +115,18 @@ opencrawling:
 
 server:
   port: 8080
+
+springdoc:
+  api-docs:
+    path: ${SPRINGDOC_API_DOCS_PATH:/v3/api-docs}
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: ${SPRINGDOC_SWAGGER_UI_PATH:/swagger-ui.html}
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+    display-request-duration: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: none
+  show-actuator: false
+

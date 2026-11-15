@@ -1,0 +1,69 @@
+#
+# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Reference identity provider for OpenCrawling (#187): Keycloak with a demo "opencrawling" realm, and the runtime
+# configured to require a token on the REST API and the MCP endpoints, with management authorization on.
+#
+# Use it on top of the application stack:
+#
+#   export KC_BOOTSTRAP_ADMIN_USERNAME=admin
+#   export KC_BOOTSTRAP_ADMIN_PASSWORD='<choose one>'
+#   docker compose -f docker-compose-apps.yml -f docker/docker-compose-with-keycloak.yml up -d
+#
+# Then set passwords for the demo users and sign in at http://localhost:3000 (see
+# docs/Security-and-Identity-Management.md). Keycloak runs in development mode over plain HTTP: for local
+# evaluation only.
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    container_name: opencrawling-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:?set KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # Tokens name the issuer as the browser reaches it; the runtime fetches keys over the internal network.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./docker/keycloak/opencrawling-realm.json:/opt/keycloak/data/import/opencrawling-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  opencrawling-backend:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      - OPENCRAWLING_SECURITY_IDENTITY_MODE=jwt
+      - OPENCRAWLING_SECURITY_IDENTITY_PROTECT_API=true
+      - OPENCRAWLING_SECURITY_IDENTITY_ADMIN_UI_CLIENT_ID=opencrawling-admin-ui
+      - OPENCRAWLING_SECURITY_MANAGEMENT_ENABLED=true
+      - OPENCRAWLING_SECURITY_MANAGEMENT_ADMIN_GROUPS=opencrawling-admin
+      - OPENCRAWLING_SECURITY_MANAGEMENT_JOB_CREATOR_GROUPS=hr-team,finance-team
+      # The issuer the tokens carry, and where to fetch the signing keys from inside the network.
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://localhost:8180/realms/opencrawling
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://keycloak:8080/realms/opencrawling/protocol/openid-connect/certs
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_AUDIENCES=opencrawling-api

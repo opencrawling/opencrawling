@@ -1,0 +1,17 @@
+{
+  "value": [
+    {
+      "id": "p1",
+      "roles": [
+        "read"
+      ],
+      "grantedToV2": {
+        "siteUser": {
+          "id": "7",
+          "displayName": "Adele Vance",
+          "loginName": "i:0#.f|membership|Adele.Vance@contoso.com"
+        }
+      }
+    }
+  ]
+}

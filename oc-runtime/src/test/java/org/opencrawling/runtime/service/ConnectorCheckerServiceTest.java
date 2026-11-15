@@ -15,8 +15,13 @@
  */
 package org.opencrawling.runtime.service;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,6 +56,16 @@ class ConnectorCheckerServiceTest {
     void testCheckCamundaConnectorFailure() {
         ConnectorDTO connector = new ConnectorDTO("Camunda_Test", "Test Camunda", "repository",
                 "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/engine-rest"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Camunda"));
+    }
+
+    @Test
+    void testCheckCamunda8ConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Camunda_8_Test", "Test Camunda 8", "repository",
+                "org.opencrawling.camunda.CamundaRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/v2"));
 
         ConnectionCheckResult result = checker.check(connector);
         assertFalse(result.success());
@@ -142,5 +157,473 @@ class ConnectorCheckerServiceTest {
         ConnectionCheckResult result = checker.check(connector);
         assertFalse(result.success());
         assertTrue(result.message().contains("Failed to connect to CMIS endpoint"));
+    }
+
+    @Test
+    void testCheckSharePointConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("SP_Test", "Test SharePoint", "repository",
+                "org.opencrawling.sharepoint.SharePointRepositoryConnector", 10, Map.of("siteUrl", "https://contoso.sharepoint.com"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("tenant-id"));
+    }
+
+    @Test
+    void testCheckSharePointConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("SP_Test", "Test SharePoint", "repository",
+                "org.opencrawling.sharepoint.SharePointRepositoryConnector", 10, Map.of("tenantId", "t", "clientId", "c",
+                        "clientSecret", "s3cret", "siteUrl", "https://contoso.sharepoint.com/sites/x",
+                        "authorityUrl", "http://127.0.0.1:59999", "graphUrl", "http://127.0.0.1:59999/v1.0", "maxRetries", "0"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to SharePoint"));
+        assertFalse(result.message().contains("s3cret"));
+    }
+
+    @Test
+    void testCheckSharePointConnectorSuccess() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer graph = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        graph.createContext("/", exchange -> {
+            String key = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
+            requests.add(key);
+            String body = switch (key) {
+                case "POST /t/oauth2/v2.0/token" -> "{\"access_token\":\"tok\",\"expires_in\":3599}";
+                case "GET /v1.0/sites/contoso.sharepoint.com:/sites/engineering" ->
+                        "{\"id\":\"contoso.sharepoint.com,a,b\",\"displayName\":\"Engineering\"}";
+                case "GET /v1.0/sites/contoso.sharepoint.com,a,b/drives" ->
+                        "{\"value\":[{\"id\":\"b!1\",\"name\":\"Documents\",\"driveType\":\"documentLibrary\"}]}";
+                default -> null;
+            };
+            byte[] bytes = (body == null ? "{}" : body).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(body == null ? 404 : 200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        graph.start();
+        try {
+            String base = "http://127.0.0.1:" + graph.getAddress().getPort();
+            Map<String, String> config = Map.of("tenantId", "t", "clientId", "c", "clientSecret", "s3cret",
+                    "siteUrl", "https://contoso.sharepoint.com/sites/engineering", "authorityUrl", base, "graphUrl", base + "/v1.0");
+            ConnectionCheckResult result = checker.check(new ConnectorDTO("SP_Test", "Test SharePoint", "repository",
+                    "org.opencrawling.sharepoint.SharePointRepositoryConnector", 10, config));
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("'Engineering' is accessible with 1 document libraries [Documents]"));
+            assertTrue(requests.contains("POST /t/oauth2/v2.0/token"));
+
+            Map<String, String> missing = new java.util.HashMap<>(config);
+            missing.put("driveName", "Contracts");
+            ConnectionCheckResult wrongLibrary = checker.check(new ConnectorDTO("SP_Test", "Test SharePoint", "repository",
+                    "org.opencrawling.sharepoint.SharePointRepositoryConnector", 10, missing));
+            assertFalse(wrongLibrary.success());
+            assertTrue(wrongLibrary.message().contains("[Contracts]"));
+        } finally {
+            graph.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckMFilesConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("MFiles_Test", "Test M-Files", "repository",
+                "org.opencrawling.mfiles.MFilesRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/REST"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("vault-guid"));
+    }
+
+    @Test
+    void testCheckMFilesConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("MFiles_Test", "Test M-Files", "repository",
+                "org.opencrawling.mfiles.MFilesRepositoryConnector", 10, Map.of("url", "http://127.0.0.1:59999/REST",
+                        "vaultGuid", "{C0B3B52E-6512-4BD8-8F2B-2A8E9A349201}", "username", "crawler", "password", "secret"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to M-Files"));
+        assertFalse(result.message().contains("secret"));
+    }
+
+    @Test
+    void testCheckMFilesConnectorSuccess() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer mfws = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        mfws.createContext("/REST/", exchange -> {
+            String key = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
+            requests.add(key);
+            String body = switch (key) {
+                case "POST /REST/server/authenticationtokens" -> "{\"Value\":\"tok\"}";
+                case "GET /REST/session/vault" -> "{\"Name\":\"Contracts\",\"GUID\":\"{C0B3B52E-6512-4BD8-8F2B-2A8E9A349201}\"}";
+                case "GET /REST/structure/objecttypes" -> "[{\"ID\":0,\"Name\":\"Document\"}]";
+                default -> null;
+            };
+            if (body == null) {
+                exchange.sendResponseHeaders(key.startsWith("DELETE") ? 204 : 404, -1);
+            } else {
+                byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+            }
+            exchange.close();
+        });
+        mfws.start();
+        try {
+            ConnectorDTO connector = new ConnectorDTO("MFiles_Test", "Test M-Files", "repository",
+                    "org.opencrawling.mfiles.MFilesRepositoryConnector", 10, Map.of(
+                            "url", "http://127.0.0.1:" + mfws.getAddress().getPort() + "/REST",
+                            "vaultGuid", "C0B3B52E-6512-4BD8-8F2B-2A8E9A349201", "username", "crawler", "password", "secret"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("vault 'Contracts' is accessible (1 object types)"));
+            assertTrue(requests.contains("DELETE /REST/session"), "the check ends its session");
+        } finally {
+            mfws.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckFileNetConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                "org.opencrawling.filenet.FileNetRepositoryConnector", 10,
+                Map.of("url", "http://127.0.0.1:59999/content-services-graphql/graphql", "username", "p8crawler", "password", "x"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("object-store"));
+    }
+
+    @Test
+    void testCheckFileNetConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.of(
+                        "url", "http://127.0.0.1:59999/content-services-graphql/graphql", "objectStore", "OS1",
+                        "username", "p8crawler", "password", "secret"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to FileNet"));
+        assertFalse(result.message().contains("secret"));
+    }
+
+    @Test
+    void testCheckFileNetConnectorSuccess() throws Exception {
+        List<String> xsrf = new CopyOnWriteArrayList<>();
+        HttpServer csgql = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        csgql.createContext("/content-services-graphql/graphql", exchange -> {
+            String header = exchange.getRequestHeaders().getFirst("ECM-CS-XSRF-Token");
+            String cookie = exchange.getRequestHeaders().getFirst("Cookie");
+            xsrf.add(header + "|" + cookie);
+            boolean ok = header != null && ("ECM-CS-XSRF-Token=" + header).equals(cookie)
+                    && exchange.getRequestHeaders().getFirst("Authorization") != null;
+            byte[] bytes = ("{\"data\":{\"_apiInfo\":{\"productVersion\":\"5.6.0\"},"
+                    + "\"objectStore\":{\"id\":\"{A59F88D9-759E-56FF-BCBD-5289671DA1D0}\",\"symbolicName\":\"OS1\"}}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(ok ? 200 : 403, ok ? bytes.length : -1);
+            if (ok) {
+                exchange.getResponseBody().write(bytes);
+            }
+            exchange.close();
+        });
+        csgql.start();
+        try {
+            ConnectorDTO connector = new ConnectorDTO("FileNet_Test", "Test FileNet", "repository",
+                    "org.opencrawling.filenet.FileNetRepositoryConnector", 10, Map.of(
+                            "url", "http://127.0.0.1:" + csgql.getAddress().getPort() + "/content-services-graphql/graphql",
+                            "objectStore", "OS1", "username", "p8crawler", "password", "secret"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("object store 'OS1' is accessible"));
+            assertTrue(result.message().contains("5.6.0"));
+            assertEquals(1, xsrf.size());
+        } finally {
+            csgql.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckDocumentumConnectorNotConfigured() {
+        ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                "org.opencrawling.documentum.DocumentumRepositoryConnector", 10,
+                Map.of("url", "http://127.0.0.1:59999/dctm-rest", "username", "dctm_crawler", "password", "x"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("repository-name"));
+    }
+
+    @Test
+    void testCheckDocumentumConnectorFailure() {
+        ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.of(
+                        "url", "http://127.0.0.1:59999/dctm-rest", "repositoryName", "corp",
+                        "username", "dctm_crawler", "password", "secret"));
+
+        ConnectionCheckResult result = checker.check(connector);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Documentum"));
+        assertFalse(result.message().contains("secret"));
+    }
+
+    @Test
+    void testCheckDocumentumConnectorSuccess() throws Exception {
+        List<String> auth = new CopyOnWriteArrayList<>();
+        HttpServer rest = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        rest.createContext("/dctm-rest/repositories/corp", exchange -> {
+            auth.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            String query = exchange.getRequestURI().getRawQuery();
+            String body = query != null && query.contains("dql=")
+                    ? "{\"updated\":\"2026-10-31T10:00:00.000+02:00\",\"links\":[],\"entries\":[{\"content\":"
+                            + "{\"properties\":{\"r_object_id\":\"0c0277b680000105\"}}}]}"
+                    : "{\"id\":160694,\"name\":\"corp\",\"servers\":[{\"version\":\"23.4.0000.0124\"}],\"links\":[]}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/vnd.emc.documentum+json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        rest.start();
+        try {
+            ConnectorDTO connector = new ConnectorDTO("Documentum_Test", "Test Documentum", "repository",
+                    "org.opencrawling.documentum.DocumentumRepositoryConnector", 10, Map.of(
+                            "url", "http://127.0.0.1:" + rest.getAddress().getPort() + "/dctm-rest",
+                            "repositoryName", "corp", "username", "dctm_crawler", "password", "secret"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("repository 'corp'"));
+            assertTrue(result.message().contains("23.4.0000.0124"));
+            assertTrue(result.message().contains("+02:00"));
+            assertEquals(2, auth.size());
+            assertTrue(auth.stream().allMatch(a -> a.startsWith("Basic ")));
+        } finally {
+            rest.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_rejectsHtml() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] html = "<!DOCTYPE html><html><head><title>OpenCrawling</title></head><body><div id=\"root\"></div></body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html;charset=UTF-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("endpoint returned an HTML page"));
+            assertTrue(result.message().contains("8081"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_success() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\",\"nodeType\":\"cm:folder\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco", "username", "admin", "password", "admin"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+            assertTrue(result.message().contains("-root-"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoOutputConnector_bearerAuth() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("Bearer test-jwt-token".equals(auth)) {
+                byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\",\"nodeType\":\"cm:folder\"}}".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, json.length);
+                exchange.getResponseBody().write(json);
+            } else {
+                exchange.sendResponseHeaders(401, -1);
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Output_Test", "Test Alfresco Output", "output",
+                    "org.opencrawling.alfresco.output.AlfrescoOutputConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco",
+                            "authType", "bearer",
+                            "bearerToken", "test-jwt-token"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoRepositoryConnector_rejectsHtml() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] html = "<!DOCTYPE html><html><body>OpenCrawling UI</body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Repo_Test", "Test Alfresco Repo", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco/api/-default-/public/alfresco/versions/1"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("endpoint returned an HTML page"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckAlfrescoRepositoryConnector_success() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            ConnectorDTO connector = new ConnectorDTO("Alfresco_Repo_Test", "Test Alfresco Repo", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", "http://127.0.0.1:" + port + "/alfresco/api/-default-/public/alfresco/versions/1",
+                            "username", "admin", "password", "admin"));
+
+            ConnectionCheckResult result = checker.check(connector);
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Company Home"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorSuccessWithApiKey() throws Exception {
+        List<String> authHeaders = new CopyOnWriteArrayList<>();
+        HttpServer es = elasticsearchStub("Elasticsearch", authHeaders);
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + es.getAddress().getPort(),
+                    "elasticsearchApiKey", "a2V5OnNlY3JldA==",
+                    "elasticsearchUsername", "elastic",
+                    "elasticsearchPassword", "ignored")));
+
+            assertTrue(result.success(), result.message());
+            assertTrue(result.message().contains("Successfully connected to Elasticsearch"));
+            assertEquals(List.of("ApiKey a2V5OnNlY3JldA=="), authHeaders);
+        } finally {
+            es.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorUsesBasicAuthWithoutApiKey() throws Exception {
+        List<String> authHeaders = new CopyOnWriteArrayList<>();
+        HttpServer es = elasticsearchStub("Elasticsearch", authHeaders);
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + es.getAddress().getPort(),
+                    "elasticsearchUsername", "elastic",
+                    "elasticsearchPassword", "changeme")));
+
+            assertTrue(result.success(), result.message());
+            assertEquals(List.of("Basic " + java.util.Base64.getEncoder().encodeToString(
+                    "elastic:changeme".getBytes(StandardCharsets.UTF_8))), authHeaders);
+        } finally {
+            es.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorRejectsOpenSearch() throws Exception {
+        HttpServer openSearch = elasticsearchStub(null, new CopyOnWriteArrayList<>());
+        try {
+            ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of(
+                    "elasticsearchUris", "http://127.0.0.1:" + openSearch.getAddress().getPort())));
+
+            assertFalse(result.success());
+            assertTrue(result.message().contains("is not Elasticsearch"), result.message());
+        } finally {
+            openSearch.stop(0);
+        }
+    }
+
+    @Test
+    void testCheckElasticsearchConnectorFailure() {
+        ConnectionCheckResult result = checker.check(elasticsearchConnector(Map.of("elasticsearchUris", "http://127.0.0.1:1")));
+
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Failed to connect to Elasticsearch"), result.message());
+        assertFalse(result.message().endsWith("null"), result.message());
+    }
+
+    private static ConnectorDTO elasticsearchConnector(Map<String, String> config) {
+        return new ConnectorDTO("ES_Test", "Test Elasticsearch", "output",
+                "org.opencrawling.elasticsearch.ElasticsearchOutputConnector", 10, config);
+    }
+
+    private static HttpServer elasticsearchStub(String product, List<String> authHeaders) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if (auth != null) {
+                authHeaders.add(auth);
+            }
+            byte[] bytes = "{\"version\":{\"number\":\"9.4.3\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            if (product != null) {
+                exchange.getResponseHeaders().add("X-Elastic-Product", product);
+            }
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        return server;
     }
 }

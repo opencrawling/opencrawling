@@ -235,6 +235,11 @@ public class ApsRepositoryConnector implements RepositoryConnector {
     }
 
     @Override
+    public String sourceInstance() {
+        return url;
+    }
+
+    @Override
     public void connect() throws Exception {
         log.info("Connecting to Alfresco Process Services at URL: {}", url);
         if (this.httpClient == null) {

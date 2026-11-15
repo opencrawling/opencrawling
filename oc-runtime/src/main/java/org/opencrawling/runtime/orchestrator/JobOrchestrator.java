@@ -28,7 +28,9 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.result.ScanResult;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
 import org.opencrawling.runtime.config.KafkaConfig;
+import org.opencrawling.core.messaging.ChunkingSpec;
 import org.opencrawling.core.messaging.IngestionMessage;
+import org.opencrawling.core.ois.OisMetadata;
 import org.opencrawling.runtime.observability.TelemetryTraceStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,12 +39,18 @@ import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import org.opencrawling.core.claimcheck.CompositeClaimCheckStore;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
+import org.opencrawling.core.reporting.DocumentLedgerEntry;
+import org.opencrawling.core.reporting.ExecutionProvenance;
+import org.opencrawling.runtime.governance.GovernanceProperties;
+import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
+import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +75,15 @@ public class JobOrchestrator {
 
     @Autowired(required = false)
     private PipelineProperties pipelineProperties;
+
+    @Autowired(required = false)
+    private JobLedgerAccumulator ledgerAccumulator;
+
+    @Autowired(required = false)
+    private GovernanceProperties governanceProperties;
+
+    @Autowired(required = false)
+    private ChunkingDefaults chunkingDefaults;
 
     @Value("${opencrawling.pipeline.mode:rag}")
     private String defaultPipelineMode = "rag";
@@ -120,6 +137,59 @@ public class JobOrchestrator {
     @SuppressWarnings("preview")
     public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
             String transformationConnector, String jobId, NarrativizationConfig narrativization, PipelineMode pipelineMode) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, narrativization, pipelineMode, null);
+    }
+
+    @SuppressWarnings("preview")
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, null, narrativization, pipelineMode, executionId);
+    }
+
+    @SuppressWarnings("preview")
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, narrativization,
+                pipelineMode, executionId, () -> false);
+    }
+
+    /**
+     * Runs a job until it completes or {@code stopRequested} becomes true. A stop is noticed before each document
+     * and, when the caller also interrupts the running thread, while waiting on the crawl. The run then ends with
+     * {@code false} and its ledger execution is closed as stopped.
+     */
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, narrativization,
+                pipelineMode, executionId, stopRequested, null);
+    }
+
+    /**
+     * Runs a job as {@link #runJob(RepositoryConnector, OutputConnector, String, String, String, String,
+     * NarrativizationConfig, PipelineMode, String, BooleanSupplier)} does, recording who started it in the ledger.
+     *
+     * @param provenance who started the run and how; {@code null} when unknown
+     */
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested, ExecutionProvenance provenance) {
+        return runJob(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, narrativization,
+                pipelineMode, executionId, stopRequested, provenance, null);
+    }
+
+    /**
+     * Runs a job as {@link #runJob(RepositoryConnector, OutputConnector, String, String, String, String,
+     * NarrativizationConfig, PipelineMode, String, BooleanSupplier, ExecutionProvenance)} does, with the job's own
+     * chunking. The chunking travels with each document on the documents topic, so it applies to documents the
+     * ingestion consumer chunks; an output connector that is given the documents directly chunks them its own way.
+     * The global chunk size from the settings fills in what the job does not set.
+     *
+     * @param chunking how the ingestion consumer splits this job's documents; {@code null} for the defaults
+     */
+    public boolean runJob(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
+            String transformationConnector, String jobId, String jobName, NarrativizationConfig narrativization, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
         
         PipelineMode resolvedMode = pipelineMode != null ? pipelineMode :
             (pipelineProperties != null ? pipelineProperties.getMode() : PipelineMode.fromString(defaultPipelineMode));
@@ -131,6 +201,12 @@ public class JobOrchestrator {
             ? new MustacheTransformationConnector(narrativization.template())
             : null;
 
+        if (bypassesGovernance(outputConnector, resolvedMode)) {
+            log.error("Job {} refused: {}", jobId, GOVERNANCE_BYPASS);
+            traceStore.recordError(jobId, "ERROR", "Governance", "Job refused: " + GOVERNANCE_BYPASS, null);
+            return false;
+        }
+
         if (resolvedMode == PipelineMode.MIGRATION) {
             log.info("Job {} running in MIGRATION mode. Narrativization and vector embeddings are bypassed.", jobId);
         } else if (mustacheConnector != null) {
@@ -138,46 +214,69 @@ public class JobOrchestrator {
                 narrativization.template().substring(0, Math.min(60, narrativization.template().length())));
         }
 
-        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, mustacheConnector, resolvedMode);
+        return runJobInternal(repositoryConnector, outputConnector, path, transformationConnector, jobId, jobName, mustacheConnector, resolvedMode, executionId,
+                stopRequested != null ? stopRequested : () -> false, provenance, withDefaults(chunking));
+    }
+
+    /** Why a run that would bypass the governance gate is refused. */
+    public static final String GOVERNANCE_BYPASS = "pre-embedding governance is on, and a RAG job that hands documents "
+            + "straight to an output connector would embed them without it. Run RAG jobs on the decoupled pipeline "
+            + "(no output connector on the crawler) or turn governance off.";
+
+    /**
+     * Whether a run would embed documents without the governance gate: with the gate on, a RAG run given an output
+     * connector also sends each document to it directly, and those outputs extract and embed it themselves.
+     */
+    public boolean bypassesGovernance(OutputConnector outputConnector, PipelineMode mode) {
+        return governanceProperties != null && governanceProperties.isEnabled() && outputConnector != null
+                && mode != PipelineMode.MIGRATION;
+    }
+
+    /** The job's chunking with the global chunk size filled in where the job gives none. */
+    private ChunkingSpec withDefaults(ChunkingSpec chunking) {
+        return chunkingDefaults != null ? chunkingDefaults.apply(chunking) : chunking;
+    }
+
+    /** For tests and callers that build the orchestrator themselves. */
+    public void setChunkingDefaults(ChunkingDefaults chunkingDefaults) {
+        this.chunkingDefaults = chunkingDefaults;
+    }
+
+    /** For tests and callers that build the orchestrator themselves. */
+    public void setGovernanceProperties(GovernanceProperties governanceProperties) {
+        this.governanceProperties = governanceProperties;
     }
 
     @SuppressWarnings("preview")
     private boolean runJobInternal(RepositoryConnector repositoryConnector, OutputConnector outputConnector, String path,
-            String transformationConnector, String jobId, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode) {
+            String transformationConnector, String jobId, String jobName, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode, String executionId,
+            BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
         log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String currentJobId = jobId != null ? jobId : "1";
-        
-        String engine = "ollama";
-        java.util.Map<String, String> config = java.util.Map.of("model", defaultOllamaModel != null && !defaultOllamaModel.isBlank() ? defaultOllamaModel : "mxbai-embed-large");
+        String currentExecutionId = executionId != null ? executionId : UUID.randomUUID().toString().substring(0, 8);
 
-        if (transformationConnector != null && !transformationConnector.isBlank()) {
-            try {
-                java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
-                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
-                for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
-                    if (conn.name().equals(transformationConnector)) {
-                        engine = conn.configuration().getOrDefault("engine", "ollama");
-                        config = new java.util.HashMap<>(conn.configuration());
-                        if (defaultOllamaModel != null && !defaultOllamaModel.isBlank() && "Ollama_Embedding_Default".equals(transformationConnector)) {
-                            config.put("model", defaultOllamaModel);
-                        }
-                        break;
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to load connector configuration for {}: {}", transformationConnector, e.getMessage());
-            }
+        if (ledgerAccumulator != null) {
+            String repoName = repositoryConnector != null ? repositoryConnector.getClass().getSimpleName() : "UnknownRepository";
+            String outName = outputConnector != null ? outputConnector.getClass().getSimpleName() : "DirectKafka";
+            String resolvedJobName = jobName != null && !jobName.isBlank() ? jobName : ("Job #" + currentJobId);
+            ledgerAccumulator.startExecution(currentJobId, currentExecutionId, resolvedJobName, pipelineMode, repoName, outName, provenance);
         }
-
-        final String finalEngine = engine;
-        final java.util.Map<String, String> finalConfig = config;
+        
+        Transformation transformation = resolveTransformation(transformationConnector);
+        final String finalEngine = transformation.engine();
+        final java.util.Map<String, String> finalConfig = transformation.config();
 
         try (var scope = StructuredTaskScope.open()) {
             
             StructuredTaskScope.Subtask<List<ScanResult>> scanTask = scope.fork(org.opencrawling.observability.concurrency.ObservabilityTask.observed(() -> {
                 Function<RepositoryDocument, ScanResult> processDocument = initialDoc -> {
+                        // Outside the try below, which turns every exception into a per-document failure.
+                        if (stopRequested.getAsBoolean()) {
+                            throw new JobStoppedException(currentJobId);
+                        }
+                        long docStartTime = System.currentTimeMillis();
                         try {
                             RepositoryDocument doc = initialDoc;
                             if (mustacheConnector != null) {
@@ -194,6 +293,8 @@ public class JobOrchestrator {
                                     log.warn("Mustache transformation failed for doc {}: {}", initialDoc.id(), ex.getMessage());
                                 }
                             }
+
+                            doc = withOisBlocks(doc, repositoryConnector, currentJobId, provenance);
 
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
@@ -230,6 +331,15 @@ public class JobOrchestrator {
                                     // or ingest a dangling reference: report the document as failed instead.
                                     log.error("Failed to write Claim Check content for doc: {}. Document will not be published.", doc.id(), e);
                                     traceStore.recordError(currentJobId, "ERROR", "ClaimCheckStore", "Failed to write Claim Check content for doc: " + doc.id(), e.toString());
+                                    if (ledgerAccumulator != null) {
+                                        long docDuration = System.currentTimeMillis() - docStartTime;
+                                        ledgerAccumulator.recordDocument(DocumentLedgerEntry.failure(
+                                                currentJobId, currentExecutionId, pipelineMode, doc.id(), doc.uri(),
+                                                repositoryConnector.getClass().getSimpleName(),
+                                                outputConnector != null ? outputConnector.getClass().getSimpleName() : "ClaimCheckStore",
+                                                docDuration, "CLAIM_CHECK_ERROR", e.getMessage()
+                                        ));
+                                    }
                                     return new ScanResult.Failure(doc.id(), e);
                                 }
                             }
@@ -245,7 +355,8 @@ public class JobOrchestrator {
                                 finalEngine,
                                 finalConfig,
                                 doc.action(),
-                                pipelineMode
+                                pipelineMode,
+                                chunking
                             );
                             
                             // Publish document metadata to Kafka topic and wait for confirmation
@@ -257,6 +368,15 @@ public class JobOrchestrator {
                                     // Standalone crawler: Kafka is the only delivery path, losing the message means losing the document.
                                     log.error("Kafka publish failed for doc {}: {}", doc.id(), kafkaEx.getMessage());
                                     traceStore.recordError(currentJobId, "ERROR", "Kafka", "Kafka publish failed for doc: " + doc.id(), kafkaEx.toString());
+                                    if (ledgerAccumulator != null) {
+                                        long docDuration = System.currentTimeMillis() - docStartTime;
+                                        ledgerAccumulator.recordDocument(DocumentLedgerEntry.failure(
+                                                currentJobId, currentExecutionId, pipelineMode, doc.id(), doc.uri(),
+                                                repositoryConnector.getClass().getSimpleName(),
+                                                "Kafka",
+                                                docDuration, "KAFKA_PUBLISH_ERROR", kafkaEx.getMessage()
+                                        ));
+                                    }
                                     return new ScanResult.Failure(doc.id(), kafkaEx);
                                 }
                                 log.warn("Kafka publish skipped or unavailable for doc {}: {}", doc.id(), kafkaEx.getMessage());
@@ -289,9 +409,56 @@ public class JobOrchestrator {
                                     log.error("Direct OutputConnector ingestion failed for doc {}: {}", doc.id(), outEx.getMessage(), outEx);
                                 }
                             }
+
+                            if (ledgerAccumulator != null) {
+                                long docDuration = System.currentTimeMillis() - docStartTime;
+                                if (pipelineMode == PipelineMode.MIGRATION) {
+                                    long sizeBytes = 0L;
+                                    List<String> sizeMeta = doc.metadata().get("binary_size");
+                                    if (sizeMeta != null && !sizeMeta.isEmpty()) {
+                                        try { sizeBytes = Long.parseLong(sizeMeta.get(0)); } catch (Exception ignored) {}
+                                    }
+                                    String sha256 = doc.metadata().getOrDefault("checksum_sha256", List.of("")).stream().findFirst().orElse("");
+                                    String bucket = doc.metadata().getOrDefault("target_bucket", List.of("")).stream().findFirst().orElse("");
+                                    String key = doc.metadata().getOrDefault("target_key", List.of("")).stream().findFirst().orElse("");
+                                    boolean safePruned = Boolean.parseBoolean(doc.metadata().getOrDefault("safe_pruned", List.of("false")).get(0));
+                                    long reclaimedBytes = 0L;
+                                    List<String> reclaimedMeta = doc.metadata().get("reclaimed_bytes");
+                                    if (reclaimedMeta != null && !reclaimedMeta.isEmpty()) {
+                                        try { reclaimedBytes = Long.parseLong(reclaimedMeta.get(0)); } catch (Exception ignored) {}
+                                    }
+                                    ledgerAccumulator.recordDocument(DocumentLedgerEntry.migrationSuccess(
+                                            currentJobId, currentExecutionId, doc.id(), finalUri,
+                                            repositoryConnector.getClass().getSimpleName(),
+                                            outputConnector != null ? outputConnector.getClass().getSimpleName() : "DirectOzone",
+                                            docDuration, sizeBytes, sha256, bucket, key, true, 200, safePruned, reclaimedBytes
+                                    ));
+                                } else {
+                                    int tokenCount = 100;
+                                    List<String> lengthMeta = doc.metadata().get("content_length");
+                                    if (lengthMeta != null && !lengthMeta.isEmpty()) {
+                                        try { tokenCount = Math.max(1, Integer.parseInt(lengthMeta.get(0)) / 4); } catch (Exception ignored) {}
+                                    }
+                                    ledgerAccumulator.recordDocument(DocumentLedgerEntry.ragSuccess(
+                                            currentJobId, currentExecutionId, doc.id(), finalUri,
+                                            repositoryConnector.getClass().getSimpleName(),
+                                            outputConnector != null ? outputConnector.getClass().getSimpleName() : "PGVector",
+                                            docDuration, 1, tokenCount, finalEngine, 1024, "vector_store"
+                                    ));
+                                }
+                            }
                             
                             return new ScanResult.Success(doc.id(), "1.0");
                         } catch (Exception e) {
+                            if (ledgerAccumulator != null) {
+                                long docDuration = System.currentTimeMillis() - docStartTime;
+                                ledgerAccumulator.recordDocument(DocumentLedgerEntry.failure(
+                                        currentJobId, currentExecutionId, pipelineMode, initialDoc.id(), initialDoc.uri(),
+                                        repositoryConnector.getClass().getSimpleName(),
+                                        outputConnector != null ? outputConnector.getClass().getSimpleName() : "Kafka",
+                                        docDuration, "PROCESSING_ERROR", e.getMessage()
+                                ));
+                            }
                             traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + initialDoc.id() + ": " + e.getMessage(), e.toString());
                             return new ScanResult.Failure(initialDoc.id(), e);
                         }
@@ -348,17 +515,171 @@ public class JobOrchestrator {
                 Map.of("path", path, "scannedCount", String.valueOf(scanResults.size()))
             ));
 
+            if (ledgerAccumulator != null) {
+                boolean isPushConnector = repositoryConnector != null
+                        && repositoryConnector.getClass().getSimpleName().toLowerCase().contains("grpcpush");
+                if (isPushConnector && scanResults.isEmpty()) {
+                    ledgerAccumulator.cancelExecution(currentExecutionId);
+                } else {
+                    ledgerAccumulator.completeExecution(currentExecutionId, true, Map.of("durationMs", duration));
+                }
+            }
+
             log.info("Job scanning phase completed in {} ms. Documents published to Kafka.", duration);
             return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return stopped(currentJobId, currentExecutionId);
         } catch (StructuredTaskScope.FailedException e) {
+            if (stopRequested.getAsBoolean() || hasCause(e, JobStoppedException.class)) {
+                return stopped(currentJobId, currentExecutionId);
+            }
+            if (ledgerAccumulator != null) {
+                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", describe(e)));
+            }
             log.error("Job execution failed due to subtask failure: ", e.getCause());
-            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + e.getCause().getMessage(), e.toString());
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed due to subtask failure: " + describe(e.getCause()), e.toString());
             return false;
         } catch (Exception e) {
+            if (stopRequested.getAsBoolean()) {
+                return stopped(currentJobId, currentExecutionId);
+            }
+            if (ledgerAccumulator != null) {
+                ledgerAccumulator.completeExecution(currentExecutionId, false, Map.of("error", describe(e)));
+            }
             log.error("Job execution failed: ", e);
-            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + e.getMessage(), e.toString());
+            traceStore.recordError(currentJobId, "ERROR", "JobOrchestrator", "Job execution failed: " + describe(e), e.toString());
             return false;
         }
+    }
+
+    private boolean stopped(String jobId, String executionId) {
+        log.info("Job {} stopped [Exec ID: {}].", jobId, executionId);
+        if (ledgerAccumulator != null) {
+            ledgerAccumulator.completeExecution(executionId, false, Map.of("error", "stopped"));
+        }
+        return false;
+    }
+
+    /** A message for logs and the ledger; {@code Map.of} rejects the null message many exceptions carry. */
+    private static String describe(Throwable e) {
+        if (e == null) {
+            return "unknown error";
+        }
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    }
+
+    private static boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (type.isInstance(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Publishes one document that an external producer sent for a job, in RAG mode. An UPSERT stores the
+     * document's content, which must not be null, in the claim-check store as {@code text/plain} and publishes
+     * a reference to it; a DELETE publishes a tombstone. Returns once Kafka has acknowledged the message.
+     *
+     * @throws Exception if the content cannot be stored or Kafka does not acknowledge the message
+     */
+    public void publishDocument(RepositoryDocument doc, String transformationConnector) throws Exception {
+        publishDocument(doc, transformationConnector, null, null, null, null);
+    }
+
+    /**
+     * Publishes one pushed document as {@link #publishDocument(RepositoryDocument, String)} does, stamped with the
+     * OIS {@code ois:source} and {@code ois:provenance} blocks. Whatever the document brought under those keys, or
+     * under {@code ois:governance}, is replaced or removed.
+     *
+     * @param jobId          the job the document was pushed for
+     * @param provenance     how it arrived
+     * @param sourceType     the repository type the producer named; {@code null} for {@code push}
+     * @param sourceInstance the repository instance URI the producer named; {@code null} to name the job by URN
+     */
+    public void publishDocument(RepositoryDocument doc, String transformationConnector, String jobId,
+                                ExecutionProvenance provenance, String sourceType, String sourceInstance) throws Exception {
+        String instance = OisMetadata.instanceUri(sourceInstance);
+        doc = new RepositoryDocument(doc.id(), doc.uri(), doc.contentStream(),
+                OisMetadata.withSourceAndProvenance(OisMetadata.withoutOisBlocks(doc.metadata()),
+                        sourceType != null && !sourceType.isBlank() ? sourceType : "push",
+                        instance != null ? instance : OisMetadata.connectorUrn(jobId != null ? "job:" + jobId : "push"),
+                        null, jobId, provenance, Instant.now()),
+                doc.acl(), doc.security(), doc.lastModified(), doc.action());
+        String uri = doc.uri();
+        Map<String, List<String>> metadata = doc.metadata();
+        if (doc.action() != DocumentAction.DELETE) {
+            // A fresh name per message: IngestionConsumer deletes the claim it consumed, which must not be
+            // the claim of a newer message for the same document.
+            if (doc.contentStream() != null) {
+                try (InputStream in = doc.contentStream()) {
+                    uri = claimCheckStore.put(UUID.randomUUID() + ".txt", in, -1, "text/plain").toString();
+                }
+                // The text extractor picks its parser from these keys; they must describe the stored text.
+                metadata = new java.util.HashMap<>(metadata);
+                metadata.keySet().removeAll(List.of("mimetype", "Content-Type", "content-type"));
+                metadata.put("mimeType", List.of("text/plain"));
+            }
+        }
+        Transformation transformation = resolveTransformation(transformationConnector);
+        IngestionMessage message = new IngestionMessage(doc.id(), uri, metadata, doc.acl(), doc.security(),
+                doc.lastModified().toString(), transformationConnector, transformation.engine(), transformation.config(),
+                doc.action(), PipelineMode.RAG, withDefaults(null));
+        kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), message).get();
+    }
+
+    /**
+     * The document with OpenCrawling's {@code ois:source} and {@code ois:provenance} blocks, replacing anything the
+     * source put under those keys or under {@code ois:governance}: only the pipeline writes them.
+     */
+    public static RepositoryDocument withOisBlocks(RepositoryDocument doc, RepositoryConnector connector, String jobId,
+                                                   ExecutionProvenance provenance) {
+        String name = connector != null ? connector.getName() : null;
+        Map<String, List<String>> source = doc.metadata() != null ? doc.metadata() : Map.of();
+        String type = source.getOrDefault("source_type", List.of()).stream()
+                .filter(value -> value != null && !value.isBlank()).findFirst()
+                .orElseGet(() -> OisMetadata.sourceType(name));
+        String instance = connector != null ? OisMetadata.instanceUri(connector.sourceInstance()) : null;
+        String version = connector != null ? connector.connectorVersion() : null;
+        Map<String, List<String>> metadata = OisMetadata.withSourceAndProvenance(OisMetadata.withoutOisBlocks(source),
+                type, instance != null ? instance : OisMetadata.connectorUrn(name), version, jobId, provenance,
+                Instant.now());
+        return new RepositoryDocument(doc.id(), doc.uri(), doc.contentStream(), metadata, doc.acl(), doc.security(),
+                doc.lastModified(), doc.action());
+    }
+
+    /**
+     * The embedding engine and its configuration, from the named transformation connector in connectors.json.
+     * Without a match, or when connectors.json cannot be read, Ollama with the default embedding model.
+     */
+    private Transformation resolveTransformation(String transformationConnector) {
+        String engine = "ollama";
+        java.util.Map<String, String> config = java.util.Map.of("model", defaultOllamaModel != null && !defaultOllamaModel.isBlank() ? defaultOllamaModel : "mxbai-embed-large");
+
+        if (transformationConnector != null && !transformationConnector.isBlank()) {
+            try {
+                java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
+                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
+                for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
+                    if (conn.name().equals(transformationConnector)) {
+                        engine = conn.configuration().getOrDefault("engine", "ollama");
+                        config = new java.util.HashMap<>(conn.configuration());
+                        if (defaultOllamaModel != null && !defaultOllamaModel.isBlank() && "Ollama_Embedding_Default".equals(transformationConnector)) {
+                            config.put("model", defaultOllamaModel);
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load connector configuration for {}: {}", transformationConnector, e.getMessage());
+            }
+        }
+        return new Transformation(engine, config);
+    }
+
+    private record Transformation(String engine, java.util.Map<String, String> config) {
     }
 
     private String resolveSharedDir() {

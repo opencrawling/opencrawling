@@ -1,0 +1,192 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Publish VM Distribution ZIP Packages
+
+on:
+  release:
+    types: [ published, prereleased, released ]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version for VM distribution ZIPs (e.g. 1.0.4)'
+        type: string
+        required: false
+        default: '1.0.4'
+
+permissions: read-all
+
+jobs:
+  build-vm-distributions:
+    name: Build VM & Bare-Metal Distribution ZIPs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+      hashes: ${{ steps.hash.outputs.hashes }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Resolve Release Version & Tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VER="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VER="${TAG_NAME#v}"
+          elif [ -n "${{ inputs.release_version }}" ]; then
+            VER="${{ inputs.release_version }}"
+            TAG_NAME="v${VER}"
+          else
+            VER="1.0.4"
+            TAG_NAME="v1.0.4"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Update CLI Version Banner for Release
+        if: steps.version.outputs.version != ''
+        run: |
+          sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${{ steps.version.outputs.version }}/" \
+            oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
+
+      - name: Build & Package VM Distribution ZIPs
+        run: |
+          chmod +x scripts/package-dist.sh
+          ./scripts/package-dist.sh "${{ steps.version.outputs.version }}"
+
+      - name: Smoke-Test Packaged Distribution Archive
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          VERIFY_DIR=$(mktemp -d)
+          unzip -q "dist/opencrawling-platform-dist-${VER}.zip" -d "$VERIFY_DIR"
+          BUNDLE_DIR="${VERIFY_DIR}/opencrawling-platform-dist-${VER}"
+          test -f "${BUNDLE_DIR}/runtime/app.jar"
+          test -d "${BUNDLE_DIR}/runtime/lib"
+          test -f "${BUNDLE_DIR}/embedding-service/oc-embedding-service.jar"
+          test -f "${BUNDLE_DIR}/admin-ui/dist/index.html"
+          test -f "${BUNDLE_DIR}/cli/oc-cli.jar"
+          "${BUNDLE_DIR}/bin/oc" --version
+          rm -rf "$VERIFY_DIR"
+
+      - name: Checkout Wiki Documentation
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki
+        continue-on-error: true
+
+      - name: Set up Python for Documentation PDF Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PDF Generation Dependencies
+        run: |
+          pip install --upgrade pip weasyprint markdown
+
+      - name: Generate User & Installation Guide PDF
+        run: |
+          chmod +x scripts/generate-pdf-guide.sh
+          ./scripts/generate-pdf-guide.sh "${{ steps.version.outputs.version }}"
+
+      - name: Generate Hashes for SLSA Provenance
+        id: hash
+        run: |
+          cd dist
+          echo "hashes=$(sha256sum *.zip *.pdf 2>/dev/null | base64 -w0)" >> $GITHUB_OUTPUT
+
+      - name: Upload Distribution ZIP Artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: opencrawling-vm-dist-packages
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/SHA256SUMS.txt
+            dist/*.pdf
+            docker-compose-decoupled-dockerhub.yml
+            docker-compose-apps-dockerhub.yml
+
+  publish-dist-release-assets:
+    name: Attach Distribution ZIPs to GitHub Release
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    runs-on: ubuntu-24.04
+    needs: build-vm-distributions
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download Distribution ZIP Artifacts
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: opencrawling-vm-dist-packages
+          path: release-dist/
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign Release Checksums with Cosign
+        run: |
+          cosign sign-blob --yes \
+            --bundle release-dist/SHA256SUMS.txt.sigstore.json \
+            release-dist/SHA256SUMS.txt
+        env:
+          COSIGN_YES: "true"
+
+      - name: Attach Distribution ZIPs, Checksums & Signatures to GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ needs.build-vm-distributions.outputs.tag_name }}
+          files: |
+            release-dist/*.zip
+            release-dist/*.sha256
+            release-dist/SHA256SUMS.txt
+            release-dist/SHA256SUMS.txt.sigstore.json
+            release-dist/*.pdf
+            release-dist/docker-compose-decoupled-dockerhub.yml
+            release-dist/docker-compose-apps-dockerhub.yml
+
+  provenance:
+    name: Generate SLSA Build Provenance (10/10 Scorecard)
+    needs: [build-vm-distributions, publish-dist-release-assets]
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.build-vm-distributions.outputs.hashes }}"
+      upload-tag-name: "${{ needs.build-vm-distributions.outputs.tag_name }}"
+      upload-assets: true

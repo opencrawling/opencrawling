@@ -1,0 +1,43 @@
+{
+  "type": "record",
+  "name": "DocumentExecutionRecord",
+  "namespace": "org.opencrawling.reporting.avro",
+  "doc": "Audit and execution ledger record for documents processed by OpenCrawling",
+  "fields": [
+    { "name": "job_id", "type": "string", "doc": "Unique Job Identifier" },
+    { "name": "execution_id", "type": "string", "doc": "Execution UUID for this run" },
+    { "name": "pipeline_mode", "type": "string", "doc": "RAG or MIGRATION" },
+    { "name": "document_id", "type": "string", "doc": "Source document unique key" },
+    { "name": "source_uri", "type": "string", "doc": "Source URI or file path" },
+    { "name": "connector_source", "type": "string", "doc": "Source RepositoryConnector class name" },
+    { "name": "connector_target", "type": "string", "doc": "Target OutputConnector class name" },
+    { "name": "status", "type": "string", "doc": "SUCCESS, FAILED, SKIPPED, QUARANTINED" },
+    { "name": "duration_ms", "type": "long", "doc": "Processing latency in milliseconds" },
+    { "name": "timestamp_utc", "type": "string", "doc": "ISO-8601 completion timestamp" },
+    { "name": "error_code", "type": ["null", "string"], "default": null },
+    { "name": "error_message", "type": ["null", "string"], "default": null },
+
+    { "name": "rag_chunk_count", "type": ["null", "int"], "default": null },
+    { "name": "rag_token_count", "type": ["null", "int"], "default": null },
+    { "name": "rag_embedding_model", "type": ["null", "string"], "default": null },
+    { "name": "rag_embedding_dimensions", "type": ["null", "int"], "default": null },
+    { "name": "rag_vector_table", "type": ["null", "string"], "default": null },
+
+    { "name": "mig_binary_size_bytes", "type": ["null", "long"], "default": null },
+    { "name": "mig_sha256_checksum", "type": ["null", "string"], "default": null },
+    { "name": "mig_target_bucket", "type": ["null", "string"], "default": null },
+    { "name": "mig_target_key", "type": ["null", "string"], "default": null },
+    { "name": "mig_sidecar_written", "type": ["null", "boolean"], "default": null },
+    { "name": "mig_callback_http_status", "type": ["null", "int"], "default": null },
+    { "name": "mig_safe_pruned", "type": ["null", "boolean"], "default": null },
+    { "name": "mig_reclaimed_bytes", "type": ["null", "long"], "default": null },
+
+    { "name": "trigger_source", "type": ["null", "string"], "default": null, "doc": "How the execution started: api, dynamic-api, mcp, bpm, ois, grpc-push, startup" },
+    { "name": "triggered_by", "type": ["null", "string"], "default": null, "doc": "Verified party that started the execution (the acting agent of a delegated token); null when unknown" },
+    { "name": "on_behalf_of", "type": ["null", "string"], "default": null, "doc": "User an agent acted for (subject of a delegated token)" },
+    { "name": "caller_groups", "type": ["null", { "type": "array", "items": "string" }], "default": null, "doc": "Verified caller's groups" },
+    { "name": "caller_tenant", "type": ["null", "string"], "default": null, "doc": "Verified caller's tenant" },
+    { "name": "caller_verified", "type": ["null", "boolean"], "default": null, "doc": "True when the identity fields come from a validated token" },
+    { "name": "correlation_id", "type": ["null", "string"], "default": null, "doc": "Caller-supplied correlation id (X-Correlation-Id)" }
+  ]
+}

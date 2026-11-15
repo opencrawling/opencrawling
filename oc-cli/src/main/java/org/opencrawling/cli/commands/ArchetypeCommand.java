@@ -77,12 +77,12 @@ public class ArchetypeCommand implements Runnable {
                             
                             <groupId>%s</groupId>
                             <artifactId>%s</artifactId>
-                            <version>1.0.0-SNAPSHOT</version>
+                            <version>1.0.5-SNAPSHOT</version>
                             <name>%s</name>
 
                             <properties>
                                 <java.version>25</java.version>
-                                <opencrawling.version>1.0.0-SNAPSHOT</opencrawling.version>
+                                <opencrawling.version>1.0.5-SNAPSHOT</opencrawling.version>
                             </properties>
 
                             <dependencies>
@@ -102,22 +102,96 @@ public class ArchetypeCommand implements Runnable {
                 Files.createDirectories(srcPath);
 
                 String className = name.endsWith("Connector") ? name : name + "Connector";
-                String javaContent = """
+                String normalizedType = type.toLowerCase();
+                String javaContent = switch (normalizedType) {
+                    case "output" -> """
                         package %s;
 
-                        import org.opencrawling.core.connector.RepositoryConnector;
-                        import org.opencrawling.core.model.RepositoryDocument;
-                        import reactor.core.publisher.Flux;
-                        import java.util.Map;
+                        import org.opencrawling.core.connector.OutputConnector;
+                        import org.opencrawling.core.document.RepositoryDocument;
+                        import reactor.core.publisher.Mono;
 
-                        public class %s {
-                            private String name = "%s";
+                        public class %s implements OutputConnector {
+                            private final String name = "%s";
 
+                            @Override
                             public String getName() {
                                 return name;
                             }
+
+                            @Override
+                            public void connect() throws Exception {
+                            }
+
+                            @Override
+                            public void disconnect() throws Exception {
+                            }
+
+                            @Override
+                            public Mono<Void> send(RepositoryDocument document) {
+                                return Mono.empty();
+                            }
                         }
                         """.formatted(packageName, className, className);
+                    case "transformation" -> """
+                        package %s;
+
+                        import org.opencrawling.core.connector.TransformationConnector;
+                        import org.opencrawling.core.document.RepositoryDocument;
+                        import reactor.core.publisher.Flux;
+
+                        public class %s implements TransformationConnector {
+                            private final String name = "%s";
+
+                            @Override
+                            public String getName() {
+                                return name;
+                            }
+
+                            @Override
+                            public void connect() throws Exception {
+                            }
+
+                            @Override
+                            public void disconnect() throws Exception {
+                            }
+
+                            @Override
+                            public Flux<RepositoryDocument> transform(RepositoryDocument document) {
+                                return Flux.just(document);
+                            }
+                        }
+                        """.formatted(packageName, className, className);
+                    default -> """
+                        package %s;
+
+                        import org.opencrawling.core.connector.RepositoryConnector;
+                        import org.opencrawling.core.document.RepositoryDocument;
+                        import reactor.core.publisher.Flux;
+
+                        public class %s implements RepositoryConnector {
+                            private final String name = "%s";
+
+                            @Override
+                            public String getName() {
+                                return name;
+                            }
+
+                            @Override
+                            public void connect() throws Exception {
+                            }
+
+                            @Override
+                            public void disconnect() throws Exception {
+                            }
+
+                            @Override
+                            public Flux<RepositoryDocument> scan(String basePath) {
+                                return Flux.empty();
+                            }
+                        }
+                        """.formatted(packageName, className, className);
+                };
 
                 Files.writeString(srcPath.resolve(className + ".java"), javaContent);
 

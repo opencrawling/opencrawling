@@ -1,0 +1,8 @@
+ACME Board of Directors - Confidential M&A and Executive Resolution (2026-Q4)
+Classification: TOP SECRET - EXECUTIVE OWNER ONLY (alice ONLY)
+
+Board Resolution #2026-11:
+The Board authorizes Project Horizon exploratory acquisition talks (target valuation ceiling $85M) led exclusively by Alice (VP Strategy / Coordinator).
+
+Distribution Constraint:
+No group permissions (including GROUP_engineering, GROUP_finance, or GROUP_EVERYONE) are granted access to this folder or document. Access is restricted strictly to principal alice.

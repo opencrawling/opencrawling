@@ -95,7 +95,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled-milvus
     ports:
       - "11434:11434"
@@ -110,9 +110,9 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-milvus
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
@@ -213,8 +213,10 @@ services:
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
       - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - ../../oc-runtime/data:/data  # Mount sample files directory
+      - opencrawling-reportsdata-milvus:/data/reports
     depends_on:
       - kafka
     networks:
@@ -235,6 +237,7 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     volumes:
       - ../../oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
     depends_on:
@@ -300,13 +303,20 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - SPRING_OPENCRAWLING_OUTPUT_TYPE=milvus
       - SPRING_OPENCRAWLING_OUTPUT_MILVUS_URI=http://milvus-standalone:19530
       - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - ../../oc-runtime/data:/app/data
+      - opencrawling-reportsdata-milvus:/data/reports
     depends_on:
       - redis
+      - ollama
+      - milvus-standalone
     networks:
       opencrawling-network:
         aliases:
@@ -343,3 +353,6 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata-milvus:
     name: opencrawling-kafkadata-milvus
+  opencrawling-reportsdata-milvus:
+    name: opencrawling-reportsdata-milvus
+

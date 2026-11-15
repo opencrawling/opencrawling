@@ -24,6 +24,7 @@ This module provides the repository connector for **Flowable BPMN Process Engine
 | **Include Variables** | `spring.opencrawling.connector.flowable.include-variables` | `true` | Include historical BPMN variables |
 | **Include ACLs** | `spring.opencrawling.connector.flowable.include-acls` | `true` | Extract identity links and map to SecurityConfig |
 | **Scope** | `spring.opencrawling.connector.flowable.scope` | `all` | Scope of instances (`all`, `completed`, `active`) |
+| **History Level** | `spring.opencrawling.connector.flowable.history-level` | `audit` | Flowable history level (`audit`, `full`, `none`). When set to `none`, the connector crawls active runtime endpoints (`/runtime/process-instances`) |
 
 ## Metadata Mapping Example
 
@@ -43,7 +44,8 @@ This module provides the repository connector for **Flowable BPMN Process Engine
     "flowable_proc_inst_id": ["proc-1234"],
     "flowable_process_instance_id": ["proc-1234"],
     "flowable_scope_id": ["proc-1234"],
-    "flowable_scope_type": ["processInstance"],
+    "flowable_scope_type": ["bpmn"],
+    "flowable_scope_type_legacy": ["processInstance"],
     "flowable_identity_users": ["finance_agent_1"],
     "flowable_identity_groups": ["finance_managers"],
     "flowable_var_totalAmount": ["250.50"],
@@ -62,25 +64,70 @@ This module provides the repository connector for **Flowable BPMN Process Engine
 ## Zero-Trust Query Integration Patterns
 
 ### 1. Collocated pgvector Query Pushdown (Flowable Entity Link)
-When Flowable and pgvector share the same PostgreSQL database, query-time filtering avoids synchronization lag by correlating with Flowable's native identity link tables:
+
+When Flowable and pgvector share the same PostgreSQL database, query-time filtering avoids distributed synchronization lag by directly correlating similarity searches with Flowable's native identity tables.
+
+#### Pattern A: Synchronous History (Recommended for History Level $\ge$ `audit`)
+In standard Flowable setups with synchronous history (`audit` or `full`), Flowable maintains `ACT_HI_IDENTITYLINK` synchronously in step with runtime changes. Therefore, `ACT_HI_IDENTITYLINK` holds permissions for **both active and completed** instances. You do not need to query `ACT_RU_IDENTITYLINK`, avoiding expensive `OR` unions:
 
 ```sql
 SELECT *, embedding <=> :queryEmbedding AS distance 
 FROM vector_store 
-WHERE (
-    EXISTS (
-        SELECT 1 FROM ACT_RU_IDENTITYLINK I 
-        WHERE I.PROC_INST_ID_ = (metadata->>'flowable_proc_inst_id')
-          AND (I.USER_ID_ = :currentUserId OR I.GROUP_ID_ IN (:currentUserGroups))
+WHERE EXISTS (
+    SELECT 1 FROM ACT_HI_IDENTITYLINK HI 
+    WHERE (
+        HI.PROC_INST_ID_ = (metadata->>'flowable_proc_inst_id')
+        OR (HI.SCOPE_ID_ = (metadata->>'flowable_scope_id') AND HI.SCOPE_TYPE_ = (metadata->>'flowable_scope_type'))
     )
-    OR EXISTS (
-        SELECT 1 FROM ACT_HI_IDENTITYLINK HI 
-        WHERE HI.PROC_INST_ID_ = (metadata->>'flowable_proc_inst_id')
-          AND (HI.USER_ID_ = :currentUserId OR HI.GROUP_ID_ IN (:currentUserGroups))
-    )
+    AND (HI.USER_ID_ = :currentUserId OR HI.GROUP_ID_ IN (:currentUserGroups))
 )
 ORDER BY distance 
 LIMIT :topK;
+```
+
+#### Pattern B: History Disabled (History Level = `none`)
+If Flowable is running with `history level = none`, historical tables are unpopulated and queries must exclusively target runtime tables:
+
+```sql
+SELECT *, embedding <=> :queryEmbedding AS distance 
+FROM vector_store 
+WHERE EXISTS (
+    SELECT 1 FROM ACT_RU_IDENTITYLINK I 
+    WHERE (
+        I.PROC_INST_ID_ = (metadata->>'flowable_proc_inst_id')
+        OR (I.SCOPE_ID_ = (metadata->>'flowable_scope_id') AND I.SCOPE_TYPE_ = (metadata->>'flowable_scope_type'))
+    )
+    AND (I.USER_ID_ = :currentUserId OR I.GROUP_ID_ IN (:currentUserGroups))
+)
+ORDER BY distance 
+LIMIT :topK;
+```
+
+#### Pattern C: Dedicated Schema Columns (`scope_id_` and `scope_type_`)
+When `spring.opencrawling.output.pgvector.flowable-collocated-schema=true` is enabled in `oc-vector-output-connector`, `vector_store` creates dedicated B-Tree indexed columns `scope_id_` and `scope_type_`. This allows direct indexed joins without JSON operator extraction:
+
+```sql
+SELECT *, embedding <=> :queryEmbedding AS distance 
+FROM vector_store v
+WHERE EXISTS (
+    SELECT 1 FROM ACT_HI_IDENTITYLINK hi 
+    WHERE hi.SCOPE_ID_ = v.scope_id_ 
+      AND hi.SCOPE_TYPE_ = v.scope_type_
+      AND (hi.USER_ID_ = :currentUserId OR hi.GROUP_ID_ IN (:currentUserGroups))
+)
+ORDER BY distance 
+LIMIT :topK;
+```
+
+#### Recommended PostgreSQL Indexing on JSON Metadata
+When using standard Spring AI schema with JSON metadata, create expression indexes in PostgreSQL for optimal query pushdown performance:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_vector_store_flowable_scope 
+ON vector_store (((metadata->>'flowable_scope_id')), ((metadata->>'flowable_scope_type')));
+
+CREATE INDEX IF NOT EXISTS idx_vector_store_flowable_proc 
+ON vector_store (((metadata->>'flowable_proc_inst_id')));
 ```
 
 ### 2. Distributed Vector Store Metadata Filtering

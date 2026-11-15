@@ -15,25 +15,28 @@
 #
 
 services:
-  # --- Camunda Platform 7 BPMN Engine ---
+  # --- Camunda 8 Orchestration Engine (Zeebe & REST API v2) ---
   camunda:
-    image: camunda/camunda-bpm-platform:7.23.0
-    container_name: camunda-7-decoupled
+    image: camunda/zeebe:8.7.0
+    container_name: camunda-8-decoupled
     ports:
       - "8089:8080"
+      - "26500:26500"
     environment:
-      - CAMUNDA_BPM_ADMIN_USER_ID=demo
-      - CAMUNDA_BPM_ADMIN_USER_PASSWORD=demo
+      - CAMUNDA_REST_ENABLED=true
+      - CAMUNDA_REST_QUERY_ENABLED=true
+      - ZEEBE_BROKER_DATA_LOGSEGMENTSIZE=16MB
+      - ZEEBE_BROKER_DATA_DISK_ENABLEMONITORING=false
     volumes:
-      - opencrawling-camundadata:/camunda/data
+      - opencrawling-camundadata:/usr/local/zeebe/data
     networks:
       - opencrawling-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/engine-rest/engine"]
-      interval: 10s
-      timeout: 30s  # Increase from default (was likely too short)
-      retries: 10   # Increase retry attempts
-      start_period: 60s  # Add startup grace period
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /v2/topology HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"200\" <&3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
 
   # --- Vector Store (PostgreSQL / pgvector) ---
   postgres-vector:
@@ -77,7 +80,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled-camunda
     ports:
       - "11434:11434"
@@ -92,7 +95,7 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled-camunda
     entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
     environment:
@@ -140,7 +143,7 @@ services:
       - SPRING_OPENCRAWLING_REPOSITORY_CONNECTOR_TYPE=camunda
       - OPENCRAWLING_CONNECTOR_TYPE=camunda
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_ENABLED=true
-      - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_URL=http://camunda:8080/engine-rest
+      - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_URL=http://camunda:8080/v2
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_USERNAME=demo
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_PASSWORD=demo
       - SPRING_OPENCRAWLING_CONNECTOR_CAMUNDA_SCAN_HISTORIC_PROCESS_INSTANCES=true
@@ -152,6 +155,9 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-camunda:/data/reports
     depends_on:
       kafka:
         condition: service_started
@@ -184,6 +190,7 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     depends_on:
       kafka:
         condition: service_started
@@ -267,12 +274,18 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
       - SPRING_DATASOURCE_PASSWORD=opencrawling_password
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata-camunda:/data/reports
     depends_on:
       postgres-vector:
         condition: service_healthy
@@ -300,3 +313,6 @@ volumes:
     name: opencrawling-kafkadata-camunda
   opencrawling-camundadata:
     name: opencrawling-camundadata
+  opencrawling-reportsdata-camunda:
+    name: opencrawling-reportsdata-camunda
+

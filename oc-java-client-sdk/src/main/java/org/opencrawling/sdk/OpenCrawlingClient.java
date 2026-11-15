@@ -15,6 +15,8 @@
  */
 package org.opencrawling.sdk;
 
+import org.opencrawling.sdk.auth.ClientCredentialsTokenProvider;
+import org.opencrawling.sdk.auth.TokenProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.http.HttpClient;
@@ -50,6 +52,26 @@ public interface OpenCrawlingClient extends AutoCloseable {
      */
     NarrativizationCopilotClient narrativization();
 
+    /**
+     * Client for post-job audit reporting, Parquet downloads, and DuckDB analytical queries.
+     */
+    ReportClient reports();
+
+    /**
+     * Client for OpenAPI 3.1 contract retrieval, endpoint discovery, and Swagger UI health checks.
+     */
+    OpenApiClient openApi();
+
+    /**
+     * Client for pre-crawl repository discovery and dry-run inspection (/api/discovery/**).
+     */
+    DiscoveryClient discovery();
+
+    /**
+     * Client for who this client is to the runtime and what it may do (/api/auth/me, /api/jobs/permissions).
+     */
+    AuthClient auth();
+
     @Override
     default void close() {
         // No-op default close for resources
@@ -66,6 +88,7 @@ public interface OpenCrawlingClient extends AutoCloseable {
         private String baseUrl = "http://localhost:8080";
         private String apiKey;
         private String bearerToken;
+        private TokenProvider tokenProvider;
         private Duration connectTimeout = Duration.ofSeconds(10);
         private Duration readTimeout = Duration.ofSeconds(30);
         private HttpClient httpClient;
@@ -81,8 +104,27 @@ public interface OpenCrawlingClient extends AutoCloseable {
             return this;
         }
 
+        /** A fixed bearer token. For tokens that expire, use {@link #tokenProvider} or {@link #clientCredentials}. */
         public Builder bearerToken(String bearerToken) {
             this.bearerToken = bearerToken;
+            return this;
+        }
+
+        /** Supplies the bearer token for each request, and a new one when the server refuses it. */
+        public Builder tokenProvider(TokenProvider tokenProvider) {
+            this.tokenProvider = tokenProvider;
+            return this;
+        }
+
+        /**
+         * Gets tokens with the OAuth 2.0 client credentials grant, for services acting as themselves. The token is
+         * cached and renewed before it expires.
+         *
+         * @param tokenEndpoint the identity provider's token endpoint
+         * @param scope         optional scopes to ask for
+         */
+        public Builder clientCredentials(String tokenEndpoint, String clientId, String clientSecret, String scope) {
+            this.tokenProvider = new ClientCredentialsTokenProvider(tokenEndpoint, clientId, clientSecret, scope);
             return this;
         }
 
@@ -111,11 +153,14 @@ public interface OpenCrawlingClient extends AutoCloseable {
                     .connectTimeout(connectTimeout != null ? connectTimeout : Duration.ofSeconds(10))
                     .build();
 
+            if (tokenProvider != null && bearerToken != null && !bearerToken.isBlank()) {
+                throw new IllegalStateException("Set either a bearer token or a token provider, not both.");
+            }
             return new DefaultOpenCrawlingClient(
                     client,
                     baseUrl,
                     apiKey,
-                    bearerToken,
+                    tokenProvider != null ? tokenProvider : TokenProvider.of(bearerToken),
                     readTimeout,
                     objectMapper
             );

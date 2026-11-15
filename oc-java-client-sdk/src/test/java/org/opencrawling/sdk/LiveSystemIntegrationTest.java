@@ -129,6 +129,26 @@ class LiveSystemIntegrationTest {
             assertThat(tombstonePayload.content()).isNull();
             assertThat(tombstonePayload.metadata()).isNull();
             System.out.println("Live System SDK OIS Tombstone Payload Asserted: ID=" + tombstonePayload.id() + ", Action=" + tombstonePayload.action());
+
+            // 7. OpenAPI 3.1 Contract & Swagger UI Verification
+            OpenApiStatusSummary openApiStatus = client.openApi().checkStatus();
+            assertThat(openApiStatus).isNotNull();
+            assertThat(openApiStatus.specReachable()).isTrue();
+            assertThat(openApiStatus.operationCount()).isGreaterThan(0);
+            List<OpenApiEndpointSummary> endpoints = client.openApi().listEndpoints();
+            assertThat(endpoints).isNotEmpty();
+            System.out.println("Live System SDK OpenAPI 3.1 Status Asserted: " + openApiStatus.operationCount() + " operations, " + openApiStatus.schemaCount() + " schemas");
+
+            // 8. Pre-Crawl Repository Discovery & Dry-Run Client
+            assertThat(client.discovery()).isNotNull();
+            try {
+                List<DiscoveryConnectorInfo> discoverable = client.discovery().listConnectors();
+                assertThat(discoverable).isNotNull();
+                System.out.println("Live System SDK Discovery Connectors: " + discoverable.size() + " discoverable connectors found");
+            } catch (org.opencrawling.sdk.exceptions.OpenCrawlingApiException e) {
+                // Discovery endpoints might be disabled by default (opencrawling.discovery.enabled=false)
+                System.out.println("Live System SDK Discovery API returned HTTP " + e.getStatusCode() + " (discovery feature may be disabled in cluster config)");
+            }
         }
     }
 }

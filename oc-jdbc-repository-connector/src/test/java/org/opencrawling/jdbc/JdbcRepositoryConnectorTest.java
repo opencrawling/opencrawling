@@ -427,4 +427,19 @@ public class JdbcRepositoryConnectorTest {
 
         connector.disconnect();
     }
+
+    @Test
+    void sourceInstanceIsTheJdbcUrl() {
+        JdbcRepositoryConnector connector = new JdbcRepositoryConnector(
+            H2_URL, "org.h2.Driver", "sa", "", JdbcCrawlMode.TABLE,
+            "support_tickets", "", Set.of("id"), "title", Set.of(),
+            "", "", "", "",
+            false, "updated_at", "timestamp",
+            false, "is_deleted", "true",
+            false, Set.of(), Set.of(), "", "read",
+            100, 50, 5, 1, 10000L
+        );
+
+        assertThat(connector.sourceInstance()).isEqualTo(H2_URL);
+    }
 }

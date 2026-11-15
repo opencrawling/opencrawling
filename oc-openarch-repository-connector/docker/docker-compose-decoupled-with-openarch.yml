@@ -1,0 +1,405 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+services:
+  # --- OpenArch Server & Storage Layer ---
+  openarch:
+    image: ghcr.io/hyland/openarch-app-jvm:${OPENARCH_VERSION:-latest}
+    container_name: openarch-decoupled
+    hostname: openarch
+    environment:
+      OPENSEARCH_ADDRESSLIST: "http://opensearch:9200"
+      NUXEO_MONGODB_SERVER: mongo:27017
+      NUXEO_MONGODB_DBNAME: openarch
+    ports:
+      - "${OPENARCH_PORT:-8081}:8080"
+      - "5005:5005"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/api/documents/00000000-0000-0000-0000-000000000000 || curl -fs http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 25
+      start_period: 30s
+
+  mongodb:
+    image: mongo:7.0.39@sha256:9bdaeb6dac6e7e762e84e2f84103d1f9bb078fa1ba6bde8bb9d2274f655ad173
+    container_name: mongodb-openarch-decoupled
+    hostname: mongo
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-openarch-data:/data/db
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --host mongo:27017 --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongodb-init:
+    image: mongo:7.0.39@sha256:9bdaeb6dac6e7e762e84e2f84103d1f9bb078fa1ba6bde8bb9d2274f655ad173
+    container_name: mongodb-init-openarch-decoupled
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - opencrawling-network
+    command:
+      - /bin/sh
+      - -c
+      - |-
+        for i in $$(seq 30); do
+          mongosh --host mongo:27017 --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1 && break
+          sleep 1
+        done
+        mongosh --host mongo:27017 --quiet --eval 'try { rs.status().ok; } catch (error) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongo:27017"}]}); }'
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.6@sha256:8690b204fe914c60ca76d451ac73bc0481e034d32d3779944c8caca56a2b003f
+    container_name: opensearch-openarch-decoupled
+    hostname: opensearch
+    environment:
+      - "discovery.type=single-node"
+      - "cluster.routing.allocation.disk.threshold_enabled=false"
+      - "plugins.security.disabled=true"
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=af7J2N2njFgS%3"
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch-openarch-data:/usr/share/opensearch/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=green&timeout=5s' || curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-decoupled-openarch
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-redisdata-openarch:/data
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-decoupled-openarch
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata:/root/.ollama
+    networks:
+      - opencrawling-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ollama-model-puller:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-model-puller-decoupled-openarch
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-decoupled-openarch
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-kafkadata-openarch:/var/lib/kafka/data
+    networks:
+      - opencrawling-network
+
+  # --- Apache Ozone Object Storage (Claim Check Store) ---
+  ozone-scm:
+    image: apache/ozone:2.2.0
+    container_name: ozone-scm-openarch
+    hostname: scm
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "scm"]
+    networks:
+      - opencrawling-network
+
+  ozone-om:
+    image: apache/ozone:2.2.0
+    container_name: ozone-om-openarch
+    hostname: om
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "om"]
+    depends_on:
+      - ozone-scm
+    networks:
+      - opencrawling-network
+
+  ozone-datanode:
+    image: apache/ozone:2.2.0
+    container_name: ozone-datanode-openarch
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "datanode"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  ozone-s3g:
+    image: apache/ozone:2.2.0
+    container_name: ozone-s3g-openarch
+    hostname: s3g
+    ports:
+      - "9878:9878"
+    environment:
+      OZONE-SITE.XML_ozone.scm.client.address: scm
+      OZONE-SITE.XML_ozone.om.address: om
+    command: ["ozone", "s3g"]
+    depends_on:
+      - ozone-scm
+      - ozone-om
+    networks:
+      - opencrawling-network
+
+  # --- Decoupled OpenCrawling Services ---
+  oc-crawler:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.crawler
+    image: ghcr.io/opencrawling/oc-crawler:latest
+    container_name: oc-crawler-service-openarch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_CRAWL_ON_STARTUP=true
+      - SPRING_OPENCRAWLING_SCAN_PATH=/data
+      - SPRING_MAIN_WEB_APPLICATION_TYPE=none
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=openarch
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_REPOSITORY_ID=default
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ROOT_FOLDER_ID=00000000-0000-0000-0000-000000000000
+      - SPRING_OPENCRAWLING_CONNECTOR_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_OPENCRAWLING_CONNECTOR_OPENARCH_REPOSITORY_ID=default
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - ../../oc-runtime/data:/data
+      - opencrawling-reportsdata-openarch:/data/reports
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: on-failure
+
+  oc-ingestion-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-service-openarch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=openarch
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
+    volumes:
+      - ../../oc-runtime/data:/data
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-consumer-service-openarch
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OPENAI_API_KEY=mock-key
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=openarch
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - ollama
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-service-openarch
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=openarch
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_REPOSITORY_ID=default
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ROOT_FOLDER_ID=00000000-0000-0000-0000-000000000000
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_PARQUET_BATCH_THRESHOLD=1
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_EMBEDDINGS_TYPE=mxbai-embed-large
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_DIMENSIONS=1024
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_UPSERT=true
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_SYNC_ACLS=true
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_UPLOAD_BINARIES=true
+      - OPENCRAWLING_CONSUMER_WRITER_ENABLED=true
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-service-openarch
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+      - "9095:9095"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+      - SPRING_OPENCRAWLING_OUTPUT_TYPE=openarch
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_ENDPOINT_URL=http://openarch:8080
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_REPOSITORY_ID=default
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_EMBEDDINGS_TYPE=mxbai-embed-large
+      - SPRING_OPENCRAWLING_OUTPUT_OPENARCH_DIMENSIONS=1024
+      - SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - ../../oc-runtime/data:/app/data
+      - opencrawling-reportsdata-openarch:/data/reports
+    depends_on:
+      - redis
+      - ollama
+    networks:
+      opencrawling-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+  oc-admin-ui:
+    build:
+      context: ../../oc-admin-ui
+      dockerfile: Dockerfile
+    image: ghcr.io/opencrawling/oc-admin-ui:latest
+    container_name: oc-admin-ui-service-openarch
+    ports:
+      - "3000:80"
+    depends_on:
+      - oc-mcp-server
+    networks:
+      - opencrawling-network
+    restart: unless-stopped
+
+networks:
+  opencrawling-network:
+    name: opencrawling-network
+    driver: bridge
+
+volumes:
+  mongodb-openarch-data:
+    name: mongodb-openarch-data
+  opensearch-openarch-data:
+    name: opensearch-openarch-data
+  opencrawling-redisdata-openarch:
+    name: opencrawling-redisdata-openarch
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-kafkadata-openarch:
+    name: opencrawling-kafkadata-openarch
+  opencrawling-reportsdata-openarch:
+    name: opencrawling-reportsdata-openarch

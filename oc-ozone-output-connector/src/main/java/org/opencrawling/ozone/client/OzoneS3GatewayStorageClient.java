@@ -165,6 +165,22 @@ public class OzoneS3GatewayStorageClient implements OzoneStorageClient {
     }
 
     @Override
+    public KeyPage listKeys(String prefix, String startAfter, int maxKeys) {
+        software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder request =
+                software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder()
+                        .bucket(bucket)
+                        .prefix(prefix != null ? prefix : "")
+                        .maxKeys(Math.max(1, maxKeys));
+        if (startAfter != null && !startAfter.isEmpty()) {
+            request.startAfter(startAfter);
+        }
+        software.amazon.awssdk.services.s3.model.ListObjectsV2Response response = s3Client.listObjectsV2(request.build());
+        java.util.List<String> keys = response.contents().stream()
+                .map(software.amazon.awssdk.services.s3.model.S3Object::key).toList();
+        return new KeyPage(keys, Boolean.TRUE.equals(response.isTruncated()));
+    }
+
+    @Override
     public void deleteObject(String key) throws Exception {
         s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
         log.info("Deleted object from Apache Ozone S3 Gateway: s3://{}/{}", bucket, key);

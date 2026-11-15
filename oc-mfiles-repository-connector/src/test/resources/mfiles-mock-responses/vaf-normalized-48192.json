@@ -1,0 +1,25 @@
+{
+  "versionString": "v3@2026-09-27T15:20:00Z",
+  "title": "Global Vendor NDA - Final Signed",
+  "mimeType": "application/pdf",
+  "lastModifiedUtc": "2026-09-27T15:20:00Z",
+  "file": {
+    "name": "Global Vendor NDA - Final Signed.pdf",
+    "downloadUrl": "objects/0/48192/3/files/7/content"
+  },
+  "metadata": {
+    "mfiles_prop_customer": "Cyberdyne Systems",
+    "mfiles_prop_tags": [
+      "Legal",
+      "Vendor"
+    ]
+  },
+  "aclTokens": [
+    "mfiles:user:12",
+    "mfiles:group:5",
+    "mfiles:role:3"
+  ],
+  "denyTokens": [
+    "mfiles:user:9"
+  ]
+}

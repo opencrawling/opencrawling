@@ -48,7 +48,7 @@ class ManifoldCFClientTest {
 
     @BeforeAll
     static void setUp() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int port = server.getAddress().getPort();
 
         respond(server, "/repositoryconnections", 200, """
@@ -99,7 +99,7 @@ class ManifoldCFClientTest {
             """);
 
         server.start();
-        client = new ManifoldCFClient("http://localhost:" + port, null, null, 5);
+        client = new ManifoldCFClient("http://127.0.0.1:" + port, null, null, 5);
     }
 
     @AfterAll
@@ -172,7 +172,7 @@ class ManifoldCFClientTest {
 
     @Test
     void basicAuthHeader_sentWhenCredentialsProvided() throws IOException {
-        HttpServer authServer = HttpServer.create(new InetSocketAddress(0), 0);
+        HttpServer authServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int authPort = authServer.getAddress().getPort();
         Map<String, String> capturedHeaders = new ConcurrentHashMap<>();
         authServer.createContext("/repositoryconnections", exchange -> {
@@ -184,7 +184,7 @@ class ManifoldCFClientTest {
         });
         authServer.start();
         try {
-            ManifoldCFClient authedClient = new ManifoldCFClient("http://localhost:" + authPort, "admin", "admin", 5);
+            ManifoldCFClient authedClient = new ManifoldCFClient("http://127.0.0.1:" + authPort, "admin", "admin", 5);
             authedClient.listRepositoryConnections();
             assertThat(capturedHeaders).containsEntry("Authorization",
                 "Basic " + java.util.Base64.getEncoder().encodeToString("admin:admin".getBytes(StandardCharsets.UTF_8)));
@@ -198,12 +198,12 @@ class ManifoldCFClientTest {
     }
 
     private static void withDedicatedServer(String path, int status, String body, ClientAssertion assertion) throws IOException {
-        HttpServer dedicated = HttpServer.create(new InetSocketAddress(0), 0);
+        HttpServer dedicated = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int dedicatedPort = dedicated.getAddress().getPort();
         respond(dedicated, path, status, body);
         dedicated.start();
         try {
-            assertion.run(new ManifoldCFClient("http://localhost:" + dedicatedPort, null, null, 5));
+            assertion.run(new ManifoldCFClient("http://127.0.0.1:" + dedicatedPort, null, null, 5));
         } finally {
             dedicated.stop(0);
         }

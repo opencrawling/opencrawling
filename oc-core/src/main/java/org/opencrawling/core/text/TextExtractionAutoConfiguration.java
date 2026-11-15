@@ -26,12 +26,19 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration
 @EnableConfigurationProperties(TextExtractionProperties.class)
-@ConditionalOnProperty(prefix = "opencrawling.tika", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class TextExtractionAutoConfiguration {
+
+    @Bean(destroyMethod = "close")
+    @ConditionalOnMissingBean(TextExtractionService.class)
+    @ConditionalOnProperty(prefix = "opencrawling.tika", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public TextExtractionService textExtractionService(TextExtractionProperties properties) {
+        return new PipesForkTextExtractor(properties);
+    }
 
     @Bean
     @ConditionalOnMissingBean(TextExtractionService.class)
-    public TextExtractionService textExtractionService(TextExtractionProperties properties) {
-        return new PipesForkTextExtractor(properties);
+    @ConditionalOnProperty(prefix = "opencrawling.tika", name = "enabled", havingValue = "false")
+    public TextExtractionService noOpTextExtractionService() {
+        return TextExtractionService.noop();
     }
 }

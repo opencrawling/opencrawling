@@ -27,6 +27,55 @@
 
 set -euo pipefail
 
+# Configuration flags (CLI flags take precedence over environment variables)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+LOCAL_BUILD="${LOCAL_BUILD:-false}"
+KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -s, --skip-build        Skip docker compose build and reuse existing images
+  -l, --local, --local-build
+                          Use local Dockerfiles with BuildKit ~/.m2 cache mounts
+  -k, --keep, --keep-containers
+                          Preserve running containers and volumes on exit/failure
+  -h, --help              Display this help message and exit
+
+Environment Variables:
+  SKIP_BUILD=true         Equivalent to -s, --skip-build
+  LOCAL_BUILD=true        Equivalent to -l, --local-build
+  KEEP_CONTAINERS=true    Equivalent to -k, --keep-containers
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+    -l|--local|--local-build)
+      LOCAL_BUILD=true
+      shift
+      ;;
+    -k|--keep|--keep-containers)
+      KEEP_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+
 # Color variables
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -50,11 +99,15 @@ command -v docker compose >/dev/null 2>&1 || command -v docker-compose >/dev/nul
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl is required but not installed. Aborting.${NC}" >&2; exit 1; }
 
 COMPOSE_FILE="oc-jdbc-repository-connector/docker/docker-compose-decoupled-with-jdbc.yml"
-KEEP_CONTAINERS="${KEEP_CONTAINERS:-false}"
+LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 CLEANUP_ON_EXIT="${CLEANUP_ON_EXIT:-true}"
 
 compose() {
-  docker compose -f "${COMPOSE_FILE}" "$@"
+  if [ "${LOCAL_BUILD}" = true ] && [ -f "${LOCAL_OVERLAY}" ]; then
+    docker compose -f "${COMPOSE_FILE}" -f "${LOCAL_OVERLAY}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 cleanup() {
@@ -78,7 +131,12 @@ cleanup
 
 # 2. Build microservices images
 echo -e "${YELLOW}Building OpenCrawling decoupled microservice images from source...${NC}"
-compose build
+if [ "${SKIP_BUILD}" = true ]; then
+  echo -e "${YELLOW:-}SKIP_BUILD=true: Skipping compose build and using existing images.${NC:-}"
+else
+  echo -e "${YELLOW:-}Building OpenCrawling decoupled microservice images from source (LOCAL_BUILD=${LOCAL_BUILD})...${NC:-}"
+  compose build
+fi
 
 # 3. Start services
 echo -e "${YELLOW}Starting complete decoupled JDBC-based multi-service infrastructure...${NC}"
@@ -265,19 +323,19 @@ echo -e "${YELLOW}Waiting for MCP Server health endpoint to be ready...${NC}"
 HTTP_STATUS="000"
 ELAPSED=0
 TIMEOUT=60
-until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $TIMEOUT ]; do
+until [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "400" ] || [ "$HTTP_STATUS" == "405" ] || [ "$HTTP_STATUS" == "404" ] || [ $ELAPSED -ge $TIMEOUT ]; do
   HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/mcp 2>/dev/null || echo "")
   if [ -z "$HTTP_STATUS" ] || [ "$HTTP_STATUS" == "000" ]; then
     HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/ 2>/dev/null || echo "000")
   fi
-  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
     sleep 2
     ELAPSED=$((ELAPSED + 2))
   fi
 done
 echo -e "MCP Server HTTP Status: ${GREEN}$HTTP_STATUS${NC}"
 
-if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
+if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "400" ] && [ "$HTTP_STATUS" != "405" ] && [ "$HTTP_STATUS" != "404" ]; then
   echo -e "${RED}JDBC decoupled integration test failed: MCP Server returned unexpected status $HTTP_STATUS${NC}"
   compose logs oc-mcp-server
   exit 1

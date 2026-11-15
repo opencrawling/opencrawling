@@ -29,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import org.opencrawling.core.connector.ConnectorSchema;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
+import org.opencrawling.core.security.EffectiveAcl;
+import org.opencrawling.core.security.SecurityConfig;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -125,6 +127,15 @@ public class CmisRepositoryConnectorTest {
                               "cmis:contentStreamMimeType": { "value": "text/markdown" },
                               "cmis:contentStreamLength": { "value": 10 },
                               "cmis:path": { "value": "/Engineering/Specs.md" }
+                            },
+                            "acl": {
+                              "isExact": true,
+                              "aces": [
+                                {
+                                  "principal": { "principalId": "repo:anyone" },
+                                  "permissions": ["cmis:read"]
+                                }
+                              ]
                             }
                           }
                         }
@@ -192,7 +203,8 @@ public class CmisRepositoryConnectorTest {
                     "repositoryId": "-default-",
                     "repositoryName": "Enterprise ECM",
                     "vendorName": "OASIS CMIS 1.1 Server",
-                    "cmisVersionSupported": "1.1"
+                    "cmisVersionSupported": "1.1",
+                    "principalAnyone": "repo:anyone"
                   }
                 }
                 """;
@@ -240,11 +252,16 @@ public class CmisRepositoryConnectorTest {
                     assertThat(doc.id()).isEqualTo("cmis://-default-/documents/doc-01");
                     assertThat(doc.action()).isEqualTo(DocumentAction.UPSERT);
                     assertThat(doc.metadata().get("name")).containsExactly("Charter.pdf");
+                    // ACL-less object is indexed with no rules (never public by default)
+                    assertThat(doc.security()).isEqualTo(SecurityConfig.none());
+                    assertThat(EffectiveAcl.resolve(doc.security(), doc.acl()).allowedRead()).isEmpty();
                 })
                 .assertNext(doc -> {
                     assertThat(doc.id()).isEqualTo("cmis://-default-/documents/doc-02");
                     assertThat(doc.action()).isEqualTo(DocumentAction.UPSERT);
                     assertThat(doc.metadata().get("name")).containsExactly("Specs.md");
+                    // Object with the repository's principalAnyone is granted public read
+                    assertThat(EffectiveAcl.resolve(doc.security(), doc.acl()).isPublic()).isTrue();
                 })
                 .verifyComplete();
     }
@@ -316,5 +333,19 @@ public class CmisRepositoryConnectorTest {
         assertThat(schema.fields()).isNotEmpty();
         assertThat(schema.fields().stream().map(ConnectorSchema.SchemaField::name))
                 .contains("cmis.objectId", "cmis.name", "cmis.baseTypeId", "cmis.lastModificationDate");
+    }
+
+    @Test
+    void sourceInstanceIsTheConfiguredEndpointUrl() {
+        CmisRepositoryConnector connector = new CmisRepositoryConnector(
+            "https://ecm.example.com/alfresco/api/-default-/public/cmis/versions/1.1/browser", "-default-", "admin", "admin",
+            CmisBindingType.BROWSER, CmisCrawlMode.FOLDER,
+            "/", "", true, Set.of(),
+            "SELECT * FROM cmis:document", CmisVersionsMode.LATEST_MAJOR,
+            true, 52428800L, true, true, false, "", 50, 5
+        );
+
+        assertThat(connector.sourceInstance())
+            .isEqualTo("https://ecm.example.com/alfresco/api/-default-/public/cmis/versions/1.1/browser");
     }
 }

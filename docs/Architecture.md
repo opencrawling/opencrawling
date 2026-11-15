@@ -20,11 +20,11 @@ A stateless microservice that pulls text chunks from Kafka, requests vector embe
 docker compose scale oc-embedding-service=3
 ```
 
-### 4. Vector Store Writer (`VectorStoreWriterConsumer` / `VespaStoreWriterConsumer`)
-Consumes embedded chunks and writes them directly to database outputs (such as PostgreSQL with `pgvector`, Elasticsearch, Qdrant, Milvus, OpenSearch, Vespa, or Solr). It uses a stateless model to write raw vectors directly, bypassing model inference.
+### 4. Vector & Lakehouse Store Writers (`VectorStoreWriterConsumer` / `VespaStoreWriterConsumer` / `IcebergStoreWriterConsumer`)
+Consumes embedded chunks and writes them directly to database outputs (such as PostgreSQL with `pgvector`, Elasticsearch, Qdrant, Milvus, OpenSearch, Vespa, or Solr), or consumes raw `IngestionMessage` records directly into Apache Iceberg Parquet tables (`IcebergStoreWriterConsumer`) with OIS ACLs and dynamic schema evolution.
 
-### 5. Secure Model Context Protocol Server (`McpVectorServer`)
-Exposes knowledge retrieval tools to AI models and agents using the Model Context Protocol (MCP). It handles SSE-based queries, authenticates user identities, and filters search results by matching document ACL tokens.
+### 5. Secure Model Context Protocol Server (`McpVectorServer` / `IcebergMcpTools` / `SidecarMcpTools`)
+Exposes knowledge retrieval, OIS sidecar inspection (`Ozone`, `S3`, and `IcebergSidecarStore`), and Apache Iceberg time-travel & entity analytics tools to AI models and agents using the Model Context Protocol (MCP) over Streamable HTTP. Every candidate a store or lakehouse table returns passes through one `DocumentAccessGate` before it reaches the model; the decision comes from the ACLs stored with each document or, optionally, from OpenFGA (see [Document Authorization](Document-Authorization)).
 
 ### 6. Optional gRPC Transport Layer (`oc-grpc-api` / `InternalTransportManager`)
 Provides binary Protobuf payload streaming over HTTP/2 (default port `9095`) for high-speed inter-node communication between `oc-repository-connectors`, `oc-core`, `oc-worker`, and `oc-output-connectors`. Features dynamic mode switching (`AUTO`, `GRPC`, `REST`), defaulting to `AUTO` mode with automatic fallback to HTTP/REST, TLS/mTLS encryption, and real-time connectivity testing from the Admin Dashboard.
@@ -33,7 +33,7 @@ Provides binary Protobuf payload streaming over HTTP/2 (default port `9095`) for
 A modular translation engine that bridges Apache ManifoldCF crawler configurations (repository, output, transformation connections, and jobs) into OpenCrawling. Reusable as a standalone CLI JAR, embedded within `oc-cli` under `oc mcf`, and powering the `/api/mcf-migration/*` REST endpoints and the `oc-admin-ui` migration wizard.
 
 ### 8. Pluggable Connector Ecosystem (`oc-*-repository-connector`)
-Enterprise boundary adapters that stream structured and unstructured data from heterogeneous sources (Relational databases via JDBC, Alfresco, CMIS, Camunda, Flowable, FileSystem, Iceberg, StormCrawler). Employs Java 25 Virtual Threads, Structured Concurrency, schema introspection, zero-trust security ACL mapping, and dual-path ingestion.
+Enterprise boundary adapters that stream structured and unstructured data from heterogeneous sources (Relational databases via JDBC, Alfresco, CMIS, Camunda, Flowable, FileSystem, Iceberg, StormCrawler, and high-performance streaming gRPC Push). Employs Java 25 Virtual Threads, Structured Concurrency, schema introspection, zero-trust security ACL mapping, and dual-path ingestion. See [gRPC Push Connector](gRPC-Push-Connector).
 
 ---
 
@@ -56,7 +56,7 @@ flowchart TD
 ```
 
 1.  **Crawl & Check-In**: The repository connector discovers a document. Instead of sending the full payload, it saves the file to a shared file/object storage and publishes an `IngestionMessage` (the Claim Check) to Kafka.
-2.  **Text Extraction & Chunking**: The `IngestionConsumer` reads the message, fetches the file from storage, extracts text using **Apache Tika**, splits it into semantic chunks, and publishes them to `opencrawling-chunks`.
+2.  **Text Extraction & Chunking**: The `IngestionConsumer` reads the message, fetches the file from storage, extracts text using **Apache Tika**, splits it into semantic chunks, and publishes them to `opencrawling-chunks`. With pre-embedding governance on (`opencrawling.governance.enabled`), the extracted text and metadata first go through the configured hooks, which approve, sanitize or reject the document; see [Configuration Guide, Pre-Embedding Governance](Configuration-Guide#%EF%B8%8F-pre-embedding-governance).
 3.  **Embedding Generation**: The `oc-embedding-service` consumes chunks, generates embedding vectors, and pushes them to `opencrawling-embedded`.
 4.  **Vector Store Sync**: The `VectorStoreWriterConsumer` saves the vectors, metadata, and Security SIDs into the vector database.
 
@@ -65,7 +65,7 @@ flowchart TD
 OpenCrawling supports the **Open Ingestion Standard (OIS)** specification for document lifecycle management (`action: "UPSERT" | "DELETE"`). When a tombstone deletion (`action: "DELETE"`) is published:
 - **Claim Check Bypass**: `JobOrchestrator` skips binary storage persistence.
 - **Pipeline Short-Circuiting**: `IngestionConsumer` and `oc-embedding-service` bypass Tika parsing, chunking, and AI embedding generation, directly forwarding tombstone deletion messages downstream.
-- **Vector Store Purge**: Output store consumers (pgvector, Solr, Qdrant, Milvus, Vespa, OpenSearch) execute targeted deletion queries to purge documents and vector chunks.
+- **Vector & Lakehouse Store Purge**: Output store consumers (pgvector, Solr, Qdrant, Milvus, Vespa, OpenSearch) execute targeted deletion queries to purge documents and vector chunks, while `IcebergStoreWriterConsumer` commits immutable `DELETE` tombstone snapshots enforced by `IcebergMcpTools`, `IcebergSidecarStore`, and `IcebergMcpSearchBackend`.
 
 ---
 
@@ -272,7 +272,7 @@ When building narrativization for tabular or structured entities:
 
 #### Step 8: Platform Runtime Registration
 - In `oc-runtime/pom.xml`, add the new connector dependency.
-- In [`JobController.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/api/JobController.java), resolve the connector by type string.
+- In `ConnectorFactory.java` (`oc-runtime/src/main/java/org/opencrawling/runtime/connector/`), add a `RepositoryKind` (matched on the class name) and a builder that reads the saved configuration. Jobs started through the job API are built there; an unknown repository class stops the job rather than falling back to the file system.
 - In [`ConnectorController.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/api/ConnectorController.java), register the connector class for UI auto-discovery.
 - In [`ConnectorCheckerService.java`](file:///Users/piergiorgiolucidi/Documents/workspaces/opencrawling/opencrawling-in-org/oc-runtime/src/main/java/org/opencrawling/runtime/service/ConnectorCheckerService.java), implement health-check probing.
 
@@ -290,6 +290,12 @@ Every connector requires two test suites:
 2. **Bash Integration Scripts**:
    - `scripts/test-<name>-connector.sh`: Verifies the connector against an embedded or local Docker container.
    - `scripts/test-<name>-decoupled.sh`: Verifies the full decoupled pipeline from source to Kafka, Ingestion Consumer, Ollama embeddings, pgvector writing, and MCP server queries.
+
+All decoupled integration test scripts support standardized Bash 3.2+ compatible CLI parameters and environment variables:
+- `-s, --skip-build` / `SKIP_BUILD=true`: Skips `compose build` entirely and reuses existing local Docker images.
+- `-l, --local, --local-build` / `LOCAL_BUILD=true`: Overlays `.local.yml` referencing `docker/local/Dockerfile.*` with BuildKit shared `~/.m2` cache mounts (`id=opencrawling-m2-cache,sharing=shared`) and skips `mvn dependency:go-offline`.
+- `-k, --keep, --keep-containers` / `KEEP_CONTAINERS=true`: Preserves running containers and volumes on exit/failure for local debugging and log inspection.
+- `-h, --help`: Displays usage guide and available options. All flags default to `false` ensuring zero impact on CI fresh image builds.
 
 ---
 

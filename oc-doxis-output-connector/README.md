@@ -4,6 +4,47 @@ This module provides the `OutputConnector` implementation for **[Doxis 4](https:
 
 The connector keeps the **metadata plane** and the **content plane** separate. Metadata always goes through the REST API. The binary is handled by a per-document *content strategy*, so multi-terabyte files never have to be streamed. They can be registered **in place** by handing Doxis a `predefinedLocator` instead of the bytes.
 
+## Prerequisites
+
+Make sure all of the following are in place before you configure the connector or run a job. If any of them is missing,
+the connection check or the archiving fails.
+
+1. **A valid Doxis licence.**
+   - A valid, unexpired Doxis 4 licence for the CSB you connect to, with the CSB REST API (`restws`) enabled.
+   - The licence must allow **API / technical-user sessions** for the connector. CSB counts these sessions against the
+     licence. A job holds one session for its whole run and logs out at the end; the connection check opens and closes
+     one more. Plan session capacity with your Doxis administrator.
+   - The `CONTENT_LINK` strategy also needs the SER Doxis (Blueline) client jars, which are licensed separately and are not
+     part of OpenCrawling.
+   - OpenCrawling doesn't include Doxis or any Doxis licence.
+2. **A reachable Doxis CSB.** Doxis 4 CSB 14.4 or later (verified on 14.4.1) with its public REST API at
+   `<scheme>://<csb-host>:<port>/restws/publicws/rest/api/v1`, network access from the OpenCrawling runtime, and the
+   **customer (tenant) name** the repository belongs to.
+3. **A technical user and role** (`role`, e.g. `admins`) with at least these rights:
+
+   | Needed for | Doxis right |
+   |---|---|
+   | Logging in | Login allowed. No "change password at next login" flag, which blocks API sign-in |
+   | Creating documents | `createDocument` on the document classes to write |
+   | Per-document permissions (`security.mode: DOCUMENT`) | Instance rights on the document class |
+   | `PRIMARY_PARENT` filing | *Document - Change primary parent object* (`SET_PRIMARY_PARENT`) on the document classes |
+   | Removing or deleting e-files | *All instances - Read* and *All instances - Write* on the e-file class |
+   | Mapping ACLs to users and groups | Read access to users and groups (`/users`, `/groups`) |
+
+   The connector **writes** to Doxis: it creates documents, versions and e-files, and removes (`LOGICAL`) or deletes
+   (`PHYSICAL`) documents for deletion tombstones.
+4. **Repository configuration** (cubeDesigner; the REST API cannot change it).
+   - The target DMS repository (`repository`) must exist and must allow the document type (otherwise `INSTANCE0014`).
+   - The document type's `allowedMimeTypes` must accept the files you archive, or `application/octet-stream`.
+   - E-file filing needs a *content repository for primary parent objects* (*DMS → Databases*; otherwise `INSTANCE0207`).
+   - `PREDEFINED_LOCATOR` needs predefined locators enabled on the storage system; it is off by default and experimental
+     (see [Known Limitations](#known-limitations)).
+5. **OpenCrawling side.** A running OpenCrawling runtime (Java 25). The password is a secret: supply it through the
+   Admin UI, environment variables or your secret store, never through source control.
+
+Use the Admin UI's **Test Connection** button, or `oc connector check --name <name> --type output`, to check items 1–3
+before the first job. Both log in, read the session user and the repository, and log out.
+
 ## Feature Overview
 
 1. **Session handling**:
@@ -197,7 +238,7 @@ The script checks liveness, customer discovery, login, repository and the CQL lo
 ### 3. End-to-End Pipeline (filesystem → OpenCrawling → Doxis)
 Verified 2026-10-02 against `D_TEXTER` / `TX_MigratedDocument` as `crawler`:
 1. `docker compose up -d postgres kafka` (the dev profile needs Postgres; Redis/Ollama are optional for a Doxis-only run).
-2. Build and start the runtime, e.g. `java --enable-preview -jar oc-runtime/target/oc-runtime-1.0.0-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8097 --grpc.server.port=9097`. Run it from an empty working directory to keep a separate `data/`.
+2. Build and start the runtime, e.g. `java --enable-preview -jar oc-runtime/target/oc-runtime-*-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8097 --grpc.server.port=9097`. Run it from an empty working directory to keep a separate `data/`.
 3. `POST /api/connectors` an output connector with class `org.opencrawling.doxis.output.DoxisOutputConnector` and the `doxis*` configuration keys.
 4. `POST /api/jobs` with `repositoryConnector: "FileSystem_Local"`, that output connector, the folder `path` and `transformationConnector: ""` (no embedding). Then `POST /api/jobs/{id}/start`.
 

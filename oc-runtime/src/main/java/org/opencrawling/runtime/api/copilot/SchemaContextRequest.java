@@ -17,13 +17,22 @@ package org.opencrawling.runtime.api.copilot;
 
 import java.util.List;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@Schema(description = "Schema context for LLM prompt template generation")
 public record SchemaContextRequest(
+    @Schema(description = "Connector type hint (e.g. 'Alfresco', 'CMIS', 'JDBC')", example = "FileSystem")
     String connectorType,
+    @Schema(description = "List of metadata attributes and schema fields discovered from the repository")
     List<FieldDto> fields
 ) {
+    @Schema(description = "Repository schema field definition")
     public record FieldDto(
+        @Schema(description = "Field name", example = "title")
         String name,
+        @Schema(description = "Field data type", example = "string")
         String type,
+        @Schema(description = "Field description or label", example = "Document title")
         String description
     ) {}
 }

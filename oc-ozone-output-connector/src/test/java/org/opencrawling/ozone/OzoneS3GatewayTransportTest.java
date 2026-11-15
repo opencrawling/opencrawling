@@ -26,7 +26,7 @@ import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.ozone.client.OzoneS3GatewayStorageClient;
 import org.opencrawling.ozone.config.OzoneOutputProperties;
-import org.opencrawling.ozone.model.OisMigrationDocument;
+import org.opencrawling.core.ois.OisSidecar;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
@@ -293,11 +293,11 @@ class OzoneS3GatewayTransportTest {
         assertEquals("application/pdf", putRequests.get(key).contentType());
         assertEquals(raw.length, putRequests.get(key).contentLength());
 
-        OisMigrationDocument ois = new ObjectMapper().readValue(objects.get(key + ".ois.json"), OisMigrationDocument.class);
+        OisSidecar ois = new ObjectMapper().readValue(objects.get(key + ".ois.json"), OisSidecar.class);
         assertEquals("s3://migration-target/" + key, ois.uri());
-        assertEquals(expectedSha, ois.contentRef().checksumSha256());
-        assertEquals(raw.length, ois.contentRef().contentLength());
-        assertEquals("s3://claims/c-1.pdf", ois.contentRef().claimCheckUri());
+        assertEquals(expectedSha, ois.content().sha256());
+        assertEquals(raw.length, ois.content().sizeBytes().longValue());
+        assertEquals("s3://claims/c-1.pdf", ois.content().claimCheckUri());
 
         assertEquals(key, new String(objects.get(OzoneOutputConnector.indexKey("/crawl/contracts/c-1.pdf")), StandardCharsets.UTF_8));
         assertEquals(3, objects.size(), "binary + sidecar + index entry only");

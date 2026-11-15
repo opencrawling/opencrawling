@@ -45,6 +45,25 @@ public interface OzoneStorageClient extends AutoCloseable {
 
     boolean exists(String key);
 
+    /**
+     * One page of keys under a prefix, in key order.
+     *
+     * @param keys      the keys found, at most the requested number
+     * @param truncated whether more keys follow
+     */
+    record KeyPage(java.util.List<String> keys, boolean truncated) {}
+
+    /**
+     * Lists the keys that start with {@code prefix} and sort after {@code startAfter}, in key order.
+     *
+     * @param prefix     the key prefix; empty for the whole bucket
+     * @param startAfter the last key of the previous page; {@code null} to start at the beginning
+     * @param maxKeys    the most keys to return (at least 1)
+     */
+    default KeyPage listKeys(String prefix, String startAfter, int maxKeys) throws Exception {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot list keys");
+    }
+
     @Override
     default void close() throws Exception {}
 }

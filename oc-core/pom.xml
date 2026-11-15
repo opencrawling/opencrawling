@@ -23,7 +23,7 @@
     <parent>
         <groupId>org.opencrawling</groupId>
         <artifactId>opencrawling-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.5-SNAPSHOT</version>
     </parent>
 
     <artifactId>oc-core</artifactId>
@@ -50,6 +50,10 @@
             <artifactId>reactor-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </dependency>
+        <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
         </dependency>
@@ -70,6 +74,10 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers-standard-package</artifactId>
             <type>pom</type>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

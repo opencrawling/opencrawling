@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
@@ -52,6 +53,20 @@ class LuxirStoreWriterConsumerTest {
         consumer.consume(tombstone);
 
         verify(luxirClient).deleteDocuments(eq("opencrawling"), eq(List.of("doc-luxir-1", "chunk-luxir-1")), eq(true));
+    }
+
+    @Test
+    void aFailedDeleteIsRethrownSoKafkaRetriesIt() throws Exception {
+        LuxirClient luxirClient = mock(LuxirClient.class);
+        doThrow(new RuntimeException("luxir unavailable")).when(luxirClient).deleteDocuments(anyString(), anyList(), anyBoolean());
+        LuxirStoreWriterConsumer consumer = new LuxirStoreWriterConsumer(luxirClient);
+        ReflectionTestUtils.setField(consumer, "collectionName", "opencrawling");
+        ReflectionTestUtils.setField(consumer, "autoCommit", true);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> consumer.consume(
+                new DocumentEmbeddedMessage("doc-luxir-1", "chunk-luxir-1", "", Map.of(), new float[0],
+                        DocumentAction.DELETE)));
+        assertTrue(thrown.getMessage().contains("chunk-luxir-1"));
     }
 
     @Test
@@ -110,5 +125,61 @@ class LuxirStoreWriterConsumerTest {
 
         List<Float> embedding = (List<Float>) doc.get("embedding_v");
         assertEquals(3, embedding.size());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testConsumeEmbeddedMessageDoesNotCreateSingleValuedSecurityAllowedReadField() throws Exception {
+        LuxirClient luxirClient = mock(LuxirClient.class);
+        LuxirStoreWriterConsumer consumer = new LuxirStoreWriterConsumer(luxirClient);
+        ReflectionTestUtils.setField(consumer, "collectionName", "opencrawling");
+        ReflectionTestUtils.setField(consumer, "vectorFieldName", "embedding_v");
+        ReflectionTestUtils.setField(consumer, "autoCommit", true);
+
+        DocumentEmbeddedMessage message = new DocumentEmbeddedMessage(
+                "doc-luxir-3",
+                "chunk-luxir-3",
+                "Text content",
+                Map.of(
+                        "uri", "file:///data/luxir-test.txt",
+                        "acl", "public",
+                        // The writer derives the security fields from the security object (EffectiveAcl).
+                        "security", Map.of("inheritanceEnabled", false, "permissions", List.of(
+                                Map.of("identity", "public", "identityType", "public", "access", "read"),
+                                Map.of("identity", "engineering", "identityType", "group", "access", "read"),
+                                Map.of("identity", "contractor", "identityType", "group", "access", "deny"))),
+                        "custom_tags", List.of("tag1", "tag2"),
+                        "ois:provenance.jobId", List.of("job-7"),
+                        "cmis:objectId", "abc"
+                ),
+                new float[]{0.5f},
+                DocumentAction.UPSERT
+        );
+
+        consumer.consume(message);
+
+        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(luxirClient).updateDocuments(eq("opencrawling"), captor.capture(), eq(true));
+
+        Map<String, Object> doc = captor.getValue().getFirst();
+
+        // Must NOT contain single-valued _s suffix for security fields
+        org.junit.jupiter.api.Assertions.assertFalse(doc.containsKey("security_allowed_read_s"),
+                "Field 'security_allowed_read_s' should not exist as it causes Luxir single-valued collision");
+        org.junit.jupiter.api.Assertions.assertFalse(doc.containsKey("security_denied_read_s"));
+
+        // Must map to multi-valued _ss in Luxir schema
+        assertEquals(List.of("public", "group:engineering"), doc.get("security_allowed_read_ss"));
+        assertEquals(List.of("group:contractor"), doc.get("security_denied_read_ss"));
+        assertEquals("false", doc.get("security_inheritance_s"));
+
+        // Custom multi-valued metadata should receive _ss suffix
+        assertEquals(List.of("tag1", "tag2"), doc.get("custom_tags_ss"));
+
+        // Luxir rejects ':' and '.' in field names, and with them the whole document
+        assertEquals(List.of("job-7"), doc.get("ois_provenance_jobId_ss"));
+        assertEquals("abc", doc.get("cmis_objectId_s"));
+        org.junit.jupiter.api.Assertions.assertTrue(doc.keySet().stream().noneMatch(k -> k.contains(":") || k.contains(".")),
+                "every field name must be valid in Luxir: " + doc.keySet());
     }
 }

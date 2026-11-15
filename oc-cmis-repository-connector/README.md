@@ -39,7 +39,7 @@ The `oc-cmis-repository-connector` module enables OpenCrawling to crawl, ingest,
 | `versions-mode` | `CMIS_VERSIONS_MODE` | `latest_major` | Versioning filter: `latest_major`, `latest`, `all` |
 | `include-content-stream`| `CMIS_INCLUDE_CONTENT_STREAM`| `true` | Fetch and ingest binary document content |
 | `max-content-size-bytes`| `CMIS_MAX_CONTENT_SIZE_BYTES`| `52428800` (50MB) | Maximum file size for binary downloads |
-| `include-acls` | `CMIS_INCLUDE_ACLS` | `true` | Extract ACLs and map to OIS security rules |
+| `include-acls` | `CMIS_INCLUDE_ACLS` | `true` | Extract ACLs and map to OIS security rules; when `false`, every document is marked **public** |
 | `include-secondary-types`| `CMIS_INCLUDE_SECONDARY_TYPES`| `true` | Extract secondary object type properties and aspects |
 | `change-log-enabled` | `CMIS_CHANGE_LOG_ENABLED` | `false` | Enable incremental change log delta processing |
 | `change-log-token` | `CMIS_CHANGE_LOG_TOKEN` | `""` | Initial change log token for incremental synchronization |

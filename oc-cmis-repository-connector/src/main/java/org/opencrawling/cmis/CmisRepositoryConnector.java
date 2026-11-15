@@ -15,18 +15,35 @@
  */
 package org.opencrawling.cmis;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Collectors;
 
 import org.opencrawling.core.connector.ConnectorSchema;
-import org.opencrawling.core.connector.RepositoryConnector;
+import org.opencrawling.core.connector.discovery.CountAccuracy;
+import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
+import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
+import org.opencrawling.core.connector.discovery.DiscoveryException;
+import org.opencrawling.core.connector.discovery.DiscoveryNode;
+import org.opencrawling.core.connector.discovery.DiscoveryResult;
+import org.opencrawling.core.connector.discovery.DryRunRequest;
+import org.opencrawling.core.connector.discovery.DryRunResult;
+import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.TruncationReason;
+import org.opencrawling.core.connector.discovery.VisibilityFilter;
+import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
 import org.slf4j.Logger;
@@ -46,7 +63,7 @@ import reactor.core.publisher.FluxSink;
  * leveraging Java 25 Virtual Threads (StructuredTaskScope) and Project Reactor.
  */
 @Component
-public class CmisRepositoryConnector implements RepositoryConnector {
+public class CmisRepositoryConnector implements DocumentFetchingRepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(CmisRepositoryConnector.class);
 
@@ -73,6 +90,7 @@ public class CmisRepositoryConnector implements RepositoryConnector {
 
     private CmisClient cmisClient;
     private String resolvedRepositoryId;
+    private String principalAnyone = CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL;
     private volatile boolean connected = false;
 
     public CmisRepositoryConnector() {
@@ -141,6 +159,9 @@ public class CmisRepositoryConnector implements RepositoryConnector {
         this.includeContentStream = includeContentStream;
         this.maxContentSizeBytes = maxContentSizeBytes > 0 ? maxContentSizeBytes : 52428800L;
         this.includeAcls = includeAcls;
+        if (!this.includeAcls) {
+            log.warn("CMIS connector has include-acls=false: crawled documents will be marked public (readable by everyone)");
+        }
         this.includeSecondaryTypes = includeSecondaryTypes;
         this.changeLogEnabled = changeLogEnabled;
         this.changeLogToken = changeLogToken;
@@ -185,6 +206,9 @@ public class CmisRepositoryConnector implements RepositoryConnector {
         this.includeContentStream = includeContentStream;
         this.maxContentSizeBytes = maxContentSizeBytes > 0 ? maxContentSizeBytes : 52428800L;
         this.includeAcls = includeAcls;
+        if (!this.includeAcls) {
+            log.warn("CMIS connector has include-acls=false: crawled documents will be marked public (readable by everyone)");
+        }
         this.includeSecondaryTypes = includeSecondaryTypes;
         this.changeLogEnabled = changeLogEnabled;
         this.changeLogToken = changeLogToken;
@@ -195,6 +219,11 @@ public class CmisRepositoryConnector implements RepositoryConnector {
     @Override
     public String getName() {
         return "CmisRepositoryConnector";
+    }
+
+    @Override
+    public String sourceInstance() {
+        return endpointUrl;
     }
 
     @Override
@@ -215,6 +244,9 @@ public class CmisRepositoryConnector implements RepositoryConnector {
         Map<String, CmisClient.CmisRepositoryInfo> repos = cmisClient.getRepositories();
         CmisClient.CmisRepositoryInfo info = repos.get(resolvedRepositoryId);
         if (info != null) {
+            if (info.principalAnyone() != null && !info.principalAnyone().isBlank()) {
+                this.principalAnyone = info.principalAnyone();
+            }
             log.info("Successfully connected to CMIS repository '{}' ({}) - vendor: {}, version: {}",
                 info.repositoryName(), info.repositoryId(), info.vendorName(), info.cmisVersionSupported());
         } else {
@@ -449,7 +481,7 @@ public class CmisRepositoryConnector implements RepositoryConnector {
             }
         }
 
-        return CmisDocumentBuilder.buildDocument(resolvedRepositoryId, docNode, contentStream, includeAcls);
+        return CmisDocumentBuilder.buildDocument(resolvedRepositoryId, docNode, contentStream, includeAcls, principalAnyone);
     }
 
     private boolean matchesVersionPolicy(JsonNode docNode) {
@@ -513,5 +545,477 @@ public class CmisRepositoryConnector implements RepositoryConnector {
             new ConnectorSchema.SchemaField("cmis.contentStreamFileName", "STRING", "Original filename"),
             new ConnectorSchema.SchemaField("cmis.path", "STRING", "Folder hierarchy path")
         ));
+    }
+
+    // ---- Discovery and dry run (#203) ----
+
+    /** Longest query a dry run accepts. */
+    static final int MAX_QUERY_LENGTH = 4000;
+
+    private void ensureConnected() {
+        if (!connected || cmisClient == null) {
+            try {
+                connect();
+            } catch (Exception e) {
+                throw new DiscoveryException("Cannot connect to the CMIS repository: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * Lists the tree below a folder, breadth-first. The folder must be the configured root or below it, and not
+     * excluded; excluded folders are left out of the listing, as the crawler leaves them out. ACLs are always
+     * requested, whatever {@code include-acls} says, since the filter decides on them.
+     */
+    @Override
+    public DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter) {
+        long deadline = System.nanoTime() + request.timeout().toNanos();
+        ensureConnected();
+        try {
+            String startRef = request.start() != null ? request.start() : configuredRoot();
+            DiscoveryNode startNode = visibleFolder(folderInScope(startRef), startRef, filter);
+            Deque<DiscoveryNode> folders = new ArrayDeque<>();
+            folders.add(startNode);
+            List<DiscoveryNode> nodes = new ArrayList<>();
+            long hidden = 0;
+            TruncationReason truncation = null;
+            while (!folders.isEmpty()) {
+                DiscoveryNode folder = folders.poll();
+                int skipCount = 0;
+                boolean hasMore = true;
+                while (hasMore) {
+                    if (System.nanoTime() - deadline > 0) {
+                        return new DiscoveryResult(nodes, hidden, TruncationReason.TIMEOUT);
+                    }
+                    CmisClient.CmisChildrenResult page = cmisClient.getChildren(
+                            resolvedRepositoryId, folder.sourceId(), skipCount, batchSize, true);
+                    List<DiscoveryNode> candidates = new ArrayList<>();
+                    for (JsonNode child : page.objects()) {
+                        DiscoveryNode node = childNode(child, folder.sourceId(), folder.depth() + 1);
+                        if (node != null && (node.type() == DiscoveryNode.NodeType.FOLDER || request.includeDocuments())) {
+                            candidates.add(node);
+                        }
+                    }
+                    boolean[] visible = VisibilityFilter.decide(filter, candidates);
+                    for (int i = 0; i < visible.length; i++) {
+                        if (!visible[i]) {
+                            hidden++;
+                            continue;
+                        }
+                        DiscoveryNode node = candidates.get(i);
+                        if (nodes.size() >= request.maxNodes()) {
+                            return new DiscoveryResult(nodes, hidden, TruncationReason.MAX_NODES);
+                        }
+                        nodes.add(node);
+                        if (node.type() == DiscoveryNode.NodeType.FOLDER) {
+                            if (node.depth() < request.maxDepth()) {
+                                folders.add(node);
+                            } else {
+                                truncation = TruncationReason.MAX_DEPTH;
+                            }
+                        }
+                    }
+                    hasMore = page.hasMoreItems() && !page.objects().isEmpty();
+                    skipCount += page.objects().size();
+                }
+            }
+            return new DiscoveryResult(nodes, hidden, truncation);
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS exploration failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS exploration was interrupted.", e);
+        }
+    }
+
+    /**
+     * Counts what a crawl of the scope would pick up, with the crawler's rules: for a folder, its documents (and,
+     * with {@code include-subfolders}, its subfolders' documents) that match the version policy, skipping excluded
+     * folders; for a query, every result, as a query crawl takes them. Without a scope, the connector's own
+     * configured query or root folder.
+     *
+     * <p>In a folder scope every document is checked against the filter, so the count is the caller's. Subfolders
+     * are walked whether or not the filter shows them, since a crawl takes their documents too; samples name no
+     * folder. A query returns no ACLs, so its count covers every match ({@code ESTIMATE} unless the filter shows
+     * everything) and only its samples are checked.
+     */
+    @Override
+    public DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter) {
+        long deadline = System.nanoTime() + request.timeout().toNanos();
+        ensureConnected();
+        String scope = request.scope();
+        if (scope == null) {
+            if (changeLogEnabled) {
+                throw new IllegalArgumentException("This connector crawls the change log; give a folder or a query to preview.");
+            }
+            scope = crawlMode == CmisCrawlMode.QUERY ? cmisQuery : null;
+        }
+        try {
+            if (isQuery(scope)) {
+                return dryRunQuery(readOnlyQuery(scope), request, filter, deadline);
+            }
+            String folderRef = scope != null ? scope : configuredRoot();
+            return dryRunFolder(visibleFolder(folderInScope(folderRef), folderRef, filter), request, filter, deadline);
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS dry run failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS dry run was interrupted.", e);
+        }
+    }
+
+    /**
+     * The folder a crawl from {@code reference} would start at. Only for a connector that crawls a folder tree: one
+     * set up to crawl a query or the change log ignores the start folder in {@link #scan(String)}.
+     */
+    @Override
+    public DiscoveryNode crawlStart(String reference, VisibilityFilter filter) {
+        if (changeLogEnabled || crawlMode == CmisCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        ensureConnected();
+        String folderRef = reference == null || reference.isBlank() ? configuredRoot() : reference.strip();
+        try {
+            // A query string is not a folder, so it is refused as missing; scan() only ever gets the folder's id.
+            return visibleFolder(folderInScope(folderRef), folderRef, filter);
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS folder lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS folder lookup was interrupted.", e);
+        }
+    }
+
+    /**
+     * Fetches a document the way a folder crawl would emit it. It must be filed in at least one folder the crawl
+     * walks (the configured root, or below it with {@code include-subfolders}, outside excluded folders), match the
+     * version policy, and be shown by the filter. Only for a connector that crawls a folder tree.
+     */
+    @Override
+    public FetchedDocument fetchDocument(String documentId, VisibilityFilter filter) {
+        if (changeLogEnabled || crawlMode == CmisCrawlMode.QUERY) {
+            throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
+        }
+        String id = documentId == null ? "" : documentId.strip();
+        if (id.isEmpty() || id.startsWith("/") || id.length() > MAX_DOCUMENT_ID_LENGTH
+                || id.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(documentNotFound(documentId));
+        }
+        ensureConnected();
+        try {
+            JsonNode document;
+            try {
+                document = cmisClient.getObject(resolvedRepositoryId, id, true);
+            } catch (FileNotFoundException e) {
+                return new FetchedDocument.Gone(CmisDocumentBuilder.buildTombstone(resolvedRepositoryId, id).id());
+            }
+            String baseType = CmisDocumentBuilder.getPropertyValue(document, "cmis:baseTypeId");
+            if (!"cmis:document".equalsIgnoreCase(baseType) || !id.equals(objectId(document))) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            String parentId = crawledParent(id);
+            DiscoveryNode node = parentId == null ? null : documentNode(document, parentId, 1);
+            if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
+                throw new IllegalArgumentException(documentNotFound(id));
+            }
+            return new FetchedDocument.Found(node, buildSingleDocument(document));
+        } catch (IOException e) {
+            throw new DiscoveryException("CMIS document lookup failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DiscoveryException("CMIS document lookup was interrupted.", e);
+        }
+    }
+
+    static final int MAX_DOCUMENT_ID_LENGTH = 512;
+
+    /** The id of a folder the document is filed in that a crawl walks, or {@code null} when there is none. */
+    private String crawledParent(String documentId) throws IOException, InterruptedException {
+        String rootPath = configuredRootPath();
+        String root = rootPath.endsWith("/") && rootPath.length() > 1 ? rootPath.substring(0, rootPath.length() - 1) : rootPath;
+        for (JsonNode parent : cmisClient.getObjectParents(resolvedRepositoryId, documentId)) {
+            String path = CmisDocumentBuilder.getPropertyValue(parent, "cmis:path");
+            if (path != null && isWithin(path, rootPath) && !isExcluded(path)
+                    && (includeSubfolders || path.equalsIgnoreCase(root))) {
+                return objectId(parent);
+            }
+        }
+        return null;
+    }
+
+    private static String documentNotFound(String reference) {
+        return "No CMIS document '" + reference + "' in this connector's scope.";
+    }
+
+    static final String NOT_A_FOLDER_CRAWL =
+            "This connector crawls a query or the change log, not a folder tree, so a crawl cannot start from a folder.";
+
+    /** The starting folder as a node, refused as not found when the filter hides it. */
+    private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
+        DiscoveryNode node = folderNode(folder, null, 0);
+        if (node == null) {
+            throw new DiscoveryException("The CMIS folder '" + reference + "' has no object id.", null);
+        }
+        if (!VisibilityFilter.decide(filter, List.of(node))[0]) {
+            throw new IllegalArgumentException(notFound(reference));
+        }
+        return node;
+    }
+
+    private static String notFound(String reference) {
+        return "No CMIS folder '" + reference + "' in this connector's scope.";
+    }
+
+    private DryRunResult dryRunFolder(DiscoveryNode start, DryRunRequest request, VisibilityFilter filter, long deadline)
+            throws IOException, InterruptedException {
+        Deque<String> folders = new ArrayDeque<>();
+        folders.add(start.sourceId());
+        Set<String> visited = new HashSet<>();
+        List<DiscoveryNode> samples = new ArrayList<>();
+        long scanned = 0;
+        long count = 0;
+        long hidden = 0;
+        while (!folders.isEmpty()) {
+            String folderId = folders.poll();
+            if (!visited.add(folderId)) {
+                continue;
+            }
+            int skipCount = 0;
+            boolean hasMore = true;
+            while (hasMore) {
+                if (System.nanoTime() - deadline > 0) {
+                    return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, hidden, TruncationReason.TIMEOUT);
+                }
+                CmisClient.CmisChildrenResult page = cmisClient.getChildren(resolvedRepositoryId, folderId, skipCount, batchSize, true);
+                List<DiscoveryNode> documents = new ArrayList<>();
+                for (JsonNode child : page.objects()) {
+                    DiscoveryNode node = childNode(child, null, 1);
+                    if (node == null) {
+                        continue;
+                    }
+                    if (node.type() == DiscoveryNode.NodeType.FOLDER) {
+                        if (includeSubfolders) {
+                            folders.add(node.sourceId());
+                        }
+                    } else {
+                        documents.add(node);
+                    }
+                }
+                boolean[] visible = VisibilityFilter.decide(filter, documents);
+                for (int i = 0; i < visible.length; i++) {
+                    if (scanned >= request.maxScan()) {
+                        return new DryRunResult(count, CountAccuracy.LOWER_BOUND, samples, hidden, TruncationReason.MAX_SCAN);
+                    }
+                    scanned++;
+                    if (!visible[i]) {
+                        hidden++;
+                        continue;
+                    }
+                    count++;
+                    if (samples.size() < request.sampleSize()) {
+                        samples.add(documents.get(i));
+                    }
+                }
+                hasMore = page.hasMoreItems() && !page.objects().isEmpty();
+                skipCount += page.objects().size();
+            }
+        }
+        return new DryRunResult(count, CountAccuracy.EXACT, samples, hidden, null);
+    }
+
+    /** How many query results may be read again for each sample asked for, looking for visible ones. */
+    static final int SAMPLE_CANDIDATES_PER_SAMPLE = 5;
+
+    private DryRunResult dryRunQuery(String query, DryRunRequest request, VisibilityFilter filter, long deadline)
+            throws IOException, InterruptedException {
+        boolean searchAllVersions = versionsMode == CmisVersionsMode.ALL;
+        int candidateLimit = filter.showsEverything() ? request.sampleSize()
+                : (int) Math.min((long) request.sampleSize() * SAMPLE_CANDIDATES_PER_SAMPLE, request.maxScan());
+        List<String> candidateIds = new ArrayList<>();
+        long count = 0;
+        TruncationReason truncation = null;
+        int skipCount = 0;
+        boolean hasMore = true;
+        scan:
+        while (hasMore) {
+            if (System.nanoTime() - deadline > 0) {
+                truncation = TruncationReason.TIMEOUT;
+                break;
+            }
+            CmisClient.CmisQueryResult page = cmisClient.query(resolvedRepositoryId, query, searchAllVersions, batchSize, skipCount);
+            for (JsonNode result : page.results()) {
+                if (count >= request.maxScan()) {
+                    truncation = TruncationReason.MAX_SCAN;
+                    break scan;
+                }
+                count++;
+                String objectId = CmisDocumentBuilder.getPropertyValue(result, "cmis:objectId");
+                if (candidateIds.size() < candidateLimit && objectId != null && !objectId.isBlank()) {
+                    candidateIds.add(objectId);
+                }
+            }
+            hasMore = page.hasMoreItems() && !page.results().isEmpty();
+            skipCount += page.results().size();
+        }
+        // Query results carry no ACL, so each candidate sample is read again with its ACL.
+        List<DiscoveryNode> candidates = new ArrayList<>();
+        for (String objectId : candidateIds) {
+            if (System.nanoTime() - deadline > 0) {
+                truncation = truncation != null ? truncation : TruncationReason.TIMEOUT;
+                break;
+            }
+            DiscoveryNode node = documentNode(cmisClient.getObject(resolvedRepositoryId, objectId, true), null, 1);
+            if (node != null) {
+                candidates.add(node);
+            }
+        }
+        boolean[] visible = VisibilityFilter.decide(filter, candidates);
+        List<DiscoveryNode> samples = new ArrayList<>();
+        for (int i = 0; i < visible.length && samples.size() < request.sampleSize(); i++) {
+            if (visible[i]) {
+                samples.add(candidates.get(i));
+            }
+        }
+        CountAccuracy accuracy = !filter.showsEverything() ? CountAccuracy.ESTIMATE
+                : truncation == null ? CountAccuracy.EXACT : CountAccuracy.LOWER_BOUND;
+        return new DryRunResult(count, accuracy, samples, filter.showsEverything() ? 0L : null, truncation);
+    }
+
+    private static boolean isQuery(String scope) {
+        return scope != null && scope.regionMatches(true, 0, "select ", 0, 7);
+    }
+
+    /** CMIS QL has no statements that change data; this keeps a scope to one plain SELECT. */
+    static String readOnlyQuery(String query) {
+        String trimmed = query.strip();
+        if (!isQuery(trimmed)) {
+            throw new IllegalArgumentException("A query scope must be a CMIS SELECT statement.");
+        }
+        if (trimmed.length() > MAX_QUERY_LENGTH) {
+            throw new IllegalArgumentException("A query scope may be at most " + MAX_QUERY_LENGTH + " characters.");
+        }
+        if (trimmed.indexOf(';') >= 0) {
+            throw new IllegalArgumentException("A query scope must be a single statement.");
+        }
+        return trimmed;
+    }
+
+    private String configuredRoot() {
+        return rootFolderId != null && !rootFolderId.isBlank() ? rootFolderId : rootFolderPath;
+    }
+
+    /**
+     * Reads a folder and checks that the connector may look into it: it must be the configured root or below it,
+     * and not excluded. Every refusal reads the same, so that a caller cannot learn what exists outside its view.
+     *
+     * @throws IllegalArgumentException when it does not exist, is not a folder or is out of scope
+     */
+    private JsonNode folderInScope(String folderIdOrPath) throws IOException, InterruptedException {
+        JsonNode folder;
+        try {
+            folder = cmisClient.getObject(resolvedRepositoryId, folderIdOrPath, true);
+        } catch (FileNotFoundException e) {
+            throw new IllegalArgumentException(notFound(folderIdOrPath), e);
+        }
+        if (!"cmis:folder".equalsIgnoreCase(CmisDocumentBuilder.getPropertyValue(folder, "cmis:baseTypeId"))) {
+            throw new IllegalArgumentException(notFound(folderIdOrPath));
+        }
+        String path = CmisDocumentBuilder.getPropertyValue(folder, "cmis:path");
+        String rootPath = configuredRootPath();
+        if (path == null || !isWithin(path, rootPath) || isExcluded(path)) {
+            throw new IllegalArgumentException(notFound(folderIdOrPath));
+        }
+        return folder;
+    }
+
+    private String configuredRootPath() throws IOException, InterruptedException {
+        if (rootFolderId != null && !rootFolderId.isBlank()) {
+            String path = CmisDocumentBuilder.getPropertyValue(cmisClient.getObject(resolvedRepositoryId, rootFolderId, false), "cmis:path");
+            if (path == null || path.isBlank()) {
+                throw new DiscoveryException("The configured root folder '" + rootFolderId + "' has no path.", null);
+            }
+            return path;
+        }
+        return rootFolderPath;
+    }
+
+    static boolean isWithin(String path, String rootPath) {
+        String root = rootPath.endsWith("/") ? rootPath.substring(0, rootPath.length() - 1) : rootPath;
+        if (root.isEmpty()) {
+            return path.startsWith("/");
+        }
+        String p = path.toLowerCase(Locale.ROOT);
+        String r = root.toLowerCase(Locale.ROOT);
+        return p.equals(r) || p.startsWith(r + "/");
+    }
+
+    private static String objectId(JsonNode object) {
+        return CmisDocumentBuilder.getPropertyValue(object, "cmis:objectId");
+    }
+
+    /** A child as a node, or {@code null} when the crawler would not take it (excluded, other version, other type). */
+    private DiscoveryNode childNode(JsonNode child, String parentId, int depth) {
+        String baseType = CmisDocumentBuilder.getPropertyValue(child, "cmis:baseTypeId");
+        if ("cmis:folder".equalsIgnoreCase(baseType)) {
+            String path = CmisDocumentBuilder.getPropertyValue(child, "cmis:path");
+            return path != null && isExcluded(path) ? null : folderNode(child, parentId, depth);
+        }
+        if ("cmis:document".equalsIgnoreCase(baseType) || baseType == null) {
+            return documentNode(child, parentId, depth);
+        }
+        return null;
+    }
+
+    private DiscoveryNode folderNode(JsonNode folder, String parentId, int depth) {
+        String objectId = objectId(folder);
+        if (objectId == null || objectId.isBlank()) {
+            return null;
+        }
+        return new DiscoveryNode("cmis://" + resolvedRepositoryId + "/folders/" + objectId, objectId, parentId,
+                nameOf(folder, objectId), CmisDocumentBuilder.getPropertyValue(folder, "cmis:path"),
+                DiscoveryNode.NodeType.FOLDER, depth, null, null,
+                CmisDocumentBuilder.parseTimestamp(CmisDocumentBuilder.getPropertyValue(folder, "cmis:lastModificationDate")),
+                null, discoverySecurity(folder, principalAnyone));
+    }
+
+    private DiscoveryNode documentNode(JsonNode document, String parentId, int depth) {
+        String objectId = objectId(document);
+        if (objectId == null || objectId.isBlank() || !matchesVersionPolicy(document)) {
+            return null;
+        }
+        Long size = null;
+        String length = CmisDocumentBuilder.getPropertyValue(document, "cmis:contentStreamLength");
+        if (length != null && !length.isBlank()) {
+            try {
+                size = Long.parseLong(length);
+            } catch (NumberFormatException ignored) {
+                // Unknown size.
+            }
+        }
+        // Same id as the crawler gives the document, so a provider keyed on document ids decides on it.
+        return new DiscoveryNode("cmis://" + resolvedRepositoryId + "/documents/" + objectId, objectId, parentId,
+                nameOf(document, objectId), CmisDocumentBuilder.getPropertyValue(document, "cmis:path"),
+                DiscoveryNode.NodeType.DOCUMENT, depth,
+                CmisDocumentBuilder.getPropertyValue(document, "cmis:contentStreamMimeType"), size,
+                CmisDocumentBuilder.parseTimestamp(CmisDocumentBuilder.getPropertyValue(document, "cmis:lastModificationDate")),
+                null, discoverySecurity(document, principalAnyone));
+    }
+
+    private static String nameOf(JsonNode object, String fallback) {
+        String name = CmisDocumentBuilder.getPropertyValue(object, "cmis:name");
+        return name == null || name.isBlank() ? fallback : name;
+    }
+
+    /**
+     * The object's ACL, or {@code null} when the repository returned none: discovery must not show an item whose
+     * permissions it does not know.
+     */
+    static SecurityConfig discoverySecurity(JsonNode object) {
+        return discoverySecurity(object, CmisSecurityMapper.DEFAULT_ANYONE_PRINCIPAL);
+    }
+
+    static SecurityConfig discoverySecurity(JsonNode object, String anyonePrincipal) {
+        SecurityConfig security = CmisSecurityMapper.mapAcl(object.path("acl"), anyonePrincipal);
+        return security.permissions().isEmpty() ? null : security;
     }
 }

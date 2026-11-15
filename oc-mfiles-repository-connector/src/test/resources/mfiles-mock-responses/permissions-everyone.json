@@ -1,0 +1,74 @@
+{
+  "AccessControlList": {
+    "IsUnSpecified": false,
+    "CheckedOutToUserID": -2147483648,
+    "HasCheckedOutToUserID": false,
+    "IsFullyAuthoritative": false,
+    "AutomaticComponents": [],
+    "CustomComponent": {
+      "AccessControlEntries": [
+        {
+          "ChangePermissionsPermission": 1,
+          "EditPermission": 1,
+          "ReadPermission": 1,
+          "DeletePermission": 1,
+          "IsGroup": true,
+          "UserOrGroupID": 1,
+          "IsPsudoUser": false,
+          "HasConcreteUserOrGruopID": true
+        }
+      ],
+      "CanDeactivate": false,
+      "CurrentUserBinding": -2147483648,
+      "HasCurrentUser": false,
+      "HasCurrentUserBinding": false,
+      "HasNamedACLLink": true,
+      "HasPseudoUsers": false,
+      "IsActive": true,
+      "NamedACLLink": -1
+    }
+  },
+  "CustomACL": false,
+  "NamedACL": {
+    "ID": -1,
+    "Name": "Full control for all internal users",
+    "IsNamedACL": true,
+    "AccessControlList": {
+      "IsUnSpecified": false,
+      "CheckedOutToUserID": -2147483648,
+      "HasCheckedOutToUserID": false,
+      "IsFullyAuthoritative": false,
+      "AutomaticComponents": [],
+      "CustomComponent": {
+        "AccessControlEntries": [
+          {
+            "ChangePermissionsPermission": 1,
+            "EditPermission": 1,
+            "ReadPermission": 1,
+            "DeletePermission": 1,
+            "IsGroup": true,
+            "UserOrGroupID": 1,
+            "IsPsudoUser": false,
+            "HasConcreteUserOrGruopID": true
+          }
+        ],
+        "CanDeactivate": false,
+        "CurrentUserBinding": -2147483648,
+        "HasCurrentUser": false,
+        "HasCurrentUserBinding": false,
+        "HasNamedACLLink": true,
+        "HasPseudoUsers": false,
+        "IsActive": true,
+        "NamedACLLink": -1
+      }
+    },
+    "HasAutomaticComponent": false,
+    "IsUnSpecified": false
+  },
+  "ObjVer": {
+    "Version": 1,
+    "VersionType": 4,
+    "ID": 5,
+    "Type": 0
+  }
+}

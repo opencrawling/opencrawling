@@ -100,7 +100,8 @@ class SeaTunnelOutputConnectorTest {
         connector.send(doc).block();
 
         ArgumentCaptor<DocumentEmbeddedMessage> captor = ArgumentCaptor.forClass(DocumentEmbeddedMessage.class);
-        verify(kafkaTemplate).send(eq("opencrawling-embedded"), any(String.class), captor.capture());
+        // Keyed by document id, like the document's DELETE, so they reach the same partition in order.
+        verify(kafkaTemplate).send(eq("opencrawling-embedded"), eq("doc-st-1"), captor.capture());
 
         DocumentEmbeddedMessage captured = captor.getValue();
         assertThat(captured.documentId()).isEqualTo("doc-st-1");
@@ -117,7 +118,7 @@ class SeaTunnelOutputConnectorTest {
         connector.send(tombstone).block();
 
         ArgumentCaptor<DocumentEmbeddedMessage> captor = ArgumentCaptor.forClass(DocumentEmbeddedMessage.class);
-        verify(kafkaTemplate).send(eq("opencrawling-embedded"), any(String.class), captor.capture());
+        verify(kafkaTemplate).send(eq("opencrawling-embedded"), eq("doc-st-delete-1"), captor.capture());
 
         DocumentEmbeddedMessage captured = captor.getValue();
         assertThat(captured.documentId()).isEqualTo("doc-st-delete-1");

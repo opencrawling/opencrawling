@@ -1,0 +1,13 @@
+{
+  "value": [
+    {
+      "id": "f1",
+      "name": "Specs",
+      "folder": {},
+      "deleted": {
+        "state": "deleted"
+      }
+    }
+  ],
+  "@odata.deltaLink": "{{BASE}}/v1.0/drives/b!lib1/root/delta?token=d3"
+}

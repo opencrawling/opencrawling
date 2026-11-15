@@ -1,0 +1,21 @@
+{
+  "value": [
+    {
+      "id": "b!lib1",
+      "name": "Documents",
+      "driveType": "documentLibrary",
+      "webUrl": "https://contoso.sharepoint.com/sites/engineering/Shared%20Documents"
+    },
+    {
+      "id": "b!lib2",
+      "name": "Contracts",
+      "driveType": "documentLibrary",
+      "webUrl": "https://contoso.sharepoint.com/sites/engineering/Contracts"
+    },
+    {
+      "id": "b!od",
+      "name": "Personal",
+      "driveType": "business"
+    }
+  ]
+}

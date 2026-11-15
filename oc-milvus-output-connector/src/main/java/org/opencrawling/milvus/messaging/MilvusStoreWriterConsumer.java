@@ -19,7 +19,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.DeleteReq;
-import io.milvus.v2.service.vector.request.InsertReq;
+import io.milvus.v2.service.vector.request.UpsertReq;
+import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.milvus.MilvusConstants;
@@ -68,56 +69,29 @@ public class MilvusStoreWriterConsumer {
             message.embedding() != null ? message.embedding().length : 0);
         try {
             if (message.action() == DocumentAction.DELETE) {
-                log.info("Received DELETE tombstone for Milvus storage: {}", message.chunkId());
+                String docId = (message.documentId() != null && !message.documentId().isBlank())
+                        ? message.documentId()
+                        : message.chunkId();
+                log.info("Received DELETE tombstone for Milvus storage: documentId={}, chunkId={}", docId, message.chunkId());
                 DeleteReq deleteReq = DeleteReq.builder()
                     .collectionName(collectionName)
-                    .filter("id == '" + message.chunkId() + "'")
+                    .filter("id == '" + escapeFilter(docId) + "' or documentId == '" + escapeFilter(docId) + "'")
                     .build();
                 client.delete(deleteReq);
-                log.info("Successfully deleted tombstone chunk {} from Milvus collection '{}'.", message.chunkId(), collectionName);
+                log.info("Successfully deleted tombstone document/chunks {} from Milvus collection '{}'.", docId, collectionName);
                 return;
             }
-            // Map Zero-Trust security ACLs
-            List<String> allowedRead = new ArrayList<>();
-            List<String> deniedRead = new ArrayList<>();
-            boolean inheritanceEnabled = true;
-
-            Object securityObj = message.metadata().get("security");
-            if (securityObj instanceof Map) {
-                Map<?, ?> securityMap = (Map<?, ?>) securityObj;
-                if (securityMap.containsKey("inheritanceEnabled")) {
-                    inheritanceEnabled = Boolean.TRUE.equals(securityMap.get("inheritanceEnabled"));
-                }
-                Object permsObj = securityMap.get("permissions");
-                if (permsObj instanceof List) {
-                    List<?> permsList = (List<?>) permsObj;
-                    for (Object permObj : permsList) {
-                        if (permObj instanceof Map) {
-                            Map<?, ?> permMap = (Map<?, ?>) permObj;
-                            String identity = String.valueOf(permMap.get("identity"));
-                            String access = String.valueOf(permMap.get("access"));
-                            if ("read".equalsIgnoreCase(access) || "write".equalsIgnoreCase(access)) {
-                                allowedRead.add(identity);
-                            } else if ("deny".equalsIgnoreCase(access)) {
-                                deniedRead.add(identity);
-                            }
-                        }
-                    }
-                }
-            } else if (securityObj instanceof org.opencrawling.core.security.SecurityConfig) {
-                org.opencrawling.core.security.SecurityConfig sc = (org.opencrawling.core.security.SecurityConfig) securityObj;
-                inheritanceEnabled = sc.inheritanceEnabled();
-                for (org.opencrawling.core.security.PermissionRule rule : sc.permissions()) {
-                    if ("read".equalsIgnoreCase(rule.access()) || "write".equalsIgnoreCase(rule.access())) {
-                        allowedRead.add(rule.identity());
-                    } else if ("deny".equalsIgnoreCase(rule.access())) {
-                        deniedRead.add(rule.identity());
-                    }
-                }
-            }
+            // Map Zero-Trust security ACLs (one normalization for every store, see EffectiveAcl)
+            EffectiveAcl effectiveAcl = EffectiveAcl.resolve(message.metadata().get("security"), message.metadata().get("acl"));
+            List<String> allowedRead = effectiveAcl.allowedRead();
+            List<String> deniedRead = effectiveAcl.deniedRead();
+            boolean inheritanceEnabled = effectiveAcl.inheritanceEnabled();
 
             JsonObject row = new JsonObject();
             row.addProperty(MilvusConstants.FIELD_ID, message.chunkId());
+            if (message.documentId() != null && !message.documentId().isBlank()) {
+                row.addProperty(MilvusConstants.FIELD_DOCUMENT_ID, message.documentId());
+            }
             row.addProperty(MilvusConstants.FIELD_TEXT, message.text());
 
             Object uriVal = message.metadata().get(MilvusConstants.FIELD_URI);
@@ -144,14 +118,26 @@ public class MilvusStoreWriterConsumer {
                 }
             });
 
-            InsertReq insertReq = InsertReq.builder()
+            // Upsert, so a re-ingested chunk with the same deterministic ID replaces the old one
+            UpsertReq upsertReq = UpsertReq.builder()
                     .collectionName(collectionName)
                     .data(Collections.singletonList(row))
                     .build();
-            client.insert(insertReq);
+            client.upsert(upsertReq);
             log.info("Successfully saved chunk {} to Milvus collection '{}'.", message.chunkId(), collectionName);
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to store embedded chunk in Milvus: {}", message.chunkId(), e);
+            // Rethrown so the container's error handler retries the chunk, then dead-letters it. Rows are upserted
+            // by id and a DELETE removes by document id, so retrying either is safe.
+            throw new IllegalStateException("Milvus write failed for chunk " + message.chunkId(), e);
         }
+    }
+
+    private String escapeFilter(String val) {
+        if (val == null) return "";
+        return val.replace("'", "\\'");
     }
 }

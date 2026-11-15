@@ -17,12 +17,18 @@
 name: Publish Java SDK to Maven Central
 
 on:
+  release:
+    types: [ published, prereleased, released ]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Release version for oc-java-client-sdk (e.g. 1.0.0)'
+        description: 'Release version for oc-java-client-sdk (e.g. 1.0.4)'
+        type: string
         required: false
-        default: '1.0.0'
+        default: '1.0.4'
 
 permissions: read-all
 
@@ -31,35 +37,53 @@ jobs:
     name: Build & Publish Java Client SDK
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
           server-id: central
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
+          server-username-env-var: MAVEN_USERNAME
+          server-password-env-var: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+          gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
 
-      - name: Set Release Version (if specified)
+      - name: Resolve and Set Release Version
+        id: version
         run: |
-          RELEASE_VER="${{ inputs.release_version }}"
-          if [ -n "$RELEASE_VER" ]; then
-            echo "Setting release version to $RELEASE_VER"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VER="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VER="${TAG_NAME#v}"
+          elif [ -n "${{ inputs.release_version }}" ]; then
+            VER="${{ inputs.release_version }}"
+            TAG_NAME="v${VER}"
+          else
+            VER="1.0.4"
+            TAG_NAME="v1.0.4"
+          fi
+          if [ -n "$VER" ]; then
+            echo "Setting oc-java-client-sdk release version to $VER"
             cd oc-java-client-sdk
-            mvn versions:set -DnewVersion=$RELEASE_VER -DgenerateBackupPoms=false
+            mvn versions:set -DnewVersion=$VER -DgenerateBackupPoms=false
             cd ..
           fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Build Core Dependencies
         run: |
@@ -75,3 +99,37 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: Prepare Release SDK JAR
+        run: |
+          mkdir -p oc-java-client-sdk/target/release-jar
+          BUILT_JAR=$(ls oc-java-client-sdk/target/oc-java-client-sdk-*.jar 2>/dev/null | grep -v 'sources' | grep -v 'javadoc' | grep -v 'original' | head -n 1)
+          if [ -n "${{ steps.version.outputs.version }}" ]; then
+            TARGET_NAME="oc-java-client-sdk-${{ steps.version.outputs.version }}.jar"
+            cp "$BUILT_JAR" "oc-java-client-sdk/target/release-jar/${TARGET_NAME}"
+            if [ -f "${BUILT_JAR}.asc" ]; then
+              cp "${BUILT_JAR}.asc" "oc-java-client-sdk/target/release-jar/${TARGET_NAME}.asc"
+            fi
+          else
+            cp "$BUILT_JAR" "oc-java-client-sdk/target/release-jar/"
+            if [ -f "${BUILT_JAR}.asc" ]; then
+              cp "${BUILT_JAR}.asc" "oc-java-client-sdk/target/release-jar/"
+            fi
+          fi
+
+      - name: Upload SDK JAR Artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: oc-java-client-sdk-jar
+          path: |
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar.asc
+
+      - name: Attach SDK JAR & Signature to GitHub Release
+        if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && steps.version.outputs.tag_name != '')) && steps.version.outputs.tag_name != ''
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          files: |
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar
+            oc-java-client-sdk/target/release-jar/oc-java-client-sdk-*.jar.asc

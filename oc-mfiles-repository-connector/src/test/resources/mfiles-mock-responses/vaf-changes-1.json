@@ -1,0 +1,24 @@
+{
+  "changes": [
+    {
+      "objectType": 0,
+      "objectId": 48192,
+      "version": 3,
+      "changeType": "UPDATED"
+    },
+    {
+      "objectType": 0,
+      "objectId": 48195,
+      "version": 1,
+      "changeType": "UPDATED"
+    },
+    {
+      "objectType": 0,
+      "objectId": 48195,
+      "version": 1,
+      "changeType": "DELETED"
+    }
+  ],
+  "nextCursor": "c-2",
+  "hasMore": true
+}

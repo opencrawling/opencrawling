@@ -1,0 +1,8 @@
+{"name":"object","type":"oc_contract","definition":"{base}/repositories/corp/types/oc_contract",
+ "properties":{"object_name":"Contract 001","r_object_type":"oc_contract","title":"Supply contract","subject":"","authors":["Rui Costa","Kim Lee"],"keywords":null,"a_status":"Approved",
+  "r_creation_date":"2026-01-05T12:14:54.000+02:00","r_modify_date":"2026-01-06T09:00:01.000+02:00","r_modifier":"Rui Costa","r_access_date":null,"i_folder_id":["0b0277b680000105","0b0277b680000106"],
+  "a_content_type":"msw12","r_page_cnt":1,"r_content_size":9689,"owner_name":"Rui Costa","owner_permit":7,"group_name":"regulatory","group_permit":1,"world_permit":1,
+  "i_antecedent_id":"0000000000000000","i_chronicle_id":"090277b680000104","r_lock_owner":"","r_version_label":["1.0","CURRENT"],"acl_domain":"dmadmin","acl_name":"oc_finance_restricted",
+  "r_creator_name":"Rui Costa","r_full_content_size":9689.0,"r_aspect_name":null,"i_vstamp":3,
+  "contract_number":"C-00001","counterparty":"Globex","contract_value":4500000.0,"regions":["EMEA","APAC"],"signed_date":"2025-02-02T12:00:00.000+02:00","r_object_id":"090277b680000105"},
+ "links":[{"rel":"self","href":"{base}/repositories/corp/objects/090277b680000105"},{"rel":"contents","href":"{base}/repositories/corp/objects/090277b680000105/contents"},{"rel":"http://identifiers.emc.com/linkrel/primary-content","href":"{base}/repositories/corp/objects/090277b680000105/contents/content"}]}

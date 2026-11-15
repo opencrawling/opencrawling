@@ -1,0 +1,67 @@
+{
+  "value": [
+    {
+      "id": "f1",
+      "name": "Specs",
+      "folder": {
+        "childCount": 1
+      },
+      "eTag": "\"{F1},1\"",
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "root1"
+      }
+    },
+    {
+      "id": "i2",
+      "name": "readme.txt",
+      "eTag": "\"{I2},1\"",
+      "cTag": "\"c:{I2},1\"",
+      "size": 27,
+      "webUrl": "https://contoso.sharepoint.com/sites/engineering/Shared%20Documents/readme.txt",
+      "createdDateTime": "2026-03-12T14:20:00Z",
+      "lastModifiedDateTime": "2026-09-30T10:15:30Z",
+      "createdBy": {
+        "user": {
+          "email": "adele.vance@contoso.com",
+          "displayName": "Adele Vance"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "email": "megan.bowen@contoso.com",
+          "displayName": "Megan Bowen"
+        }
+      },
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "root1"
+      },
+      "file": {
+        "mimeType": "text/plain"
+      },
+      "sharepointIds": {
+        "listItemUniqueId": "luid-i2"
+      },
+      "listItem": {
+        "id": "5",
+        "fields": {
+          "id": "6",
+          "Title": null
+        }
+      }
+    },
+    {
+      "id": "nb1",
+      "name": "Notes",
+      "package": {
+        "type": "oneNote"
+      },
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "root1"
+      }
+    }
+  ],
+  "@odata.nextLink": "{{BASE}}/v1.0/drives/b!lib1/items/root1/children?$skiptoken=2"
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "PropertyDef": 0,
+    "TypedValue": {
+      "DataType": 1,
+      "HasValue": true,
+      "Value": "Cyberdyne Systems",
+      "DisplayValue": "Cyberdyne Systems"
+    }
+  },
+  {
+    "PropertyDef": 100,
+    "TypedValue": {
+      "DataType": 9,
+      "HasValue": true,
+      "Lookup": {
+        "Item": 31,
+        "Version": -1,
+        "DisplayValue": "Customer",
+        "Deleted": false,
+        "Hidden": false
+      },
+      "DisplayValue": "Customer"
+    }
+  }
+]

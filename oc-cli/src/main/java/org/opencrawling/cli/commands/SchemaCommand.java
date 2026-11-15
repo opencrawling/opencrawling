@@ -90,8 +90,10 @@ public class SchemaCommand implements Runnable {
                     }
                 }
 
-                if (root.has("contentRef")) {
-                    System.out.println(AnsiColors.cyan("ℹ OIS Migration Mode document payload detected (contains contentRef binary locator)."));
+                if (root.has("contentRef") || root.path("content").has("sha256")) {
+                    System.out.println(AnsiColors.cyan(root.has("contentRef")
+                            ? "ℹ OIS Migration Mode document payload detected (earlier format: contentRef binary locator)."
+                            : "ℹ OIS Migration Mode document payload detected (content with sha256)."));
                     List<String> errors = validateMigrationEnvelope(root, actionVal);
                     for (String error : errors) {
                         System.out.println(AnsiColors.red("✖ " + error));
@@ -121,10 +123,31 @@ public class SchemaCommand implements Runnable {
                 errors.add("OIS migration envelope requires a non-empty 'id'");
             }
 
+            JsonNode content = root.get("content");
             JsonNode contentRef = root.get("contentRef");
             if ("DELETE".equalsIgnoreCase(action)) {
                 if (contentRef != null && !contentRef.isNull()) {
                     errors.add("DELETE tombstones must not carry a 'contentRef' (no content stream)");
+                }
+            } else if (content != null && !content.isNull()) {
+                // The OIS document schema's content block, as the migration writers emit it now.
+                if (!content.isObject()) {
+                    errors.add("'content' must be an object");
+                } else {
+                    String sha = content.path("sha256").asText("");
+                    if (!SHA256_HEX.matcher(sha).matches()) {
+                        errors.add("'content.sha256' must be a 64-character hex SHA-256 digest");
+                    }
+                    JsonNode size = content.get("sizeBytes");
+                    if (size == null || !size.canConvertToLong() || size.asLong() < 0) {
+                        errors.add("'content.sizeBytes' must be a non-negative integer");
+                    }
+                    if (content.path("mimeType").asText("").isBlank()) {
+                        errors.add("'content.mimeType' is required");
+                    }
+                }
+                if (root.path("source").path("instance").asText("").isBlank()) {
+                    errors.add("'source.instance' is required");
                 }
             } else if (contentRef != null && !contentRef.isNull()) {
                 if (!contentRef.isObject()) {

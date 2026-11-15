@@ -1,0 +1,534 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Self-contained Docker Compose stack for the Alfresco + PGVector + Admin UI + MCP Inspector tutorial.
+# Differences vs oc-alfresco-repository-connector/docker/docker-compose-decoupled-with-alfresco.yml:
+#   1. Adds oc-admin-ui on port 3000 so connectors, jobs, and Reports & Audit are managed visually.
+#   2. Shares /data/claims, /data/reports, and /app/data between Admin UI backend (oc-mcp-server) and consumers.
+#   3. Configures Alfresco with -Dindex.subsystem.name=noindex for fast, quiet startup in Folder Crawl mode.
+#   4. Omits auto-crawling oc-crawler on startup so test documents and ACLs can be provisioned first.
+#   5. Enables MCP Discovery tools (listRepositoryConnectors, exploreRepositoryTree, queryRepositoryDryRun)
+#      for local exploration in MCP Inspector alongside secureVectorSearch, getDocumentContent, listAccessibleSources.
+#   6. Includes Alfresco Share (/share/), Alfresco Content App / Digital Workspace Community (/workspace/,
+#      /content-app/), and Traefik reverse proxy on port 8081 so developers can inspect folders and ACLs visually.
+
+name: opencrawling-tutorial
+
+services:
+  # --- Alfresco Content Services (Community Edition 26.1.0) ---
+  alfresco:
+    image: docker.io/alfresco/alfresco-content-repository-community:26.1.0
+    container_name: alfresco-tutorial
+    mem_limit: 2g
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -Dencryption.keystore.type=JCEKS
+        -Dencryption.cipherAlgorithm=DESede/CBC/PKCS5Padding
+        -Dencryption.keyAlgorithm=DESede
+        -Dencryption.keystore.location=/usr/local/tomcat/shared/classes/alfresco/extension/keystore/keystore
+        -Dmetadata-keystore.password=mp6yc0UD9e
+        -Dmetadata-keystore.aliases=metadata
+        -Dmetadata-keystore.metadata.password=oKIWzVdEdA
+        -Dmetadata-keystore.metadata.algorithm=DESede
+      JAVA_OPTS: >-
+        -Ddb.driver=org.postgresql.Driver
+        -Ddb.username=alfresco
+        -Ddb.password=alfresco
+        -Ddb.url=jdbc:postgresql://postgres-alfresco:5432/alfresco
+        -Dindex.subsystem.name=noindex
+        -Dshare.host=localhost
+        -Dshare.port=8081
+        -Dalfresco.host=localhost
+        -Dalfresco.port=8081
+        -Dcsrf.filter.enabled=false
+        -Dmessaging.broker.url="failover:(nio://activemq:61616)?timeout=3000&jms.useCompression=true"
+        -Dmessaging.broker.username=admin
+        -Dmessaging.broker.password=admin
+        -Ddeployment.method=DOCKER_COMPOSE
+        -DlocalTransform.core-aio.url=http://transform-core-aio:8090/
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/probes/-ready-"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    volumes:
+      - opencrawling-tutorial-alfrescodata:/usr/local/tomcat/alf_data
+    depends_on:
+      postgres-alfresco:
+        condition: service_healthy
+      activemq:
+        condition: service_healthy
+      transform-core-aio:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alfresco.rule=PathPrefix(`/`)"
+      - "traefik.http.services.alfresco.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.limit.buffering.maxRequestBodyBytes=5368709120"
+      - "traefik.http.middlewares.alfresco-root-redirect.redirectregex.regex=^https?://[^/]+/([^/.]+)$$"
+      - "traefik.http.middlewares.alfresco-root-redirect.redirectregex.replacement=$$0/"
+      - "traefik.http.middlewares.alfresco-chain.chain.middlewares=alfresco-root-redirect@docker,limit@docker"
+      - "traefik.http.routers.alfresco.middlewares=alfresco-chain@docker"
+      - "traefik.http.routers.solrapideny.rule=PathRegexp(`^/alfresco/(wc)?s(ervice)?/api/solr/.*$$`)"
+      - "traefik.http.middlewares.acsfakeauth.basicauth.users=fake:"
+      - "traefik.http.routers.solrapideny.middlewares=acsfakeauth@docker"
+      - "traefik.http.routers.alfrescomicrometer.rule=PathRegexp(`^/alfresco/(wc)?s(ervice)?/prometheus`)"
+      - "traefik.http.middlewares.prometheusipfilter.ipallowlist.sourcerange=127.0.0.0/8"
+      - "traefik.http.routers.alfrescomicrometer.middlewares=prometheusipfilter@docker"
+    networks:
+      - opencrawling-tutorial-network
+
+  # --- Alfresco Share UI (Classic Repository & Permission Manager) ---
+  share:
+    image: docker.io/alfresco/alfresco-share:26.1.0
+    container_name: alfresco-share-tutorial
+    mem_limit: 1g
+    environment:
+      CSRF_FILTER_ORIGIN: http://localhost:8081
+      CSRF_FILTER_REFERER: http://localhost:8081/share/.*
+      REPO_HOST: "alfresco"
+      REPO_PORT: "8080"
+      JAVA_OPTS: >-
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+        -Dalfresco.host=localhost
+        -Dalfresco.port=8081
+        -Dalfresco.context=alfresco
+        -Dalfresco.protocol=http
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/share"]
+      interval: 15s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      alfresco:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.share.rule=PathPrefix(`/share`)"
+      - "traefik.http.services.share.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.limit.buffering.maxRequestBodyBytes=5368709120"
+      - "traefik.http.middlewares.share-root-redirect.redirectregex.regex=^(.*/share)$$"
+      - "traefik.http.middlewares.share-root-redirect.redirectregex.replacement=$${1}/"
+      - "traefik.http.middlewares.share-chain.chain.middlewares=share-root-redirect@docker,limit@docker"
+      - "traefik.http.routers.share.middlewares=share-chain@docker"
+      - "traefik.http.routers.proxiedsolrapideny.rule=PathRegexp(`^/share/proxy/alfresco(-(noauth|feed|api))?/api/solr/`)"
+      - "traefik.http.middlewares.sharefakeauth.basicauth.users=fake:"
+      - "traefik.http.routers.proxiedsolrapideny.middlewares=sharefakeauth@docker"
+    networks:
+      - opencrawling-tutorial-network
+
+  # --- Alfresco Content App / Digital Workspace Community UI ---
+  content-app:
+    image: docker.io/alfresco/alfresco-content-app:7.5.0
+    container_name: alfresco-content-app-tutorial
+    mem_limit: 128m
+    environment:
+      APP_CONFIG_PROVIDER: "ECM"
+      APP_CONFIG_AUTH_TYPE: "BASIC"
+      APP_BASE_SHARE_URL: "http://localhost:8081/workspace/#/preview/s"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      alfresco:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.aca.rule=PathPrefix(`/content-app`) || PathPrefix(`/workspace`)"
+      - "traefik.http.services.content-app.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.acaroot.stripprefix.prefixes=/content-app,/workspace"
+      - "traefik.http.middlewares.acaforceslash.redirectregex.regex=^(.*/(content-app|workspace))$$"
+      - "traefik.http.middlewares.acaforceslash.redirectregex.replacement=$${1}/"
+      - "traefik.http.middlewares.acachain.chain.middlewares=acaforceslash,acaroot"
+      - "traefik.http.routers.aca.middlewares=acachain@docker"
+    networks:
+      - opencrawling-tutorial-network
+
+  # --- Reverse Proxy for Alfresco Repository, Share & Workspace (port 8081) ---
+  proxy:
+    image: docker.io/traefik:3.6
+    container_name: alfresco-proxy-tutorial
+    mem_limit: 128m
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.network=opencrawling-tutorial-network"
+      - "--entrypoints.web.address=:8080"
+      - "--entrypoints.web.transport.respondingTimeouts.readTimeout=20m"
+      - "--accesslog=false"
+      - "--ping.entrypoint=web"
+      - "--ping=true"
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    security_opt:
+      - label=disable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - opencrawling-tutorial-network
+
+  transform-core-aio:
+    image: alfresco/alfresco-transform-core-aio:5.4.2
+    container_name: transform-core-aio-tutorial
+    mem_limit: 1536m
+    environment:
+      JAVA_OPTS: >-
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      activemq:
+        condition: service_healthy
+    networks:
+      - opencrawling-tutorial-network
+
+  postgres-alfresco:
+    image: postgres:17.9
+    container_name: postgres-alfresco-tutorial
+    mem_limit: 512m
+    environment:
+      - POSTGRES_PASSWORD=alfresco
+      - POSTGRES_USER=alfresco
+      - POSTGRES_DB=alfresco
+    command: postgres -c max_connections=300 -c log_min_messages=LOG
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - opencrawling-tutorial-alfresco-pgdata:/var/lib/postgresql/data
+    networks:
+      - opencrawling-tutorial-network
+
+  activemq:
+    image: docker.io/alfresco/alfresco-activemq:6.2.6-jre17-rockylinux8
+    container_name: activemq-tutorial
+    mem_limit: 1g
+    environment:
+      - ACTIVEMQ_ADMIN_LOGIN=admin
+      - ACTIVEMQ_ADMIN_PASSWORD=admin
+    ports:
+      - "8161:8161"
+      - "61616:61616"
+    healthcheck:
+      test: ["CMD", "/opt/activemq/bin/activemq", "query", "--objname", "type=Broker,brokerName=*,service=Health", "|", "grep", "Good"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - opencrawling-tutorial-network
+
+  # --- Vector Store (PostgreSQL 17 + pgvector) ---
+  postgres-vector:
+    image: pgvector/pgvector:pg17
+    container_name: postgres-vector-tutorial
+    environment:
+      POSTGRES_DB: opencrawling
+      POSTGRES_USER: opencrawling
+      POSTGRES_PASSWORD: opencrawling_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - opencrawling-tutorial-pgdata:/var/lib/postgresql/data
+    networks:
+      opencrawling-tutorial-network:
+        aliases:
+          - postgres
+          - postgres-vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawling -d opencrawling"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    container_name: redis-stack-tutorial
+    environment:
+      REDIS_ARGS: "--requirepass redis_password"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - opencrawling-tutorial-redisdata:/data
+    networks:
+      - opencrawling-tutorial-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-tutorial
+    ports:
+      - "11434:11434"
+    volumes:
+      - opencrawling-ollamadata:/root/.ollama
+    networks:
+      - opencrawling-tutorial-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama-model-puller:
+    image: ollama/ollama:0.40.5
+    container_name: ollama-model-puller-tutorial
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - opencrawling-tutorial-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka-tutorial
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9094,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9094,EXTERNAL://127.0.0.1:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - opencrawling-tutorial-kafkadata:/var/lib/kafka/data
+    networks:
+      - opencrawling-tutorial-network
+
+  # --- OpenCrawling Decoupled Pipeline + Admin UI Backend + MCP Server ---
+  oc-ingestion-consumer:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.ingestion-consumer
+    image: ghcr.io/opencrawling/oc-ingestion-consumer:latest
+    container_name: oc-ingestion-consumer-tutorial
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - OPENCRAWLING_TIKA_FORK_ENABLED=true
+      - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
+      - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
+    volumes:
+      - opencrawling-tutorial-claims:/data/claims
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-tutorial-network
+    restart: unless-stopped
+
+  oc-embedding-consumer:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.embedding-consumer
+    image: ghcr.io/opencrawling/oc-embedding-consumer:latest
+    container_name: oc-embedding-consumer-tutorial
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+    depends_on:
+      kafka:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-tutorial-network
+    restart: unless-stopped
+
+  oc-writer-consumer:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.writer-consumer
+    image: ghcr.io/opencrawling/oc-writer-consumer:latest
+    container_name: oc-writer-consumer-tutorial
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opencrawling-tutorial-network
+    restart: unless-stopped
+
+  oc-mcp-server:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.mcp-server
+    image: ghcr.io/opencrawling/oc-mcp-server:latest
+    container_name: oc-mcp-server-tutorial
+    ports:
+      - "8080:8080"
+      - "9095:9095"
+      - "9096:9096"
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PASSWORD=redis_password
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
+      - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_DATASOURCE_USERNAME=opencrawling
+      - SPRING_DATASOURCE_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
+      - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
+      - SPRING_AI_VECTORSTORE_PGVECTOR_DIMENSIONS=1024
+      - SPRING_AI_VECTORSTORE_PGVECTOR_TABLE_NAME=vector_store_1024
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=local
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/data/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+      - OPENCRAWLING_DISCOVERY_ENABLED=${OPENCRAWLING_DISCOVERY_ENABLED:-true}
+      - OPENCRAWLING_DISCOVERY_ALLOW_ASSERTED_IDENTITY=${OPENCRAWLING_DISCOVERY_ALLOW_ASSERTED_IDENTITY:-true}
+    volumes:
+      - opencrawling-tutorial-claims:/data/claims
+      - opencrawling-tutorial-reports:/data/reports
+      - opencrawling-tutorial-state:/app/data
+    depends_on:
+      postgres-vector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      opencrawling-tutorial-network:
+        aliases:
+          - opencrawling-backend
+    restart: unless-stopped
+
+  oc-admin-ui:
+    build:
+      context: ../../oc-admin-ui
+      dockerfile: Dockerfile
+    image: ghcr.io/opencrawling/oc-admin-ui:latest
+    container_name: oc-admin-ui-tutorial
+    ports:
+      - "3000:80"
+    depends_on:
+      - oc-mcp-server
+    networks:
+      - opencrawling-tutorial-network
+    restart: unless-stopped
+
+networks:
+  opencrawling-tutorial-network:
+    name: opencrawling-tutorial-network
+    driver: bridge
+
+volumes:
+  opencrawling-tutorial-alfrescodata:
+    name: opencrawling-tutorial-alfrescodata
+  opencrawling-tutorial-alfresco-pgdata:
+    name: opencrawling-tutorial-alfresco-pgdata
+  opencrawling-tutorial-pgdata:
+    name: opencrawling-tutorial-pgdata
+  opencrawling-tutorial-redisdata:
+    name: opencrawling-tutorial-redisdata
+  opencrawling-ollamadata:
+    name: opencrawling-ollamadata
+  opencrawling-tutorial-kafkadata:
+    name: opencrawling-tutorial-kafkadata
+  opencrawling-tutorial-claims:
+    name: opencrawling-tutorial-claims
+  opencrawling-tutorial-reports:
+    name: opencrawling-tutorial-reports
+  opencrawling-tutorial-state:
+    name: opencrawling-tutorial-state

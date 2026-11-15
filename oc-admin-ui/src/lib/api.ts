@@ -47,6 +47,8 @@ export const jobApi = {
   pause: (id: string) => api.post(`/jobs/${id}/pause`),
   create: (data: any) => api.post('/jobs', data),
   delete: (id: string) => api.delete(`/jobs/${id}`),
+  /** What the caller may do with each job they can see (READ, EXECUTE, MANAGE). */
+  permissions: () => api.get<Record<string, ('READ' | 'EXECUTE' | 'MANAGE')[]>>('/jobs/permissions'),
 }
 
 export const connectorApi = {
@@ -164,6 +166,101 @@ export interface McfMigrationResponse {
 export const mcfMigrationApi = {
   plan: (data: McfMigrationRequest) => api.post<McfMigrationResponse>('/mcf-migration/plan', data),
   apply: (data: McfMigrationRequest) => api.post<McfMigrationResponse>('/mcf-migration/apply', data),
+}
+
+export interface JobReportSummary {
+  jobId: string
+  executionId: string
+  jobName: string
+  pipelineMode: 'RAG' | 'MIGRATION'
+  repositoryConnector: string
+  outputConnector: string
+  status: 'SUCCESS' | 'PARTIAL' | 'FAILED'
+  startTime: string
+  endTime: string
+  durationMs: number
+  totalDocuments: number
+  successfulDocuments: number
+  failedDocuments: number
+  skippedDocuments: number
+  // RAG
+  totalChunks?: number
+  totalTokens?: number
+  estimatedEmbeddingCostUsd?: number
+  embeddingModel?: string
+  // Migration
+  totalBinaryBytes?: number
+  totalReclaimedBytes?: number
+  safePrunedCount?: number
+  verifiedChecksumCount?: number
+  // Artifact paths
+  reportPathParquet?: string
+  reportPathCsv?: string
+  reportPathJson?: string
+}
+
+export interface DocumentLedgerEntry {
+  jobId: string
+  executionId: string
+  pipelineMode: 'RAG' | 'MIGRATION'
+  documentId: string
+  sourceUri: string
+  connectorSource: string
+  connectorTarget: string
+  status: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'QUARANTINED'
+  durationMs: number
+  timestampUtc: string
+  errorCode?: string
+  errorMessage?: string
+  // RAG
+  ragChunkCount?: number
+  ragTokenCount?: number
+  ragEmbeddingModel?: string
+  ragEmbeddingDimensions?: number
+  ragVectorTable?: string
+  // Migration
+  migBinarySizeBytes?: number
+  migSha256Checksum?: string
+  migTargetBucket?: string
+  migTargetKey?: string
+  migSidecarWritten?: boolean
+  migCallbackHttpStatus?: number
+  migSafePruned?: boolean
+  migReclaimedBytes?: number
+}
+
+export interface PaginatedLedgerResponse {
+  items: DocumentLedgerEntry[]
+  total: number
+  page: number
+  size: number
+}
+
+export const reportApi = {
+  getAll: () => api.get<JobReportSummary[]>('/reports'),
+  getById: (jobId: string, executionId: string) => api.get<JobReportSummary>(`/reports/${jobId}/${executionId}`),
+  getDocumentLedger: (jobId: string, executionId: string, params?: { status?: string; query?: string; page?: number; size?: number }) =>
+    api.get<PaginatedLedgerResponse>(`/reports/${jobId}/${executionId}/documents`, { params }),
+  /**
+   * Downloads an export through the API client, so the request carries the access token (a plain link would not),
+   * and saves it under `filename`.
+   */
+  downloadExport: async (jobId: string, executionId: string, format: 'csv' | 'parquet' | 'json', filename: string) => {
+    const res = await api.get<Blob>(`/reports/${encodeURIComponent(jobId)}/${encodeURIComponent(executionId)}/export`,
+      { params: { format }, responseType: 'blob', timeout: 120000 })
+    const url = URL.createObjectURL(res.data)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  },
+  runQuery: (sql: string) => api.post<{ columns: string[]; rows: any[][] }>('/reports/query', { sql }),
 }
 
 export default api

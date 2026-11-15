@@ -1,0 +1,43 @@
+{
+  "value": [
+    {
+      "id": "i3",
+      "name": "huge.bin",
+      "eTag": "\"{I3},1\"",
+      "cTag": "\"c:{I3},1\"",
+      "size": 999999999,
+      "webUrl": "https://contoso.sharepoint.com/sites/engineering/Shared%20Documents/huge.bin",
+      "createdDateTime": "2026-03-12T14:20:00Z",
+      "lastModifiedDateTime": "2026-09-30T10:15:30Z",
+      "createdBy": {
+        "user": {
+          "email": "adele.vance@contoso.com",
+          "displayName": "Adele Vance"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "email": "megan.bowen@contoso.com",
+          "displayName": "Megan Bowen"
+        }
+      },
+      "parentReference": {
+        "driveId": "b!lib1",
+        "id": "root1"
+      },
+      "file": {
+        "mimeType": "application/octet-stream"
+      },
+      "sharepointIds": {
+        "listItemUniqueId": "luid-i3"
+      },
+      "@microsoft.graph.downloadUrl": "{{BASE}}/download/i3?tempauth=signed",
+      "listItem": {
+        "id": "5",
+        "fields": {
+          "id": "7"
+        }
+      }
+    }
+  ]
+}

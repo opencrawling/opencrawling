@@ -17,6 +17,7 @@ package org.opencrawling.qdrant;
 
 import com.google.common.util.concurrent.Futures;
 import io.qdrant.client.QdrantClient;
+import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Points.PointStruct;
 import io.qdrant.client.grpc.Points.UpdateResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
@@ -104,9 +106,37 @@ class QdrantOutputConnectorTest {
         List<PointStruct> points = captor.getValue();
         assertThat(points).isNotEmpty();
         assertThat(points.get(0).getPayloadMap().get(QdrantFields.FIELD_CHUNK_ID).getStringValue()).contains("doc-123");
+        assertThat(points.get(0).getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue()).isEqualTo("doc-123");
         assertThat(points.get(0).getPayloadMap()).containsKeys(
                 QdrantFields.FIELD_SECURITY_ALLOWED_READ,
                 QdrantFields.FIELD_SECURITY_DENIED_READ,
                 QdrantFields.FIELD_SECURITY_INHERITANCE);
+    }
+
+    @Test
+    void testSendDeleteActionDeletesByFilter() throws Exception {
+        RepositoryDocument deleteDoc = new RepositoryDocument(
+                "doc-to-delete",
+                "file://tmp/doc-to-delete.txt",
+                new ByteArrayInputStream(new byte[0]),
+                Map.of(),
+                "acl-public",
+                SecurityConfig.createPublic(),
+                Instant.now(),
+                DocumentAction.DELETE
+        );
+
+        when(qdrantClient.deleteAsync(eq("enterprise_kb"), any(Filter.class)))
+                .thenReturn(Futures.immediateFuture(UpdateResult.newBuilder().build()));
+        when(qdrantClient.deleteAsync(eq("enterprise_kb"), any(List.class)))
+                .thenReturn(Futures.immediateFuture(UpdateResult.newBuilder().build()));
+
+        connector.send(deleteDoc).block();
+
+        ArgumentCaptor<Filter> captor = ArgumentCaptor.forClass(Filter.class);
+        verify(qdrantClient).deleteAsync(eq("enterprise_kb"), captor.capture());
+        Filter filter = captor.getValue();
+        assertThat(filter.getShould(0).getField().getKey()).isEqualTo(QdrantFields.FIELD_DOCUMENT_ID);
+        assertThat(filter.getShould(0).getField().getMatch().getKeyword()).isEqualTo("doc-to-delete");
     }
 }

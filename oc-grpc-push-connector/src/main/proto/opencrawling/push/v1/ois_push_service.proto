@@ -1,0 +1,154 @@
+//
+// Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+/*
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+syntax = "proto3";
+
+package opencrawling.push.v1;
+
+option java_multiple_files = true;
+option java_package = "org.opencrawling.push.v1";
+option java_outer_classname = "OisPushServiceProto";
+
+// High-performance streaming ingestion service for OpenCrawling
+service OisPushService {
+  // Unary: Push a single document (UPSERT or DELETE tombstone)
+  rpc PushDocument (PushDocumentRequest) returns (PushDocumentResponse);
+
+  // Client-Streaming: High-throughput continuous streaming of documents
+  rpc StreamDocuments (stream PushDocumentRequest) returns (StreamSummaryResponse);
+
+  // Bi-Directional Streaming: Real-time streaming with per-document acknowledgments
+  rpc BiDirectionalStream (stream PushDocumentRequest) returns (stream IngestionAck);
+
+  // Diagnostic Ping / Health Check probe
+  rpc Ping (PingRequest) returns (PingResponse);
+}
+
+// Target job and document payload wrapper
+message PushDocumentRequest {
+  string job_id = 1;                           // Target active OpenCrawling Job ID
+  OisDocumentPayload document = 2;              // Document content, metadata, and ACLs
+  PushOptions options = 3;                      // Pipeline routing and execution options
+}
+
+// Open Ingestion Standard (OIS) Protobuf representation
+message OisDocumentPayload {
+  string id = 1;                               // Unique document identifier (e.g. URI or primary key)
+  DocumentAction action = 2;                   // UPSERT or DELETE
+  string mime_type = 3;                        // MIME type (e.g. text/plain, application/pdf)
+  int64 timestamp = 4;                         // Event timestamp (epoch milliseconds)
+  
+  // Binary / Text Content representation (either inline or via claim-check)
+  oneof content_payload {
+    bytes raw_bytes = 5;                       // Inline binary or raw text content
+    string claim_check_uri = 6;                // Pre-uploaded claim check URI (file://, ozone://, s3://)
+    string text_content = 7;                   // Direct plaintext content
+  }
+
+  map<string, string> metadata = 8;            // Dynamic structured metadata attributes
+  SecurityConfig security = 9;                 // Document-level Zero-Trust security rules
+  string checksum_sha256 = 10;                 // Optional SHA-256 for cryptographic integrity audit
+}
+
+// Lifecycle action matching OIS specification
+enum DocumentAction {
+  ACTION_UNSPECIFIED = 0;
+  UPSERT = 1;
+  DELETE = 2;
+}
+
+// Zero-Trust security permissions matching OpenCrawling OIS models
+message SecurityConfig {
+  repeated string allow_sids = 1;              // Security Identifiers allowed to read (users/groups)
+  repeated string deny_sids = 2;               // Security Identifiers denied access
+  string owner = 3;                            // Document owner / creator SID
+  string tenant_id = 4;                        // Multi-tenant isolation boundary
+  map<string, string> attributes = 5;          // Custom ABAC attributes
+}
+
+// Ingestion execution options
+message PushOptions {
+  bool bypass_tika_extraction = 1;             // Skip text extraction (if text already supplied)
+  bool immediate_flush = 2;                    // Force immediate dispatch to Kafka event bus
+  string routing_key = 3;                      // Kafka partition routing key
+}
+
+// Single document response
+message PushDocumentResponse {
+  string document_id = 1;
+  IngestionStatus status = 2;
+  string message = 3;
+  int64 processed_at = 4;
+}
+
+// Continuous stream summary response
+message StreamSummaryResponse {
+  int64 total_received = 1;
+  int64 total_accepted = 2;
+  int64 total_rejected = 3;
+  int64 duration_ms = 4;
+  repeated PushFailure failures = 5;
+}
+
+// Bi-directional acknowledgment message
+message IngestionAck {
+  string document_id = 1;
+  IngestionStatus status = 2;
+  string error_message = 3;
+  int64 ack_timestamp = 4;
+}
+
+message PushFailure {
+  string document_id = 1;
+  string error_code = 2;
+  string reason = 3;
+}
+
+enum IngestionStatus {
+  STATUS_UNSPECIFIED = 0;
+  ACCEPTED = 1;
+  QUEUED = 2;
+  REJECTED_INVALID_PAYLOAD = 3;
+  REJECTED_JOB_NOT_FOUND = 4;
+  REJECTED_UNAUTHORIZED = 5;
+  REJECTED_RATE_LIMITED = 6;
+  ERROR_INTERNAL = 7;
+}
+
+message PingRequest {
+  string client_id = 1;
+}
+
+message PingResponse {
+  string status = 1;
+  int64 server_time = 2;
+  string version = 3;
+}

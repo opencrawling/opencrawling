@@ -20,9 +20,10 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Release version for archetypes (e.g. 1.0.0)'
+        description: 'Release version for archetypes (e.g. 1.0.4)'
+        type: string
         required: false
-        default: '1.0.0'
+        default: '1.0.4'
 
 permissions: read-all
 
@@ -38,16 +39,16 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.1.0
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
           server-id: central
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
+          server-username-env-var: MAVEN_USERNAME
+          server-password-env-var: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+          gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
 
@@ -55,9 +56,13 @@ jobs:
         run: |
           RELEASE_VER="${{ inputs.release_version }}"
           if [ -n "$RELEASE_VER" ]; then
-            echo "Setting release version to $RELEASE_VER"
+            CURRENT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            echo "Setting release version from $CURRENT_VER to $RELEASE_VER"
+            mvn versions:set -B -DnewVersion=$RELEASE_VER -DgenerateBackupPoms=false
             cd oc-connector-archetypes
-            mvn versions:set -DnewVersion=$RELEASE_VER -DprocessParents=true -DgenerateBackupPoms=false
+            mvn versions:set -B -DnewVersion=$RELEASE_VER -DprocessParents=true -DgenerateBackupPoms=false
+            sed -i "s/<version>${CURRENT_VER}<\/version>/<version>${RELEASE_VER}<\/version>/g" \
+              opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml
             cd ..
           fi
 

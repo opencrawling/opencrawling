@@ -27,8 +27,11 @@ public class WebConfig implements WebMvcConfigurer {
         // Map the root path to index.html
         registry.addViewController("/").setViewName("forward:/index.html");
         
-        // Forward all non-api and non-static-resource routes to index.html for SPA routing
-        registry.addViewController("/{path:[^\\.]*}")
+        // Forward all non-api, non-swagger, and non-static-resource routes to index.html for SPA routing
+        registry.addViewController("/{path:^(?!api|v3|swagger-ui|webjars)[^\\.]*}")
                 .setViewName("forward:/index.html");
+
+        // The admin UI's OpenID Connect sign-in returns here (two segments, so the rule above does not match it)
+        registry.addViewController("/auth/callback").setViewName("forward:/index.html");
     }
 }

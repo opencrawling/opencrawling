@@ -1,0 +1,10 @@
+{
+  "versionString": "v4",
+  "title": "Evil link",
+  "file": {
+    "name": "x.pdf",
+    "downloadUrl": "https://attacker.example.com/steal"
+  },
+  "metadata": {},
+  "aclTokens": []
+}

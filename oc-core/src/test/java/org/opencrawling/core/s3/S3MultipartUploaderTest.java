@@ -195,6 +195,49 @@ class S3MultipartUploaderTest {
         assertThrows(IllegalArgumentException.class, () -> new S3MultipartUploader(s3, 8L * MB, 1L * MB, 4));
     }
 
+    @Test
+    void testSmallFileUploadWithCustomHeaders() throws IOException {
+        Path file = randomFile(1 * MB);
+        Map<String, String> headers = Map.of("x-emc-namespace", "finance-tenant", "X-Custom", "test-val");
+        new S3MultipartUploader(s3, 8L * MB, 5L * MB, 4).uploadFile("b", "k", file, "text/plain", headers);
+
+        ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3).putObject(put.capture(), any(RequestBody.class));
+        assertTrue(put.getValue().overrideConfiguration().isPresent());
+        Map<String, List<String>> actualHeaders = put.getValue().overrideConfiguration().get().headers();
+        assertEquals(List.of("finance-tenant"), actualHeaders.get("x-emc-namespace"));
+        assertEquals(List.of("test-val"), actualHeaders.get("X-Custom"));
+    }
+
+    @Test
+    void testMultipartUploadWithCustomHeaders() throws IOException {
+        Path file = randomFile(12 * MB);
+        Map<String, String> headers = Map.of("x-emc-metadata-search", "dept=eng", "x-emc-namespace", "ns1");
+        new S3MultipartUploader(s3, 8L * MB, 5L * MB, 2).uploadFile("b", "k", file, "application/octet-stream", headers);
+
+        ArgumentCaptor<CreateMultipartUploadRequest> create = ArgumentCaptor.forClass(CreateMultipartUploadRequest.class);
+        verify(s3).createMultipartUpload(create.capture());
+        assertTrue(create.getValue().overrideConfiguration().isPresent());
+        Map<String, List<String>> actualHeaders = create.getValue().overrideConfiguration().get().headers();
+        assertEquals(List.of("dept=eng"), actualHeaders.get("x-emc-metadata-search"));
+        assertEquals(List.of("ns1"), actualHeaders.get("x-emc-namespace"));
+    }
+
+    @Test
+    void testSmallStreamUploadWithCustomHeaders() throws IOException {
+        byte[] data = new byte[500];
+        new Random(42).nextBytes(data);
+        Map<String, String> headers = Map.of("x-custom-stream", "val123");
+        long n = new S3MultipartUploader(s3, 8L * MB, 5L * MB, 2)
+                .uploadStream("b", "k", nonMarkable(data), "text/plain", headers);
+
+        assertEquals(500, n);
+        ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3).putObject(put.capture(), any(RequestBody.class));
+        assertTrue(put.getValue().overrideConfiguration().isPresent());
+        assertEquals(List.of("val123"), put.getValue().overrideConfiguration().get().headers().get("x-custom-stream"));
+    }
+
     private Path randomFile(int size) throws IOException {
         byte[] data = new byte[size];
         new Random(size).nextBytes(data);

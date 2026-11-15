@@ -254,6 +254,49 @@ public class LuxirClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Search result wrapper holding total matched count and document maps.
+     */
+    public record LuxirSearchResult(long found, List<Map<String, Object>> docs) {}
+
+    /**
+     * Executes a search query against the collection via POST /collections/{collection}/_search.
+     */
+    public LuxirSearchResult search(String collection, Map<String, Object> queryPayload) throws IOException, InterruptedException {
+        String body = objectMapper.writeValueAsString(queryPayload != null ? queryPayload : Collections.emptyMap());
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint + "/collections/" + collection + "/_search"))
+                .timeout(timeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Failed to search Luxir collection '" + collection + "': HTTP "
+                    + response.statusCode() + " - " + response.body());
+        }
+
+        com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(response.body());
+        long found = 0;
+        if (root.has("found")) {
+            found = root.get("found").asLong();
+        } else if (root.has("total")) {
+            found = root.get("total").asLong();
+        }
+
+        List<Map<String, Object>> docs = new ArrayList<>();
+        com.fasterxml.jackson.databind.JsonNode docsNode = root.has("docs") ? root.get("docs") : root.get("hits");
+        if (docsNode != null && docsNode.isArray()) {
+            for (com.fasterxml.jackson.databind.JsonNode docNode : docsNode) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = objectMapper.convertValue(docNode, Map.class);
+                docs.add(map);
+            }
+        }
+        return new LuxirSearchResult(found, docs);
+    }
+
     @Override
     public void close() {
         // HttpClient manages internal thread pools

@@ -23,11 +23,9 @@ import {
   AlertCircle, 
   Loader2,
   RefreshCw,
-  HelpCircle,
   Database,
   HardDrive,
   Zap,
-  Radio,
   Server,
   ShieldCheck,
   Activity,
@@ -72,6 +70,7 @@ interface SystemSettings {
   tikaFallbackToEmbedded: boolean
   tikaExtractEmbedded: boolean
   tikaWriteLimit: number
+  tikaNumClients: number
 }
 
 export default function Settings() {
@@ -90,15 +89,16 @@ export default function Settings() {
     ozoneOmPort: 9862,
     ozoneVolume: 's3v',
     ozoneBucket: 'claims',
-    tikaVersion: '4.1.0',
+    tikaVersion: '4.2.0',
     tikaEngine: 'PipesForkParser (Process-Isolated)',
     tikaForkEnabled: true,
     tikaTimeoutMs: 30000,
     tikaJvmHeap: '-Xmx512m',
-    tikaMaxFilesPerProcess: 10000,
+    tikaMaxFilesPerProcess: 100000,
     tikaFallbackToEmbedded: true,
-    tikaExtractEmbedded: false,
-    tikaWriteLimit: 20000000
+    tikaExtractEmbedded: true,
+    tikaWriteLimit: 20000000,
+    tikaNumClients: 1
   })
 
   const [transportSettings, setTransportSettings] = useState<TransportSettings>({
@@ -254,7 +254,7 @@ export default function Settings() {
         {[
           { id: 'embedding', label: 'Embedding Engine', icon: Cpu, badge: settings.embeddingProvider || 'Ollama' },
           { id: 'chunking', label: 'Splitter & Chunker', icon: Layers, badge: settings.chunkerType || 'TokenTextSplitter' },
-          { id: 'tika', label: 'Text Extraction (Tika)', icon: FileText, badge: 'v' + (settings.tikaVersion || '4.1.0') },
+          { id: 'tika', label: 'Text Extraction (Tika)', icon: FileText, badge: 'v' + (settings.tikaVersion || '4.2.0') },
           { id: 'storage', label: 'Claim-Check Storage', icon: HardDrive, badge: (settings.claimCheckStore || 'ozone').toUpperCase() },
           { id: 'transport', label: 'Internal Transport', icon: Server, badge: transportSettings?.mode || 'AUTO' }
         ].map((tab) => {
@@ -479,31 +479,17 @@ export default function Settings() {
                 <span>1000</span>
                 <span>2000</span>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Used for documents published after you save, by jobs that do not set their own chunking.
+              </p>
             </div>
 
-            {/* Chunk Overlap */}
+            {/* Chunk Overlap: not supported by the splitter */}
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-sm font-medium flex items-center gap-1">
-                  Chunk Overlap 
-                  <span className="text-xs text-muted-foreground font-normal">(Tokens)</span>
-                </label>
-                <span className="font-mono text-sm text-primary font-bold">{settings.chunkOverlap}</span>
-              </div>
-              <input 
-                type="range"
-                min="0"
-                max="500"
-                step="10"
-                value={settings.chunkOverlap}
-                onChange={(e) => setSettings({ ...settings, chunkOverlap: parseInt(e.target.value) })}
-                className="w-full accent-primary bg-secondary h-1.5 rounded-lg appearance-none cursor-pointer"
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-                <span>0</span>
-                <span>250</span>
-                <span>500</span>
-              </div>
+              <label className="text-sm font-medium">Chunk Overlap</label>
+              <p className="text-xs text-muted-foreground">
+                Not available: the TokenTextSplitter cuts chunks at sentence ends and does not overlap them.
+              </p>
             </div>
           </div>
         </div>
@@ -522,7 +508,7 @@ export default function Settings() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Tika {settings.tikaVersion || '4.1.0'}
+                  Tika {settings.tikaVersion || '4.2.0'}
                 </span>
                 <span className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase ${
                   settings.tikaForkEnabled
@@ -532,6 +518,13 @@ export default function Settings() {
                   {settings.tikaForkEnabled ? 'Fork Isolated' : 'In-Process'}
                 </span>
               </div>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-3 text-amber-300 text-xs">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+              <span>
+                <strong>Application Restart Required:</strong> Tika child JVM and execution properties are initialized at startup. Changes to fork mode, worker clients, heap, or timeouts take effect upon restarting the application or container.
+              </span>
             </div>
 
             <div className="space-y-6">
@@ -651,7 +644,7 @@ export default function Settings() {
                   <input
                     type="number"
                     value={settings.tikaMaxFilesPerProcess}
-                    onChange={(e) => setSettings({ ...settings, tikaMaxFilesPerProcess: parseInt(e.target.value) || 10000 })}
+                    onChange={(e) => setSettings({ ...settings, tikaMaxFilesPerProcess: parseInt(e.target.value) || 100000 })}
                     className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
                     min="100"
                     step="1000"
@@ -676,6 +669,23 @@ export default function Settings() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Maximum characters extracted per document before truncating (default: 20,000,000 characters).
+                  </p>
+                </div>
+
+                {/* Number of Fork Worker Clients */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Fork Worker Clients (Concurrency)</label>
+                  <input
+                    type="number"
+                    value={settings.tikaNumClients || 1}
+                    onChange={(e) => setSettings({ ...settings, tikaNumClients: parseInt(e.target.value) || 1 })}
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono"
+                    min="1"
+                    max="32"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Number of concurrent Pipes child worker clients handling simultaneous document parsing.
                   </p>
                 </div>
               </div>

@@ -1,0 +1,94 @@
+{
+  "type": "record",
+  "name": "Embedding",
+  "namespace": "com.hyland.openarch.embeddings.avro",
+  "fields": [
+    { "name": "id", "type": "string" },
+    { "name": "type", "type": "string" },
+    {
+      "name": "vector",
+      "type": {
+        "type": "array",
+        "items": "double"
+      }
+    },
+    { "name": "text", "type": "string" },
+    {
+      "name": "blobref",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "location",
+      "type": {
+        "type": "record",
+        "name": "Location",
+        "fields": [
+          {
+            "name": "text",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "TextLocation",
+                "fields": [
+                  { "name": "page", "type": "int" },
+                  { "name": "paragraph", "type": "int" }
+                ]
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "position",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "Position",
+                "fields": [
+                  { "name": "left", "type": "int" },
+                  { "name": "top", "type": "int" },
+                  { "name": "right", "type": "int" },
+                  { "name": "bottom", "type": "int" }
+                ]
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "timestamp",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "Timestamp",
+                "fields": [
+                  { "name": "start", "type": "double" },
+                  { "name": "end", "type": "double" }
+                ]
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "spreadsheet",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "SpreadsheetLocation",
+                "fields": [
+                  { "name": "sheet", "type": "string" },
+                  { "name": "row", "type": "int" },
+                  { "name": "column", "type": "int" }
+                ]
+              }
+            ],
+            "default": null
+          }
+        ]
+      }
+    }
+  ]
+}

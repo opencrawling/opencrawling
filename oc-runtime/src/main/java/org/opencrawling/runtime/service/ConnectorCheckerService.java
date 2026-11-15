@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import java.io.File;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -27,17 +28,36 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.opencrawling.doxis.DoxisRepositoryConnector;
+import org.opencrawling.doxis.DoxisProperties;
+import org.opencrawling.doxis.client.DoxisClient;
 import org.opencrawling.doxis.output.config.DoxisConnectorSettings;
 import org.opencrawling.doxis.output.config.DoxisOutputProperties;
-import org.opencrawling.doxis.client.DoxisClient;
+import org.opencrawling.sharepoint.GraphClient;
+import org.opencrawling.sharepoint.SharePointProperties;
+import org.opencrawling.sharepoint.SharePointRepositoryConnector;
+import org.opencrawling.mfiles.MFilesClient;
+import org.opencrawling.mfiles.MFilesProperties;
+import org.opencrawling.mfiles.MFilesRepositoryConnector;
+import org.opencrawling.documentum.DocumentumClient;
+import org.opencrawling.documentum.DocumentumProperties;
+import org.opencrawling.documentum.DocumentumRepositoryConnector;
+import org.opencrawling.filenet.FileNetClient;
+import org.opencrawling.filenet.FileNetProperties;
+import org.opencrawling.filenet.FileNetRepositoryConnector;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.springframework.stereotype.Service;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 @Service
 public class ConnectorCheckerService {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     public ConnectionCheckResult check(ConnectorDTO connector) {
         if (connector == null || connector.className() == null) {
@@ -56,6 +76,11 @@ public class ConnectorCheckerService {
             // --- Milvus Output Connector ---
             if (className.contains("MilvusOutputConnector") || className.contains("Milvus")) {
                 return checkMilvus(config);
+            }
+
+            // --- Elasticsearch Output Connector (8.x & 9.x) ---
+            if (className.contains("ElasticsearchOutputConnector") || className.contains("elasticsearch")) {
+                return checkElasticsearch(config);
             }
 
             // --- OpenSearch Output Connector (2.x & 3.x) ---
@@ -83,9 +108,9 @@ public class ConnectorCheckerService {
                 return checkLuxir(config);
             }
 
-            // --- Doxis AI.dp Output Connector ---
-            if (className.contains("DoxisOutputConnector") || className.contains("Doxis")) {
-                return checkDoxis(config);
+            // --- Doxis 4 Output Connector ---
+            if (className.contains("DoxisOutputConnector")) {
+                return checkDoxisOutput(config);
             }
 
             // --- Apache SeaTunnel Output Connector ---
@@ -96,6 +121,11 @@ public class ConnectorCheckerService {
             // --- Camunda Repository Connector ---
             if (className.contains("CamundaRepositoryConnector") || className.contains("Camunda")) {
                 return checkCamunda(config);
+            }
+
+            // --- gRPC Push Repository Connector ---
+            if (className.contains("GrpcPush") || className.contains("grpc-push") || className.contains("grpcPush")) {
+                return checkGrpcPush(config);
             }
 
             // --- StormCrawler Repository Connector ---
@@ -113,14 +143,49 @@ public class ConnectorCheckerService {
                 return checkFlowable(config);
             }
 
+            // --- Alfresco Output Connector (Migration Mode) ---
+            if (className.contains("AlfrescoOutputConnector") || (className.contains("Alfresco") && className.contains("Output"))) {
+                return checkAlfrescoOutput(config);
+            }
+
             // --- Alfresco Repository Connector ---
             if (className.contains("AlfrescoRepositoryConnector") || className.contains("Alfresco")) {
-                return checkAlfresco(config);
+                return checkAlfrescoRepository(config);
+            }
+
+            // --- Doxis Repository Connector ---
+            if (className.contains("DoxisRepositoryConnector")) {
+                return checkDoxisRepository(config);
+            }
+
+            // --- SharePoint Repository Connector ---
+            if (className.contains("SharePointRepositoryConnector")) {
+                return checkSharePointRepository(config);
+            }
+
+            // --- M-Files Repository Connector ---
+            if (className.contains("MFilesRepositoryConnector")) {
+                return checkMFilesRepository(config);
+            }
+
+            // --- IBM FileNet P8 Repository Connector ---
+            if (className.contains("FileNetRepositoryConnector")) {
+                return checkFileNetRepository(config);
+            }
+
+            // --- OpenText Documentum Repository Connector ---
+            if (className.contains("DocumentumRepositoryConnector")) {
+                return checkDocumentumRepository(config);
             }
 
             // --- CMIS Repository Connector ---
             if (className.contains("CmisRepositoryConnector") || className.contains("Cmis") || className.contains("cmis")) {
                 return checkCmis(config);
+            }
+
+            // --- Hyland OpenArch (Repository & Output) Connector ---
+            if (className.contains("OpenArch") || className.contains("openarch")) {
+                return checkOpenArch(config);
             }
 
             // --- FileSystem Repository Connector ---
@@ -267,6 +332,44 @@ public class ConnectorCheckerService {
         }
     }
 
+    private ConnectionCheckResult checkElasticsearch(Map<String, String> config) {
+        String uris = config.getOrDefault("elasticsearchUris", config.getOrDefault("uris", "http://localhost:9200"));
+        String apiKey = config.getOrDefault("elasticsearchApiKey", config.getOrDefault("apiKey", ""));
+        String user = config.getOrDefault("elasticsearchUsername", config.getOrDefault("username", ""));
+        String pass = config.getOrDefault("elasticsearchPassword", config.getOrDefault("password", ""));
+        String firstUri = uris.split(",")[0].trim();
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(firstUri.endsWith("/") ? firstUri : firstUri + "/"))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET();
+
+            if (apiKey != null && !apiKey.isBlank()) {
+                reqBuilder.header("Authorization", "ApiKey " + apiKey.trim());
+            } else if (user != null && !user.isBlank() && pass != null && !pass.isEmpty()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return new ConnectionCheckResult(false, "Elasticsearch returned HTTP status " + response.statusCode() + " from " + firstUri, response.body());
+            }
+            // OpenSearch and Elasticsearch both answer on :9200; only Elasticsearch sends this header.
+            String product = response.headers().firstValue("X-Elastic-Product").orElse("");
+            if (!"Elasticsearch".equalsIgnoreCase(product)) {
+                return new ConnectionCheckResult(false, "The server at " + firstUri
+                        + " is not Elasticsearch (missing X-Elastic-Product header); is this an OpenSearch cluster?", response.body());
+            }
+            return new ConnectionCheckResult(true, "Successfully connected to Elasticsearch cluster at " + firstUri + " (HTTP " + response.statusCode() + ").", response.body());
+        } catch (Exception e) {
+            String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return new ConnectionCheckResult(false, "Failed to connect to Elasticsearch cluster at " + uris + ": " + reason, e.toString());
+        }
+    }
+
     private ConnectionCheckResult checkPGVector(Map<String, String> config) {
         String url = config.getOrDefault("pgVectorUrl", config.getOrDefault("url", "jdbc:postgresql://localhost:5432/opencrawling"));
         String user = config.getOrDefault("pgVectorUsername", config.getOrDefault("username", "opencrawling"));
@@ -315,31 +418,96 @@ public class ConnectorCheckerService {
     }
 
     private ConnectionCheckResult checkCamunda(Map<String, String> config) {
-        String url = config.getOrDefault("url", "http://localhost:8080/engine-rest");
+        String url = config.getOrDefault("url", "http://localhost:8080/v2");
         String user = config.getOrDefault("username", "demo");
         String pass = config.getOrDefault("password", "demo");
+        String authType = config.getOrDefault("authType", "basic");
+        String oauthTokenUrl = config.getOrDefault("oauthTokenUrl", "");
+        String clientId = config.getOrDefault("clientId", "");
+        String clientSecret = config.getOrDefault("clientSecret", "");
+        String audience = config.getOrDefault("audience", "zeebe-api");
 
         String cleanUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-        String testEndpoint = cleanUrl + "/history/process-instance?maxResults=1";
 
         try {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(testEndpoint))
-                    .timeout(Duration.ofSeconds(5))
-                    .header("Accept", "application/json")
-                    .GET();
 
-            if (user != null && !user.isBlank()) {
+            String authHeader = null;
+            if ("oauth2".equalsIgnoreCase(authType) || (!oauthTokenUrl.isBlank() && !clientId.isBlank())) {
+                StringBuilder formBody = new StringBuilder("grant_type=client_credentials");
+                formBody.append("&client_id=").append(URLEncoder.encode(clientId, StandardCharsets.UTF_8));
+                formBody.append("&client_secret=").append(URLEncoder.encode(clientSecret, StandardCharsets.UTF_8));
+                if (!audience.isBlank()) {
+                    formBody.append("&audience=").append(URLEncoder.encode(audience, StandardCharsets.UTF_8));
+                }
+
+                HttpRequest tokenReq = HttpRequest.newBuilder()
+                        .uri(URI.create(oauthTokenUrl))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .header("Accept", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(formBody.toString()))
+                        .build();
+
+                HttpResponse<String> tokenResp = client.send(tokenReq, HttpResponse.BodyHandlers.ofString());
+                if (tokenResp.statusCode() == 200) {
+                    JsonNode tokenJson = OBJECT_MAPPER.readTree(tokenResp.body());
+                    authHeader = "Bearer " + tokenJson.path("access_token").asText();
+                } else {
+                    return new ConnectionCheckResult(false, "Camunda OAuth2 token request failed with HTTP " + tokenResp.statusCode(), tokenResp.body());
+                }
+            } else if (user != null && !user.isBlank()) {
                 String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
-                reqBuilder.header("Authorization", "Basic " + credentials);
+                authHeader = "Basic " + credentials;
             }
 
-            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                return new ConnectionCheckResult(true, "Successfully connected to Camunda 7 REST API at " + cleanUrl + ".", null);
+            if (cleanUrl.contains("/engine-rest")) {
+                // Camunda 7 legacy check
+                String testEndpoint = cleanUrl + "/history/process-instance?maxResults=1";
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(testEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .GET();
+                if (authHeader != null) reqBuilder.header("Authorization", authHeader);
+
+                HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 7 REST API at " + cleanUrl + ".", null);
+                } else {
+                    return new ConnectionCheckResult(false, "Camunda REST API returned HTTP status " + response.statusCode() + " from " + testEndpoint, response.body());
+                }
             } else {
-                return new ConnectionCheckResult(false, "Camunda REST API returned HTTP status " + response.statusCode() + " from " + testEndpoint, response.body());
+                // Camunda 8 REST API v2 check (/v2/topology)
+                String c8Base = cleanUrl.endsWith("/v2") ? cleanUrl : cleanUrl + "/v2";
+                String topologyEndpoint = c8Base + "/topology";
+                HttpRequest.Builder topologyBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(topologyEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .GET();
+                if (authHeader != null) topologyBuilder.header("Authorization", authHeader);
+                HttpResponse<String> topologyResp = client.send(topologyBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (topologyResp.statusCode() == 200 || topologyResp.statusCode() == 204) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 8 REST API at " + c8Base + ".", null);
+                }
+
+                // Fallback check against /process-instances/search
+                String testEndpoint = c8Base + "/process-instances/search";
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(testEndpoint))
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"page\":{\"limit\":1}}"));
+                if (authHeader != null) reqBuilder.header("Authorization", authHeader);
+
+                HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200 || response.statusCode() == 204) {
+                    return new ConnectionCheckResult(true, "Successfully connected to Camunda 8 REST API at " + c8Base + ".", null);
+                }
+
+                return new ConnectionCheckResult(false, "Camunda 8 REST API returned HTTP status " + topologyResp.statusCode() + " from " + topologyEndpoint, topologyResp.body());
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Camunda REST engine at " + cleanUrl + ": " + e.getMessage(), e.toString());
@@ -445,16 +613,106 @@ public class ConnectorCheckerService {
         }
     }
 
-    private ConnectionCheckResult checkAlfresco(Map<String, String> config) {
-        String url = config.getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
+    private ConnectionCheckResult checkAlfrescoOutput(Map<String, String> config) {
+        String baseUrl = config.getOrDefault("url", "http://localhost:8081/alfresco");
+        String authType = config.getOrDefault("authType", "basic");
         String user = config.getOrDefault("username", "admin");
         String pass = config.getOrDefault("password", "admin");
+        String bearerToken = config.getOrDefault("bearerToken", "");
+        String targetParentNodeId = config.getOrDefault("targetParentNodeId", "-root-");
+        if (targetParentNodeId == null || targetParentNodeId.isBlank()) {
+            targetParentNodeId = "-root-";
+        }
+
+        String cleanUrl = baseUrl.replaceAll("/+$", "");
+        String testUrl;
+        if (cleanUrl.contains("/nodes/")) {
+            testUrl = cleanUrl;
+        } else if (cleanUrl.contains("/api/-default-/public/alfresco/versions/1")) {
+            testUrl = cleanUrl + "/nodes/" + URLEncoder.encode(targetParentNodeId, StandardCharsets.UTF_8);
+        } else {
+            testUrl = cleanUrl + "/api/-default-/public/alfresco/versions/1/nodes/" + URLEncoder.encode(targetParentNodeId, StandardCharsets.UTF_8);
+        }
 
         try {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(URI.create(testUrl))
                     .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
+                    .GET();
+
+            if ("bearer".equalsIgnoreCase(authType) && !bearerToken.isBlank()) {
+                reqBuilder.header("Authorization", "Bearer " + bearerToken.trim());
+            } else if (user != null && !user.isBlank()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            String body = response.body() != null ? response.body().trim() : "";
+
+            if (contentType.toLowerCase().contains("text/html") || body.startsWith("<!DOCTYPE") || body.toLowerCase().startsWith("<html") || body.contains("<!doctype html")) {
+                return new ConnectionCheckResult(false,
+                        "Alfresco connection check failed: endpoint returned an HTML page (Content-Type: " + contentType + ") instead of Alfresco REST API JSON. "
+                        + "The requested URL appears to be pointing to OpenCrawling itself or another web application. "
+                        + "If running via Docker Compose, note that Alfresco is exposed on port 8081 (e.g. http://localhost:8081/alfresco) while OpenCrawling runs on port 8080.",
+                        body.length() > 500 ? body.substring(0, 500) + "..." : body);
+            }
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                try {
+                    JsonNode root = OBJECT_MAPPER.readTree(body);
+                    if (root.has("entry")) {
+                        JsonNode entry = root.get("entry");
+                        String nodeName = entry.path("name").asText(targetParentNodeId);
+                        String nodeId = entry.path("id").asText(targetParentNodeId);
+                        String nodeType = entry.path("nodeType").asText("cm:folder");
+                        return new ConnectionCheckResult(true,
+                                "Successfully connected to Alfresco Content Services at " + cleanUrl + ". Target parent node '" + targetParentNodeId + "' resolved (name: '" + nodeName + "', id: '" + nodeId + "', type: '" + nodeType + "').",
+                                body);
+                    } else {
+                        return new ConnectionCheckResult(false,
+                                "Alfresco connection check failed: endpoint returned HTTP " + response.statusCode() + " but response is missing the Alfresco 'entry' JSON object.",
+                                body);
+                    }
+                } catch (Exception parseEx) {
+                    return new ConnectionCheckResult(false,
+                            "Alfresco connection check failed: endpoint returned non-JSON payload (HTTP " + response.statusCode() + "): " + parseEx.getMessage(),
+                            body);
+                }
+            } else {
+                return new ConnectionCheckResult(false,
+                        "Alfresco Content Services returned HTTP status " + response.statusCode() + " from " + testUrl,
+                        body);
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Content Services at " + cleanUrl + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkAlfrescoRepository(Map<String, String> config) {
+        String rawUrl = config.getOrDefault("url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1");
+        String user = config.getOrDefault("username", "admin");
+        String pass = config.getOrDefault("password", "admin");
+
+        String cleanUrl = rawUrl.replaceAll("/+$", "");
+        String testUrl;
+        if (cleanUrl.contains("/nodes/")) {
+            testUrl = cleanUrl;
+        } else if (cleanUrl.contains("/api/-default-/public/alfresco/versions/1")) {
+            testUrl = cleanUrl + "/nodes/-root-";
+        } else {
+            testUrl = cleanUrl + "/api/-default-/public/alfresco/versions/1/nodes/-root-";
+        }
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(testUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
                     .GET();
 
             if (user != null && !user.isBlank()) {
@@ -463,14 +721,213 @@ public class ConnectorCheckerService {
             }
 
             HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 200 && response.statusCode() < 400) {
-                return new ConnectionCheckResult(true, "Successfully connected to Alfresco Repository at " + url + ".", null);
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            String body = response.body() != null ? response.body().trim() : "";
+
+            if (contentType.toLowerCase().contains("text/html") || body.startsWith("<!DOCTYPE") || body.toLowerCase().startsWith("<html") || body.contains("<!doctype html")) {
+                return new ConnectionCheckResult(false,
+                        "Alfresco connection check failed: endpoint returned an HTML page (Content-Type: " + contentType + ") instead of Alfresco REST API JSON. "
+                        + "The requested URL appears to be pointing to OpenCrawling itself or another web application. "
+                        + "If running via Docker Compose, note that Alfresco is exposed on port 8081 (e.g. http://localhost:8081/alfresco) while OpenCrawling runs on port 8080.",
+                        body.length() > 500 ? body.substring(0, 500) + "..." : body);
+            }
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                try {
+                    JsonNode root = OBJECT_MAPPER.readTree(body);
+                    if (root.has("entry")) {
+                        JsonNode entry = root.get("entry");
+                        String nodeName = entry.path("name").asText("-root-");
+                        String nodeId = entry.path("id").asText("-root-");
+                        return new ConnectionCheckResult(true,
+                                "Successfully connected to Alfresco Repository at " + cleanUrl + " (root node: '" + nodeName + "', id: '" + nodeId + "').",
+                                body);
+                    } else {
+                        return new ConnectionCheckResult(false,
+                                "Alfresco connection check failed: endpoint returned HTTP " + response.statusCode() + " but response is missing the Alfresco 'entry' JSON object.",
+                                body);
+                    }
+                } catch (Exception parseEx) {
+                    return new ConnectionCheckResult(false,
+                            "Alfresco connection check failed: endpoint returned non-JSON payload (HTTP " + response.statusCode() + "): " + parseEx.getMessage(),
+                            body);
+                }
             } else {
-                return new ConnectionCheckResult(false, "Alfresco Repository returned HTTP status " + response.statusCode() + " from " + url, response.body());
+                return new ConnectionCheckResult(false,
+                        "Alfresco Repository returned HTTP status " + response.statusCode() + " from " + testUrl,
+                        body);
             }
         } catch (Exception e) {
-            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + url + ": " + e.getMessage(), e.toString());
+            return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + cleanUrl + ": " + e.getMessage(), e.toString());
         }
+    }
+
+    private ConnectionCheckResult checkDoxisOutput(Map<String, String> config) {
+        DoxisOutputProperties props = DoxisConnectorSettings.fromConfiguration(config);
+        if (props.customerName() == null || props.username() == null || props.password() == null) {
+            return new ConnectionCheckResult(false, "Doxis customer name, username and password must be configured.", null);
+        }
+        DoxisClient client = new DoxisClient(props.baseUrl(), props.customerName(), props.username(), props.password(),
+                props.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(10), 0);
+        try (client) {
+            JsonNode user = client.getLoggedInUser();
+            StringBuilder message = new StringBuilder("Successfully logged in to Doxis CSB at " + client.getBaseUrl()
+                    + " as " + user.path("name").asText(props.username()) + " (customer '" + props.customerName() + "')");
+            if (props.repository() != null && !props.repository().isBlank()) {
+                JsonNode repository = client.getRepository(props.repository());
+                message.append("; repository '").append(repository.path("name").asText(props.repository())).append("' is accessible");
+            }
+            return new ConnectionCheckResult(true, message + ".", user.path("uuid").asText(null));
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + props.baseUrl() + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkDoxisRepository(Map<String, String> config) {
+        DoxisProperties settings = DoxisProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "Doxis repository connector is not configured: " + String.join(" ", problems)
+                    + " " + DoxisRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        DoxisClient client = DoxisRepositoryConnector.newClient(settings, "OpenCrawling-ConnectionCheck", Duration.ofSeconds(30), 0);
+        try (client) {
+            JsonNode repository = client.getRepository(settings.repositoryId());
+            String shortName = repository.path("shortName").asText(repository.path("name").asText(settings.repositoryId()));
+            return new ConnectionCheckResult(true, "Successfully logged in to Doxis CSB at " + client.getBaseUrl() + " (customer '"
+                    + settings.customerName() + "'); repository '" + shortName + "' is accessible. " + DoxisRepositoryConnector.LICENCE_NOTICE,
+                    repository.path("uuid").asText(null));
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + settings.url() + ": " + e.getMessage() + " "
+                    + DoxisRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    /**
+     * Acquires an app-only token, resolves the site and lists its document libraries: proves the app registration, its
+     * secret and its Sites.Read.All / Sites.Selected access in one go.
+     */
+    private ConnectionCheckResult checkSharePointRepository(Map<String, String> config) {
+        SharePointProperties settings = SharePointProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "SharePoint repository connector is not configured: " + String.join(" ", problems)
+                    + " " + SharePointRepositoryConnector.PREREQUISITES_NOTICE, null);
+        }
+        try {
+            GraphClient client = new GraphClient(settings);
+            JsonNode site = settings.siteId() != null ? client.getSite(settings.siteId())
+                    : client.getSiteByPath(settings.hostname(), settings.sitePath());
+            List<String> libraries = client.listDrives(site.path("id").asText()).stream()
+                    .filter(d -> "documentLibrary".equalsIgnoreCase(d.path("driveType").asText("documentLibrary")))
+                    .map(d -> d.path("name").asText()).toList();
+            List<String> missing = settings.driveNames().stream()
+                    .filter(name -> libraries.stream().noneMatch(l -> l.equalsIgnoreCase(name))).toList();
+            if (!missing.isEmpty()) {
+                return new ConnectionCheckResult(false, "Connected to SharePoint site '" + site.path("displayName").asText()
+                        + "', but it has no document library named " + missing + "; it has " + libraries + ".", null);
+            }
+            return new ConnectionCheckResult(true, "Successfully authenticated to Microsoft Graph; SharePoint site '"
+                    + site.path("displayName").asText(site.path("webUrl").asText()) + "' is accessible with " + libraries.size()
+                    + " document libraries " + libraries + ".", site.path("id").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to SharePoint through " + settings.graphUrl() + ": "
+                    + e.getMessage() + " " + SharePointRepositoryConnector.PREREQUISITES_NOTICE, e.toString());
+        }
+    }
+
+    /**
+     * Logs in (vault-scoped token, credential headers or bearer), reads the session's vault and lists its object types: a
+     * vault-level call, so an anonymous or server-level token fails here instead of on the first crawl.
+     */
+    private ConnectionCheckResult checkMFilesRepository(Map<String, String> config) {
+        MFilesProperties settings = MFilesProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "M-Files repository connector is not configured: " + String.join(" ", problems)
+                    + " " + MFilesRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        try (MFilesClient client = MFilesRepositoryConnector.newClient(settings, Duration.ofSeconds(30), 0)) {
+            client.login();
+            JsonNode vault = client.getVault();
+            int objectTypes = MFilesClient.items(client.getObjectTypes()).size();
+            return new ConnectionCheckResult(true, "Successfully authenticated to M-Files at " + client.getBaseUrl() + "; vault '"
+                    + vault.path("Name").asText(settings.vaultGuid()) + "' is accessible (" + objectTypes + " object types). "
+                    + MFilesRepositoryConnector.LICENCE_NOTICE, vault.path("GUID").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to M-Files at " + settings.url() + ": " + e.getMessage() + " "
+                    + MFilesRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    /**
+     * Reads the Content Services GraphQL API information and the configured object store in one query: wrong credentials,
+     * a missing XSRF acceptance or an unknown object store fail here instead of on the first crawl.
+     */
+    private ConnectionCheckResult checkFileNetRepository(Map<String, String> config) {
+        FileNetProperties settings = FileNetProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "FileNet repository connector is not configured: " + String.join(" ", problems)
+                    + " " + FileNetRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        try {
+            FileNetClient client = FileNetRepositoryConnector.newClient(FileNetProperties.fromConfiguration(withNoRetries(config)));
+            JsonNode info = FileNetRepositoryConnector.connectionInfo(client, settings);
+            JsonNode store = info.path("objectStore");
+            return new ConnectionCheckResult(true, "Successfully authenticated to the FileNet Content Services GraphQL API "
+                    + info.path("_apiInfo").path("productVersion").asText("") + " at " + settings.url() + "; object store '"
+                    + store.path("symbolicName").asText(settings.objectStore()) + "' is accessible. "
+                    + FileNetRepositoryConnector.LICENCE_NOTICE, store.path("id").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to FileNet at " + settings.url() + ": " + e.getMessage()
+                    + " " + FileNetRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    /**
+     * Reads the repository resource and runs one DQL query (in folder crawl mode, the root path's lookup): a wrong URL,
+     * wrong credentials, an unknown repository or a missing folder fail here instead of on the first crawl.
+     */
+    private ConnectionCheckResult checkDocumentumRepository(Map<String, String> config) {
+        DocumentumProperties settings = DocumentumProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false, "Documentum repository connector is not configured: "
+                    + String.join(" ", problems) + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, null);
+        }
+        try {
+            DocumentumClient client = DocumentumRepositoryConnector.newClient(
+                    DocumentumProperties.fromConfiguration(withNoRetries(config)));
+            DocumentumRepositoryConnector.Info info = DocumentumRepositoryConnector.connectionInfo(client, settings);
+            JsonNode repository = info.repository();
+            return new ConnectionCheckResult(true, "Successfully authenticated to Documentum REST Services at " + settings.url()
+                    + "; repository '" + repository.path("name").asText(settings.repository()) + "' (Content Server "
+                    + repository.path("servers").path(0).path("version").asText("?") + ", server time zone offset "
+                    + info.serverOffset().getId() + ") is accessible. " + DocumentumRepositoryConnector.LICENCE_NOTICE,
+                    repository.path("id").asText(null));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false, "Failed to connect to Documentum at " + settings.url() + ": "
+                    + e.getMessage() + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    private static Map<String, String> withNoRetries(Map<String, String> config) {
+        Map<String, String> c = new java.util.HashMap<>(config);
+        c.put("maxRetries", "0");
+        return c;
     }
 
     private ConnectionCheckResult checkCmis(Map<String, String> config) {
@@ -500,6 +957,47 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to CMIS endpoint at " + endpointUrl + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkOpenArch(Map<String, String> config) {
+        String endpointUrl = config.getOrDefault("endpointUrl",
+                config.getOrDefault("url", "http://localhost:8080"));
+        if (endpointUrl.endsWith("/")) {
+            endpointUrl = endpointUrl.substring(0, endpointUrl.length() - 1);
+        }
+        String repoId = config.getOrDefault("repositoryId", "default");
+        String user = config.getOrDefault("username", "Administrator");
+        String pass = config.getOrDefault("password", "Administrator");
+
+        try {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            URI uri = URI.create(endpointUrl + "/api/query");
+            String queryJson = "{\"repositoryId\":\"" + repoId + "\",\"query\":\"SELECT * FROM SysContent\",\"limit\":1}";
+
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .header("X-HXCS-Repository", repoId)
+                    .POST(HttpRequest.BodyPublishers.ofString(queryJson));
+
+            if (user != null && !user.isBlank()) {
+                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                reqBuilder.header("Authorization", "Basic " + credentials);
+            }
+
+            HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return new ConnectionCheckResult(true, "Successfully connected to Hyland OpenArch endpoint at " + endpointUrl + " (Repository: " + repoId + ").", response.body());
+            } else if (response.statusCode() == 404) {
+                return new ConnectionCheckResult(true, "Hyland OpenArch server reachable at " + endpointUrl + ", endpoint returned 404.", response.body());
+            } else {
+                return new ConnectionCheckResult(false, "Hyland OpenArch returned HTTP status " + response.statusCode() + " from " + endpointUrl, response.body());
+            }
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Hyland OpenArch at " + endpointUrl + ": " + e.getMessage(), e.toString());
         }
     }
 
@@ -610,27 +1108,6 @@ public class ConnectorCheckerService {
         }
     }
 
-    private ConnectionCheckResult checkDoxis(Map<String, String> config) {
-        DoxisOutputProperties props = DoxisConnectorSettings.fromConfiguration(config);
-        if (props.customerName() == null || props.username() == null || props.password() == null) {
-            return new ConnectionCheckResult(false, "Doxis customer name, username and password must be configured.", null);
-        }
-        DoxisClient client = new DoxisClient(props.baseUrl(), props.customerName(), props.username(), props.password(),
-                props.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(10), 0);
-        try (client) {
-            JsonNode user = client.getLoggedInUser();
-            StringBuilder message = new StringBuilder("Successfully logged in to Doxis CSB at " + client.getBaseUrl()
-                    + " as " + user.path("name").asText(props.username()) + " (customer '" + props.customerName() + "')");
-            if (props.repository() != null && !props.repository().isBlank()) {
-                JsonNode repository = client.getRepository(props.repository());
-                message.append("; repository '").append(repository.path("name").asText(props.repository())).append("' is accessible");
-            }
-            return new ConnectionCheckResult(true, message + ".", user.path("uuid").asText(null));
-        } catch (Exception e) {
-            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + props.baseUrl() + ": " + e.getMessage(), e.toString());
-        }
-    }
-
     private ConnectionCheckResult checkSeaTunnel(Map<String, String> config) {
         String endpoint = config.getOrDefault("seaTunnelRestUrl", config.getOrDefault("restUrl", "http://localhost:8080"));
         String cleanEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
@@ -696,6 +1173,49 @@ public class ConnectorCheckerService {
         }
     }
 
+    private ConnectionCheckResult checkGrpcPush(Map<String, String> config) {
+        String host = config.getOrDefault("host", "localhost");
+        int port = 9096;
+        try {
+            port = Integer.parseInt(config.getOrDefault("port", config.getOrDefault("listenerPort", "9096")));
+        } catch (NumberFormatException ignored) {}
+
+        io.grpc.ManagedChannel channel = null;
+        try {
+            channel = io.grpc.ManagedChannelBuilder.forAddress(host, port)
+                    .usePlaintext()
+                    .build();
+
+            org.opencrawling.push.v1.OisPushServiceGrpc.OisPushServiceBlockingStub stub =
+                    org.opencrawling.push.v1.OisPushServiceGrpc.newBlockingStub(channel)
+                            .withDeadlineAfter(3, java.util.concurrent.TimeUnit.SECONDS);
+
+            org.opencrawling.push.v1.PingResponse response = stub.ping(
+                    org.opencrawling.push.v1.PingRequest.newBuilder()
+                            .setClientId("admin-ui-diagnostic-check")
+                            .build()
+            );
+
+            return new ConnectionCheckResult(
+                    true,
+                    "gRPC Push listener ready at " + host + ":" + port + " (Status: " + response.getStatus() + ", Version: " + response.getVersion() + ")",
+                    "Server epoch time: " + response.getServerTime()
+            );
+        } catch (Exception e) {
+            return new ConnectionCheckResult(
+                    false,
+                    "Failed to connect to gRPC Push listener at " + host + ":" + port + ": " + e.getMessage(),
+                    e.toString()
+            );
+        } finally {
+            if (channel != null) {
+                try {
+                    channel.shutdownNow().awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
     private ConnectionCheckResult checkGenericUrlOrHost(Map<String, String> config) {
         for (Map.Entry<String, String> entry : config.entrySet()) {
             String val = entry.getValue();
@@ -713,9 +1233,13 @@ public class ConnectorCheckerService {
         return new ConnectionCheckResult(true, "Connector configuration structure validated.", null);
     }
 
+    @Schema(description = "Result of connector live connectivity test")
     public static record ConnectionCheckResult(
+        @Schema(description = "Whether the target connection test succeeded", example = "true")
         boolean success,
+        @Schema(description = "Diagnostic status summary message", example = "Successfully reached endpoint.")
         String message,
+        @Schema(description = "Detailed exception trace or error context if connection failed", example = "null")
         String details
     ) {}
 }

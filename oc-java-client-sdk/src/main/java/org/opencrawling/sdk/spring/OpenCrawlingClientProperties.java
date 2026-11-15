@@ -50,6 +50,12 @@ public class OpenCrawlingClientProperties {
      */
     private Duration readTimeout = Duration.ofSeconds(30);
 
+    /**
+     * OAuth 2.0 client credentials: when {@code client-id} is set, the client gets and renews its own tokens instead
+     * of using {@code bearer-token}.
+     */
+    private final OAuth2 oauth2 = new OAuth2();
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -88,5 +94,60 @@ public class OpenCrawlingClientProperties {
 
     public void setReadTimeout(Duration readTimeout) {
         this.readTimeout = readTimeout;
+    }
+    public OAuth2 getOauth2() {
+        return oauth2;
+    }
+
+    /** OAuth 2.0 client credentials ({@code opencrawling.client.oauth2.*}). */
+    public static class OAuth2 {
+
+        /** The identity provider's token endpoint. */
+        private String tokenUri;
+
+        /** The client's id. Blank: no client credentials. */
+        private String clientId;
+
+        /** The client's secret. Take it from the environment or a secret store, never from a committed file. */
+        private String clientSecret;
+
+        /** Optional scopes to ask for. */
+        private String scope;
+
+        public String getTokenUri() {
+            return tokenUri;
+        }
+
+        public void setTokenUri(String tokenUri) {
+            this.tokenUri = tokenUri;
+        }
+
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        public String getClientSecret() {
+            return clientSecret;
+        }
+
+        public void setClientSecret(String clientSecret) {
+            this.clientSecret = clientSecret;
+        }
+
+        public String getScope() {
+            return scope;
+        }
+
+        public void setScope(String scope) {
+            this.scope = scope;
+        }
+
+        public boolean isConfigured() {
+            return clientId != null && !clientId.isBlank();
+        }
     }
 }

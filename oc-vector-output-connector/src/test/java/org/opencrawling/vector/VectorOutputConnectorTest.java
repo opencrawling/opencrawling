@@ -70,7 +70,61 @@ class VectorOutputConnectorTest {
         assertFalse(addedChunks.isEmpty());
         assertNotNull(addedChunks.get(0).getMetadata().get("embedding"));
         assertArrayEquals(mockEmbedding, (float[]) addedChunks.get(0).getMetadata().get("embedding"));
+        assertEquals(List.of(), addedChunks.get(0).getMetadata().get("security_allowed_read"));
+    }
+
+    @Test
+    void testSendWithPublicSecurityConfigPopulatesPublicAllowedRead() {
+        byte[] content = "Public content test.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-pub");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of("mimeType", List.of("text/plain")));
+        when(repoDoc.uri()).thenReturn("file://doc-pub");
+        when(repoDoc.acl()).thenReturn("public");
+        when(repoDoc.security()).thenReturn(org.opencrawling.core.security.SecurityConfig.createPublic());
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+
+        connector.send(repoDoc).block();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore, atLeastOnce()).add(captor.capture());
+
+        List<Document> addedChunks = captor.getValue();
         assertEquals(List.of("public"), addedChunks.get(0).getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("public"), addedChunks.get(0).getMetadata().get("security_read_keys"));
+    }
+
+    @Test
+    void testRestrictiveAclOverridesDefaultPublicSecurity() {
+        byte[] content = "Restricted content behind a default public placeholder.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-override");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of("mimeType", List.of("text/plain")));
+        when(repoDoc.uri()).thenReturn("file://doc-override");
+        when(repoDoc.acl()).thenReturn("alice");
+        when(repoDoc.security()).thenReturn(org.opencrawling.core.security.SecurityConfig.createPublic());
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+
+        connector.send(repoDoc).block();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore, atLeastOnce()).add(captor.capture());
+
+        Map<String, Object> metadata = captor.getValue().get(0).getMetadata();
+        // Before EffectiveAcl this indexed [public, alice], making the document readable by everyone.
+        assertEquals(List.of("alice"), metadata.get("security_allowed_read"));
+        org.opencrawling.core.security.SecurityConfig stored =
+                (org.opencrawling.core.security.SecurityConfig) metadata.get("security");
+        assertEquals(List.of("alice"), stored.permissions().stream()
+                .map(org.opencrawling.core.security.PermissionRule::identity).toList());
     }
 
     @Test
@@ -105,9 +159,44 @@ class VectorOutputConnectorTest {
         List<Document> addedChunks = captor.getValue();
         assertFalse(addedChunks.isEmpty());
         Document chunk = addedChunks.get(0);
-        assertEquals(List.of("user1", "group1"), chunk.getMetadata().get("security_allowed_read"));
-        assertEquals(List.of("bad_user"), chunk.getMetadata().get("security_denied_read"));
+        assertEquals(List.of("user:user1", "group:group1"), chunk.getMetadata().get("security_allowed_read"));
+        assertEquals(List.of("u:user1", "g:group1"), chunk.getMetadata().get("security_read_keys"));
+        assertEquals(List.of("user:bad_user"), chunk.getMetadata().get("security_denied_read"));
         assertEquals(false, chunk.getMetadata().get("security_inheritance"));
         assertEquals(List.of("proc-1234"), chunk.getMetadata().get("flowable_proc_inst_id"));
+    }
+
+    @Test
+    void testSendWithFlowableCollocatedSchemaUpdatesDedicatedColumns() {
+        org.springframework.jdbc.core.JdbcTemplate mockJdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        VectorOutputConnector collocatedConnector = new VectorOutputConnector(
+                vectorStore,
+                embeddingModel,
+                mockJdbc,
+                true
+        );
+
+        assertTrue(collocatedConnector.isFlowableCollocatedSchema());
+        assertEquals("vector_store", collocatedConnector.getVectorTableName());
+
+        byte[] content = "Content for flowable collocated schema testing.".getBytes();
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn("doc-flowable-1");
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream(content));
+        when(repoDoc.metadata()).thenReturn(Map.of(
+                "flowable_scope_id", List.of("proc-scope-777"),
+                "flowable_scope_type", List.of("bpmn"),
+                "mimeType", List.of("text/plain")
+        ));
+        when(repoDoc.uri()).thenReturn("flowable://process-instances/proc-scope-777");
+        when(repoDoc.acl()).thenReturn("public");
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f, 0.3f});
+
+        collocatedConnector.send(repoDoc).block();
+
+        verify(vectorStore).add(anyList());
+        verify(mockJdbc).batchUpdate(contains("UPDATE vector_store SET scope_id_ = ?, scope_type_ = ?"), anyList());
     }
 }

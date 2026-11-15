@@ -78,7 +78,7 @@ services:
       retries: 5
 
   ollama:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-decoupled
     ports:
       - "11434:11434"
@@ -93,9 +93,9 @@ services:
       retries: 3
 
   ollama-model-puller:
-    image: ollama/ollama:0.23.4
+    image: ollama/ollama:0.40.5
     container_name: ollama-model-puller-decoupled
-    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm && ollama pull llama3.2"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull mxbai-embed-large && ollama pull nomic-embed-text && ollama pull all-minilm"]
     environment:
       - OLLAMA_HOST=ollama:11434
     networks:
@@ -198,6 +198,7 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_MAIN_WEB_APPLICATION_TYPE=none
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
@@ -210,8 +211,11 @@ services:
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
     volumes:
       - ./oc-runtime/data:/data  # Mount sample files directory
+      - opencrawling-claims:/claims
+      - opencrawling-reportsdata:/data/reports
     depends_on:
       - kafka
       - postgres
@@ -234,6 +238,7 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_USERNAME=opencrawling
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
       # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
       - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
@@ -245,8 +250,10 @@ services:
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
     volumes:
       - ./oc-runtime/data:/data  # Needs access to resolve local claim check file URIs
+      - opencrawling-claims:/claims
     depends_on:
       - kafka
       - postgres
@@ -317,6 +324,7 @@ services:
     ports:
       - "8080:8080"
       - "9095:9095"
+      - "9096:9096"
     environment:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/opencrawling
       - SPRING_DATASOURCE_USERNAME=opencrawling
@@ -329,12 +337,30 @@ services:
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_OLLAMA_EMBEDDING_OPTIONS_MODEL=mxbai-embed-large
+      - SPRING_AI_MCP_SERVER_PROTOCOL=${SPRING_AI_MCP_SERVER_PROTOCOL:-STREAMABLE}
+      - SPRING_AI_MCP_SERVER_ANNOTATION_SCANNER_ENABLED=true
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_STORE=${SPRING_OPENCRAWLING_CLAIM_CHECK_STORE:-local}
+      # Ozone claim-check transport: NATIVE (default, Ozone RPC to the OM + datanodes) or S3 (S3 Gateway HTTP).
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE=${SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_CLIENT_TYPE:-NATIVE}
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_HOST=om
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_OM_PORT=9862
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_OZONE_S3_ENDPOINT=http://s3g:9878
+      - SPRING_OPENCRAWLING_CLAIM_CHECK_LOCAL_DIR=/claims
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+      - OPENCRAWLING_INGEST_OIS_TOKEN=${OPENCRAWLING_INGEST_OIS_TOKEN:-}
+      - OPENCRAWLING_GRPC_PUSH_ENABLED=${OPENCRAWLING_GRPC_PUSH_ENABLED:-true}
+      - OPENCRAWLING_GRPC_PUSH_PORT=${OPENCRAWLING_GRPC_PUSH_PORT:-9096}
+      - OPENCRAWLING_GRPC_PUSH_TOKEN=${OPENCRAWLING_GRPC_PUSH_TOKEN:-}
+    volumes:
+      - opencrawling-claims:/claims  # Local claim check files, shared with oc-ingestion-consumer
+      - opencrawling-reportsdata:/data/reports
     depends_on:
       - postgres
       - redis
+      - ollama
     networks:
       opencrawling-network:
         aliases:
@@ -369,3 +395,7 @@ volumes:
     name: opencrawling-ollamadata
   opencrawling-kafkadata:
     name: opencrawling-kafkadata
+  opencrawling-claims:
+    name: opencrawling-claims
+  opencrawling-reportsdata:
+    name: opencrawling-reportsdata

@@ -44,8 +44,8 @@ class QdrantPointMapperTest {
 
         Map<String, Value> payload = point.getPayloadMap();
         assertThat(payload.get(QdrantFields.FIELD_SECURITY_INHERITANCE).getBoolValue()).isTrue();
-        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user1", "group1");
-        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_DENIED_READ))).containsExactly("baduser");
+        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_ALLOWED_READ))).containsExactlyInAnyOrder("user:user1", "group:group1");
+        assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_DENIED_READ))).containsExactly("user:baduser");
         assertThat(payload.get(QdrantFields.FIELD_TEXT).getStringValue()).isEqualTo("hello world");
         assertThat(payload.get(QdrantFields.FIELD_CHUNK_ID).getStringValue()).isEqualTo("doc-1_chunk-0");
     }
@@ -66,6 +66,49 @@ class QdrantPointMapperTest {
         assertThat(payload.get(QdrantFields.FIELD_SECURITY_INHERITANCE).getBoolValue()).isFalse();
         assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_ALLOWED_READ))).containsExactly("hr-group");
         assertThat(valuesOf(payload.get(QdrantFields.FIELD_SECURITY_DENIED_READ))).containsExactly("external-user");
+    }
+
+    @Test
+    void adminGrantsReadAndPublicTypedRulesBecomePublic() {
+        SecurityConfig security = new SecurityConfig(false, List.of(
+                new PermissionRule("site-managers", "group", "Site Managers", "admin"),
+                new PermissionRule("GROUP_EVERYONE", "public", "Everyone", "read")
+        ));
+
+        PointStruct point = mapper.toPoint("doc-3_chunk-0", "text", "file:///doc-3.txt", "secured",
+                "now", security, new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("group:site-managers", "public");
+    }
+
+    @Test
+    void legacyAclAloneIsIndexedAsAllowedReaders() {
+        PointStruct point = mapper.toPoint("doc-4_chunk-0", "text", "file:///doc-4.txt", "finance,read",
+                "now", null, new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("finance");
+    }
+
+    @Test
+    void restrictiveAclOverridesTheDefaultPublicPlaceholder() {
+        PointStruct point = mapper.toPoint("doc-5_chunk-0", "text", "file:///doc-5.txt", "finance",
+                "now", SecurityConfig.createPublic(), new float[]{0.1f}, Map.of());
+
+        assertThat(valuesOf(point.getPayloadMap().get(QdrantFields.FIELD_SECURITY_ALLOWED_READ)))
+                .containsExactly("finance");
+    }
+
+    @Test
+    void mapsDocumentIdToPayload() {
+        PointStruct pointWithArg = mapper.toPoint("doc-parent-10", "doc-parent-10_chunk-0", "text", "file:///doc.txt", "public",
+                "now", null, new float[]{0.1f}, Map.of());
+        assertThat(pointWithArg.getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue()).isEqualTo("doc-parent-10");
+
+        PointStruct pointWithMeta = mapper.toPoint("doc-parent-20_chunk-0", "text", "file:///doc.txt", "public",
+                "now", null, new float[]{0.1f}, Map.of("documentId", "doc-parent-20"));
+        assertThat(pointWithMeta.getPayloadMap().get(QdrantFields.FIELD_DOCUMENT_ID).getStringValue()).isEqualTo("doc-parent-20");
     }
 
     @Test

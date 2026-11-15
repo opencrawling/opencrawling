@@ -110,7 +110,7 @@ public class OpenCrawlingTestTopology {
 
     public static void main(String[] args) throws Exception {
         String topologyName = args.length > 0 && !args[0].isBlank() ? args[0] : DEFAULT_TOPOLOGY_NAME;
-        String endpoint = args.length > 1 && !args[1].isBlank() ? args[1] : "http://localhost:8080/api/v1/ingest/ois";
+        String endpoint = args.length > 1 && !args[1].isBlank() ? args[1] : "http://localhost:8080/api/v1/ingest/ois/1";
         String transportMode = args.length > 2 && !args[2].isBlank() ? args[2] : "MEMORY";
 
         log.info("Configuring OpenCrawlingTestTopology: name='{}', endpoint='{}', transport='{}'",

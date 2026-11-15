@@ -16,14 +16,22 @@
 package org.opencrawling.core.text;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.metadata.Property;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -45,6 +53,9 @@ class PipesForkTextExtractorTest {
             assertTrue(result.success());
             assertTrue(result.text().contains("Hello OpenCrawling"));
             assertFalse(result.trimmed());
+            assertFalse(extractor.isForkActive());
+            assertTrue(extractor.isHealthy());
+            assertEquals("In-Process Embedded Tika", extractor.getEngineName());
         }
     }
 
@@ -55,7 +66,11 @@ class PipesForkTextExtractorTest {
         props.setTimeoutMs(15000);
 
         try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
-            String sample = "Apache Tika 4.1.0 process-isolated parsing via PipesForkParser!";
+            assertTrue(extractor.isForkActive(), "Forked process parser must be active");
+            assertTrue(extractor.isHealthy());
+            assertEquals("PipesForkParser (Process-Isolated)", extractor.getEngineName());
+
+            String sample = "Apache Tika 4.2.0 process-isolated parsing via PipesForkParser!";
             byte[] bytes = sample.getBytes(StandardCharsets.UTF_8);
 
             TextExtractionResult result = extractor.extractText(
@@ -65,6 +80,7 @@ class PipesForkTextExtractorTest {
 
             assertTrue(result.success());
             assertTrue(result.text().contains("PipesForkParser"));
+            assertEquals("4.2.0", extractor.getVersion());
         }
     }
 
@@ -99,6 +115,84 @@ class PipesForkTextExtractorTest {
             assertTrue(resultNullStream.success());
             assertEquals("", resultNullStream.text());
         }
+    }
+
+    @Test
+    void testEmbeddedDocumentExtraction() throws IOException {
+        byte[] zipBytes = createSampleZipBytes();
+
+        // 1. With extractEmbedded = true (default)
+        TextExtractionProperties propsEnabled = new TextExtractionProperties();
+        propsEnabled.setForkEnabled(false);
+        propsEnabled.setExtractEmbedded(true);
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(propsEnabled)) {
+            TextExtractionResult result = extractor.extractText(zipBytes, Map.of("mimeType", List.of("application/zip")));
+            assertTrue(result.success());
+            assertTrue(result.text().contains("First embedded file inside zip"), "Nested zip entries should be extracted");
+            assertTrue(result.text().contains("Second embedded file inside zip"), "Nested zip entries should be extracted");
+        }
+
+        // 2. With extractEmbedded = false
+        TextExtractionProperties propsDisabled = new TextExtractionProperties();
+        propsDisabled.setForkEnabled(false);
+        propsDisabled.setExtractEmbedded(false);
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(propsDisabled)) {
+            TextExtractionResult result = extractor.extractText(zipBytes, Map.of("mimeType", List.of("application/zip")));
+            assertTrue(result.success());
+            assertFalse(result.text().contains("First embedded file inside zip"), "Nested zip entries should not be extracted when extractEmbedded=false");
+        }
+    }
+
+    @Test
+    void testWriteLimitTruncation() {
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(false);
+        props.setWriteLimit(20);
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
+            String longContent = "This is a very long text stream that definitely exceeds the configured write limit of 20 characters.";
+            byte[] bytes = longContent.getBytes(StandardCharsets.UTF_8);
+
+            TextExtractionResult result = extractor.extractText(bytes, Map.of("mimeType", List.of("text/plain")));
+            assertTrue(result.success());
+            assertTrue(result.trimmed(), "Result must be marked trimmed when write limit is reached");
+            assertTrue(result.text().length() <= 30, "Text length should be constrained by writeLimit");
+        }
+    }
+
+    @Test
+    void testNoOpTextExtractionService() {
+        TextExtractionService noop = TextExtractionService.noop();
+        assertFalse(noop.isForkActive());
+        assertTrue(noop.isHealthy());
+        assertEquals("No-Op / Plain Text Fallback", noop.getEngineName());
+        assertEquals("N/A", noop.getVersion());
+
+        // Plain text should succeed
+        byte[] textBytes = "Plain text for noop".getBytes(StandardCharsets.UTF_8);
+        TextExtractionResult textRes = noop.extractText(textBytes, Map.of("mimeType", List.of("text/plain")));
+        assertTrue(textRes.success());
+        assertEquals("Plain text for noop", textRes.text());
+
+        // Binary content without plain text mime should return empty text
+        byte[] binBytes = new byte[]{0x1F, (byte) 0x8B, 0x08, 0x00};
+        TextExtractionResult binRes = noop.extractText(binBytes, Map.of("mimeType", List.of("application/octet-stream")));
+        assertTrue(binRes.success());
+        assertEquals("", binRes.text());
+    }
+
+    @Test
+    void testCleanProcessTerminationOnClose() {
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(true);
+        props.setTimeoutMs(15000);
+
+        PipesForkTextExtractor extractor = new PipesForkTextExtractor(props);
+        assertTrue(extractor.isForkActive());
+        extractor.close();
+        assertFalse(extractor.isForkActive(), "Child fork parser should be null/inactive after close()");
     }
 
     @Test
@@ -143,5 +237,143 @@ class PipesForkTextExtractorTest {
         assertFalse(Files.exists(escapedMaliciousFile), "Malicious zip entry must not escape destination directory");
         assertFalse(Files.exists(extractDir.resolve("escaped.jar")), "Malicious zip entry with path traversal must be rejected");
         assertFalse(Files.exists(extractDir.resolve("App.class")), "Non-jar entry should not be extracted");
+    }
+
+    @Test
+    void testResolveOuterJarPathAndUrlParsing(@TempDir Path tempDir) throws Exception {
+        Path jarFile = tempDir.resolve("myapp-fat.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarFile))) {
+            jos.putNextEntry(new JarEntry("BOOT-INF/lib/sample.jar"));
+            jos.write("bytes".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+
+        String absPath = jarFile.toAbsolutePath().toString();
+
+        // 1. Spring Boot 4 / 3.2+ jar:nested format
+        String springBoot4Nested = "jar:nested:" + absPath + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved1 = PipesForkTextExtractor.parseJarPathFromUrlSpec(springBoot4Nested);
+        assertNotNull(resolved1);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved1);
+
+        // 2. Spring Boot nested format without leading jar:
+        String nestedOnly = "nested:" + absPath + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved2 = PipesForkTextExtractor.parseJarPathFromUrlSpec(nestedOnly);
+        assertNotNull(resolved2);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved2);
+
+        // 3. Spring Boot jar:file format
+        String jarFileUrl = "jar:file:" + absPath + "!/BOOT-INF/lib/sample.jar!/";
+        Path resolved3 = PipesForkTextExtractor.parseJarPathFromUrlSpec(jarFileUrl);
+        assertNotNull(resolved3);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved3);
+
+        // 4. Direct file URL
+        Path resolved4 = PipesForkTextExtractor.resolveOuterJarPath(jarFile.toUri().toURL());
+        assertNotNull(resolved4);
+        assertEquals(jarFile.toAbsolutePath().normalize(), resolved4);
+
+        // 5. URL with percent-encoded spaces
+        Path dirWithSpaces = tempDir.resolve("folder with spaces");
+        Files.createDirectories(dirWithSpaces);
+        Path jarWithSpaces = dirWithSpaces.resolve("app-space.jar");
+        Files.copy(jarFile, jarWithSpaces);
+
+        String encodedUrl = "jar:nested:" + jarWithSpaces.toUri().toURL().getPath() + "/!BOOT-INF/lib/sample.jar!/";
+        Path resolved5 = PipesForkTextExtractor.parseJarPathFromUrlSpec(encodedUrl);
+        assertNotNull(resolved5);
+        assertEquals(jarWithSpaces.toAbsolutePath().normalize(), resolved5);
+
+        // 6. Non-existent path or empty spec returns null
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec(null));
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec(""));
+        assertNull(PipesForkTextExtractor.parseJarPathFromUrlSpec("jar:file:/non/existent/path.jar!/BOOT-INF/lib/a.jar"));
+    }
+
+    @Test
+    void testIsFatJarDetection(@TempDir Path tempDir) throws IOException {
+        Path fatJar = tempDir.resolve("fat.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(fatJar))) {
+            jos.putNextEntry(new JarEntry("BOOT-INF/lib/lib.jar"));
+            jos.write("data".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+        assertTrue(PipesForkTextExtractor.isFatJar(fatJar), "Jar containing BOOT-INF/lib/ should be detected as fat jar");
+
+        Path thinJar = tempDir.resolve("thin.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(thinJar))) {
+            jos.putNextEntry(new JarEntry("org/example/App.class"));
+            jos.write("class".getBytes(StandardCharsets.UTF_8));
+            jos.closeEntry();
+        }
+        assertFalse(PipesForkTextExtractor.isFatJar(thinJar), "Plain jar without BOOT-INF should not be detected as fat jar");
+        assertFalse(PipesForkTextExtractor.isFatJar(null));
+        assertFalse(PipesForkTextExtractor.isFatJar(tempDir.resolve("non-existent.jar")));
+    }
+
+    @Test
+    void testPipesForkLifecycleFailureFallback() {
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(true);
+        props.setTimeoutMs(15000);
+        props.setJvmArgs(List.of("-XX:+NonExistentJvmFlagFailsStartup"));
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
+            // When native pipesForkParser.start() fails fast due to bad JVM args, fallback kicks in
+            assertFalse(extractor.isForkActive());
+            assertFalse(extractor.isHealthy(), "Service is degraded when requested fork fails to start");
+            assertEquals("In-Process Embedded Tika", extractor.getEngineName());
+
+            // Extraction should still succeed via embedded fallback
+            String sample = "Testing graceful fallback after fork initialization failure.";
+            TextExtractionResult result = extractor.extractText(
+                    sample.getBytes(StandardCharsets.UTF_8),
+                    Map.of("mimeType", List.of("text/plain"))
+            );
+            assertTrue(result.success());
+            assertTrue(result.text().contains("Testing graceful fallback"));
+        }
+    }
+
+    @Test
+    void testUtcDateNormalizationAndMetadataExtraction() {
+        // Tika 4.2.0 parses zone-less dates as UTC (TIKA-4917)
+        Metadata md = new Metadata();
+        md.set("custom_date", "2026-10-25T14:30:00");
+        Date parsedDate = md.getDate(Property.externalDate("custom_date"));
+        assertNotNull(parsedDate);
+        Instant instant = parsedDate.toInstant();
+        assertEquals(Instant.parse("2026-10-25T14:30:00Z"), instant);
+
+        // Verify metadata extraction via extractor
+        TextExtractionProperties props = new TextExtractionProperties();
+        props.setForkEnabled(false);
+        props.setExtractMetadata(true);
+
+        try (PipesForkTextExtractor extractor = new PipesForkTextExtractor(props)) {
+            Map<String, List<String>> initialMeta = new HashMap<>();
+            initialMeta.put("mimeType", List.of("text/plain"));
+            TextExtractionResult result = extractor.extractText(
+                    "Sample text content for metadata test.".getBytes(StandardCharsets.UTF_8),
+                    initialMeta
+            );
+            assertTrue(result.success());
+            assertNotNull(result.metadata());
+            assertTrue(result.metadata().containsKey("tk:Content-Type"));
+        }
+    }
+
+    private byte[] createSampleZipBytes() throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            zos.putNextEntry(new ZipEntry("inner1.txt"));
+            zos.write("First embedded file inside zip".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            zos.putNextEntry(new ZipEntry("inner2.txt"));
+            zos.write("Second embedded file inside zip".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        return baos.toByteArray();
     }
 }

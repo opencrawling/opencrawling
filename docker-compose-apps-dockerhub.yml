@@ -16,11 +16,12 @@
 
 services:
   opencrawling-backend:
-    image: opencrawling/opencrawling-backend:latest
+    image: opencrawling/oc-mcp-server:latest
     container_name: opencrawling-backend
     ports:
       - "8080:8080"
       - "9095:9095"
+      - "9096:9096"
     environment:
       - SPRING_DATA_REDIS_HOST=redis-stack
       - SPRING_DATA_REDIS_PASSWORD=redis_password
@@ -33,15 +34,23 @@ services:
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
       - OPENCRAWLING_OBSERVABILITY_ENABLED=true
       - OPENCRAWLING_OBSERVABILITY_SAMPLING_PROBABILITY=1.0
+      - OPENCRAWLING_INGEST_OIS_TOKEN=${OPENCRAWLING_INGEST_OIS_TOKEN:-}
+      - OPENCRAWLING_GRPC_PUSH_ENABLED=${OPENCRAWLING_GRPC_PUSH_ENABLED:-true}
+      - OPENCRAWLING_GRPC_PUSH_PORT=${OPENCRAWLING_GRPC_PUSH_PORT:-9096}
+      - OPENCRAWLING_GRPC_PUSH_TOKEN=${OPENCRAWLING_GRPC_PUSH_TOKEN:-}
       - OPENCRAWLING_TIKA_FORK_ENABLED=true
       - OPENCRAWLING_TIKA_TIMEOUT_MS=30000
       - OPENCRAWLING_TIKA_JVM_ARGS=-Xmx512m
+      - OPENCRAWLING_TIKA_MAX_FILES_PER_PROCESS=100000
+      - SPRING_OPENCRAWLING_REPORTING_LOCAL_DIR=/data/reports
+    volumes:
+      - opencrawling-reportsdata:/data/reports
     networks:
       - opencrawling-network
     restart: unless-stopped
 
   opencrawling-embedding:
-    image: opencrawling/opencrawling-embedding:latest
+    image: opencrawling/oc-embedding-consumer:latest
     container_name: opencrawling-embedding
     ports:
       - "8082:8082"
@@ -59,7 +68,7 @@ services:
     restart: unless-stopped
 
   opencrawling-frontend:
-    image: opencrawling/opencrawling-frontend:latest
+    image: opencrawling/oc-admin-ui:latest
     container_name: opencrawling-frontend
     ports:
       - "3000:80"
@@ -73,3 +82,7 @@ networks:
   opencrawling-network:
     name: opencrawling-network
     external: true
+
+volumes:
+  opencrawling-reportsdata:
+    name: opencrawling-reportsdata

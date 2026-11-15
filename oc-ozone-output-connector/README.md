@@ -135,7 +135,7 @@ Starting a job whose output is the Ozone connector in `rag` mode is rejected wit
 
 - **CLI**: `opencrawling job start <jobId> --mode migration`, `opencrawling job create -f job.json --mode migration`; `job list` shows a `MODE` column.
 - **Admin UI**: the Job form has a *Pipeline Mode* radio group (RAG / Migration); selecting an Ozone output switches it to Migration automatically. Jobs display a `Migration` / `RAG` badge.
-- **Offline validation**: `opencrawling schema validate <envelope.json>` checks migration envelopes (`contentRef`, `checksumSha256`, `security`, …).
+- **Offline validation**: `opencrawling schema validate <envelope.json>` checks migration envelopes (`content.sha256`, `content.sizeBytes`, `source.instance`, `security`, …), and still accepts the earlier `contentRef` format.
 
 ## Object Layout
 
@@ -144,11 +144,20 @@ For each `UPSERT` the connector writes:
 | Object | Content |
 |---|---|
 | `<key>` | Original binary, streamed bit-for-bit (SHA-256 computed while streaming). |
-| `<key>.ois.json` | OIS sidecar: `id`, `action`, `metadata`, `security` (`inheritanceEnabled`, `permissions[]`), `contentRef` (`key`, `volume`, `bucket`, `claimCheckUri`, `filename`, `mimeType`, `contentLength`, `checksumSha256`). |
+| `<key>.ois.json` | OIS sidecar, valid against the [OIS document schema](https://github.com/opencrawling/open-ingestion-standard/blob/master/schemas/document.schema.json): `id`, `action`, `source` (`type`, `instance`, `connectorVersion`, plus `originalUri`, `originalPath`), `content` (`mimeType`, `claimCheckUri`, `sidecarUri`, `sha256`, `sizeBytes`, plus the locators `key`, `volume`, `bucket`, `filename`), `metadata` (with `ois:provenance`, and `ois:governance` when a governance gate decided), `security` (`evaluationPolicy: FAIL_CLOSED`, `inheritanceEnabled`, `permissions[]`). See [OIS sidecar format](#ois-sidecar-format). |
 | `.opencrawling/index/<sha256(docId)>` | Internal index mapping the document id to its key, so metadata-less tombstones remove the right objects. |
 
 `HIERARCHICAL` keys derive from `relativePath`/`file_path` (or the `file:` URI), sanitized against `..` traversal; `FLAT` keys use the sanitized document id.
-On `DELETE`, `DELETE_KEY` removes binary, sidecar and index entry; `ARCHIVE_TOMBSTONE` additionally writes `.tombstones/<key>.ois.json`.
+On `DELETE`, `DELETE_KEY` removes binary, sidecar and index entry; `ARCHIVE_TOMBSTONE` additionally writes `.tombstones/<key>.ois.json`. A tombstone names its `source` and grants nobody anything (empty `permissions`, fail closed).
+
+### OIS sidecar format
+
+The sidecar is an Open Ingestion Standard document envelope (`$schema` `https://opencrawling.org/schemas/ois-document-schema.json`). OpenCrawling's CI validates real writer output against the OIS schema.
+
+- **`source.instance`** is the repository connector's base URI (`RepositoryConnector.sourceInstance()`), without user info, query or fragment, so no credentials end up in the lake. A connector that cannot tell is named by URN (`urn:opencrawling:connector:<name>`).
+- **Metadata** keys the OIS schema declares (`title`, `author`, `lastModified`, `cmis:*`, `bpmn:*`) are typed: one value as a string, date-time or boolean, several as an array. A value that does not fit its declared type is kept unchanged under `<key>.raw`. Every other key keeps its list of strings.
+- **`ois:provenance`** records the job (`jobId`), how it was started (`triggeredBy`: `manual`, `mcp-agent`, `webhook`, `system`, or OpenCrawling's own trigger name), the verified user (`onBehalfOf`), the agent acting for them (`actorAgent`), and `ingestedAt`. A source cannot set it: whatever a document brings under `ois:*` is replaced.
+- **Earlier sidecars** (`contentRef` with `contentLength` and `checksumSha256`, list-valued metadata) stay readable by the sidecar tools.
 
 ## Testing
 

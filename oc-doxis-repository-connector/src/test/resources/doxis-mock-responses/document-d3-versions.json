@@ -1,0 +1,4 @@
+{"uuid":"d3","documentTypeUUID":"t-link","ownerId":"u-sup","modificationDate":"2026-10-05T22:00:00.000+01:00",
+ "versions":[{"versionNumber":"1","currentVersion":true,"attributes":[],
+   "representations":[{"uuid":"r3","defaultRepresentation":true,"contentObjects":[
+     {"uuid":"c3","index":0,"length":0,"mimeTypeName":"application/pdf","fullFilename":"\\\\fs01\\share\\big.pdf"}]}]}]}

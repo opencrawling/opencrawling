@@ -24,13 +24,13 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath /> <!-- lookup parent from repository -->
     </parent>
 
     <groupId>org.opencrawling</groupId>
     <artifactId>opencrawling-parent</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.5-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>OpenCrawling</name>
@@ -76,6 +76,15 @@
                 <role>Lead Developer</role>
             </roles>
         </developer>
+        <developer>
+            <id>dpol1</id>
+            <name>Davide Polato</name>
+            <email>davide@polato.dev</email>
+            <timezone>Europe/Rome</timezone>
+            <roles>
+                <role>Lead Developer</role>
+            </roles>
+        </developer>
     </developers>
 
     <url>https://github.com/opencrawling/opencrawling</url>
@@ -101,17 +110,31 @@
         <module>oc-embedding-service</module>
         <module>oc-opensearch2-output-connector</module>
         <module>oc-opensearch3-output-connector</module>
+        <module>oc-elasticsearch-output-connector</module>
         <module>oc-vespa-output-connector</module>
         <module>oc-solr-output-connector</module>
         <module>oc-luxir-output-connector</module>
-        <module>oc-doxis-client</module>
         <module>oc-doxis-output-connector</module>
         <module>oc-seatunnel-output-connector</module>
         <module>oc-ozone-output-connector</module>
+        <module>oc-s3-output-connector</module>
+        <module>oc-iceberg-output-connector</module>
+        <module>oc-alfresco-output-connector</module>
+        <module>oc-openarch-output-connector</module>
+        <module>oc-authorization-openfga</module>
+        <module>oc-openarch-repository-connector</module>
+        <module>oc-hyland-cic-connector</module>
         <module>oc-flowable-repository-connector</module>
         <module>oc-camunda-repository-connector</module>
+        <module>oc-web-repository-connector</module>
         <module>oc-aps-repository-connector</module>
         <module>oc-cmis-repository-connector</module>
+        <module>oc-doxis-client</module>
+        <module>oc-doxis-repository-connector</module>
+        <module>oc-sharepoint-repository-connector</module>
+        <module>oc-mfiles-repository-connector</module>
+        <module>oc-filenet-repository-connector</module>
+        <module>oc-documentum-repository-connector</module>
         <module>oc-stormcrawler-bolt</module>
         <module>oc-stormcrawler-repository-connector</module>
         <module>oc-jdbc-repository-connector</module>
@@ -119,35 +142,49 @@
         <module>oc-java-client-sdk</module>
         <module>oc-cli</module>
         <module>oc-mcf-migrator</module>
+        <module>oc-grpc-push-connector</module>
     </modules>
 
     <properties>
         <java.version>25</java.version>
-        <oc-java-client-sdk.version>1.0.2</oc-java-client-sdk.version>
+        <oc-java-client-sdk.version>1.0.5-SNAPSHOT</oc-java-client-sdk.version>
         <picocli.version>4.7.6</picocli.version>
         <jline.version>3.26.1</jline.version>
-        <spring-ai.version>2.0.0</spring-ai.version>
-        <tika.version>4.1.0</tika.version>
+        <spring-ai.version>2.0.2</spring-ai.version>
+        <tika.version>4.2.0</tika.version>
+        <jackson.version>2.21.7</jackson.version>
+        <jackson-annotations.version>2.22</jackson-annotations.version>
+        <tools-jackson.version>3.2.4</tools-jackson.version>
+        <jsoup.version>1.24.1</jsoup.version>
+        <assertj.version>3.27.7</assertj.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-io.version>2.22.0</commons-io.version>
         <jaxb-api.version>2.3.1</jaxb-api.version>
         <jmustache.version>1.16</jmustache.version>
         <grpc.version>1.83.1</grpc.version>
         <protobuf.version>3.25.5</protobuf.version>
+        <guava.version>33.7.2-jre</guava.version>
         <javax.annotation-api.version>1.3.2</javax.annotation-api.version>
         <stormcrawler.version>3.7.0</stormcrawler.version>
         <storm.version>3.1.0</storm.version>
+        <parquet.version>1.18.1</parquet.version>
+        <avro.version>1.12.2</avro.version>
+        <hadoop.version>3.5.0</hadoop.version>
+        <duckdb.version>1.5.6.0</duckdb.version>
+        <zstd-jni.version>1.5.7-23</zstd-jni.version>
+        <springdoc.version>3.1.1</springdoc.version>
+        <swagger-core.version>2.2.55</swagger-core.version>
         
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
-        <maven-surefire-plugin.version>3.5.5</maven-surefire-plugin.version>
-        <maven-failsafe-plugin.version>3.5.5</maven-failsafe-plugin.version>
+        <maven-surefire-plugin.version>3.6.0</maven-surefire-plugin.version>
+        <maven-failsafe-plugin.version>3.6.0</maven-failsafe-plugin.version>
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         
-        <aws-sdk.version>2.30.34</aws-sdk.version>
-        <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
+        <aws-sdk.version>2.57.7</aws-sdk.version>
+        <docker-maven-plugin.version>0.49.0</docker-maven-plugin.version>
         <skipITs>true</skipITs>
         <gpg.skip>true</gpg.skip>
 
@@ -164,6 +201,38 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson-annotations.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>tools.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${tools-jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>tools.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${tools-jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jsoup</groupId>
+                <artifactId>jsoup</artifactId>
+                <version>${jsoup.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>io.grpc</groupId>
                 <artifactId>grpc-netty-shaded</artifactId>
                 <version>${grpc.version}</version>
@@ -179,9 +248,19 @@
                 <version>${grpc.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-services</artifactId>
+                <version>${grpc.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
                 <version>${protobuf.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
             </dependency>
             <dependency>
                 <groupId>javax.annotation</groupId>
@@ -191,6 +270,36 @@
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>s3</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>kms</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>sts</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>glue</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>dynamodb</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>url-connection-client</artifactId>
+                <version>${aws-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>apache-client</artifactId>
                 <version>${aws-sdk.version}</version>
             </dependency>
             <dependency>
@@ -330,6 +439,53 @@
                 <groupId>javax.xml.bind</groupId>
                 <artifactId>jaxb-api</artifactId>
                 <version>${jaxb-api.version}</version>
+            </dependency>
+
+            <!-- Apache Avro and Parquet for Post-Job Audit Reporting -->
+            <dependency>
+                <groupId>org.apache.avro</groupId>
+                <artifactId>avro</artifactId>
+                <version>${avro.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-avro</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-hadoop</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-column</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.luben</groupId>
+                <artifactId>zstd-jni</artifactId>
+                <version>${zstd-jni.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.duckdb</groupId>
+                <artifactId>duckdb_jdbc</artifactId>
+                <version>${duckdb.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations</artifactId>
+                <version>${swagger-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations-jakarta</artifactId>
+                <version>${swagger-core.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -47,4 +47,39 @@ public interface TextExtractionService extends AutoCloseable {
     default void close() {
         // Default no-op for closeable
     }
+
+    /**
+     * Factory method returning a lightweight no-op text extraction service.
+     */
+    static TextExtractionService noop() {
+        return new NoOpTextExtractionService();
+    }
+
+    /**
+     * Whether the active parser is executing inside an isolated forked JVM process.
+     */
+    default boolean isForkActive() {
+        return false;
+    }
+
+    /**
+     * Whether the text extraction service is initialized and operational.
+     */
+    default boolean isHealthy() {
+        return true;
+    }
+
+    /**
+     * Human-readable description of the active extraction engine.
+     */
+    default String getEngineName() {
+        return "In-Process Embedded Tika";
+    }
+
+    /**
+     * Version of the underlying extraction library.
+     */
+    default String getVersion() {
+        return "4.2.0";
+    }
 }

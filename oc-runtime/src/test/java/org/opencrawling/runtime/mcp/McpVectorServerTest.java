@@ -158,4 +158,32 @@ class McpVectorServerTest {
         assertThat(sources.get(1)).containsEntry("uri", "file:///doc2.txt");
         assertThat(sources.get(1)).containsEntry("acl", "user@enterprise.com");
     }
+
+    @Test
+    void testEmptyPermissionsDocumentExcludedFromAllToolsForOutsider() {
+        String docUri = "http://repro.example/nobody-access.html";
+        Map<String, Object> emptyPermsMeta = Map.of(
+                "uri", docUri,
+                "acl", "",
+                "security_allowed_read", List.of(),
+                "security", Map.of("permissions", List.of())
+        );
+        Document emptyPermsDoc = new Document("doc-nobody", "Nobody can read this", emptyPermsMeta);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(emptyPermsDoc));
+
+        // 1. secureVectorSearch as outsider -> empty
+        List<McpVectorServer.DocumentSearchResult> searchResults = mcpVectorServer.secureVectorSearch(
+                "confidential", "outsider", "", 5, 0.0
+        );
+        assertThat(searchResults).isEmpty();
+
+        // 2. getDocumentContent as outsider -> throws NoSuchElementException
+        assertThatThrownBy(() -> mcpVectorServer.getDocumentContent(docUri, "outsider", ""))
+                .isInstanceOf(NoSuchElementException.class)
+                .hasMessageContaining("Document not found or access denied.");
+
+        // 3. listAccessibleSources as outsider -> empty
+        List<Map<String, Object>> sources = mcpVectorServer.listAccessibleSources("outsider", "");
+        assertThat(sources).isEmpty();
+    }
 }

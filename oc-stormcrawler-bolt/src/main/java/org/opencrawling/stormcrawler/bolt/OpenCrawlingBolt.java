@@ -74,7 +74,7 @@ public class OpenCrawlingBolt extends AbstractIndexerBolt {
     private transient OutputCollector collector;
     private PayloadDispatcher dispatcher;
 
-    private String targetEndpoint = "http://localhost:8080/api/v1/ingest/ois";
+    private String targetEndpoint = "http://localhost:8080/api/v1/ingest/ois/1";
     private String transportMode = "REST";
     private boolean emitDeletions = true;
     private String hashAlgorithm = "SHA-256";

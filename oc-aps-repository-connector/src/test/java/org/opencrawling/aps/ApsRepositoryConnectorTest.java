@@ -743,4 +743,9 @@ class ApsRepositoryConnectorTest {
         assertEquals(1, docs.size(), "Failed attachment download should not terminate stream; process doc should still be emitted");
         assertEquals("proc-10042", docs.get(0).id());
     }
+
+    @Test
+    void sourceInstanceIsTheConfiguredUrl() {
+        assertEquals("http://localhost:8080/activiti-app/api/enterprise", connector.sourceInstance());
+    }
 }
