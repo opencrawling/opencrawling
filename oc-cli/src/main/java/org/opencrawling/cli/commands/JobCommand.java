@@ -325,7 +325,9 @@ public class JobCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                client.platform().jobs().delete(id, RequestOptions.none());
+                // The job as it is now, so the delete also works when the runtime requires If-Match.
+                String version = client.platform().jobs().get(id).etag();
+                client.platform().jobs().delete(id, RequestOptions.ifMatch(version));
                 System.out.println(AnsiColors.green("✔ Job deleted: " + id));
                 return 0;
             } catch (Exception e) {

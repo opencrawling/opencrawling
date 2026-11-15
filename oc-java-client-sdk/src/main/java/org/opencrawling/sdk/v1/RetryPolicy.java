@@ -20,10 +20,14 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * When the Platform API client repeats a request: after a network error, or a {@code 502}, {@code 503}, {@code 504} or
- * {@code 429}. It only repeats requests that are safe to repeat: {@code GET}, {@code PUT} and {@code DELETE}, and
+ * When the Platform API client repeats a request: after a network error, a {@code 502}, {@code 503}, {@code 504} or
+ * {@code 429}, or a {@code 409 idempotency-in-progress} (its first attempt is still running). It only repeats requests that are safe to repeat: {@code GET}, {@code PUT} and {@code DELETE}, and
  * {@code POST}s that carry an {@code Idempotency-Key}; the client gives every {@code POST} one unless the caller did.
- * Waits grow exponentially, with jitter, and follow the runtime's {@code Retry-After}, up to {@code maxDelay}.
+ * Waits grow exponentially, with jitter, and follow the runtime's {@code Retry-After}; when that asks for longer than
+ * {@code maxDelay}, the client gives up instead of retrying early.
+ *
+ * <p>A conditional change ({@code If-Match}) whose answer was lost may come back from its repeat as {@code 412}: the
+ * first attempt succeeded and changed the version. Read the resource to see.
  *
  * @param maxAttempts how many times a request is sent at most, the first time included (1 means no retries)
  */
@@ -48,12 +52,15 @@ public record RetryPolicy(int maxAttempts, Duration baseDelay, Duration maxDelay
         return new RetryPolicy(1, Duration.ZERO, Duration.ZERO);
     }
 
-    /** How long to wait before attempt {@code attempt + 1}: the runtime's Retry-After if it sent one, else backoff. */
+    /**
+     * How long to wait before attempt {@code attempt + 1}: the runtime's Retry-After if it sent one, else backoff; null
+     * when the runtime asks for a longer wait than {@code maxDelay}, so the caller gives up rather than retry too early.
+     */
     Duration delay(int attempt, String retryAfter) {
         if (retryAfter != null) {
             try {
                 Duration asked = Duration.ofSeconds(Long.parseLong(retryAfter.trim()));
-                return asked.compareTo(maxDelay) > 0 ? maxDelay : asked;
+                return asked.compareTo(maxDelay) > 0 ? null : asked;
             } catch (NumberFormatException ignored) {
                 // an HTTP date: fall back to backoff
             }

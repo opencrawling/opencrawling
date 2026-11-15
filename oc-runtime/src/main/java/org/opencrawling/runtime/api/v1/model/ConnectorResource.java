@@ -48,16 +48,30 @@ public record ConnectorResource(
 
     /** Key endings that name secrets: {@code password}, {@code apiKey}, {@code clientSecret}, {@code milvusToken}, ... */
     private static final Set<String> SECRET_SUFFIXES = Set.of("password", "passwd", "apikey", "api_key", "token",
-            "credential", "credentials", "privatekey", "private_key", "passphrase", "connectionstring", "sastoken");
+            "credential", "credentials", "privatekey", "private_key", "passphrase", "connectionstring", "sastoken",
+            "ticket");
+
+    /** Keys that end like a secret but hold none: a CMIS change-log position, not a credential. */
+    private static final Set<String> NOT_SECRET = Set.of("changelogtoken");
 
     /** Keys whose whole value may carry credentials, such as an {@code Authorization} header. */
     private static final Set<String> SECRET_KEYS = Set.of("customheaders", "headers", "authorization");
 
-    /** Keys that say where a connector connects: changing one must not reuse stored secrets. */
-    private static final Pattern ADDRESS_KEY = Pattern.compile(".*(url|uri|endpoint|host|server|bootstrap).*");
+    /**
+     * Keys that say where and how a connector connects: changing one must not reuse stored secrets. Ports and TLS
+     * switches count too: turning TLS off would send a stored password in clear to the same host.
+     */
+    private static final Pattern ADDRESS_KEY = Pattern.compile(
+            ".*(url|uri|host|hosts|server|servers|port)|.*(endpoint|bootstrap|tls|ssl).*");
 
-    /** The password in a URL's user information: {@code scheme://user:password@host}. */
-    private static final Pattern URL_PASSWORD = Pattern.compile("([A-Za-z][A-Za-z0-9+.-]*://[^/@:\\s]*:)([^@/\\s]+)(@)");
+    /**
+     * The password in a URL's user information, {@code scheme://user:password@host}, up to the last {@code @} before the
+     * host, so a raw {@code @} in the password is masked whole.
+     */
+    private static final Pattern URL_PASSWORD = Pattern.compile("([A-Za-z][A-Za-z0-9+.-]*://[^/@:\\s]*:)([^/\\s]*)(@[^@/\\s]*)");
+
+    /** A password given as a URL or connection string parameter: {@code ?password=...}, {@code ;password=...}. */
+    private static final Pattern PASSWORD_PARAMETER = Pattern.compile("(?i)([?&;](?:password|pwd|passwd)=)([^&;\\s]*)");
 
     /**
      * Whether a setting holds a secret: any key containing {@code secret} ({@code s3SecretAccessKey}, {@code clientSecret}),
@@ -65,6 +79,9 @@ public record ConnectorResource(
      */
     public static boolean isSecret(String key) {
         String lower = key == null ? "" : key.toLowerCase(Locale.ROOT);
+        if (NOT_SECRET.contains(lower)) {
+            return false;
+        }
         return lower.contains("secret") || SECRET_KEYS.contains(lower) || SECRET_SUFFIXES.stream().anyMatch(lower::endsWith);
     }
 
@@ -80,7 +97,8 @@ public record ConnectorResource(
         if (isSecret(key)) {
             return MASK;
         }
-        return URL_PASSWORD.matcher(value).replaceAll("$1" + Matcher.quoteReplacement(MASK) + "$3");
+        String masked = URL_PASSWORD.matcher(value).replaceAll("$1" + Matcher.quoteReplacement(MASK) + "$3");
+        return PASSWORD_PARAMETER.matcher(masked).replaceAll("$1" + Matcher.quoteReplacement(MASK));
     }
 
     public static ConnectorResource of(ConnectorController.ConnectorDTO connector) {
@@ -104,6 +122,14 @@ public record ConnectorResource(
      * may edit connectors could send a stored password to a server of their choice.
      */
     public static Map<String, String> unmask(Map<String, String> sent, Map<String, String> stored) {
+        return unmask(sent, stored, false);
+    }
+
+    /**
+     * @param classChanged whether the connector's implementation changes: stored secrets are not handed to another
+     *                     implementation either
+     */
+    public static Map<String, String> unmask(Map<String, String> sent, Map<String, String> stored, boolean classChanged) {
         if (sent == null) {
             return null;
         }
@@ -121,15 +147,22 @@ public record ConnectorResource(
             } else if (old != null && value != null && !value.equals(old) && value.equals(masked(key, old))) {
                 result.put(key, old); // a URL sent back with its password masked
                 kept.add(key);
+            } else if (value != null && value.contains(MASK)) {
+                // An edited value that still holds the mask would store the mask itself as the password.
+                throw ApiProblem.invalid("configuration." + key, "contains " + MASK + "; enter the secret in full, "
+                        + "or send the value back exactly as it was read");
             } else {
                 result.put(key, value);
             }
         });
         if (!kept.isEmpty()) {
-            List<String> moved = new java.util.TreeSet<>(sentAndStoredKeys(result, previous)).stream()
+            List<String> moved = new ArrayList<>(new java.util.TreeSet<>(sentAndStoredKeys(result, previous)).stream()
                     .filter(ConnectorResource::isAddress)
                     .filter(key -> !java.util.Objects.equals(result.get(key), previous.get(key)))
-                    .toList();
+                    .toList());
+            if (classChanged) {
+                moved.add("className");
+            }
             if (!moved.isEmpty()) {
                 throw ApiProblem.invalid(kept.stream().sorted().map(key -> new ApiProblem.FieldError("configuration." + key,
                         "must be entered again, because the connector's address changed (" + String.join(", ", moved) + ")"))

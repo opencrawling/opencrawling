@@ -710,4 +710,32 @@ class PlatformApiV1HttpTest {
         assertThat(links.get("jobRuns").asString()).isEqualTo("/api/v1/job-runs");
         assertThat(links.toString()).as("only resources that can be read").doesNotContain(":plan");
     }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    org.opencrawling.runtime.api.JobController jobController;
+
+    /**
+     * Every change of the job list takes the controller's lock, the one a conditional change (If-Match) holds from its
+     * check to its write. Shown deterministically: while the test holds that lock, each writer must wait.
+     */
+    @Test
+    void everyJobWriterWaitsForTheLockThatConditionalChangesHold() throws Exception {
+        String id = createJob(tag).get("id").asString();
+        Map<String, Runnable> writers = new java.util.LinkedHashMap<>();
+        writers.put("pushed document (recordPushExecution)", () -> jobController.recordPushExecution(id, 1, true));
+        writers.put("stop (updateJobStatus)", () -> jobController.stopJob(id));
+        writers.put("pause (updateJobStatus)", () -> jobController.pauseJob(id));
+        writers.put("save", () -> jobController.save(jobController.findJobById(id)));
+        writers.put("delete", () -> jobController.deleteJob("none-" + tag));
+        for (Map.Entry<String, Runnable> writer : writers.entrySet()) {
+            Thread thread;
+            synchronized (jobController) {
+                thread = Thread.ofVirtual().start(writer.getValue());
+                Thread.sleep(150);
+                assertThat(thread.isAlive()).as(writer.getKey() + " waits while the lock is held").isTrue();
+            }
+            thread.join(5_000);
+            assertThat(thread.isAlive()).as(writer.getKey() + " runs once the lock is free").isFalse();
+        }
+    }
 }

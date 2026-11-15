@@ -111,6 +111,22 @@ class IdempotencyStoreTest {
     }
 
     @Test
+    void closingAHoldWaitsForTheRenewerSoTheAnswerKeepsItsRetention() throws Exception {
+        FakeRedis redis = new FakeRedis();
+        RedisIdempotencyStore store = redis.store(Duration.ofHours(24), Duration.ofMillis(30));
+        assertThat(store.begin("alice", "k", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        IdempotencyStore.Hold held = store.hold("alice", "k", "f");
+        Thread.sleep(100); // the renewer is running
+        held.close();
+        store.complete("alice", "k", "f", new IdempotencyStore.StoredResponse(201, Map.of(), "{}".getBytes()));
+        Thread.sleep(100); // a renewal after close would cut the lifetime back to 30 ms
+        redis.advance(Duration.ofHours(23));
+        assertThat(store.begin("alice", "k", "f")).as("the answer lives for the retention")
+                .isInstanceOf(IdempotencyStore.Begin.Replay.class);
+        held.close(); // closing twice is harmless
+    }
+
+    @Test
     void anAnswerTooLargeToKeepIsNotRunAgainAndTheQueryStringIsPartOfTheRequest() throws Exception {
         InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
         IdempotencyFilter filter = new IdempotencyFilter(store, JSON, null, 10);

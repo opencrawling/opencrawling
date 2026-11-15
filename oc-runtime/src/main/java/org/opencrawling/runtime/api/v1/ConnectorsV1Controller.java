@@ -147,7 +147,8 @@ public class ConnectorsV1Controller {
                 throw ApiProblem.invalid("name", "must be '" + current.name() + "', the connector's name; renaming is not supported");
             }
             saved = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
-                    input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration()));
+                    input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration(),
+                    !java.util.Objects.equals(input.className(), current.className())));
             JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", name);
         }
         return ResponseEntity.ok().eTag(etag(saved)).body(ConnectorResource.of(saved));
@@ -160,6 +161,8 @@ public class ConnectorsV1Controller {
     public ResponseEntity<Void> delete(@PathVariable String name,
                                        @Parameter(description = "Delete even if jobs use it") @RequestParam(defaultValue = "false") boolean force,
                                        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        // Lock order: this holds the connectors' lock and reads jobs without theirs (getAllJobs takes no lock). Never
+        // call a synchronized JobController method here; JobsV1Controller holds the jobs' lock and reads connectors.
         synchronized (connectors) {
             ConnectorDTO current = find(name);
             Etags.requireMatch(ifMatch, etag(current));
@@ -204,7 +207,8 @@ public class ConnectorsV1Controller {
         ConnectorDTO stored = unnamed ? null : findOrNull(input.name());
         return checked(connectors.checkConnection(new ConnectorDTO(input.name(), input.description(), input.type(),
                 input.className(), input.maxConnections(),
-                ConnectorResource.unmask(input.configuration(), stored == null ? Map.of() : stored.configuration()))));
+                ConnectorResource.unmask(input.configuration(), stored == null ? Map.of() : stored.configuration(),
+                        stored != null && !java.util.Objects.equals(input.className(), stored.className())))));
     }
 
     /**

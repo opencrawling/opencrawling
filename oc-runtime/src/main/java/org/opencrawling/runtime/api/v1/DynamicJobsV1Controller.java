@@ -82,7 +82,12 @@ public class DynamicJobsV1Controller {
             @Parameter(description = "Page size, 1 to 500 (default 50)") @RequestParam(required = false) Integer limit,
             @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
             HttpServletResponse response) {
-        List<DynamicJobService.JobStatus> jobs = dynamicJobs.list();
+        // Newest first, the id deciding between jobs created at the same instant: one order across requests.
+        List<DynamicJobService.JobStatus> jobs = dynamicJobs.list().stream()
+                .sorted(java.util.Comparator.comparing(DynamicJobService.JobStatus::createdAt,
+                                java.util.Comparator.nullsLast(java.util.Comparator.<java.time.Instant>reverseOrder()))
+                        .thenComparing(DynamicJobService.JobStatus::jobId))
+                .toList();
         return Paging.page(jobs, limit, cursor, "", response, DynamicJobService.JobStatus::jobId);
     }
 

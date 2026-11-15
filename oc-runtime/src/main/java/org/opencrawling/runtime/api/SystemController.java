@@ -391,14 +391,27 @@ public class SystemController {
      * that is not {@code -Xmx<number>[k|m|g]}.
      */
     public static String invalidSetting(SystemSettingsDTO settings) {
-        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(settings.chunkSize())) {
+        Map<String, String> invalid = invalidSettings(settings);
+        if (invalid.containsKey("chunkSize")) {
             return "Invalid chunk size: " + settings.chunkSize() + ". Expected 1 to "
                     + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens.";
         }
-        if (!isValidHeap(settings.tikaJvmHeap())) {
+        if (invalid.containsKey("tikaJvmHeap")) {
             return "Invalid JVM heap argument: '" + settings.tikaJvmHeap().trim() + "'. Expected pattern -Xmx<number>[k|m|g].";
         }
         return null;
+    }
+
+    /** Each setting that cannot be applied, with why; empty when all can. The one place settings are checked. */
+    public static Map<String, String> invalidSettings(SystemSettingsDTO settings) {
+        Map<String, String> invalid = new java.util.LinkedHashMap<>();
+        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(settings.chunkSize())) {
+            invalid.put("chunkSize", "must be 1 to " + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens");
+        }
+        if (!isValidHeap(settings.tikaJvmHeap())) {
+            invalid.put("tikaJvmHeap", "must be -Xmx<number>[k|m|g], for example -Xmx512m");
+        }
+        return invalid;
     }
 
     /** Whether a text extraction heap setting is absent or {@code -Xmx<number>[k|m|g]}. */

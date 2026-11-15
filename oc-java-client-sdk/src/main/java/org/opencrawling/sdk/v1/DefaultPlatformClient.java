@@ -100,9 +100,16 @@ public class DefaultPlatformClient implements PlatformClient {
         this.defaults = defaults != null ? defaults : RequestOptions.none();
     }
 
+    /**
+     * Only the options that make sense on every request are kept: the correlation and request ids. An Idempotency-Key
+     * or an If-Match names one request or one version, so as defaults they would make unrelated calls replay each
+     * other's answers or fail; they are ignored here and belong on each call.
+     */
     @Override
     public PlatformClient withDefaults(RequestOptions options) {
-        return new DefaultPlatformClient(transport, retryPolicy, merge(defaults, options));
+        RequestOptions o = options != null ? options : RequestOptions.none();
+        return new DefaultPlatformClient(transport, retryPolicy, merge(defaults,
+                new RequestOptions(null, o.correlationId(), o.requestId(), null)));
     }
 
     /** Each option set in {@code overrides} wins; the others come from {@code base}. */
@@ -347,8 +354,18 @@ public class DefaultPlatformClient implements PlatformClient {
                     byte[] problem = response.body().readAllBytes();
                     ok(new HttpTransport.RawResponse(response.status(), response.headers(), problem));
                 }
-                // Streamed to the file: report files can be large.
-                Files.copy(response.body(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                // Streamed to a file next to the target, then moved: report files can be large, and a failed download
+                // leaves no truncated file behind.
+                Path absolute = target.toAbsolutePath();
+                Path partial = Files.createTempFile(absolute.getParent(), absolute.getFileName().toString(), ".part");
+                try {
+                    Files.copy(response.body(), partial, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(partial, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException | RuntimeException e) {
+                    Files.deleteIfExists(partial);
+                    throw e;
+                }
                 return target;
             } catch (IOException e) {
                 throw new OpenCrawlingNetworkException("Could not write the report to " + target, e);
@@ -657,8 +674,10 @@ public class DefaultPlatformClient implements PlatformClient {
     private HttpTransport.RawResponse send(String method, String path, Object body, String contentType,
                                            RequestOptions options, Map<String, String> extraHeaders, boolean retry) {
         RequestOptions o = merge(defaults, options);
-        boolean upload = contentType != null && contentType.startsWith("multipart/");
-        if ("POST".equals(method) && o.idempotencyKey() == null && !upload) {
+        boolean upload = contentType != null && contentType.toLowerCase(java.util.Locale.ROOT).startsWith("multipart/");
+        if (upload) {
+            o = o.withIdempotencyKey(null); // the runtime refuses a key on an upload
+        } else if ("POST".equals(method) && o.idempotencyKey() == null) {
             o = o.withIdempotencyKey("sdk-" + UUID.randomUUID());
         }
         boolean repeatable = switch (method) {
@@ -695,11 +714,27 @@ public class DefaultPlatformClient implements PlatformClient {
                 pause(retryPolicy.delay(attempt, null));
                 continue;
             }
-            if (attempt >= attempts || !RetryPolicy.RETRYABLE_STATUSES.contains(response.status())) {
+            if (attempt >= attempts || !retryable(response)) {
                 return response;
             }
-            pause(retryPolicy.delay(attempt, response.header("Retry-After")));
+            java.time.Duration wait = retryPolicy.delay(attempt, response.header("Retry-After"));
+            if (wait == null) {
+                return response; // the runtime asks for a longer wait than the policy allows: give up, do not retry early
+            }
+            pause(wait);
         }
+    }
+
+    /**
+     * Whether repeating may help: overload and gateway errors, and a 409 idempotency-in-progress, which means the first
+     * attempt (perhaps one that timed out here) is still running; the repeat then gets its answer.
+     */
+    private static boolean retryable(HttpTransport.RawResponse response) {
+        if (RetryPolicy.RETRYABLE_STATUSES.contains(response.status())) {
+            return true;
+        }
+        return response.status() == 409
+                && new String(response.body(), StandardCharsets.UTF_8).contains("problem-idempotency-in-progress");
     }
 
     private static void pause(java.time.Duration delay) {

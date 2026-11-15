@@ -61,7 +61,10 @@ public interface IdempotencyStore {
         record AnswerNotKept(int status) implements Begin {}
     }
 
-    /** Holds a key while its request runs, so a long request does not lose its key; close it when the request ends. */
+    /**
+     * Holds a key while its request runs, so a long request does not lose its key. Close it when the request ends and
+     * before writing its outcome: once closed, nothing renews the key any more. Closing twice is harmless.
+     */
     interface Hold extends AutoCloseable {
         Hold NONE = () -> {};
 

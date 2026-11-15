@@ -159,7 +159,16 @@ public class RedisIdempotencyStore implements IdempotencyStore {
                 }
             }
         });
-        return renewer::interrupt;
+        // Closing stops the renewer and waits for it, so no renewal can land after the outcome is written (it would cut
+        // the outcome's lifetime to the in-progress timeout).
+        return () -> {
+            renewer.interrupt();
+            try {
+                renewer.join(java.time.Duration.ofSeconds(5));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
     }
 
     @Override

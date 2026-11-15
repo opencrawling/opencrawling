@@ -113,9 +113,10 @@ public class ApiV1Configuration {
     @Bean
     public FilterRegistrationBean<IdempotencyFilter> apiV1IdempotencyFilter(IdempotencyStore store, JsonMapper json,
             ObjectProvider<CallerResolver> callerResolver,
-            @Value("${opencrawling.api.idempotency.max-stored-bytes:262144}") int maxStoredBytes) {
+            @Value("${opencrawling.api.idempotency.max-stored-bytes:262144}") int maxStoredBytes,
+            @Value("${opencrawling.api.max-request-bytes:1048576}") long maxRequestBytes) {
         FilterRegistrationBean<IdempotencyFilter> registration = new FilterRegistrationBean<>(
-                new IdempotencyFilter(store, json, callerResolver::getIfAvailable, maxStoredBytes));
+                new IdempotencyFilter(store, json, callerResolver::getIfAvailable, maxStoredBytes, maxRequestBytes));
         registration.setOrder(SecurityFilterProperties.DEFAULT_FILTER_ORDER + 10);
         registration.addUrlPatterns(ApiV1.BASE + "/*");
         return registration;

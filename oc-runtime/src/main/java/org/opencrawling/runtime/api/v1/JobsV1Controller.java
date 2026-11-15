@@ -283,6 +283,11 @@ public class JobsV1Controller {
         return job;
     }
 
+    /**
+     * Called holding the jobs' lock. Lock order: it reads connectors without their lock (getAllConnectors takes none).
+     * Never call a synchronized ConnectorController method under the jobs' lock; ConnectorsV1Controller holds the
+     * connectors' lock and reads jobs.
+     */
     private ResponseEntity<JobResource> update(String id, JobInput input) {
         checkConnectors(input);
         JobResource saved = resource(saved(jobs.save(input.toJob(id), true), id));

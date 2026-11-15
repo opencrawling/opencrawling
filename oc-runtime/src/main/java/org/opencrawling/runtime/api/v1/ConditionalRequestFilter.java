@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
 /**
  * With {@code opencrawling.api.require-if-match}, changes to versioned resources must say which version they change:
  * a {@code PUT}, {@code PATCH} or {@code DELETE} of a job, connector or settings document without {@code If-Match}
- * answers {@code 428 precondition-required} (RFC 6585), so no client can overwrite a change it has not seen.
+ * answers {@code 428 precondition-required} (RFC 6585), so no Platform API client can overwrite a change it has not
+ * seen. The deprecated legacy endpoints are not covered.
  */
 public class ConditionalRequestFilter extends OncePerRequestFilter {
 
@@ -47,7 +48,10 @@ public class ConditionalRequestFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !CHANGES.contains(request.getMethod()) || !VERSIONED.matcher(request.getRequestURI()).matches()
+        String uri = request.getRequestURI();
+        String context = request.getContextPath();
+        String path = context != null && !context.isEmpty() && uri.startsWith(context) ? uri.substring(context.length()) : uri;
+        return !CHANGES.contains(request.getMethod()) || !VERSIONED.matcher(path).matches()
                 || request.getHeader("If-Match") != null;
     }
 

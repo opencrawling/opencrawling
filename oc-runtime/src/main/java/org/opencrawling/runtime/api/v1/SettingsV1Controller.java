@@ -76,14 +76,9 @@ public class SettingsV1Controller {
     public ResponseEntity<SystemController.SystemSettingsDTO> replaceSystem(
             @RequestBody SystemController.SystemSettingsDTO settings,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        // The legacy controller's own checks, reported per field.
         List<ApiProblem.FieldError> errors = new ArrayList<>();
-        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(settings.chunkSize())) {
-            errors.add(new ApiProblem.FieldError("chunkSize", "must be 1 to "
-                    + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens"));
-        }
-        if (!SystemController.isValidHeap(settings.tikaJvmHeap())) {
-            errors.add(new ApiProblem.FieldError("tikaJvmHeap", "must be -Xmx<number>[k|m|g], for example -Xmx512m"));
-        }
+        SystemController.invalidSettings(settings).forEach((field, message) -> errors.add(new ApiProblem.FieldError(field, message)));
         if (!errors.isEmpty()) {
             throw ApiProblem.invalid(errors);
         }

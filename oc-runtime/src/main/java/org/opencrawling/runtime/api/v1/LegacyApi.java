@@ -63,7 +63,11 @@ public final class LegacyApi {
 
     /** Legacy paths whose own successor is known: a resource or action, not only its collection. */
     private static final List<java.util.Map.Entry<java.util.regex.Pattern, String>> EXACT = List.of(
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/dynamic/documents"), ApiV1.BASE + "/dynamic-jobs:ingest-document"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/dynamic/([^/]+)/(stop|approve|reject)"),
+                    ApiV1.BASE + "/dynamic-jobs/$1:$2"),
             java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/dynamic/([^/]+)"), ApiV1.BASE + "/dynamic-jobs/$1"),
+            java.util.Map.entry(java.util.regex.Pattern.compile("/api/reports/query"), ApiV1.BASE + "/executions:query"),
             java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/(?!runs$|permissions$|dynamic$)([^/]+)/(start|stop|pause)"),
                     ApiV1.BASE + "/jobs/$1:$2"),
             java.util.Map.entry(java.util.regex.Pattern.compile("/api/jobs/(?!runs$|permissions$|dynamic$)([^/]+)"), ApiV1.BASE + "/jobs/$1"),

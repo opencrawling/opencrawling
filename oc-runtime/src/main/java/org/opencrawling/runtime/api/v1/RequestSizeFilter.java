@@ -60,7 +60,8 @@ public class RequestSizeFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return !ApiV1.isPlatformRequest(request)
-                || (request.getContentType() != null && request.getContentType().startsWith("multipart/"));
+                || (request.getContentType() != null
+                        && request.getContentType().toLowerCase(java.util.Locale.ROOT).startsWith("multipart/"));
     }
 
     @Override
@@ -86,6 +87,14 @@ public class RequestSizeFilter extends OncePerRequestFilter {
         LimitedRequest(HttpServletRequest request, long maxBytes) {
             super(request);
             this.maxBytes = maxBytes;
+        }
+
+        /** The capped stream as text, so a consumer that reads characters cannot pass the cap either. */
+        @Override
+        public java.io.BufferedReader getReader() throws IOException {
+            String encoding = getCharacterEncoding();
+            return new java.io.BufferedReader(new java.io.InputStreamReader(getInputStream(),
+                    encoding != null ? java.nio.charset.Charset.forName(encoding) : java.nio.charset.StandardCharsets.UTF_8));
         }
 
         @Override

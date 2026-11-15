@@ -279,7 +279,11 @@ export const jobApi = {
         { headers: { 'Content-Type': 'application/merge-patch+json', ...ifMatch(etag) } })
     return { data: toJob(res.data) }
   },
-  delete: (id: string) => api.delete(`/jobs/${seg(id)}`),
+  /** Deletes the job as it is now: read, then delete that version (works when the runtime requires If-Match). */
+  delete: async (id: string) => {
+    const current = await api.get<JobResource>(`/jobs/${seg(id)}`)
+    return api.delete(`/jobs/${seg(id)}`, { headers: ifMatch(etagOf(current.headers)) })
+  },
   /** What the caller may do with each job they can see (READ, EXECUTE, MANAGE), from the jobs' `permissions`. */
   permissions: async () => ({
     data: Object.fromEntries((await listJobs()).map((job) => [job.id, job.permissions])) as Record<string, JobAction[]>,
@@ -379,7 +383,11 @@ export const connectorApi = {
       : await api.post<ConnectorResource>('/connectors', input)
     return { data: toConnector(res.data) }
   },
-  delete: (name: string) => api.delete(`/connectors/${seg(name)}`),
+  /** Deletes the connector as it is now: read, then delete that version (works when the runtime requires If-Match). */
+  delete: async (name: string) => {
+    const current = await api.get<ConnectorResource>(`/connectors/${seg(name)}`)
+    return api.delete(`/connectors/${seg(name)}`, { headers: ifMatch(etagOf(current.headers)) })
+  },
   checkConnection: (connector: ConnectorDefinition) =>
     api.post<{ success: boolean; message: string; details?: string }>('/connectors:check', toConnectorInput({
       ...connector,

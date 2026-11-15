@@ -57,6 +57,7 @@ import java.util.regex.Pattern;
 public class IdempotencyFilter extends OncePerRequestFilter {
 
     static final Pattern KEY = Pattern.compile("[A-Za-z0-9._:-]{1,200}");
+    /** The default largest body of a request with a key; the runtime uses opencrawling.api.max-request-bytes. */
     static final int MAX_BODY_BYTES = 1024 * 1024;
     /** Headers of a successful answer that are replayed with it. */
     private static final List<String> REPLAYED_HEADERS = List.of("Content-Type", "Location", "ETag", "Link");
@@ -65,13 +66,14 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private final JsonMapper json;
     private final Supplier<CallerResolver> callerResolver;
     private final int maxStoredBytes;
+    private final long maxBodyBytes;
 
     /**
      * @param callerResolver the runtime's caller resolution, so keys are scoped to the same identity the rest of the
      *                       runtime uses (principal claims, tenant); null where there is none
      */
     public IdempotencyFilter(IdempotencyStore store, JsonMapper json, Supplier<CallerResolver> callerResolver) {
-        this(store, json, callerResolver, 256 * 1024);
+        this(store, json, callerResolver, 256 * 1024, MAX_BODY_BYTES);
     }
 
     /**
@@ -80,10 +82,17 @@ public class IdempotencyFilter extends OncePerRequestFilter {
      */
     public IdempotencyFilter(IdempotencyStore store, JsonMapper json, Supplier<CallerResolver> callerResolver,
                              int maxStoredBytes) {
+        this(store, json, callerResolver, maxStoredBytes, MAX_BODY_BYTES);
+    }
+
+    /** @param maxBodyBytes the largest request body taken, the same as for every request (max-request-bytes) */
+    public IdempotencyFilter(IdempotencyStore store, JsonMapper json, Supplier<CallerResolver> callerResolver,
+                             int maxStoredBytes, long maxBodyBytes) {
         this.store = store;
         this.json = json;
         this.callerResolver = callerResolver != null ? callerResolver : () -> null;
         this.maxStoredBytes = maxStoredBytes;
+        this.maxBodyBytes = maxBodyBytes;
     }
 
     @Override
@@ -100,7 +109,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (key.length() >= 2 && key.startsWith("\"") && key.endsWith("\"")) {
             key = key.substring(1, key.length() - 1);
         }
-        if (request.getContentType() != null && request.getContentType().startsWith("multipart/")) {
+        if (request.getContentType() != null
+                && request.getContentType().toLowerCase(java.util.Locale.ROOT).startsWith("multipart/")) {
             ProblemResponses.write(request, response, ApiProblem.invalid(ApiV1.IDEMPOTENCY_KEY,
                     "is not supported for uploads (multipart requests); send them without one"), json);
             return;
@@ -112,14 +122,13 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
         byte[] body;
         try {
-            body = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
+            body = request.getInputStream().readNBytes((int) Math.min(Integer.MAX_VALUE - 8, maxBodyBytes + 1));
         } catch (RequestSizeFilter.BodyTooLargeException e) {
             ProblemResponses.write(request, response, RequestSizeFilter.problem(e.maxBytes()), json);
             return;
         }
-        if (body.length > MAX_BODY_BYTES) {
-            ProblemResponses.write(request, response, new ApiProblem(HttpStatus.CONTENT_TOO_LARGE, "body-too-large",
-                    "Request too large", "Requests with an Idempotency-Key may have at most 1 MB of body."), json);
+        if (body.length > maxBodyBytes) {
+            ProblemResponses.write(request, response, RequestSizeFilter.problem(maxBodyBytes), json);
             return;
         }
         String scope = caller() + " POST " + request.getRequestURI();
@@ -163,7 +172,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 ContentCachingResponseWrapper wrapped = new ContentCachingResponseWrapper(response);
                 boolean completed = false;
                 try (IdempotencyStore.Hold held = store.hold(scope, key, fingerprint)) {
-                    chain.doFilter(new CachedBodyRequest(request, body), wrapped);
+                    try {
+                        chain.doFilter(new CachedBodyRequest(request, body), wrapped);
+                    } finally {
+                        held.close(); // stop renewing before the outcome is written
+                    }
                     if (wrapped.getStatus() >= 200 && wrapped.getStatus() < 300) {
                         Map<String, List<String>> headers = new LinkedHashMap<>();
                         for (String name : REPLAYED_HEADERS) {

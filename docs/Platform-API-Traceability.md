@@ -178,6 +178,18 @@ Each finding was checked against the code first; all of the ones below held up.
 | `executions:query` reported server faults as invalid queries and showed server paths | `500` for faults, paths shortened | Operations |
 | No way to require `If-Match` | `opencrawling.api.require-if-match` gives `428` | `PlatformApiV1RequireIfMatchHttpTest` |
 
+**Second review.** A second independent read checked these fixes and found what the first round missed. Each item was verified, then fixed and tested:
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| Critical: the job state writers (run end, every pushed document) and the legacy delete did not take the jobs' lock, so they could revert a saved definition or overwrite another job | Every writer of the job list is synchronized on the controller | Core `everyJobWriterWaitsForTheLockThatConditionalChangesHold` (deterministic; fails if any writer loses the lock) |
+| A Redis key renewal could land after the answer was written, cutting its lifetime to 10 minutes | Closing a hold stops and waits for the renewer, before the outcome is written | `closingAHoldWaitsForTheRenewerSoTheAnswerKeepsItsRetention` |
+| `require-if-match` broke the shipped clients' deletes and replaces, and ignored a context path | UI and CLI read the version first; the filter strips the context path; legacy scope documented | `api.test.ts`; CLI `PlatformApiCommandsTest` |
+| SDK: a timed-out POST's retry failed on `409 idempotency-in-progress`; defaults shared one key across calls; uploads got a key | That 409 is retried; defaults keep only ids; uploads never get a key; a longer `Retry-After` than allowed gives up | SDK `PlatformClientTest` |
+| Masking gaps: `sessionTicket`, `password=` parameters, `@` in passwords, ports and TLS switches, `className` changes, edited masked values | All covered; `changeLogToken` is no longer treated as a secret | Unit masking tests |
+| Minor: exact successors for dynamic-job actions and the report query; keyed-request size limit; reader-based bodies; case of `multipart`; dynamic-job order; lock-order notes; duplicated settings validation; export to a partial file | All fixed | Unit; Core; SDK |
+| The guide said secrets are never returned, but the deprecated `GET /api/connectors` returns them to admins | The legacy endpoint is unchanged (compatibility); the guide says so | Guide |
+
 **Deferred, with reasons:**
 - **`RateLimit` headers and `429` on writes:** the runtime has no rate limiter yet, so there are no limits to advertise.
 - **Long-running operations as resources, events and webhooks:** these are part 2 of #313 (scenario runs).

@@ -71,7 +71,7 @@ Every error is `application/problem+json`. The one exception is `GET /api/v1/hea
 | <a id="problem-conflict"></a>`conflict` | 409 | Another conflict with the resource's state, reported by an optional feature |
 | <a id="problem-precondition-failed"></a>`precondition-failed` | 412 | `If-Match` does not match the current version; `currentEtag` is the current one |
 | <a id="problem-precondition-required"></a>`precondition-required` | 428 | A change without `If-Match`, on a runtime that requires it (`opencrawling.api.require-if-match`) |
-| <a id="problem-body-too-large"></a>`body-too-large` | 413 | The request body is larger than allowed; `maxBytes` says how large it may be |
+| <a id="problem-body-too-large"></a>`body-too-large` | 413 | The request body is larger than allowed; `maxBytes` says how large it may be (for request bodies; uploads have their own limits) |
 | <a id="problem-unsupported-media-type"></a>`unsupported-media-type` | 415 | The `Content-Type` is not one the operation takes |
 | <a id="problem-idempotency-key-reused"></a>`idempotency-key-reused` | 422 | The `Idempotency-Key` was used before for a different request |
 | <a id="problem-too-many-runs"></a>`too-many-runs` | 429 | A cap on concurrent runs is reached; see `Retry-After` |
@@ -121,7 +121,7 @@ Single resources (jobs, connectors, system and transport settings) return an `ET
 - **Conditional reads:** `GET` with `If-None-Match: <etag>` answers `304 Not Modified` only when nothing in the answer changed.
 - **Conditional changes:** `PUT`, `PATCH` and `DELETE` with `If-Match: <etag>` answer `412` when the resource changed since you read it. Read it again, and redo the change on what is there now. A job whose run changed its state since you read it answers `412` too.
 - **Atomic:** the check and the change happen as one step, so of several changes made from the same version exactly one succeeds and the others get `412` (no lost updates, RFC 9110 13.1.1).
-- **Without `If-Match`:** the change is applied unconditionally, unless the runtime sets `opencrawling.api.require-if-match=true`. Then every change of a job, connector or settings document must carry `If-Match`, and one without it answers `428 precondition-required` (RFC 6585).
+- **Without `If-Match`:** the change is applied unconditionally, unless the runtime sets `opencrawling.api.require-if-match=true`. Then every change of a job, connector or settings document through the Platform API must carry `If-Match`, and one without it answers `428 precondition-required` (RFC 6585). The admin UI, the CLI and the SDK read the version first, so they keep working. The deprecated legacy endpoints are not covered.
 - **Weak tags (a deliberate deviation from RFC 9110):** a weak copy of a tag (`W/"..."`) is accepted in `If-Match`. RFC 9110 asks for strong comparison there, but proxies that compress responses, such as nginx with `gzip on`, turn tags weak. The tag digests the JSON, not the bytes sent, so it still names the same version.
 - **Browsers:** the runtime sends no CORS headers, so serve browser clients from the same origin, as the admin UI is. A proxy that adds CORS must expose the headers clients read: `Access-Control-Expose-Headers: ETag, Location, Link, X-Request-Id`.
 
@@ -147,7 +147,7 @@ Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) w
 - **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, shared by every runtime instance and kept across restarts; the Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
 - **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`, with `Retry-After`) and not run. Retry later with the same key.
 - **Long requests:** while a request runs, its key is held (Redis renews it), however long the request takes.
-- **Limits of the memory store:** at most 10,000 keys, and 1,000 per caller. A key whose request still runs is never dropped. When a new key would need dropping one, the request is refused with `503`.
+- **Limits of the memory store:** at most 10,000 keys, and 1,000 per caller. A key whose request still runs is never dropped before the retention ends; when a new key would need dropping one, the request is refused with `503`. Finished keys may be dropped before 24 hours when a caller or the runtime is at its limit. Without sign-in all clients are one caller and share its 1,000 keys; use the Redis store when many clients send keys.
 - **The one gap:** if Redis fails after the request ran and stays down while the runtime retries keeping its outcome, the outcome is lost. Once the key's in-progress marker expires (10 minutes), a retry would run the request again. The runtime logs this as an error.
 - **Failures:** only successful answers are remembered, so a failed request can be retried with the same key.
 
@@ -218,12 +218,13 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 | POST | `/api/v1/connectors/{name}:check` | Live connectivity check of a saved connector |
 | POST | `/api/v1/connectors:check` | The same for a definition not saved yet |
 
-**Secrets are never returned:**
+**The Platform API never returns secrets.** The deprecated `GET /api/connectors` still returns them to admins, unchanged for existing integrations; that is one more reason to move off it.
 
-- **Which keys are secret:** any key that contains `secret` (`clientSecret`, `s3SecretAccessKey`), keys that end in `password`, `token`, `apiKey`, `credential`, `privateKey`, `passphrase` or `connectionString`, and header settings (`customHeaders`, `authorization`).
-- **How they look:** they are returned as `********`. A password inside a URL (`scheme://user:password@host`) is returned as `scheme://user:********@host`.
+- **Which keys are secret:** any key that contains `secret` (`clientSecret`, `s3SecretAccessKey`), keys that end in `password`, `token`, `apiKey`, `credential`, `privateKey`, `passphrase`, `ticket` or `connectionString` (but not `changeLogToken`, a position in a change log), and header settings (`customHeaders`, `authorization`).
+- **How they look:** they are returned as `********`. A password inside a URL (`scheme://user:password@host`) is returned as `scheme://user:********@host`, and a `password=` parameter of a URL or connection string as `password=********`.
+- **Edited values:** a value that still holds `********` but is not exactly the value that was read is refused, so the mask itself is never stored as a password.
 - **Sending them back:** a value sent back as it was read keeps the stored secret, so a client can `GET`, change something and `PUT` without knowing the secrets.
-- **Changing the address:** if the change also changes where the connector connects (a setting whose name contains `url`, `uri`, `endpoint`, `host`, `server` or `bootstrap`), secrets sent back as the mask are refused (`400`, naming them) and must be entered again. Otherwise a stored password could be sent to a server of the caller's choice.
+- **Changing the address:** if the change also changes where or how the connector connects, secrets sent back as the mask are refused (`400`, naming them) and must be entered again. That covers settings named like a URL, host, server or port, endpoint, bootstrap, TLS or SSL settings, and a change of `className`. Otherwise a stored password could be sent to a server of the caller's choice, or in clear.
 
 ### Settings (admins)
 
@@ -333,7 +334,7 @@ Removal will be announced separately; no `Sunset` date is set. The endpoints lis
 
 Every call the admin UI makes goes to `/api/v1`, except the public `GET /api/auth/config`, which it reads before sign-in. A test (`PlatformApiV1UiParityTest`) reads the UI's sources and checks two things: each call is a documented v1 operation, and everything the UI did before still uses one.
 
-- Saving settings sends the ETag they were read with, so a concurrent change answers `412` and the page asks to reload.
+- Editing a job or a connector, and saving settings, use the version read with the form (`If-Match`). A change made meanwhile answers `412`, and the page asks to reopen or reload. Deletes read the current version first.
 - Lists follow the cursors.
 - Errors show the problem's `detail` and field errors.
 
@@ -363,6 +364,7 @@ try {
 ```
 
 - **Coverage:** one method per operation. A test (`PlatformApiV1SdkTest`) runs the SDK against the runtime and checks that it reaches every operation in the API description.
+- **Retries:** requests that are safe to repeat are repeated after network errors, `429`, `502`, `503`, `504` and `409 idempotency-in-progress`, with backoff and the runtime's `Retry-After` (`RetryPolicy`). The safe ones are `GET`, `PUT`, `DELETE`, a `PATCH` with `If-Match`, and every `POST`, because the SDK gives each `POST` an `Idempotency-Key` unless you do. Uploads are sent once. `withDefaults(...)` applies correlation and request ids to every call; keys and `If-Match` belong to single calls.
 - **Settings:** `SystemSettings` keeps every field the runtime sends, so a read, change and replace never resets the settings you did not touch.
 - **Earlier clients:** the SDK's other clients (`jobs()`, `connectors()`, `system()`, ...) still use the legacy endpoints, which are deprecated; they log a warning once. Their `system().updateSettings` changes only the fields its model has and keeps the runtime's other settings.
 

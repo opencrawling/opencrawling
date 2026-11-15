@@ -268,7 +268,9 @@ class PlatformApiV1UnitTest {
                 "s3SecretAccessKey", "secretKey", "vespaTlsPrivateKey", "connectionString", "customHeaders", "Authorization")) {
             assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret(key)).as(key).isTrue();
         }
-        for (String key : List.of("url", "username", "s3AccessKeyId", "bucket", "keyPrefix", "primaryKeyColumn", "region")) {
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret("sessionTicket")).isTrue();
+        for (String key : List.of("url", "username", "s3AccessKeyId", "bucket", "keyPrefix", "primaryKeyColumn", "region",
+                "changeLogToken")) {
             assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret(key)).as(key).isFalse();
         }
         assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "https://bob:pw@host/x"))
@@ -277,6 +279,13 @@ class PlatformApiV1UnitTest {
                 .isEqualTo("jdbc:postgresql://u:********@db:5432/x");
         assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "https://host/x?y=1"))
                 .as("no credentials, nothing masked").isEqualTo("https://host/x?y=1");
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "https://bob:p@ss@host/x"))
+                .as("a raw @ in the password").isEqualTo("https://bob:********@host/x");
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url",
+                "jdbc:sqlserver://db:1433;user=sa;password=S3cret;encrypt=true"))
+                .isEqualTo("jdbc:sqlserver://db:1433;user=sa;password=********;encrypt=true");
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "jdbc:mysql://db/x?user=u&password=p"))
+                .isEqualTo("jdbc:mysql://db/x?user=u&password=********");
     }
 
     @Test
@@ -296,6 +305,22 @@ class PlatformApiV1UnitTest {
         assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
                 Map.of("password", "********", "host", "elsewhere"), Map.of("password", "s3cret", "host", "here")))
                 .isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("password", "********", "omPort", "9999"), Map.of("password", "s3cret", "omPort", "9862")))
+                .as("another port").isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("password", "********", "useTls", "false"), Map.of("password", "s3cret", "useTls", "true")))
+                .as("TLS turned off").isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("password", "********"), Map.of("password", "s3cret"), true))
+                .as("another implementation").isInstanceOf(ApiProblem.class);
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("password", "********", "exportFormat", "csv", "securityEnabled", "true"),
+                Map.of("password", "s3cret", "exportFormat", "json", "securityEnabled", "false")))
+                .as("settings that are not addresses").containsEntry("password", "s3cret");
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("dsn", "postgres://u:********@other/x"), Map.of("dsn", "postgres://u:dbpass@db/x")))
+                .as("an edited value holding the mask").isInstanceOf(ApiProblem.class);
     }
 
     @Test

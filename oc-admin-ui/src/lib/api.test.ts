@@ -122,9 +122,12 @@ describe('jobApi', () => {
     await jobApi.start('j 1')
     await jobApi.stop('j 1')
     await jobApi.pause('j 1')
+    reply({ data: { id: 'j 1' }, headers: { ETag: '"d1"' } })
     await jobApi.delete('j 1')
+    expect(calls[4].headers.get('If-Match')).toBe('"d1"')
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      'POST /api/v1/jobs/j%201:start', 'POST /api/v1/jobs/j%201:stop', 'POST /api/v1/jobs/j%201:pause', 'DELETE /api/v1/jobs/j%201',
+      'POST /api/v1/jobs/j%201:start', 'POST /api/v1/jobs/j%201:stop', 'POST /api/v1/jobs/j%201:pause',
+      'GET /api/v1/jobs/j%201', 'DELETE /api/v1/jobs/j%201',
     ])
   })
 
@@ -230,11 +233,14 @@ describe('connectorApi', () => {
   })
 
   it('deletes and checks connectors', async () => {
+    reply({ data: { name: 'A B' }, headers: { ETag: '"c9"' } })
     await connectorApi.delete('A B')
+    expect(calls[1].headers.get('If-Match')).toBe('"c9"')
     reply({ data: { success: true, message: 'ok' } })
     const res = await connectorApi.checkConnection({ name: '', type: 'output', className: 'c.PG', configuration: {} })
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['DELETE /api/v1/connectors/A%20B', 'POST /api/v1/connectors:check'])
-    expect(calls[1].data).toMatchObject({ name: CHECK_PLACEHOLDER_NAME, type: 'output', className: 'c.PG' })
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/v1/connectors/A%20B', 'DELETE /api/v1/connectors/A%20B',
+      'POST /api/v1/connectors:check'])
+    expect(calls[2].data).toMatchObject({ name: CHECK_PLACEHOLDER_NAME, type: 'output', className: 'c.PG' })
     expect(res.data.success).toBe(true)
   })
 

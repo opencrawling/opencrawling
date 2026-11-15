@@ -146,10 +146,12 @@ class PlatformApiCommandsTest {
         answer("POST /api/v1/jobs/42:stop", 200, JOB);
         answer("POST /api/v1/jobs/42:pause", 200, JOB);
         answer("DELETE /api/v1/jobs/42", 204, "");
+        // GET /api/v1/jobs/42 answers with ETag "v1": the delete names that version.
         assertEquals(0, oc("job", "stop", "--id", "42"));
         assertEquals(0, oc("job", "pause", "--id", "42"));
         assertEquals(0, oc("job", "delete", "--id", "42"));
         assertTrue(requests().containsAll(List.of("POST /api/v1/jobs/42:stop", "POST /api/v1/jobs/42:pause", "DELETE /api/v1/jobs/42")));
+        assertEquals("\"v1\"", seen.getLast().headers().get("if-match"), "the delete sends the version it read");
     }
 
     @Test
@@ -204,12 +206,15 @@ class PlatformApiCommandsTest {
                 "{\"name\":\"HR Share\",\"type\":\"repository\",\"className\":\"x.Fs\",\"configuration\":{\"basePath\":\"/data\"}}");
         answer("POST /api/v1/connectors", 409, "{\"type\":\"https://opencrawling.org/problems/connector-exists\",\"title\":\"Conflict\",\"status\":409}");
         answer("PUT /api/v1/connectors/HR%20Share", 200, "{\"name\":\"HR Share\"}");
+        answer("GET /api/v1/connectors/HR%20Share", 200, "{\"name\":\"HR Share\"}", "ETag", "\"c7\"");
         assertEquals(0, oc("connector", "create", "--file", file.toString()));
         assertTrue(text().contains("Connector updated successfully"));
+        assertEquals("\"c7\"", seen.getLast().headers().get("if-match"), "the replace sends the version it read");
     }
 
     @Test
     void aConnectorJobsUseIsOnlyDeletedWithForce() {
+        answer("GET /api/v1/connectors/HR_Share", 200, "{\"name\":\"HR_Share\"}", "ETag", "\"c3\"");
         answer("DELETE /api/v1/connectors/HR_Share", 409, "{\"type\":\"https://opencrawling.org/problems/connector-in-use\","
                 + "\"title\":\"Conflict\",\"status\":409,\"jobs\":[\"42\"]}");
         assertEquals(1, oc("connector", "delete", "--name", "HR_Share"));

@@ -286,7 +286,7 @@ public class JobController {
     @Operation(summary = "Delete a pipeline job", description = "Removes a pipeline job definition by its identifier.")
     @ApiResponse(responseCode = "200", description = "Job successfully deleted")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteJob(
+    public synchronized ResponseEntity<Void> deleteJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Deleting job: {}", id);
         if (authorizationOn()) {
@@ -644,7 +644,9 @@ public class JobController {
         return globalProperties != null ? globalProperties.getMode() : PipelineMode.RAG;
     }
 
-    private void updateJobStatus(String id, String status) {
+    // Every change of the job list holds this controller's lock, the one the Platform API takes around a conditional
+    // change (If-Match), so no writer can revert a saved definition or overwrite another job.
+    private synchronized void updateJobStatus(String id, String status) {
         String cleanId = id != null ? id.trim() : "";
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
@@ -688,7 +690,7 @@ public class JobController {
         PersistenceHelper.save("jobs.json", jobs);
     }
 
-    private void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
+    private synchronized void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
             if (job.id().equals(id)) {
@@ -715,7 +717,7 @@ public class JobController {
         PersistenceHelper.save("jobs.json", jobs);
     }
 
-    public void recordPushExecution(String id, long pushedDocs, boolean success) {
+    public synchronized void recordPushExecution(String id, long pushedDocs, boolean success) {
         if (id == null || id.isBlank()) return;
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);

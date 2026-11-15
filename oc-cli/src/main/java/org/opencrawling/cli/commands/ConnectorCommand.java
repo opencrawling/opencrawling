@@ -194,7 +194,8 @@ public class ConnectorCommand implements Runnable {
                     if (!"connector-exists".equals(e.code())) {
                         throw e;
                     }
-                    connectors.replace(request.name(), request, RequestOptions.none());
+                    connectors.replace(request.name(), request,
+                            RequestOptions.ifMatch(connectors.get(request.name()).etag()));
                     System.out.println(AnsiColors.green("✔ Connector updated successfully!"));
                 }
                 return 0;
@@ -223,7 +224,8 @@ public class ConnectorCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                client.platform().connectors().delete(name, force, RequestOptions.none());
+                PlatformClient.Connectors connectors = client.platform().connectors();
+                connectors.delete(name, force, RequestOptions.ifMatch(connectors.get(name).etag()));
                 System.out.println(AnsiColors.green("✔ Connector deleted: " + name));
                 return 0;
             } catch (ApiProblemException e) {
