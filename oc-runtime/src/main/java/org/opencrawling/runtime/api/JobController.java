@@ -382,6 +382,8 @@ public class JobController {
                     succeeded = jobOrchestrator.runJob(finalConnector, finalOutputConnector, finalActiveJob.path(), finalActiveJob.transformationConnector(), finalActiveJob.id(), finalActiveJob.name(), finalActiveJob.narrativization(), mode, executionId, stopRequested, provenance);
                 } catch (Exception e) {
                     log.error("Background Virtual Thread failed: {}", e.getMessage(), e);
+                } finally {
+                    connectorFactory.release(finalOutputConnector);
                 }
                 // A stop interrupts this thread; clear it so the status updates below are not cut short.
                 Thread.interrupted();

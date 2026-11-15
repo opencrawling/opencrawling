@@ -36,6 +36,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.opencrawling.doxis.DoxisRepositoryConnector;
 import org.opencrawling.doxis.DoxisProperties;
 import org.opencrawling.doxis.client.DoxisClient;
+import org.opencrawling.doxis.output.config.DoxisConnectorSettings;
+import org.opencrawling.doxis.output.config.DoxisOutputProperties;
 import org.opencrawling.sharepoint.GraphClient;
 import org.opencrawling.sharepoint.SharePointProperties;
 import org.opencrawling.sharepoint.SharePointRepositoryConnector;
@@ -104,6 +106,11 @@ public class ConnectorCheckerService {
             // --- Luxir Output Connector ---
             if (className.contains("LuxirOutputConnector") || className.contains("Luxir")) {
                 return checkLuxir(config);
+            }
+
+            // --- Doxis 4 Output Connector ---
+            if (className.contains("DoxisOutputConnector")) {
+                return checkDoxisOutput(config);
             }
 
             // --- Apache SeaTunnel Output Connector ---
@@ -752,6 +759,27 @@ public class ConnectorCheckerService {
             }
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + cleanUrl + ": " + e.getMessage(), e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkDoxisOutput(Map<String, String> config) {
+        DoxisOutputProperties props = DoxisConnectorSettings.fromConfiguration(config);
+        if (props.customerName() == null || props.username() == null || props.password() == null) {
+            return new ConnectionCheckResult(false, "Doxis customer name, username and password must be configured.", null);
+        }
+        DoxisClient client = new DoxisClient(props.baseUrl(), props.customerName(), props.username(), props.password(),
+                props.role(), "OpenCrawling-ConnectionCheck", Duration.ofSeconds(10), 0);
+        try (client) {
+            JsonNode user = client.getLoggedInUser();
+            StringBuilder message = new StringBuilder("Successfully logged in to Doxis CSB at " + client.getBaseUrl()
+                    + " as " + user.path("name").asText(props.username()) + " (customer '" + props.customerName() + "')");
+            if (props.repository() != null && !props.repository().isBlank()) {
+                JsonNode repository = client.getRepository(props.repository());
+                message.append("; repository '").append(repository.path("name").asText(props.repository())).append("' is accessible");
+            }
+            return new ConnectionCheckResult(true, message + ".", user.path("uuid").asText(null));
+        } catch (Exception e) {
+            return new ConnectionCheckResult(false, "Failed to connect to Doxis at " + props.baseUrl() + ": " + e.getMessage(), e.toString());
         }
     }
 

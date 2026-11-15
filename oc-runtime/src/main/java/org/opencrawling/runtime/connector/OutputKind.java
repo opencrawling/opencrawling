@@ -29,6 +29,7 @@ public enum OutputKind {
     S3,
     ICEBERG,
     HYLAND_CIC,
+    DOXIS,
     /** The runtime's configured output connector ({@code spring.opencrawling.output.type}). */
     ACTIVE;
 
@@ -49,6 +50,8 @@ public enum OutputKind {
             return S3;
         } else if (className.contains("Iceberg") || className.contains("iceberg")) {
             return ICEBERG;
+        } else if (className.contains("DoxisOutputConnector")) {
+            return DOXIS;
         } else if (className.contains("HylandCic") || className.contains("HylandCIC") || className.contains("hyland-cic")) {
             return HYLAND_CIC;
         }

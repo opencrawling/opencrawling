@@ -80,6 +80,9 @@ class ConnectorKindTest {
             "org.opencrawling.iceberg.output.IcebergOutputConnector, ICEBERG",
             "custom.icebergSink, ICEBERG",
             "org.opencrawling.hyland.cic.output.HylandCicOutputConnector, HYLAND_CIC",
+            "org.opencrawling.doxis.output.DoxisOutputConnector, DOXIS",
+            // the Doxis repository connector is not an output
+            "org.opencrawling.doxis.DoxisRepositoryConnector, ACTIVE",
             // the S3 rule never catches OpenSearch
             "org.opencrawling.opensearch3.OpenSearch3OutputConnector, ACTIVE",
             "custom.opensearch3s3, ACTIVE",

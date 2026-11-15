@@ -133,11 +133,27 @@ public class ConnectorFactory {
                 case S3 -> buildS3(config, mode);
                 case ICEBERG -> buildIcebergOutput(config);
                 case HYLAND_CIC -> buildHylandCicOutput(config);
+                case DOXIS -> buildDoxisOutput(config);
                 default -> throw new IllegalStateException("Unhandled output kind " + kind);
             };
         } catch (RuntimeException e) {
             throw new ConnectorResolutionException("Output connector '" + connector.name() + "' could not be built: "
                     + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Releases an output connector built for one job by {@link #output(ConnectorDTO, PipelineMode)}: such a connector owns its
+     * clients and sessions (e.g. a Doxis CSB login). The runtime's shared output connector is left untouched.
+     */
+    public void release(OutputConnector connector) {
+        if (connector == null || connector == activeOutputConnector) {
+            return;
+        }
+        try {
+            connector.disconnect();
+        } catch (Exception e) {
+            log.warn("Failed to disconnect per-job output connector {}: {}", connector.getName(), e.getMessage());
         }
     }
 
@@ -562,6 +578,14 @@ public class ConnectorFactory {
             }
         });
         return s3Props;
+    }
+
+    private OutputConnector buildDoxisOutput(Map<String, String> config) {
+        org.opencrawling.doxis.output.config.DoxisOutputProperties doxisProps =
+                org.opencrawling.doxis.output.config.DoxisConnectorSettings.fromConfiguration(config);
+        log.info("Resolving dynamic Doxis output connector for '{}' (repository '{}', content strategy {})",
+                doxisProps.baseUrl(), doxisProps.repository(), doxisProps.content().strategy());
+        return new org.opencrawling.doxis.output.DoxisOutputConnector(doxisProps);
     }
 
     private OutputConnector buildHylandCicOutput(Map<String, String> config) {

@@ -98,6 +98,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.includes('luxir') || className.includes('Luxir')) {
     return { icon: Sparkles, color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-500/20' }
   }
+  if (className.includes('doxis') || className.includes('Doxis')) {
+    return { icon: Archive, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-500/20' }
+  }
   if (className.includes('seatunnel') || className.includes('SeaTunnel')) {
     return { icon: Network, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-500/20' }
   }
@@ -445,6 +448,7 @@ export default function ConnectorForm() {
       { label: 'Vespa Hybrid Search Store', value: 'org.opencrawling.vespa.VespaOutputConnector' },
       { label: 'Apache Solr 10 Output Connector', value: 'org.opencrawling.solr.SolrOutputConnector' },
       { label: 'Luxir Hybrid Search Store', value: 'org.opencrawling.luxir.LuxirOutputConnector' },
+      { label: 'Doxis 4 ECM Archive (CSB REST API)', value: 'org.opencrawling.doxis.output.DoxisOutputConnector' },
       { label: 'Apache SeaTunnel Distributed Fan-Out', value: 'org.opencrawling.seatunnel.SeaTunnelOutputConnector' },
       { label: 'Apache Ozone (Migration Mode only)', value: 'org.opencrawling.ozone.OzoneOutputConnector' },
       { label: 'AWS S3 (Migration Mode only)', value: 'org.opencrawling.s3.S3OutputConnector' },
@@ -4794,6 +4798,532 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                         <p className="text-xs text-muted-foreground">HTTP socket and connection timeout.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Doxis 4 Output Connector */}
+                  {selectedClass === 'org.opencrawling.doxis.output.DoxisOutputConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium">CSB REST API URL</label>
+                        <input 
+                          {...register('configuration.doxisBaseUrl', { required: true })}
+                          placeholder="http://localhost:8080/restws/publicws/rest/api/v1"
+                          defaultValue="http://localhost:8080/restws/publicws/rest/api/v1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Doxis CSB REST base URL (…/restws/publicws/rest/api/v1). Test Connection logs in and checks the repository.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Customer (Tenant)</label>
+                        <input 
+                          {...register('configuration.doxisCustomerName', { required: true })}
+                          placeholder="faststarter"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Doxis customer short name, e.g. faststarter (GET /customers lists them).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Role</label>
+                        <input 
+                          {...register('configuration.doxisRole')}
+                          placeholder="admins"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Role to log in with; required when the user needs a role for createDocument (e.g. admins).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input 
+                          {...register('configuration.doxisUsername', { required: true })}
+                          placeholder="Supervisor"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Doxis user that archives documents.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input 
+                          type="password"
+                          {...register('configuration.doxisPassword', { required: true })}
+                          placeholder=""
+                          
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Password of the Doxis user.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">DMS Repository</label>
+                        <input 
+                          {...register('configuration.doxisRepository', { required: true })}
+                          placeholder="D_TEXTER"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Target DMS repository (name or UUID), e.g. D_TEXTER.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Document Type</label>
+                        <input 
+                          {...register('configuration.doxisDocumentType')}
+                          placeholder="BaseDocument"
+                          defaultValue="BaseDocument"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Document type (name or UUID); must be allowed in the repository.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">External ID Descriptor</label>
+                        <input 
+                          {...register('configuration.doxisExternalIdAttribute')}
+                          placeholder="ObjectNumber"
+                          defaultValue="ObjectNumber"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Descriptor holding the OpenCrawling document id; used to find documents on re-crawl and DELETE.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Title Descriptor</label>
+                        <input 
+                          {...register('configuration.doxisTitleAttribute')}
+                          placeholder="ObjectName"
+                          defaultValue="ObjectName"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Descriptor receiving the document title.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Source URI Descriptor</label>
+                        <input 
+                          {...register('configuration.doxisReferenceAttribute')}
+                          placeholder="URL"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional descriptor receiving the source URI (required to locate reference-only content).</p>
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium">Descriptor Mapping</label>
+                        <input 
+                          {...register('configuration.doxisAttributeMapping')}
+                          placeholder="author=ObjectAuthors, lastModified=ObjectDate"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">metadataKey=Descriptor pairs, comma separated (pseudo-keys: id, uri, lastModified).</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Binary Content</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Content Strategy</label>
+                        <select
+                          {...register('configuration.doxisContentStrategy')}
+                          defaultValue="AUTO"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="AUTO">Auto (locator → upload → fallback)</option>
+                          <option value="UPLOAD">Upload (stream binary)</option>
+                          <option value="PREDEFINED_LOCATOR">Predefined Locator (in place, no transfer)</option>
+                          <option value="REFERENCE_ONLY">Reference Only (no binary in Doxis)</option>
+                          <option value="CONTENT_LINK">Content Link (zero-copy, in place)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How the binary reaches Doxis. Metadata always goes through the REST API.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Fallback (Auto, too large)</label>
+                        <select
+                          {...register('configuration.doxisContentFallback')}
+                          defaultValue="REFERENCE_ONLY"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="REFERENCE_ONLY">Reference Only</option>
+                          <option value="UPLOAD">Upload anyway</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Used by Auto when no locator resolves and the file exceeds the upload limit.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Upload Limit (bytes)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.doxisUploadMaxBytes', { valueAsNumber: true })}
+                          placeholder="2147483648"
+                          defaultValue={2147483648}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Largest binary streamed to Doxis (default 2 GiB).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Locator URI Prefix</label>
+                        <input 
+                          {...register('configuration.doxisLocatorUriPrefix')}
+                          placeholder="file:///mnt/doxis-store/"
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Document URIs under this prefix are registered in place; the remainder becomes the predefinedLocator.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Locator Prefix</label>
+                        <input 
+                          {...register('configuration.doxisLocatorPrefix')}
+                          placeholder=""
+                          defaultValue=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional text prepended to derived locators.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Locator Metadata Key</label>
+                        <input 
+                          {...register('configuration.doxisLocatorMetadataKey')}
+                          placeholder="doxisLocator"
+                          defaultValue="doxisLocator"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Metadata key carrying an explicit locator (wins over the URI prefix).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisVerifyContent"
+                            {...register('configuration.doxisVerifyContent')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisVerifyContent" className="text-sm font-medium cursor-pointer">
+                            Verify Content
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Read back the content object and compare length/SHA-256 after each write.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Change Marker Descriptor</label>
+                        <input
+                          {...register('configuration.doxisChangeMarkerAttribute')}
+                          placeholder="SystemId1"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional descriptor storing lastModified|length; unchanged re-crawls then skip the new version.</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Zero-copy Content Links (optional module)</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Doxis Client Lib Dir</label>
+                        <input
+                          {...register('configuration.doxisContentLinkClientLibDir')}
+                          placeholder="/opt/doxis-client-lib"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">SER Doxis client jars + oc-doxis-blueline-content-link; enables the CONTENT_LINK strategy.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawled URI Prefix</label>
+                        <input
+                          {...register('configuration.doxisContentLinkUriPrefix')}
+                          placeholder="file:///mnt/archive/"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Documents under this URI prefix are linked in place instead of uploaded (when above the upload limit).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Link Prefix</label>
+                        <input
+                          {...register('configuration.doxisContentLinkPrefix')}
+                          placeholder="\\\\fileserver\\archive\\"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Replaces the URI prefix to form the UNC path or URL Doxis links to.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Link Type</label>
+                        <select
+                          {...register('configuration.doxisContentLinkType')}
+                          defaultValue="UNC"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="UNC">UNC path (\\\\server\\share\\...)</option>
+                          <option value="URL">URL</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">The document class must allow linking contents.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Linked Document Class</label>
+                        <input
+                          {...register('configuration.doxisContentLinkDocumentType')}
+                          placeholder="TX_LargeExternalDocument"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional class for linked documents (defaults to the Document Type).</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Filing (e-file / record)</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Filing Mode</label>
+                        <select
+                          {...register('configuration.doxisFilingMode')}
+                          defaultValue="METADATA"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="NONE">None</option>
+                          <option value="FIXED">Fixed e-file (Record ID)</option>
+                          <option value="METADATA">E-file ID from metadata (doxisRecordId)</option>
+                          <option value="SOURCE_FOLDER">One e-file per source folder</option>
+                          <option value="KEY_METADATA">One e-file per metadata value</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Which e-file a new document is filed into; keyed modes find or create the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file Class</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordClass')}
+                          placeholder="TX_SourceFolder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">E-file (record) class used to auto-create e-files.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file Key Descriptor</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordKeyAttribute')}
+                          placeholder="ObjectNumberExternal"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Descriptor that identifies an e-file (folder path or metadata value).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Key Metadata Field</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordKeyMetadataKey')}
+                          placeholder="customerId"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">KEY_METADATA: metadata field whose value selects the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Filing Method</label>
+                        <select
+                          {...register('configuration.doxisFilingMethod')}
+                          defaultValue="PRIMARY_PARENT"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="PRIMARY_PARENT">Primary parent (uploads + content links)</option>
+                          <option value="RELATIONSHIP">Relationship in create (uploads, folder node)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How documents are attached to the e-file.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisFilingAutoCreate"
+                            {...register('configuration.doxisFilingAutoCreate')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisFilingAutoCreate" className="text-sm font-medium cursor-pointer">
+                            Auto-create E-files
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Create the e-file when no e-file with the key exists.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Record (e-file) ID</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordId')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">New documents are filed into this record; metadata doxisRecordId overrides it per document.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Record Repository</label>
+                        <input
+                          {...register('configuration.doxisFilingRecordRepository')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Repository of the record (defaults to the DMS repository).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Folder Node ID</label>
+                        <input
+                          {...register('configuration.doxisFilingFolderNodeId')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">Optional folder node inside the record; metadata doxisFolderNodeId overrides it.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Folder Node Name</label>
+                        <input
+                          {...register('configuration.doxisFilingFolderNodeName')}
+                          placeholder="Documents"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">RELATIONSHIP filing without a node ID: the document node of this name in each e-file, created when missing.</p>
+                      </div>
+
+                      <div className="md:col-span-2 pt-2 border-t border-border">
+                        <h4 className="text-sm font-semibold">Lifecycle & Security</h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Security Mode</label>
+                        <select
+                          {...register('configuration.doxisSecurityMode')}
+                          defaultValue="DOCUMENT"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="DOCUMENT">Per document</option>
+                          <option value="RECORD">On the e-file (documents inherit)</option>
+                          <option value="DOCUMENT_AND_RECORD">Both</option>
+                          <option value="NONE">None (class ACL)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Where source permissions are applied. RECORD needs a filing mode and Pass down permissions on the document class.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">E-file ACL Sync</label>
+                        <select
+                          {...register('configuration.doxisSecurityRecordAclSync')}
+                          defaultValue="CREATE_ONLY"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="CREATE_ONLY">When the e-file is created</option>
+                          <option value="ADDITIVE">Add missing entries from later documents</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How permissions of existing e-files are maintained.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisSecurityStrict"
+                            {...register('configuration.doxisSecurityStrict')}
+                            defaultChecked={false}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisSecurityStrict" className="text-sm font-medium cursor-pointer">
+                            Strict Permissions
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Fail (and roll back) a document whose permissions cannot be applied.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisSecurityRemoveStale"
+                            {...register('configuration.doxisSecurityRemoveStale')}
+                            defaultChecked={false}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisSecurityRemoveStale" className="text-sm font-medium cursor-pointer">
+                            Remove Stale Permissions
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Per-document mode: remove view/update/version permissions that no longer exist at the source.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Existing Documents</label>
+                        <select
+                          {...register('configuration.doxisConflictResolution')}
+                          defaultValue="NEW_VERSION"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="NEW_VERSION">Add New Version</option>
+                          <option value="UPDATE_METADATA">Update Descriptors Only</option>
+                          <option value="SKIP">Skip</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">What happens when the external id already exists.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Delete Mode</label>
+                        <select
+                          {...register('configuration.doxisDeleteMode')}
+                          defaultValue="LOGICAL"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        >
+                          <option value="LOGICAL">Logical (reversible, keeps binary)</option>
+                          <option value="PHYSICAL">Physical (irrevocable)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">How OIS DELETE tombstones are applied.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 pt-6">
+                          <input
+                            type="checkbox"
+                            id="doxisApplySecurityAcls"
+                            {...register('configuration.doxisApplySecurityAcls')}
+                            defaultChecked={true}
+                            className="rounded border-border text-primary focus:ring-primary/50"
+                          />
+                          <label htmlFor="doxisApplySecurityAcls" className="text-sm font-medium cursor-pointer">
+                            Apply Source ACLs
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Map OIS read/write/deny permissions to Doxis document permissions on creation.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (seconds)</label>
+                        <input 
+                          type="number"
+                          {...register('configuration.doxisTimeoutSeconds', { valueAsNumber: true })}
+                          placeholder="120"
+                          defaultValue={120}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                        <p className="text-xs text-muted-foreground">HTTP request timeout.</p>
                       </div>
                     </div>
                   )}

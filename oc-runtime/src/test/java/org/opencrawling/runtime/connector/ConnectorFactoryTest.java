@@ -36,6 +36,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ConnectorFactoryTest {
@@ -176,5 +178,33 @@ class ConnectorFactoryTest {
         assertThat(factory.output(connector("Hyland_CIC_Output", "org.opencrawling.hyland.cic.output.HylandCicOutputConnector",
                 Map.of("baseUrl", "https://hxp.test")), PipelineMode.RAG))
                 .isInstanceOf(org.opencrawling.hyland.cic.output.HylandCicOutputConnector.class);
+    }
+
+    @Test
+    void doxisOutputIsBuiltPerJob() {
+        assertThat(factory.output(connector("Doxis_Output", "org.opencrawling.doxis.output.DoxisOutputConnector",
+                Map.of("doxisBaseUrl", "http://csb.test:8080/restws/publicws/rest/api/v1", "doxisCustomerName", "DX4",
+                        "doxisUsername", "crawler", "doxisPassword", "secret", "doxisRepository", "Repo")), PipelineMode.RAG))
+                .isInstanceOf(org.opencrawling.doxis.output.DoxisOutputConnector.class);
+    }
+
+    @Test
+    void releaseDisconnectsPerJobOutputsButNeverTheActiveOutput() throws Exception {
+        OutputConnector perJob = mock(OutputConnector.class);
+        factory.release(perJob);
+        verify(perJob).disconnect();
+
+        factory.release(activeOutput);
+        verify(activeOutput, never()).disconnect();
+
+        factory.release(null);
+    }
+
+    @Test
+    void aFailingDisconnectIsLoggedNotThrown() throws Exception {
+        OutputConnector perJob = mock(OutputConnector.class);
+        org.mockito.Mockito.doThrow(new IllegalStateException("logout failed")).when(perJob).disconnect();
+        factory.release(perJob);
+        verify(perJob).disconnect();
     }
 }

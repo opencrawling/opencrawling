@@ -101,7 +101,7 @@ graph TD
         
         Writer_Cons[Vector Store Writer - VectorStoreWriterConsumer]
         Precompute_Model[PrecomputedEmbeddingModel]
-        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Elasticsearch / Luxir / OpenArch / Apache SeaTunnel]
+        Vec_Conn[Vector Stores & Fan-Out: pgvector / Solr 10 / Vespa / Qdrant / Milvus / OpenSearch / Elasticsearch / Luxir / OpenArch / Doxis 4 / Apache SeaTunnel]
 
         McpServer[Secure MCP Server - McpVectorServer]
         
@@ -1094,6 +1094,30 @@ mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
 
 In the Admin UI it is the **OpenText Documentum (REST Services)** repository connector. See
 [oc-documentum-repository-connector/README.md](oc-documentum-repository-connector/README.md).
+
+### Option A.8.g: Doxis 4 ECM Archiving (Output)
+
+[![Doxis](https://img.shields.io/badge/Doxis_4-CSB_14.x-00A86B.svg?style=flat)](https://www.doxis.com/en/)
+
+To archive crawled documents into a [Doxis 4](https://www.doxis.com/en/) DMS repository, select the Doxis output connector and point it at a Doxis CSB:
+
+```bash
+SPRING_OPENCRAWLING_OUTPUT_TYPE=doxis \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_BASE_URL=http://<csb-host>:8080/restws/publicws/rest/api/v1 \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_CUSTOMER_NAME=<customer> \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_USERNAME=<user> \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_PASSWORD=<password> \
+SPRING_OPENCRAWLING_OUTPUT_DOXIS_REPOSITORY=<repository> \
+mvn spring-boot:run -pl oc-runtime -Dspring-boot.run.profiles=dev
+```
+
+`DoxisOutputConnector` writes the document type, descriptors, OIS ACLs, versions and deletes through the Doxis CSB REST API. Binaries follow a per-document content strategy (`content.strategy`):
+- `UPLOAD` streams the file.
+- `PREDEFINED_LOCATOR` registers a binary already in the Doxis data store without transferring it, for multi-terabyte or in-place content (`locator.uri-prefix` / `doxisLocator` metadata).
+- `REFERENCE_ONLY` records the source URI only.
+- `AUTO` (the default) chooses among these per document.
+
+Every write is verified by reading back the content object's length and SHA-256. Files above `opencrawling.ingestion.max-extract-bytes` skip text extraction and embedding but are still archived. See [oc-doxis-output-connector/README.md](oc-doxis-output-connector/README.md).
 
 ### Option A.9: Decoupled Apache SeaTunnel-Based Deployment
 
