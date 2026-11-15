@@ -49,7 +49,8 @@ public class OperationsV1Controller {
         this.jobs = jobs;
     }
 
-    @Operation(operationId = "getSystemStatus", summary = "Status of the runtime and its dependencies")
+    @Operation(operationId = "getSystemStatus", summary = "Status of the runtime and its dependencies",
+            description = "UP or DOWN for each dependency (PostgreSQL, Redis, Ollama, ...) and the overall system state, as the admin UI's status badge shows it.")
     @ApiResponse(responseCode = "200", description = "Each dependency: UP or DOWN, and the overall system state")
     @GetMapping("/system/status")
     public Map<String, String> status() {

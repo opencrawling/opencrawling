@@ -86,6 +86,7 @@ public class ApiV1OpenApiConfiguration {
         }
         openApi.getPaths().forEach((path, item) -> item.readOperationsMap().forEach((method, operation) ->
                 addErrors(operation, method, path.contains(":") || path.contains("{"))));
+        ApiV1Documentation.document(openApi);
     }
 
     private static void addErrors(Operation operation, PathItem.HttpMethod method, boolean addressesOne) {
@@ -107,6 +108,17 @@ public class ApiV1OpenApiConfiguration {
             add(responses, "409", "Conflict with the resource's state, or an Idempotency-Key still in progress");
             add(responses, "422", "The Idempotency-Key was used for a different request");
         }
+        // Every other documented error answers with a problem detail too, except a health check's 503, which
+        // carries the health report itself.
+        responses.forEach((code, response) -> {
+            boolean error = code.startsWith("4") || code.startsWith("5");
+            boolean health = "getHealth".equals(operation.getOperationId()) && "503".equals(code);
+            if (error && !health && (response.getContent() == null
+                    || !response.getContent().containsKey(ProblemResponses.PROBLEM_JSON))) {
+                response.setContent(new Content().addMediaType(ProblemResponses.PROBLEM_JSON,
+                        new MediaType().schema(new Schema<>().$ref("#/components/schemas/" + PROBLEM_SCHEMA))));
+            }
+        });
         operation.setResponses(responses);
     }
 

@@ -78,7 +78,8 @@ public class ToolsV1Controller {
         return manifoldcf.apply(request);
     }
 
-    @Operation(operationId = "getVespaHealth", summary = "Vespa health", description = "Admins only.")
+    @Operation(operationId = "getVespaHealth", summary = "Vespa health",
+            description = "Whether the Vespa container at the endpoint answers, with its message. Admins only.")
     @ApiResponse(responseCode = "200", description = "The health")
     @GetMapping("/integrations/vespa/health")
     public VespaHealthResult vespaHealth(@Parameter(description = "Vespa container endpoint") @RequestParam String endpoint) {
@@ -92,14 +93,16 @@ public class ToolsV1Controller {
         return vespa.getDocumentCounts(endpoint);
     }
 
-    @Operation(operationId = "queryVespa", summary = "Run a Vespa test query", description = "Admins only.")
+    @Operation(operationId = "queryVespa", summary = "Run a Vespa test query",
+            description = "Runs a text or YQL query against a Vespa document type with a rank profile, to check what an index returns. Admins only.")
     @ApiResponse(responseCode = "200", description = "The hits")
     @PostMapping("/integrations/vespa:query")
     public VespaQueryResult queryVespa(@RequestBody VespaInsightsController.VespaQueryRequest request) {
         return vespa.runQuery(request);
     }
 
-    @Operation(operationId = "deployVespaBundledSchema", summary = "Deploy the bundled Vespa application package", description = "Admins only.")
+    @Operation(operationId = "deployVespaBundledSchema", summary = "Deploy the bundled Vespa application package",
+            description = "Deploys the application package that ships with OpenCrawling (its document types and rank profiles) to the Vespa config server. Admins only.")
     @ApiResponse(responseCode = "200", description = "The deployment's result")
     @PostMapping("/integrations/vespa:deploy-bundled")
     public VespaDeployResult deployVespaBundled(@RequestBody VespaInsightsController.DeployBundledRequest request) {

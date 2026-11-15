@@ -53,7 +53,8 @@ public class SettingsV1Controller {
         this.json = json;
     }
 
-    @Operation(operationId = "getSystemSettings", summary = "Get the crawling and extraction settings", description = "Supports If-None-Match.")
+    @Operation(operationId = "getSystemSettings", summary = "Get the crawling and extraction settings",
+            description = "Chunking defaults and text extraction (Tika) settings in effect. The ETag identifies this version; send it as If-Match when replacing them, or as If-None-Match to get 304 when nothing changed.")
     @ApiResponse(responseCode = "200", description = "The settings", headers = @Header(name = "ETag", description = "Version"))
     @GetMapping("/system")
     public ResponseEntity<SystemController.SystemSettingsDTO> getSystem(
@@ -87,7 +88,8 @@ public class SettingsV1Controller {
         return transport.getTransportSettings().getBody();
     }
 
-    @Operation(operationId = "replaceTransportSettings", summary = "Replace the internal transport settings")
+    @Operation(operationId = "replaceTransportSettings", summary = "Replace the internal transport settings",
+            description = "Switches between gRPC and REST for the runtime's internal calls, and sets gRPC port, limits, keep-alive and TLS. Takes effect at once.")
     @ApiResponse(responseCode = "200", description = "The settings now in effect")
     @PutMapping("/transport")
     public TransportSettingsDTO replaceTransport(@RequestBody TransportSettingsDTO settings) {

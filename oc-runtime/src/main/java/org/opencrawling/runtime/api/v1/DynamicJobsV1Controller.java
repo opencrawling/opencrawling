@@ -86,14 +86,16 @@ public class DynamicJobsV1Controller {
         return Paging.page(jobs, limit, cursor, "", response);
     }
 
-    @Operation(operationId = "getDynamicJob", summary = "Get a dynamic job")
+    @Operation(operationId = "getDynamicJob", summary = "Get a dynamic job",
+            description = "The dynamic job's state, what it crawls, who started it and, once it has ended, how many documents it processed.")
     @ApiResponse(responseCode = "200", description = "The dynamic job's status")
     @GetMapping("/dynamic-jobs/{jobId}")
     public DynamicJobService.JobStatus get(@PathVariable String jobId) {
         return dynamicJobs.status(jobId);
     }
 
-    @Operation(operationId = "stopDynamicJob", summary = "Stop a dynamic job")
+    @Operation(operationId = "stopDynamicJob", summary = "Stop a dynamic job",
+            description = "Asks a running dynamic job to stop before its next document. Its owner or an admin may stop it.")
     @ApiResponse(responseCode = "202", description = "Stop requested")
     @PostMapping("/dynamic-jobs/{jobId}:stop")
     public ResponseEntity<DynamicJobService.JobStatus> stop(@PathVariable String jobId) {
@@ -108,7 +110,8 @@ public class DynamicJobsV1Controller {
         return dynamicJobs.approve(jobId);
     }
 
-    @Operation(operationId = "rejectDynamicJob", summary = "Reject a dynamic job", description = "Admins only.")
+    @Operation(operationId = "rejectDynamicJob", summary = "Reject a dynamic job",
+            description = "Rejects a dynamic job waiting for approval, with an optional reason recorded on the job. Admins only.")
     @ApiResponse(responseCode = "200", description = "Rejected")
     @PostMapping("/dynamic-jobs/{jobId}:reject")
     public DynamicJobService.JobStatus reject(@PathVariable String jobId,

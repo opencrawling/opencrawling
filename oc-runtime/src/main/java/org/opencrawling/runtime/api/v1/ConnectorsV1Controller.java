@@ -88,7 +88,8 @@ public class ConnectorsV1Controller {
         return Paging.page(items, limit, cursor, Objects.toString(type, "") + "|" + Objects.toString(q, ""), response);
     }
 
-    @Operation(operationId = "getConnector", summary = "Get a connector", description = "Supports If-None-Match.")
+    @Operation(operationId = "getConnector", summary = "Get a connector",
+            description = "The connector's definition with secret settings masked (no configuration for job creators). Supports If-None-Match; the ETag is the version to send as If-Match when replacing or deleting it.")
     @ApiResponse(responseCode = "200", description = "The connector", headers = @Header(name = "ETag", description = "Version"))
     @ApiResponse(responseCode = "304", description = "Not modified")
     @GetMapping("/connectors/{name}")

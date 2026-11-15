@@ -48,7 +48,8 @@ public class DiscoveryV1Controller {
         this.discovery = discovery;
     }
 
-    @Operation(operationId = "listDiscoveryConnectors", summary = "Connectors that can be browsed")
+    @Operation(operationId = "listDiscoveryConnectors", summary = "Connectors that can be browsed",
+            description = "The registered connectors discovery may browse for the caller (opencrawling.discovery.connectors).")
     @ApiResponse(responseCode = "200", description = "The connectors")
     @GetMapping
     public List<DiscoveryService.ConnectorInfo> connectors() {

@@ -101,7 +101,8 @@ public class PlatformV1Controller {
         return index();
     }
 
-    @Operation(operationId = "getVersion", summary = "API and runtime versions")
+    @Operation(operationId = "getVersion", summary = "API and runtime versions",
+            description = "The Platform API version (follows semantic versioning; breaking changes get a new /api/vN) and the runtime build's version.")
     @ApiResponse(responseCode = "200", description = "The versions")
     @GetMapping("/version")
     public VersionInfo version() {
