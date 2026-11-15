@@ -113,11 +113,11 @@ public class JobsV1Controller {
                 "id", Comparator.comparing(JobResource::id, Comparator.nullsLast(Comparator.naturalOrder())),
                 "name", Paging.byText(JobResource::name),
                 "status", Paging.byText(job -> job.state().status()),
-                "lastRun", Paging.byText(job -> job.state().lastRun())));
+                "lastRun", Paging.byText(job -> job.state().lastRun())), JobResource::id);
         String query = String.join("|", Objects.toString(status, ""), Objects.toString(pipelineMode, ""),
                 Objects.toString(repositoryConnector, ""), Objects.toString(outputConnector, ""), Objects.toString(q, ""),
                 Objects.toString(sort, ""));
-        return Paging.page(items, limit, cursor, query, response);
+        return Paging.page(items, limit, cursor, query, response, JobResource::id);
     }
 
     @Operation(operationId = "createJob", summary = "Create a job",

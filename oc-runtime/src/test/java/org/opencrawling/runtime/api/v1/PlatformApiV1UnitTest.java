@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -66,21 +67,21 @@ class PlatformApiV1UnitTest {
     @Test
     void cursorsArePositionsBoundToTheirQuery() {
         List<Integer> items = List.of(1, 2, 3, 4, 5);
-        Page<Integer> first = Paging.page(items, 2, null, "q=a", null);
+        Page<Integer> first = Paging.page(items, 2, null, "q=a", null, String::valueOf);
         assertThat(first.items()).containsExactly(1, 2);
-        Page<Integer> second = Paging.page(items, 2, first.page().nextCursor(), "q=a", null);
+        Page<Integer> second = Paging.page(items, 2, first.page().nextCursor(), "q=a", null, String::valueOf);
         assertThat(second.items()).containsExactly(3, 4);
-        Page<Integer> last = Paging.page(items, 2, second.page().nextCursor(), "q=a", null);
+        Page<Integer> last = Paging.page(items, 2, second.page().nextCursor(), "q=a", null, String::valueOf);
         assertThat(last.items()).containsExactly(5);
         assertThat(last.page().nextCursor()).isNull();
         assertThat(last.page().totalItems()).isEqualTo(5);
 
-        assertThatThrownBy(() -> Paging.page(items, 2, first.page().nextCursor(), "q=b", null)).isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> Paging.page(items, 2, first.page().nextCursor(), "q=b", null, String::valueOf)).isInstanceOf(ApiProblem.class);
         String forged = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("v1.2.AAAAAAAAAAAA".getBytes());
-        assertThatThrownBy(() -> Paging.page(items, 2, forged, "q=a", null)).isInstanceOf(ApiProblem.class);
-        assertThatThrownBy(() -> Paging.page(items, 2, "%%%", "q=a", null)).isInstanceOf(ApiProblem.class);
-        assertThatThrownBy(() -> Paging.page(items, 501, null, "", null)).isInstanceOf(ApiProblem.class);
-        assertThat(Paging.page(items, 2, Paging.encode(10, Etags.hash("q=a")), "q=a", null).items()).isEmpty();
+        assertThatThrownBy(() -> Paging.page(items, 2, forged, "q=a", null, String::valueOf)).isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> Paging.page(items, 2, "%%%", "q=a", null, String::valueOf)).isInstanceOf(ApiProblem.class);
+        assertThatThrownBy(() -> Paging.page(items, 501, null, "", null, String::valueOf)).isInstanceOf(ApiProblem.class);
+        assertThat(Paging.page(items, 2, Paging.encode(10, Etags.hash("q=a")), "q=a", null, String::valueOf).items()).isEmpty();
     }
 
     @Test
@@ -88,9 +89,13 @@ class PlatformApiV1UnitTest {
         record Row(String name, int size) {}
         List<Row> rows = List.of(new Row("b", 1), new Row("a", 2), new Row("a", 1));
         Map<String, Comparator<Row>> fields = Map.of("name", Paging.byText(Row::name), "size", Comparator.comparingInt(Row::size));
-        assertThat(Paging.sort(rows, "name,-size", fields)).containsExactly(new Row("a", 2), new Row("a", 1), new Row("b", 1));
-        assertThat(Paging.sort(rows, null, fields)).isSameAs(rows);
-        assertThatThrownBy(() -> Paging.sort(rows, "colour", fields)).isInstanceOf(ApiProblem.class)
+        java.util.function.Function<Row, String> id = row -> row.name() + row.size();
+        assertThat(Paging.sort(rows, "name,-size", fields, id)).containsExactly(new Row("a", 2), new Row("a", 1), new Row("b", 1));
+        assertThat(Paging.sort(rows, "name", fields, id)).as("the id decides between equal names")
+                .containsExactly(new Row("a", 1), new Row("a", 2), new Row("b", 1));
+        assertThat(Paging.sort(rows, null, fields, id)).as("without a sort: by id")
+                .containsExactly(new Row("a", 1), new Row("a", 2), new Row("b", 1));
+        assertThatThrownBy(() -> Paging.sort(rows, "colour", fields, Row::name)).isInstanceOf(ApiProblem.class)
                 .satisfies(e -> assertThat(((ApiProblem) e).slug()).isEqualTo("validation-failed"));
     }
 
@@ -311,5 +316,25 @@ class PlatformApiV1UnitTest {
         assertThat(registry.run("job-1").orElseThrow().stopRequested()).isTrue();
         reserved.reservation().release();
         assertThat(registry.stopExecution("job-1", "exec-new")).as("ended").isFalse();
+    }
+
+    @Test
+    void aCursorResumesAfterItsLastItemWhenItemsAreAddedOrRemovedBeforeIt() {
+        List<String> newestFirst = new ArrayList<>(List.of("e5", "e4", "e3", "e2", "e1"));
+        Page<String> first = Paging.page(newestFirst, 2, null, "", null, item -> item);
+        assertThat(first.items()).containsExactly("e5", "e4");
+
+        newestFirst.add(0, "e6"); // a new execution arrives first
+        Page<String> second = Paging.page(newestFirst, 2, first.page().nextCursor(), "", null, item -> item);
+        assertThat(second.items()).as("no duplicate of e4").containsExactly("e3", "e2");
+
+        newestFirst.remove("e5"); // one before the cursor goes
+        Page<String> third = Paging.page(newestFirst, 2, second.page().nextCursor(), "", null, item -> item);
+        assertThat(third.items()).as("no gap: e1 is not skipped").containsExactly("e1");
+
+        List<String> shrunk = new ArrayList<>(List.of("a", "b", "c", "d"));
+        Page<String> page = Paging.page(shrunk, 2, null, "", null, item -> item);
+        shrunk.remove("b"); // the cursor's own last item goes: the page starts at the old position
+        assertThat(Paging.page(shrunk, 2, page.page().nextCursor(), "", null, item -> item).items()).containsExactly("d");
     }
 }

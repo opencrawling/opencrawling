@@ -59,9 +59,10 @@ public class JobRunsV1Controller {
         List<JobRunResource> runs = jobs.getRuns().stream()
                 .filter(run -> jobId == null || jobId.equals(run.jobId()))
                 .map(JobRunResource::of)
-                .sorted(Comparator.comparing(JobRunResource::startedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .sorted(Comparator.comparing(JobRunResource::startedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(JobRunResource::executionId))
                 .toList();
-        return Paging.page(runs, limit, cursor, Objects.toString(jobId, ""), response);
+        return Paging.page(runs, limit, cursor, Objects.toString(jobId, ""), response, JobRunResource::executionId);
     }
 
     @Operation(operationId = "getJobRun", summary = "Get a run in progress",

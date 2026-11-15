@@ -113,4 +113,16 @@ class RedisIdempotencyStoreIT {
             assertThat(proceeded).isEqualTo(1);
         }
     }
+
+    @Test
+    void aHeldKeyOutlivesTheInProgressTimeoutOnARealRedis() throws InterruptedException {
+        RedisIdempotencyStore store = store(Duration.ofMinutes(1), Duration.ofSeconds(1));
+        assertThat(store.begin("hold", "k", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        try (IdempotencyStore.Hold held = store.hold("hold", "k", "f")) {
+            Thread.sleep(2500);
+            assertThat(store.begin("hold", "k", "f")).isInstanceOf(IdempotencyStore.Begin.InProgress.class);
+        }
+        Thread.sleep(1500);
+        assertThat(store.begin("hold", "k", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+    }
 }

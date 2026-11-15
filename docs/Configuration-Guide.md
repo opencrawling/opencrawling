@@ -148,12 +148,24 @@ Runs are kept in memory: they are not shared between runtime instances and do no
 *   **`OPENCRAWLING_API_IDEMPOTENCY_RETENTION`** (`opencrawling.api.idempotency.retention`): how long a successful answer is replayed.
     *   *Type*: `duration`
     *   *Default*: `PT24H`
-*   **`OPENCRAWLING_API_IDEMPOTENCY_IN_PROGRESS_TIMEOUT`** (`opencrawling.api.idempotency.in-progress-timeout`): `redis` only. A request still running holds its key for this long; a retry in that time gets `409`. If a runtime dies mid-request, the key is free again after this time instead of after the whole retention.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_IN_PROGRESS_TIMEOUT`** (`opencrawling.api.idempotency.in-progress-timeout`): `redis` only. How long the marker of a running request lives without renewal. The runtime renews it while the request runs, so a long request keeps its key; a retry in that time gets `409`. If a runtime dies mid-request, the key is free again after this time instead of after the whole retention.
     *   *Type*: `duration`
     *   *Default*: `PT10M`
-*   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_ENTRIES`** (`opencrawling.api.idempotency.max-entries`): `memory` only. The most keys kept; the oldest is dropped beyond it.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_ENTRIES`** (`opencrawling.api.idempotency.max-entries`): `memory` only. The most keys kept.
     *   *Type*: `int`
     *   *Default*: `10000`
+    *   Beyond it, the oldest finished key is dropped. A key whose request is still running is never dropped; when only those are left, a new key is refused with `503`.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_ENTRIES_PER_CALLER`** (`opencrawling.api.idempotency.max-entries-per-caller`): `memory` only. The most keys one caller may hold, so no caller can push out the others' keys.
+    *   *Type*: `int`
+    *   *Default*: `1000`
+*   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_STORED_BYTES`** (`opencrawling.api.idempotency.max-stored-bytes`): the largest answer kept for replay.
+    *   *Type*: `int`
+    *   *Default*: `262144`
+    *   For a larger answer only its status is kept, and a retry answers `409 idempotency-answer-unavailable` instead of running the request again.
+*   **`OPENCRAWLING_API_MAX_REQUEST_BYTES`** (`opencrawling.api.max-request-bytes`): the largest request body the Platform API takes; a larger one answers `413`.
+    *   *Type*: `long`
+    *   *Default*: `1048576`
+    *   Uploads (multipart) have their own limits, `spring.servlet.multipart.*`.
 
 ---
 

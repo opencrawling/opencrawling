@@ -45,8 +45,12 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     private static final Logger log = LoggerFactory.getLogger(RedisIdempotencyStore.class);
     static final String PREFIX = "oc:api:idempotency:";
 
-    /** What is stored: the body's fingerprint, and once done, the answer. */
-    record Stored(String fingerprint, Integer status, Map<String, List<String>> headers, byte[] body) {}
+    /** What is stored: the body's fingerprint, and once done, the answer (or, if it was not kept, only its status). */
+    record Stored(String fingerprint, Integer status, Map<String, List<String>> headers, byte[] body, Boolean answerNotKept) {
+        Stored(String fingerprint, Integer status, Map<String, List<String>> headers, byte[] body) {
+            this(fingerprint, status, headers, body, null);
+        }
+    }
 
     private final StringRedisTemplate redis;
     private final JsonMapper json;
@@ -82,6 +86,9 @@ public class RedisIdempotencyStore implements IdempotencyStore {
                 if (stored.status() == null) {
                     return new Begin.InProgress();
                 }
+                if (Boolean.TRUE.equals(stored.answerNotKept())) {
+                    return new Begin.AnswerNotKept(stored.status());
+                }
                 return new Begin.Replay(new StoredResponse(stored.status(),
                         stored.headers() != null ? stored.headers() : Map.of(),
                         stored.body() != null ? stored.body() : new byte[0]));
@@ -94,13 +101,65 @@ public class RedisIdempotencyStore implements IdempotencyStore {
 
     @Override
     public void complete(String scope, String key, String fingerprint, StoredResponse response) {
-        try {
-            redis.opsForValue().set(id(scope, key), json.writeValueAsString(
-                    new Stored(fingerprint, response.status(), response.headers(), response.body())), retention);
-        } catch (RuntimeException e) {
-            // The request succeeded; only a retry's replay is lost. The marker expires after the in-progress timeout.
-            log.warn("Could not remember an idempotent answer in Redis: {}", e.toString());
+        write(scope, key, new Stored(fingerprint, response.status(), response.headers(), response.body()));
+    }
+
+    @Override
+    public void completeWithoutAnswer(String scope, String key, String fingerprint, int status) {
+        write(scope, key, new Stored(fingerprint, status, null, null, true));
+    }
+
+    /**
+     * Keeps the outcome for the retention, trying a few times: the request already ran, so losing its outcome would let
+     * a retry, once the in-progress marker expires, run it again. If Redis stays unreachable, that risk is logged.
+     */
+    private void write(String scope, String key, Stored stored) {
+        String value = json.writeValueAsString(stored);
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                redis.opsForValue().set(id(scope, key), value, retention);
+                return;
+            } catch (RuntimeException e) {
+                last = e;
+                try {
+                    Thread.sleep(50L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        log.error("Could not keep the outcome of a request with an Idempotency-Key in Redis; once its in-progress "
+                + "marker expires ({}), a retry with the same key would run it again: {}", inProgressTimeout,
+                last != null ? last.toString() : "interrupted");
+    }
+
+    /**
+     * Renews the in-progress marker while the request runs, so a request longer than the in-progress timeout keeps its
+     * key; the marker still expires soon after a runtime that dies mid-request.
+     */
+    @Override
+    public Hold hold(String scope, String key, String fingerprint) {
+        String id = id(scope, key);
+        Duration every = inProgressTimeout.dividedBy(3).isZero() ? Duration.ofMillis(100) : inProgressTimeout.dividedBy(3);
+        Thread renewer = Thread.ofVirtual().name("idempotency-hold").start(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(every);
+                    String value = redis.opsForValue().get(id);
+                    if (value == null || json.readValue(value, Stored.class).status() != null) {
+                        return; // finished, abandoned or expired: nothing to hold
+                    }
+                    redis.expire(id, inProgressTimeout);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (RuntimeException e) {
+                    log.debug("Could not renew an idempotency key's in-progress marker: {}", e.toString());
+                }
+            }
+        });
+        return renewer::interrupt;
     }
 
     @Override

@@ -93,8 +93,9 @@ public class ConnectorsV1Controller {
                         || (c.description() != null && c.description().toLowerCase(Locale.ROOT).contains(text)))
                 .map(ConnectorResource::of)
                 .toList();
-        items = Paging.sort(items, "name", Map.of("name", Paging.byText(ConnectorResource::name)));
-        return Paging.page(items, limit, cursor, Objects.toString(type, "") + "|" + Objects.toString(q, ""), response);
+        items = Paging.sort(items, "name", Map.of("name", Paging.byText(ConnectorResource::name)), ConnectorResource::name);
+        return Paging.page(items, limit, cursor, Objects.toString(type, "") + "|" + Objects.toString(q, ""), response,
+                ConnectorResource::name);
     }
 
     @Operation(operationId = "getConnector", summary = "Get a connector",

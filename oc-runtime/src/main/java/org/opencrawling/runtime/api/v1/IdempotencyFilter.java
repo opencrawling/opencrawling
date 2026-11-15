@@ -64,15 +64,26 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private final IdempotencyStore store;
     private final JsonMapper json;
     private final Supplier<CallerResolver> callerResolver;
+    private final int maxStoredBytes;
 
     /**
      * @param callerResolver the runtime's caller resolution, so keys are scoped to the same identity the rest of the
      *                       runtime uses (principal claims, tenant); null where there is none
      */
     public IdempotencyFilter(IdempotencyStore store, JsonMapper json, Supplier<CallerResolver> callerResolver) {
+        this(store, json, callerResolver, 256 * 1024);
+    }
+
+    /**
+     * @param maxStoredBytes the largest answer kept for replay; for a larger one only its status is kept, and a retry
+     *                       learns that the request succeeded instead of running it again
+     */
+    public IdempotencyFilter(IdempotencyStore store, JsonMapper json, Supplier<CallerResolver> callerResolver,
+                             int maxStoredBytes) {
         this.store = store;
         this.json = json;
         this.callerResolver = callerResolver != null ? callerResolver : () -> null;
+        this.maxStoredBytes = maxStoredBytes;
     }
 
     @Override
@@ -112,7 +123,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         String scope = caller() + " POST " + request.getRequestURI();
-        String fingerprint = sha256(body);
+        // What makes it "the same request": the body, and the query string and media type it was sent with.
+        String fingerprint = sha256((Objects.toString(request.getQueryString(), "") + "\n"
+                + Objects.toString(request.getContentType(), "") + "\n").getBytes(StandardCharsets.UTF_8), body);
         IdempotencyStore.Begin begin;
         try {
             begin = store.begin(scope, key, fingerprint);
@@ -141,10 +154,15 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             case IdempotencyStore.Begin.Mismatch mismatch -> ProblemResponses.write(request, response,
                     new ApiProblem(HttpStatus.UNPROCESSABLE_CONTENT, "idempotency-key-reused", "Idempotency key reused",
                             "This Idempotency-Key was already used for a different request."), json);
+            case IdempotencyStore.Begin.AnswerNotKept notKept -> ProblemResponses.write(request, response,
+                    new ApiProblem(HttpStatus.CONFLICT, "idempotency-answer-unavailable", "Answer not kept",
+                            "The request with this Idempotency-Key already succeeded (status " + notKept.status()
+                                    + "), but its answer was not kept. It was not run again; read the resource instead.")
+                            .with("firstStatus", notKept.status()), json);
             case IdempotencyStore.Begin.Proceed proceed -> {
                 ContentCachingResponseWrapper wrapped = new ContentCachingResponseWrapper(response);
                 boolean completed = false;
-                try {
+                try (IdempotencyStore.Hold held = store.hold(scope, key, fingerprint)) {
                     chain.doFilter(new CachedBodyRequest(request, body), wrapped);
                     if (wrapped.getStatus() >= 200 && wrapped.getStatus() < 300) {
                         Map<String, List<String>> headers = new LinkedHashMap<>();
@@ -156,8 +174,13 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         if (!headers.containsKey("Content-Type") && wrapped.getContentType() != null) {
                             headers.put("Content-Type", List.of(wrapped.getContentType()));
                         }
-                        store.complete(scope, key, fingerprint, new IdempotencyStore.StoredResponse(wrapped.getStatus(), headers,
-                                wrapped.getContentAsByteArray()));
+                        byte[] answer = wrapped.getContentAsByteArray();
+                        if (answer.length > maxStoredBytes) {
+                            store.completeWithoutAnswer(scope, key, fingerprint, wrapped.getStatus());
+                        } else {
+                            store.complete(scope, key, fingerprint,
+                                    new IdempotencyStore.StoredResponse(wrapped.getStatus(), headers, answer));
+                        }
                         completed = true;
                     }
                 } finally {
@@ -186,9 +209,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 ? "auth:" + authentication.getName() : "anonymous";
     }
 
-    private static String sha256(byte[] body) {
+    private static String sha256(byte[] context, byte[] body) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(context);
+            return HexFormat.of().formatHex(digest.digest(body));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }

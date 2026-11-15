@@ -57,6 +57,16 @@ public interface IdempotencyStore {
         record InProgress() implements Begin {}
         /** The key was used for a different request. */
         record Mismatch() implements Begin {}
+        /** Done before and succeeded with this status, but its answer was not kept (too large, or the store failed). */
+        record AnswerNotKept(int status) implements Begin {}
+    }
+
+    /** Holds a key while its request runs, so a long request does not lose its key; close it when the request ends. */
+    interface Hold extends AutoCloseable {
+        Hold NONE = () -> {};
+
+        @Override
+        void close();
     }
 
     /** The store cannot be reached, so the request must not run: it could not be told apart from a retry. */
@@ -82,6 +92,17 @@ public interface IdempotencyStore {
      */
     void complete(String scope, String key, String fingerprint, StoredResponse response);
 
+    /**
+     * Remembers that the request succeeded with this status when its answer cannot be kept, so a retry does not run it
+     * again ({@link Begin.AnswerNotKept}).
+     */
+    void completeWithoutAnswer(String scope, String key, String fingerprint, int status);
+
     /** Forgets the key of a request that failed, so it can be retried. */
     void abandon(String scope, String key);
+
+    /** Keeps the key of a request that is running for as long as it runs. Nothing to do for stores that never expire it. */
+    default Hold hold(String scope, String key, String fingerprint) {
+        return Hold.NONE;
+    }
 }

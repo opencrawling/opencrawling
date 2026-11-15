@@ -90,9 +90,9 @@ public class ExecutionsV1Controller {
                 "endTime", Comparator.comparing(JobReportSummary::endTime, Comparator.nullsFirst(Comparator.naturalOrder())),
                 "durationMs", Comparator.comparingLong(JobReportSummary::durationMs),
                 "totalDocuments", Comparator.comparingLong(JobReportSummary::totalDocuments),
-                "jobName", Paging.byText(JobReportSummary::jobName)));
+                "jobName", Paging.byText(JobReportSummary::jobName)), JobReportSummary::executionId);
         return Paging.page(items, limit, cursor, String.join("|", Objects.toString(jobId, ""),
-                Objects.toString(status, ""), Objects.toString(pipelineMode, ""), order), response);
+                Objects.toString(status, ""), Objects.toString(pipelineMode, ""), order), response, JobReportSummary::executionId);
     }
 
     @Operation(operationId = "listJobExecutions", summary = "List a job's executions",
@@ -198,8 +198,8 @@ public class ExecutionsV1Controller {
         return result.getBody() == null ? List.of() : result.getBody();
     }
 
+    /** Read directly by id: the cost does not grow with the number of executions kept. */
     private JobReportSummary find(String executionId) {
-        return all().stream().filter(r -> executionId.equals(r.executionId())).findFirst()
-                .orElseThrow(() -> ApiProblem.notFound("Execution", executionId));
+        return reports.findReport(executionId).orElseThrow(() -> ApiProblem.notFound("Execution", executionId));
     }
 }

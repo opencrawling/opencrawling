@@ -98,6 +98,14 @@ public class ReportController {
         return ResponseEntity.ok(summaries);
     }
 
+    /** One execution's summary, read directly by its id, if it exists and the caller may see it. */
+    public java.util.Optional<JobReportSummary> findReport(String executionId) {
+        if (!isValidId(executionId)) {
+            return java.util.Optional.empty();
+        }
+        return reportService.getSummary(executionId).filter(this::visible);
+    }
+
     @Operation(summary = "Get execution report summary", description = "Retrieves the execution summary and key performance indicators for a specific job run.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "Job execution report summary successfully retrieved"),

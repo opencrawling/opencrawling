@@ -83,7 +83,7 @@ public class DynamicJobsV1Controller {
             @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
             HttpServletResponse response) {
         List<DynamicJobService.JobStatus> jobs = dynamicJobs.list();
-        return Paging.page(jobs, limit, cursor, "", response);
+        return Paging.page(jobs, limit, cursor, "", response, DynamicJobService.JobStatus::jobId);
     }
 
     @Operation(operationId = "getDynamicJob", summary = "Get a dynamic job",

@@ -65,6 +65,85 @@ class IdempotencyStoreTest {
         store.abandon("bob POST /api/v1/jobs", "k1");
         assertThat(store.begin("bob POST /api/v1/jobs", "k1", "f3")).as("a failed request may be retried")
                 .isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+
+        assertThat(store.begin("carol POST /api/v1/executions:query", "big", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        store.completeWithoutAnswer("carol POST /api/v1/executions:query", "big", "f", 200);
+        assertThat(store.begin("carol POST /api/v1/executions:query", "big", "f")).as("succeeded, answer not kept: not run again")
+                .isEqualTo(new IdempotencyStore.Begin.AnswerNotKept(200));
+        assertThat(store.begin("carol POST /api/v1/executions:query", "big", "other")).isInstanceOf(IdempotencyStore.Begin.Mismatch.class);
+    }
+
+    @Test
+    void theMemoryStoreNeverDropsARunningRequestAndKeepsEachCallerWithinItsShare() {
+        InMemoryIdempotencyStore store = new InMemoryIdempotencyStore(Duration.ofHours(1), 3, 2, null);
+        assertThat(store.begin("alice POST /a", "1", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        assertThat(store.begin("alice POST /a", "2", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        assertThatThrownBy(() -> store.begin("alice POST /a", "3", "f")).as("alice's share is full of running requests")
+                .isInstanceOf(IdempotencyStore.UnavailableException.class);
+        store.complete("alice POST /a", "1", "f", new IdempotencyStore.StoredResponse(201, Map.of(), new byte[0]));
+        assertThat(store.begin("alice POST /a", "3", "f")).as("her oldest finished key makes room")
+                .isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        assertThat(store.begin("alice POST /a", "2", "f")).as("the running one was kept")
+                .isInstanceOf(IdempotencyStore.Begin.InProgress.class);
+
+        assertThat(store.begin("bob POST /a", "1", "f")).as("bob is not pushed out by alice").isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        assertThatThrownBy(() -> store.begin("carol POST /a", "1", "f")).as("all 3 running: refused, not dropped")
+                .isInstanceOf(IdempotencyStore.UnavailableException.class);
+        assertThat(InMemoryIdempotencyStore.callerOf("caller:acme/Jane Doe POST /api/v1/jobs/1:start"))
+                .isEqualTo("caller:acme/Jane Doe");
+    }
+
+    @Test
+    void aRunningRequestKeepsItsRedisKeyBeyondTheInProgressTimeout() throws Exception {
+        FakeRedis redis = new FakeRedis();
+        RedisIdempotencyStore store = redis.store(Duration.ofHours(1), Duration.ofMillis(300));
+        assertThat(store.begin("alice", "long", "f")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+        try (IdempotencyStore.Hold held = store.hold("alice", "long", "f")) {
+            for (int i = 0; i < 10; i++) {
+                Thread.sleep(100);
+                redis.advance(Duration.ofMillis(100));
+            }
+            assertThat(store.begin("alice", "long", "f")).as("held: still running after 1 s, though the timeout is 300 ms")
+                    .isInstanceOf(IdempotencyStore.Begin.InProgress.class);
+        }
+        redis.advance(Duration.ofSeconds(1));
+        assertThat(store.begin("alice", "long", "f")).as("no longer held: it expires").isInstanceOf(IdempotencyStore.Begin.Proceed.class);
+    }
+
+    @Test
+    void anAnswerTooLargeToKeepIsNotRunAgainAndTheQueryStringIsPartOfTheRequest() throws Exception {
+        InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
+        IdempotencyFilter filter = new IdempotencyFilter(store, JSON, null, 10);
+        FilterChain bigAnswer = (req, res) -> {
+            ((jakarta.servlet.http.HttpServletResponse) res).setStatus(200);
+            res.getOutputStream().write("a large answer, longer than ten bytes".getBytes());
+        };
+        MockHttpServletResponse first = send(filter, "/api/v1/executions:query", null, bigAnswer);
+        assertThat(first.getStatus()).isEqualTo(200);
+        assertThat(first.getContentAsString()).as("the caller gets the whole answer").contains("longer than ten bytes");
+
+        MockHttpServletResponse retry = send(filter, "/api/v1/executions:query", null, (req, res) -> {
+            throw new AssertionError("must not run again");
+        });
+        assertThat(retry.getStatus()).isEqualTo(409);
+        assertThat(retry.getContentAsString()).contains("idempotency-answer-unavailable", "\"firstStatus\":200");
+
+        MockHttpServletResponse otherQuery = send(filter, "/api/v1/executions:query", "dryRun=true", (req, res) -> {
+            throw new AssertionError("must not run");
+        });
+        assertThat(otherQuery.getStatus()).as("same key and body, other query string: another request").isEqualTo(422);
+    }
+
+    private static MockHttpServletResponse send(IdempotencyFilter filter, String path, String query, FilterChain chain)
+            throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+        request.setQueryString(query);
+        request.setContentType("application/json");
+        request.setContent("{\"sql\":\"SELECT 1\"}".getBytes());
+        request.addHeader(ApiV1.IDEMPOTENCY_KEY, "q-1");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(request, response, chain);
+        return response;
     }
 
     @Test
@@ -149,13 +228,13 @@ class IdempotencyStoreTest {
         Duration day = Duration.ofHours(24);
         Duration tenMinutes = Duration.ofMinutes(10);
 
-        assertThat(configuration.apiV1IdempotencyStore("memory", day, tenMinutes, 10, none, JSON))
+        assertThat(configuration.apiV1IdempotencyStore("memory", day, tenMinutes, 10, 10, none, JSON))
                 .isInstanceOf(InMemoryIdempotencyStore.class);
-        assertThat(configuration.apiV1IdempotencyStore(" Redis ", day, tenMinutes, 10, some, JSON))
+        assertThat(configuration.apiV1IdempotencyStore(" Redis ", day, tenMinutes, 10, 10, some, JSON))
                 .isInstanceOf(RedisIdempotencyStore.class);
-        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("redis", day, tenMinutes, 10, none, JSON))
+        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("redis", day, tenMinutes, 10, 10, none, JSON))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("spring.data.redis");
-        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("mongo", day, tenMinutes, 10, some, JSON))
+        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("mongo", day, tenMinutes, 10, 10, some, JSON))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("'memory' or 'redis'");
     }
 
@@ -210,6 +289,15 @@ class IdempotencyStoreTest {
                 expiries.put(call.getArgument(0), now.get().plus(call.<Duration>getArgument(2)));
                 return null;
             }).when(ops).set(anyString(), anyString(), any(Duration.class));
+            when(template.expire(anyString(), any(Duration.class))).thenAnswer(call -> {
+                expire();
+                String id = call.getArgument(0);
+                if (!values.containsKey(id)) {
+                    return false;
+                }
+                expiries.put(id, now.get().plus(call.<Duration>getArgument(1)));
+                return true;
+            });
             when(template.delete(anyString())).thenAnswer(call -> {
                 expiries.remove(call.<String>getArgument(0));
                 return values.remove(call.<String>getArgument(0)) != null;

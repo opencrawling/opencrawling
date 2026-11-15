@@ -60,9 +60,10 @@ public class ApiV1Configuration {
             @Value("${opencrawling.api.idempotency.retention:PT24H}") Duration retention,
             @Value("${opencrawling.api.idempotency.in-progress-timeout:PT10M}") Duration inProgressTimeout,
             @Value("${opencrawling.api.idempotency.max-entries:10000}") int maxEntries,
+            @Value("${opencrawling.api.idempotency.max-entries-per-caller:1000}") int maxEntriesPerCaller,
             ObjectProvider<StringRedisTemplate> redis, JsonMapper json) {
         return switch (store.strip().toLowerCase(Locale.ROOT)) {
-            case "memory" -> new InMemoryIdempotencyStore(retention, maxEntries, null);
+            case "memory" -> new InMemoryIdempotencyStore(retention, maxEntries, maxEntriesPerCaller, null);
             case "redis" -> {
                 StringRedisTemplate template = redis.getIfAvailable();
                 if (template == null) {
@@ -100,9 +101,10 @@ public class ApiV1Configuration {
     /** After Spring Security, so the key is scoped to the verified caller. */
     @Bean
     public FilterRegistrationBean<IdempotencyFilter> apiV1IdempotencyFilter(IdempotencyStore store, JsonMapper json,
-                                                                            ObjectProvider<CallerResolver> callerResolver) {
+            ObjectProvider<CallerResolver> callerResolver,
+            @Value("${opencrawling.api.idempotency.max-stored-bytes:262144}") int maxStoredBytes) {
         FilterRegistrationBean<IdempotencyFilter> registration = new FilterRegistrationBean<>(
-                new IdempotencyFilter(store, json, callerResolver::getIfAvailable));
+                new IdempotencyFilter(store, json, callerResolver::getIfAvailable, maxStoredBytes));
         registration.setOrder(SecurityFilterProperties.DEFAULT_FILTER_ORDER + 10);
         registration.addUrlPatterns(ApiV1.BASE + "/*");
         return registration;

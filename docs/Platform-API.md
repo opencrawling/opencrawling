@@ -67,6 +67,7 @@ Every error is `application/problem+json`. The one exception is `GET /api/v1/hea
 | <a id="problem-connector-exists"></a>`connector-exists` | 409 | A connector with that name exists; replace it with `PUT` |
 | <a id="problem-connector-in-use"></a>`connector-in-use` | 409 | Jobs use the connector; `jobs` lists them; delete with `force=true` to delete anyway |
 | <a id="problem-idempotency-in-progress"></a>`idempotency-in-progress` | 409 | A request with the same `Idempotency-Key` is still running; see `Retry-After` |
+| <a id="problem-idempotency-answer-unavailable"></a>`idempotency-answer-unavailable` | 409 | The request with this `Idempotency-Key` already succeeded (`firstStatus`), but its answer was too large to keep. It was not run again; read the resource instead |
 | <a id="problem-conflict"></a>`conflict` | 409 | Another conflict with the resource's state, reported by an optional feature |
 | <a id="problem-precondition-failed"></a>`precondition-failed` | 412 | `If-Match` does not match the current version; `currentEtag` is the current one |
 | <a id="problem-body-too-large"></a>`body-too-large` | 413 | The request body is larger than allowed; `maxBytes` says how large it may be |
@@ -106,7 +107,8 @@ Every Platform API answer has these headers, whatever the identity mode (OWASP R
 ```
 
 - **Paging:** `limit` from 1 to 500 (default 50); pass `page.nextCursor` as `cursor` for the next page. It is also in `Link: <...>; rel="next"`. `nextCursor` is `null` on the last page.
-- **Cursors are opaque** and tied to the filters and sort they were made with; reusing one with others gives `400`. An execution's documents also tie the cursor to `limit`, so keep the page size the same while following cursors.
+- **Cursors are opaque** and tied to the filters and sort they were made with; reusing one with others gives `400`.
+- **Stable pages:** a cursor resumes right after the last item it returned. Items added or removed before it (new executions arrive first, newest first) cause no duplicates and no gaps. Every sort ends with the item's id, so items with equal sort values keep one order. An execution's documents also tie the cursor to `limit`, so keep the page size the same while following cursors.
 - **Filters** are query parameters named after the field (`status`, `type`, `jobId`, ...); `q` searches text.
 - **Sorting:** `sort=-lastRun,name`, comma-separated fields with `-` for descending. Each collection documents its fields; an unknown one gives `400`.
 
@@ -137,11 +139,15 @@ Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) w
 
 - **Retry:** the first request runs; a retry with the same key and body gets the same answer again, with `Idempotent-Replayed: true` (a widely used convention; the IETF draft does not define a header for it).
 - **Reuse:** the same key with another body gives `422`; a retry while the first request still runs gives `409` with `Retry-After`.
-- **Size:** a request with a key may have at most 1 MiB of body.
+- **Size:** a request with a key may have at most 1 MiB of body. An answer larger than 256 KiB (`opencrawling.api.idempotency.max-stored-bytes`) is not kept: a retry gets `409 idempotency-answer-unavailable`, with the first status, and is not run again.
+- **Same request:** a retry must send the same body, query string and `Content-Type`; otherwise it is another request (`422`).
 - **Uploads:** a multipart request with a key answers `400`; send uploads without one.
 - **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours. Without sign-in (`identity.mode=none`) every caller is the same anonymous caller, so clients must pick keys that cannot collide, such as UUIDs.
 - **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, shared by every runtime instance and kept across restarts; the Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
 - **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`, with `Retry-After`) and not run. Retry later with the same key.
+- **Long requests:** while a request runs, its key is held (Redis renews it), however long the request takes.
+- **Limits of the memory store:** at most 10,000 keys, and 1,000 per caller. A key whose request still runs is never dropped. When a new key would need dropping one, the request is refused with `503`.
+- **The one gap:** if Redis fails after the request ran and stays down while the runtime retries keeping its outcome, the outcome is lost. Once the key's in-progress marker expires (10 minutes), a retry would run the request again. The runtime logs this as an error.
 - **Failures:** only successful answers are remembered, so a failed request can be retried with the same key.
 
 Use one for `:start`, so that a network retry does not start a second run.
