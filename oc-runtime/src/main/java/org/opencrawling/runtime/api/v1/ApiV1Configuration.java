@@ -76,6 +76,16 @@ public class ApiV1Configuration {
         };
     }
 
+    /** Before Spring Security, so a refused call to a legacy endpoint also learns its successor. */
+    @Bean
+    public FilterRegistrationBean<LegacyDeprecationFilter> legacyDeprecationFilter() {
+        FilterRegistrationBean<LegacyDeprecationFilter> registration =
+                new FilterRegistrationBean<>(new LegacyDeprecationFilter());
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 11);
+        registration.addUrlPatterns("/api/*");
+        return registration;
+    }
+
     /** After Spring Security, so the key is scoped to the verified caller. */
     @Bean
     public FilterRegistrationBean<IdempotencyFilter> apiV1IdempotencyFilter(IdempotencyStore store, JsonMapper json,

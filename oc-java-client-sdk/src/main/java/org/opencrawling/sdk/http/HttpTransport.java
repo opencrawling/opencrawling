@@ -45,6 +45,8 @@ public class HttpTransport {
     private final TokenProvider tokenProvider;
     private final Duration requestTimeout;
     private final ObjectMapper objectMapper;
+    /** Whether the deprecation of a legacy endpoint was already reported: once per client is enough. */
+    private final java.util.concurrent.atomic.AtomicBoolean deprecationReported = new java.util.concurrent.atomic.AtomicBoolean();
 
     public HttpTransport(
             HttpClient httpClient,
@@ -210,7 +212,21 @@ public class HttpTransport {
             log.debug("Token refused; retrying once with a new one");
             response = httpClient.send(withToken(builder).build(), handler);
         }
+        reportDeprecation(response);
         return response;
+    }
+
+    /** Warns once when the runtime says an endpoint this client uses is deprecated, naming its successor. */
+    private void reportDeprecation(HttpResponse<?> response) {
+        if (response.headers().firstValue("Deprecation").isEmpty() || !deprecationReported.compareAndSet(false, true)) {
+            return;
+        }
+        String successor = response.headers().allValues("Link").stream()
+                .filter(link -> link.contains("rel=\"successor-version\""))
+                .map(link -> link.substring(link.indexOf('<') + 1, Math.max(link.indexOf('<') + 1, link.indexOf('>'))))
+                .findFirst().orElse("the Platform API (/api/v1)");
+        log.warn("OpenCrawling: {} is deprecated; its successor is {}. Use OpenCrawlingClient.platform(), the Platform "
+                + "API client.", response.uri().getPath(), successor);
     }
 
     private HttpRequest.Builder withToken(HttpRequest.Builder builder) {

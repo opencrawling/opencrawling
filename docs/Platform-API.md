@@ -277,7 +277,13 @@ curl -s -X PATCH "$API/jobs/1763038591234" -H "$AUTH" -H 'Content-Type: applicat
 
 Not duplicated: OIS ingest (`/api/v1/ingest/ois/{jobId}`) and BPM events (`/api/events/bpm/...`) are machine-to-machine endpoints with their own authentication; `/api/auth/config` stays public for the admin UI.
 
-**Deprecation path:** the admin UI, the CLI and the Java SDK's `platform()` client use `/api/v1`. The legacy endpoints stay for existing integrations, and get `Deprecation` and `Link: rel="successor-version"` headers before any removal.
+**Deprecation:** the admin UI, the CLI and the Java SDK's `platform()` client use `/api/v1`, so the legacy management endpoints in the table are deprecated. They still work exactly as before, for existing integrations. What marks them:
+
+- **Response headers:** each answer carries `Deprecation: @1794700800` (RFC 9745: deprecated since 2026-11-15) and `Link: </api/v1/...>; rel="successor-version"` naming the replacement.
+- **Swagger UI:** in "All endpoints" they are marked deprecated, with their successor.
+- **SDK:** its earlier clients log a warning, once per client, pointing at `platform()`.
+
+Removal will be announced separately; no `Sunset` date is set. The endpoints listed under "Not duplicated" are not deprecated.
 
 ---
 
@@ -318,7 +324,7 @@ try {
 
 - **Coverage:** one method per operation. A test (`PlatformApiV1SdkTest`) runs the SDK against the runtime and checks that it reaches every operation in the API description.
 - **Settings:** `SystemSettings` keeps every field the runtime sends, so a read, change and replace never resets the settings you did not touch.
-- **Earlier clients:** the SDK's other clients (`jobs()`, `connectors()`, `system()`, ...) still use the legacy endpoints. Their `system().updateSettings` sends only the fields its model has.
+- **Earlier clients:** the SDK's other clients (`jobs()`, `connectors()`, `system()`, ...) still use the legacy endpoints, which are deprecated; they log a warning once. Their `system().updateSettings` changes only the fields its model has and keeps the runtime's other settings.
 
 ### CLI
 
@@ -390,4 +396,5 @@ Without `--url` it boots the decoupled stack, as CI does ("Platform API v1 Test 
 - every documented example works;
 - every admin UI call is a documented v1 operation, and nothing the UI did was lost;
 - the Java SDK reaches every operation, and each CLI command sends the requests it should;
-- every admin-only route refuses other callers.
+- every admin-only route refuses other callers;
+- every deprecated legacy endpoint names its successor, and the others are not marked.

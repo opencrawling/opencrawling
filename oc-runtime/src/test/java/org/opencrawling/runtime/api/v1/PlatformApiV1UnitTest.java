@@ -228,4 +228,26 @@ class PlatformApiV1UnitTest {
         assertThat(unexpected.status()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(unexpected.detail()).doesNotContain("secret internals");
     }
+
+    @Test
+    void legacyEndpointsHaveTheirPlatformApiSuccessor() {
+        assertThat(LegacyApi.successor("/api/jobs")).hasValue("/api/v1/jobs");
+        assertThat(LegacyApi.successor("/api/jobs/42/start")).hasValue("/api/v1/jobs");
+        assertThat(LegacyApi.successor("/api/jobs/dynamic/dj-1")).hasValue("/api/v1/dynamic-jobs");
+        assertThat(LegacyApi.successor("/api/jobs/runs")).hasValue("/api/v1/job-runs");
+        assertThat(LegacyApi.successor("/api/system/settings/transport")).hasValue("/api/v1/settings/transport");
+        assertThat(LegacyApi.successor("/api/system/settings")).hasValue("/api/v1/settings/system");
+        assertThat(LegacyApi.successor("/api/v1/admin/settings/transport/test-grpc")).hasValue("/api/v1/settings/transport");
+        assertThat(LegacyApi.successor("/api/reports/42/exec-1/documents")).hasValue("/api/v1/executions");
+        assertThat(LegacyApi.successor("/api/observability/metrics")).hasValue("/api/v1/observability/metrics");
+        assertThat(LegacyApi.successor("/api/observability/diagnose/42")).hasValue("/api/v1/jobs");
+        assertThat(LegacyApi.successor("/api/auth/me")).hasValue("/api/v1/me");
+
+        assertThat(LegacyApi.successor("/api/auth/config")).as("public sign-in settings").isEmpty();
+        assertThat(LegacyApi.successor("/api/v1/jobs")).as("the Platform API itself").isEmpty();
+        assertThat(LegacyApi.successor("/api/v1/ingest/ois/42")).as("machine-to-machine").isEmpty();
+        assertThat(LegacyApi.successor("/api/events/bpm/document-transition")).as("machine-to-machine").isEmpty();
+        assertThat(LegacyApi.successor("/api/jobsx")).as("a prefix matches whole segments only").isEmpty();
+        assertThat(LegacyApi.deprecationHeader()).isEqualTo("@1794700800");
+    }
 }

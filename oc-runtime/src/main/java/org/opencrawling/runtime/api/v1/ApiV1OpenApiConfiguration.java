@@ -64,7 +64,22 @@ public class ApiV1OpenApiConfiguration {
     /** Everything, as before the groups: keeps {@code /v3/api-docs} complete for existing clients. */
     @Bean
     public GroupedOpenApi allEndpoints() {
-        return GroupedOpenApi.builder().group("all").displayName("All endpoints").pathsToMatch("/**").build();
+        return GroupedOpenApi.builder().group("all").displayName("All endpoints").pathsToMatch("/**")
+                .addOpenApiCustomizer(ApiV1OpenApiConfiguration::markLegacyDeprecated).build();
+    }
+
+    /** Legacy endpoints that the Platform API replaces are marked deprecated, with their successor. */
+    static void markLegacyDeprecated(io.swagger.v3.oas.models.OpenAPI openApi) {
+        if (openApi.getPaths() == null) {
+            return;
+        }
+        openApi.getPaths().forEach((path, item) -> LegacyApi.successor(path).ifPresent(successor ->
+                item.readOperations().forEach(operation -> {
+                    operation.setDeprecated(true);
+                    String note = "Deprecated: use the Platform API, " + successor + ".";
+                    operation.setDescription(operation.getDescription() == null || operation.getDescription().isBlank()
+                            ? note : note + " " + operation.getDescription());
+                })));
     }
 
     static void customize(OpenAPI openApi) {

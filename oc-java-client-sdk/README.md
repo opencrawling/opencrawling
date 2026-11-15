@@ -58,7 +58,7 @@ api.settings().replaceSystem(settings.value().withChunkSize(1000), RequestOption
 
 `SystemSettings` in `org.opencrawling.sdk.v1.model` keeps every field the runtime sends, so replacing the settings never resets fields you did not change. See the Platform API page of the wiki for every endpoint.
 
-The examples below use the SDK's earlier clients, which call the legacy endpoints.
+The examples below use the SDK's earlier clients. The legacy endpoints they call are deprecated (they still work); the client logs a warning once.
 
 ## 💡 Usage Examples
 

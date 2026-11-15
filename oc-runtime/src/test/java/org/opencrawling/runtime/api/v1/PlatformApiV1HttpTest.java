@@ -455,4 +455,28 @@ class PlatformApiV1HttpTest {
         assertThat(body(executions).get("page").get("totalItems").asInt()).isZero();
         assertProblem(http.send("GET", "/api/v1/jobs/none-" + tag + "/executions", null), 404, "not-found");
     }
+
+    @Test
+    void legacyEndpointsAreMarkedDeprecatedWithTheirSuccessor() {
+        HttpResponse<String> legacy = http.send("GET", "/api/jobs", null);
+        assertThat(legacy.statusCode()).as("it still works").isEqualTo(200);
+        assertThat(legacy.headers().firstValue("Deprecation")).hasValue("@1794700800");
+        assertThat(legacy.headers().allValues("Link")).contains("</api/v1/jobs>; rel=\"successor-version\"");
+
+        HttpResponse<String> settings = http.send("GET", "/api/system/settings", null);
+        assertThat(settings.headers().allValues("Link")).contains("</api/v1/settings/system>; rel=\"successor-version\"");
+
+        assertThat(http.send("GET", "/api/v1/jobs", null).headers().firstValue("Deprecation")).isEmpty();
+        assertThat(http.send("GET", "/api/auth/config", null).headers().firstValue("Deprecation")).isEmpty();
+
+        JsonNode all = body(http.send("GET", "/v3/api-docs/all", null));
+        JsonNode legacyList = all.get("paths").get("/api/jobs").get("get");
+        assertThat(legacyList.get("deprecated").asBoolean()).isTrue();
+        assertThat(legacyList.get("description").asString()).startsWith("Deprecated: use the Platform API, /api/v1/jobs.");
+        assertThat(all.get("paths").get("/api/v1/jobs").get("get").has("deprecated")).isFalse();
+        JsonNode config = all.get("paths").get("/api/auth/config");
+        if (config != null) {
+            assertThat(config.get("get").has("deprecated")).isFalse();
+        }
+    }
 }
