@@ -119,12 +119,14 @@ public class DynamicJobsV1Controller {
         return dynamicJobs.reject(jobId, body);
     }
 
-    /** The legacy answer, with its Location pointing at the v1 resource. */
+    /** The legacy answer, with its Location and status URL pointing at the v1 resource. */
     private static ResponseEntity<?> relocate(ResponseEntity<?> result) {
         if (result.getBody() instanceof DynamicJobService.Accepted accepted && accepted.jobId() != null) {
+            java.net.URI location = ApiV1.location("dynamic-jobs", accepted.jobId());
             return ResponseEntity.status(result.getStatusCode())
-                    .location(ApiV1.location("dynamic-jobs", accepted.jobId()))
-                    .body(accepted);
+                    .location(location)
+                    .body(new DynamicJobService.Accepted(accepted.jobId(), accepted.executionId(),
+                            location.toString(), accepted.state(), accepted.replayed()));
         }
         return result;
     }

@@ -107,7 +107,11 @@ class PlatformApiV1UnitTest {
         Etags.requireMatch(null, etag);
         Etags.requireMatch("*", etag);
         Etags.requireMatch(etag, etag);
-        assertThatThrownBy(() -> Etags.requireMatch("W/" + etag, etag)).as("strong comparison for If-Match")
+        Etags.requireMatch("W/" + etag, etag); // a weak copy, as a compressing proxy makes it, names the same version
+        assertThatThrownBy(() -> Etags.requireMatch("W/\"other\"", etag)).as("another version, weak or not")
+                .isInstanceOf(ApiProblem.class)
+                .satisfies(e -> assertThat(((ApiProblem) e).status()).isEqualTo(HttpStatus.PRECONDITION_FAILED));
+        assertThatThrownBy(() -> Etags.requireMatch("\"other\"", etag))
                 .isInstanceOf(ApiProblem.class)
                 .satisfies(e -> assertThat(((ApiProblem) e).status()).isEqualTo(HttpStatus.PRECONDITION_FAILED));
     }
@@ -132,12 +136,12 @@ class PlatformApiV1UnitTest {
             public Clock withZone(java.time.ZoneId zone) { return this; }
             public Instant instant() { return now.get(); }
         };
-        IdempotencyStore store = new IdempotencyStore(Duration.ofHours(24), 2, clock);
+        InMemoryIdempotencyStore store = new InMemoryIdempotencyStore(Duration.ofHours(24), 2, clock);
         IdempotencyStore.StoredResponse ok = new IdempotencyStore.StoredResponse(201, Map.of(), "{}".getBytes());
 
         assertThat(store.begin("alice", "k1", "f1")).isInstanceOf(IdempotencyStore.Begin.Proceed.class);
         assertThat(store.begin("alice", "k1", "f1")).isInstanceOf(IdempotencyStore.Begin.InProgress.class);
-        store.complete("alice", "k1", ok);
+        store.complete("alice", "k1", "f1", ok);
         assertThat(store.begin("alice", "k1", "f1")).isEqualTo(new IdempotencyStore.Begin.Replay(ok));
         assertThat(store.begin("alice", "k1", "f2")).isInstanceOf(IdempotencyStore.Begin.Mismatch.class);
         assertThat(store.begin("bob", "k1", "f2")).as("scoped to the caller").isInstanceOf(IdempotencyStore.Begin.Proceed.class);
@@ -188,7 +192,9 @@ class PlatformApiV1UnitTest {
         ResponseEntity<?> started = controller.start(null, "key", "corr");
         assertThat(started.getStatusCode().value()).isEqualTo(202);
         assertThat(started.getHeaders().getLocation()).hasToString("/api/v1/dynamic-jobs/dj-1");
-        assertThat(started.getBody()).isSameAs(accepted);
+        assertThat(started.getBody()).as("the status URL points at the v1 resource too")
+                .isEqualTo(new DynamicJobService.Accepted("dj-1", "exec-1", "/api/v1/dynamic-jobs/dj-1",
+                        DynamicJobService.State.RUNNING, false));
         assertThat(controller.document(null, null, null).getBody()).isEqualTo(Map.of("valid", true));
         controller.approve("dj-1");
         verify(legacy).approve("dj-1");

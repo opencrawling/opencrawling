@@ -123,6 +123,8 @@ class PlatformApiV1FeaturesHttpTest {
         assertThat(started.statusCode()).as(started.body()).isEqualTo(202);
         assertThat(started.headers().firstValue("Location")).hasValue("/api/v1/dynamic-jobs/dj-1");
         assertThat(body(started).get("jobId").asString()).isEqualTo("dj-1");
+        assertThat(body(started).get("statusUrl").asString()).as("the v1 resource, not the legacy path")
+                .isEqualTo("/api/v1/dynamic-jobs/dj-1");
 
         when(dynamicJobs.list(any())).thenReturn(List.of(status("dj-1", DynamicJobService.State.RUNNING), status("dj-2", DynamicJobService.State.COMPLETED)));
         JsonNode page = body(http.send("GET", "/api/v1/dynamic-jobs?limit=1", null));

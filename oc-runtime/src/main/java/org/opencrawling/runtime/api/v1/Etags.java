@@ -22,7 +22,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
-/** Strong entity tags over a resource's JSON, and the {@code If-Match} / {@code If-None-Match} checks (RFC 9110). */
+/**
+ * Strong entity tags over a resource's JSON, and the {@code If-Match} / {@code If-None-Match} checks (RFC 9110).
+ * Unlike RFC 9110's strong comparison for {@code If-Match}, a weak tag ({@code W/"..."}) is accepted when its value
+ * matches, because proxies that compress responses make the runtime's tags weak.
+ */
 public final class Etags {
 
     private Etags() {}
@@ -63,7 +67,13 @@ public final class Etags {
         }
         for (String candidate : ifMatch.split(",")) {
             String tag = candidate.trim();
-            if (tag.equals("*") || tag.equals(currentEtag)) { // If-Match uses strong comparison
+            // Our tags digest the JSON representation, so a weak copy of one names the same version: proxies that
+            // compress responses (nginx with gzip on, many CDNs) turn the tag weak, and a strict strong comparison
+            // would then refuse every change.
+            if (tag.startsWith("W/")) {
+                tag = tag.substring(2);
+            }
+            if (tag.equals("*") || tag.equals(currentEtag)) {
                 return;
             }
         }

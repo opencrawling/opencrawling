@@ -107,6 +107,7 @@ public class ApiV1OpenApiConfiguration {
         if (method == PathItem.HttpMethod.POST) {
             add(responses, "409", "Conflict with the resource's state, or an Idempotency-Key still in progress");
             add(responses, "422", "The Idempotency-Key was used for a different request");
+            add(responses, "503", "Sent with an Idempotency-Key while the idempotency store cannot be reached; not run");
         }
         // Every other documented error answers with a problem detail too, except a health check's 503, which
         // carries the health report itself.

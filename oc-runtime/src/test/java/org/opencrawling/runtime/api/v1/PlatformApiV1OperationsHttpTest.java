@@ -159,12 +159,22 @@ class PlatformApiV1OperationsHttpTest {
         when(transport.getSettings()).thenReturn(settings);
         when(transport.testGrpcConnection("grpc-host", 9095)).thenReturn(new TestGrpcResponseDTO("SUCCESS", true, true, 4, "ok"));
 
-        JsonNode read = body(http.send("GET", "/api/v1/settings/transport", null));
-        assertThat(read.get("activeMode").asString()).isEqualTo(settings.mode());
-        assertThat(read.get("settings").get("grpcPort").asInt()).isEqualTo(settings.grpcPort());
+        HttpResponse<String> got = http.send("GET", "/api/v1/settings/transport", null);
+        JsonNode read = body(got);
+        assertThat(read.get("mode").asString()).as("the settings document itself, as PUT takes it").isEqualTo(settings.mode());
+        assertThat(read.get("grpcPort").asInt()).isEqualTo(settings.grpcPort());
+        String etag = got.headers().firstValue("ETag").orElseThrow();
+        assertThat(http.send("GET", "/api/v1/settings/transport", null, "If-None-Match", etag).statusCode()).isEqualTo(304);
 
-        HttpResponse<String> replaced = http.send("PUT", "/api/v1/settings/transport", json.writeValueAsString(settings));
-        assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
+        HttpResponse<String> stale = http.send("PUT", "/api/v1/settings/transport", json.writeValueAsString(settings),
+                "If-Match", "\"stale\"");
+        assertThat(stale.statusCode()).isEqualTo(412);
+        assertThat(body(stale).get("currentEtag").asString()).isEqualTo(etag);
+
+        HttpResponse<String> replaced = http.send("PUT", "/api/v1/settings/transport", got.body(), "If-Match", "W/" + etag);
+        assertThat(replaced.statusCode()).as("a weak copy of the tag, as a compressing proxy makes it").isEqualTo(200);
+        assertThat(replaced.headers().firstValue("ETag")).isPresent();
+        assertThat(body(replaced).get("grpcPort").asInt()).isEqualTo(settings.grpcPort());
         verify(transport, atLeastOnce()).updateSettings(any());
 
         JsonNode tested = body(http.send("POST", "/api/v1/settings/transport:test-grpc", "{\"host\":\"grpc-host\",\"port\":9095}"));

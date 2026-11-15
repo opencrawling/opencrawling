@@ -81,21 +81,39 @@ public class SettingsV1Controller {
     }
 
     @Operation(operationId = "getTransportSettings", summary = "Get the internal transport settings",
-            description = "How the runtime's services talk to each other (gRPC or REST), with the gRPC status.")
-    @ApiResponse(responseCode = "200", description = "The settings")
+            description = "How the runtime's services talk to each other (gRPC or REST): mode, gRPC port, limits, keep-alive and TLS. The ETag identifies this version; send it as If-Match when replacing them, or as If-None-Match to get 304 when nothing changed.")
+    @ApiResponse(responseCode = "200", description = "The settings", headers = @Header(name = "ETag", description = "Version"))
     @GetMapping("/transport")
-    public Map<String, Object> getTransport() {
-        return transport.getTransportSettings().getBody();
+    public ResponseEntity<TransportSettingsDTO> getTransport(
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+        TransportSettingsDTO settings = currentTransport();
+        String etag = Etags.of(settings, json);
+        if (Etags.notModified(ifNoneMatch, etag)) {
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).build();
+        }
+        return ResponseEntity.ok().eTag(etag).body(settings);
     }
 
     @Operation(operationId = "replaceTransportSettings", summary = "Replace the internal transport settings",
-            description = "Switches between gRPC and REST for the runtime's internal calls, and sets gRPC port, limits, keep-alive and TLS. Takes effect at once.")
-    @ApiResponse(responseCode = "200", description = "The settings now in effect")
+            description = "Switches between gRPC and REST for the runtime's internal calls, and sets gRPC port, limits, keep-alive and TLS. Takes effect at once. Supports If-Match.")
+    @ApiResponse(responseCode = "200", description = "The settings now in effect", headers = @Header(name = "ETag", description = "New version"))
     @PutMapping("/transport")
-    public TransportSettingsDTO replaceTransport(@RequestBody TransportSettingsDTO settings) {
+    public ResponseEntity<TransportSettingsDTO> replaceTransport(@RequestBody TransportSettingsDTO settings,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        Etags.requireMatch(ifMatch, Etags.of(currentTransport(), json));
         ResponseEntity<TransportSettingsDTO> result = transport.updateTransportSettingsPut(settings);
         JobsV1Controller.requireOk(result, "Settings", "transport");
-        return result.getBody();
+        TransportSettingsDTO now = currentTransport();
+        return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
+    }
+
+    /** The settings document inside the legacy answer, which also carries a status summary. */
+    private TransportSettingsDTO currentTransport() {
+        Map<String, Object> legacy = transport.getTransportSettings().getBody();
+        if (legacy == null || !(legacy.get("settings") instanceof TransportSettingsDTO settings)) {
+            throw new IllegalStateException("The transport settings are not available");
+        }
+        return settings;
     }
 
     @Operation(operationId = "testGrpcTransport", summary = "Test the gRPC transport",

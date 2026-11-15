@@ -17,13 +17,18 @@ package org.opencrawling.runtime.api.v1;
 
 import org.opencrawling.runtime.security.CallerResolver;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.json.JsonMapper;
+
+import java.time.Duration;
+import java.util.Locale;
 
 /** The Platform API's cross-cutting parts: problem details, request ids and idempotency keys. */
 @Configuration
@@ -44,9 +49,31 @@ public class ApiV1Configuration {
         return registration;
     }
 
+    /**
+     * Where idempotency keys are kept: {@code memory} (the default; one runtime, lost on restart) or {@code redis}
+     * (shared by every runtime instance, kept across restarts; uses the runtime's {@code spring.data.redis}
+     * connection).
+     */
     @Bean
-    public IdempotencyStore apiV1IdempotencyStore() {
-        return new IdempotencyStore();
+    public IdempotencyStore apiV1IdempotencyStore(
+            @Value("${opencrawling.api.idempotency.store:memory}") String store,
+            @Value("${opencrawling.api.idempotency.retention:PT24H}") Duration retention,
+            @Value("${opencrawling.api.idempotency.in-progress-timeout:PT10M}") Duration inProgressTimeout,
+            @Value("${opencrawling.api.idempotency.max-entries:10000}") int maxEntries,
+            ObjectProvider<StringRedisTemplate> redis, JsonMapper json) {
+        return switch (store.strip().toLowerCase(Locale.ROOT)) {
+            case "memory" -> new InMemoryIdempotencyStore(retention, maxEntries, null);
+            case "redis" -> {
+                StringRedisTemplate template = redis.getIfAvailable();
+                if (template == null) {
+                    throw new IllegalStateException("opencrawling.api.idempotency.store=redis needs a Redis "
+                            + "connection (spring.data.redis.*), and none is configured");
+                }
+                yield new RedisIdempotencyStore(template, json, retention, inProgressTimeout);
+            }
+            default -> throw new IllegalStateException("opencrawling.api.idempotency.store must be 'memory' or "
+                    + "'redis', not '" + store + "'");
+        };
     }
 
     /** After Spring Security, so the key is scoped to the verified caller. */

@@ -125,8 +125,8 @@ public class ExecutionsV1Controller {
             @PathVariable String executionId,
             @Parameter(description = "Only documents with this outcome (SUCCESS, FAILED, SKIPPED, QUARANTINED)") @RequestParam(required = false) String status,
             @Parameter(description = "Only documents whose id or source URI contains this text") @RequestParam(required = false) String q,
-            @Parameter(description = "Page size, 1 to 500 (default 50)") @RequestParam(required = false) Integer limit,
-            @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
+            @Parameter(description = "Page size, 1 to 500 (default 50); keep the same size when following a cursor") @RequestParam(required = false) Integer limit,
+            @Parameter(description = "Cursor from page.nextCursor, read with the same filters and page size") @RequestParam(required = false) String cursor,
             HttpServletResponse response) {
         JobReportSummary execution = find(executionId);
         int size = limit == null ? Paging.DEFAULT_LIMIT : limit;

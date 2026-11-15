@@ -21,13 +21,17 @@ import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Valid;
-import org.opencrawling.runtime.api.ConnectorController;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
+import org.opencrawling.runtime.api.ConnectorController;
 import org.opencrawling.runtime.api.JobController;
 import org.opencrawling.runtime.api.v1.model.ConnectorInput;
 import org.opencrawling.runtime.api.v1.model.ConnectorResource;
 import org.opencrawling.runtime.service.ConnectorCheckerService.ConnectionCheckResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -43,10 +47,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Connectors: the configured sources, outputs, transformations and authorities jobs use. Writing is for admins; job
@@ -60,11 +66,14 @@ public class ConnectorsV1Controller {
     private final ConnectorController connectors;
     private final JobController jobs;
     private final JsonMapper json;
+    private final Validator validator;
 
-    public ConnectorsV1Controller(ConnectorController connectors, JobController jobs, JsonMapper json) {
+    public ConnectorsV1Controller(ConnectorController connectors, JobController jobs, JsonMapper json,
+                                  ObjectProvider<Validator> validator) {
         this.connectors = connectors;
         this.jobs = jobs;
         this.json = json;
+        this.validator = validator.getIfAvailable(() -> Validation.buildDefaultValidatorFactory().getValidator());
     }
 
     @Operation(operationId = "listConnectors", summary = "List connectors",
@@ -169,11 +178,22 @@ public class ConnectorsV1Controller {
     }
 
     @Operation(operationId = "checkConnectorDefinition", summary = "Test a connector definition before saving it",
-            description = "The same check, for a definition that is not saved. Admins only.")
+            description = "The same check, for a definition that is not saved. The name may be left out; when it names a stored connector, its masked secrets are used. Admins only.")
     @ApiResponse(responseCode = "200", description = "The check's result")
     @PostMapping("/connectors:check")
-    public ConnectionCheckResult checkDefinition(@Valid @RequestBody ConnectorInput input) {
-        ConnectorDTO stored = findOrNull(input.name());
+    public ConnectionCheckResult checkDefinition(@RequestBody ConnectorInput input) {
+        // A definition being written may have no name yet: every other rule applies.
+        boolean unnamed = input.name() == null || input.name().isBlank();
+        Set<ConstraintViolation<ConnectorInput>> violations = validator.validate(input);
+        List<ApiProblem.FieldError> errors = violations.stream()
+                .filter(v -> !(unnamed && "name".equals(v.getPropertyPath().toString())))
+                .map(v -> new ApiProblem.FieldError(v.getPropertyPath().toString(), v.getMessage()))
+                .sorted(Comparator.comparing(ApiProblem.FieldError::field))
+                .toList();
+        if (!errors.isEmpty()) {
+            throw ApiProblem.invalid(errors);
+        }
+        ConnectorDTO stored = unnamed ? null : findOrNull(input.name());
         return checked(connectors.checkConnection(new ConnectorDTO(input.name(), input.description(), input.type(),
                 input.className(), input.maxConnections(),
                 ConnectorResource.unmask(input.configuration(), stored == null ? Map.of() : stored.configuration()))));

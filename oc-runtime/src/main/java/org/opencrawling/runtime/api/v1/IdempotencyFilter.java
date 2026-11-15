@@ -98,7 +98,19 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         String scope = caller() + " POST " + request.getRequestURI();
-        switch (store.begin(scope, key, sha256(body))) {
+        String fingerprint = sha256(body);
+        IdempotencyStore.Begin begin;
+        try {
+            begin = store.begin(scope, key, fingerprint);
+        } catch (IdempotencyStore.UnavailableException e) {
+            logger.warn("Refusing a request with an Idempotency-Key: " + e.getMessage(), e);
+            ProblemResponses.write(request, response, new ApiProblem(HttpStatus.SERVICE_UNAVAILABLE,
+                    "idempotency-unavailable", "Idempotency keys unavailable",
+                    "Requests with an Idempotency-Key cannot be checked right now, so this one was not run; "
+                            + "retry later with the same key."), json);
+            return;
+        }
+        switch (begin) {
             case IdempotencyStore.Begin.Replay replay -> {
                 IdempotencyStore.StoredResponse stored = replay.response();
                 response.setStatus(stored.status());
@@ -127,7 +139,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         if (!headers.containsKey("Content-Type") && wrapped.getContentType() != null) {
                             headers.put("Content-Type", List.of(wrapped.getContentType()));
                         }
-                        store.complete(scope, key, new IdempotencyStore.StoredResponse(wrapped.getStatus(), headers,
+                        store.complete(scope, key, fingerprint, new IdempotencyStore.StoredResponse(wrapped.getStatus(), headers,
                                 wrapped.getContentAsByteArray()));
                         completed = true;
                     }
