@@ -406,4 +406,53 @@ class PlatformApiV1HttpTest {
         assertProblem(http.send("POST", "/api/v1/connectors", "{\"name\":\"a:b\",\"type\":\"repository\",\"className\":\"x\"}"),
                 400, "validation-failed");
     }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    org.opencrawling.runtime.orchestrator.JobOrchestrator orchestrator;
+
+    @Test
+    void aRunInProgressIsReadAndStoppedThroughItsOwnResource() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.BooleanSupplier stop = invocation.getArgument(9);
+            for (int i = 0; i < 200 && !stop.getAsBoolean() && release.getCount() > 0; i++) {
+                Thread.sleep(25);
+            }
+            return true;
+        }).when(orchestrator).runJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        try {
+            String id = createJob(tag).get("id").asString();
+            String executionId = body(http.send("POST", "/api/v1/jobs/" + id + ":start", null)).get("executionId").asString();
+
+            HttpResponse<String> run = http.send("GET", "/api/v1/job-runs/" + executionId, null);
+            assertThat(run.statusCode()).as(run.body()).isEqualTo(200);
+            assertThat(body(run).get("jobId").asString()).isEqualTo(id);
+            assertThat(body(http.send("GET", "/api/v1/job-runs?jobId=" + id, null)).get("page").get("totalItems").asInt()).isEqualTo(1);
+            assertProblem(http.send("POST", "/api/v1/jobs/" + id + ":start", null), 409, "job-already-running");
+
+            HttpResponse<String> stopped = http.send("POST", "/api/v1/job-runs/" + executionId + ":stop", null);
+            assertThat(stopped.statusCode()).isEqualTo(202);
+            assertThat(body(stopped).get("stopRequested").asBoolean()).isTrue();
+            for (int i = 0; i < 100 && http.send("GET", "/api/v1/job-runs/" + executionId, null).statusCode() == 200; i++) {
+                Thread.sleep(50);
+            }
+            assertThat(http.send("GET", "/api/v1/job-runs/" + executionId, null).statusCode()).as("the run ended").isEqualTo(404);
+            assertThat(body(http.send("GET", "/api/v1/jobs/" + id, null)).get("state").get("stage").asString()).isEqualTo("Stopped");
+        } finally {
+            release.countDown();
+            org.mockito.Mockito.reset(orchestrator);
+        }
+    }
+
+    @Test
+    void aJobsExecutionsAreListedForAJobTheCallerMaySee() {
+        String id = createJob(tag).get("id").asString();
+        HttpResponse<String> executions = http.send("GET", "/api/v1/jobs/" + id + "/executions", null);
+        assertThat(executions.statusCode()).isEqualTo(200);
+        assertThat(body(executions).get("page").get("totalItems").asInt()).isZero();
+        assertProblem(http.send("GET", "/api/v1/jobs/none-" + tag + "/executions", null), 404, "not-found");
+    }
 }

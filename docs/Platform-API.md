@@ -276,5 +276,58 @@ Not duplicated: OIS ingest (`/api/v1/ingest/ois/{jobId}`) and BPM events (`/api/
 
 ## Trying it
 
-- **Swagger UI:** open `/swagger-ui.html`, pick "Platform API v1", and use "Authorize" with a token if the API requires one.
-- **End-to-end script:** `scripts/test-platform-api-v1.sh --url http://localhost:8080 [--token $TOKEN] [--crawl-path /dir]` checks a running runtime: the index, connectors, a job's whole lifecycle with ETags and idempotency, a run and its execution, and the error format. Without `--url` it boots the decoupled stack, as CI does.
+### API Console (in the admin UI)
+
+Open the admin UI and choose **API Console**. It is generated from `/v3/api-docs/v1`, so it always matches the runtime it talks to.
+
+- **Explorer:** every operation, grouped by area, searchable.
+- **Documentation:** each operation's description, its responses, and a curl sample.
+- **Request builder:**
+  - path, query and header parameters, each with its description, and the required ones marked;
+  - free headers, with helpers for `Idempotency-Key` and `X-Request-Id`;
+  - a body pre-filled with the documented example, checked as JSON as you type.
+- **Sending:** **Send** or Ctrl+Enter. Requests carry your sign-in token; untick "Send my token" to see how the API answers an anonymous caller.
+- **Response inspector:**
+  - **Body:** status, time and size; the body pretty-printed; problem details shown as a readable card with the field errors; files offered as a download.
+  - **Headers:** every response header, and what the important ones mean.
+  - **REST:** the mechanics of the answer, with one-click follow-ups:
+    - ETag to `If-Match` or `If-None-Match`;
+    - open the `Location`;
+    - load the next page;
+    - idempotent replay, `Retry-After` and the request id.
+  - **curl:** the exact request as a command, with the token as `$OC_TOKEN`.
+  - **History:** the last 25 requests, restorable in one click. The token is never stored.
+
+### Swagger UI
+
+`/swagger-ui.html`, "Platform API v1": the same description, with "Try it out", and "Authorize" for a token.
+
+### Bruno, Postman, Insomnia
+
+Import `http(s)://<runtime>/v3/api-docs/v1` as an OpenAPI collection. Every operation comes with its parameters, descriptions and request examples. Set the bearer token at collection level when the API requires one.
+
+### curl
+
+Every operation's documentation ends with a ready curl command (`x-codeSamples`). It uses `$OC_URL` for the runtime and `$OC_TOKEN` for the token.
+
+### End-to-end script
+
+`scripts/test-platform-api-v1.sh --url http://localhost:8080 [--token $TOKEN] [--crawl-path /dir]` checks a running runtime:
+
+- the index and the API description;
+- connectors and secret masking;
+- a job's whole lifecycle, with ETags, merge patch and idempotency;
+- with `--crawl-path`, a real run and its execution report;
+- the error format.
+
+Without `--url` it boots the decoupled stack, as CI does ("Platform API v1 Test Suite").
+
+## Guarantees
+
+[Platform API: traceability and test evidence](Platform-API-Traceability) maps every scope item and every operation to the tests that prove it. The tests also guard the contract:
+
+- the documented operations are exactly the implemented ones;
+- every operation is fully documented;
+- every documented example works;
+- every admin UI call has a v1 operation;
+- every admin-only route refuses other callers.
