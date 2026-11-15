@@ -16,6 +16,7 @@
 package org.opencrawling.sdk;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.opencrawling.sdk.http.HttpTransport;
 import org.opencrawling.sdk.models.SystemSettings;
 import org.opencrawling.sdk.models.SystemStatus;
@@ -54,8 +55,17 @@ public class DefaultSystemClient implements SystemClient {
         return transport.execute("GET", "/api/system/settings", null, SystemSettings.class);
     }
 
+    /**
+     * Sends the runtime's current settings with this model's fields changed. The model has only some of the
+     * runtime's settings (chunking and embedding); sending it alone would reset the others (text extraction,
+     * claim-check store) to their defaults.
+     */
     @Override
     public void updateSettings(SystemSettings settings) {
-        transport.executeVoid("POST", "/api/system/settings", settings);
+        ObjectNode current = transport.execute("GET", "/api/system/settings", null, ObjectNode.class);
+        ObjectNode merged = current != null ? current : transport.getObjectMapper().createObjectNode();
+        ObjectNode changes = transport.getObjectMapper().valueToTree(settings);
+        changes.properties().forEach(field -> merged.set(field.getKey(), field.getValue()));
+        transport.executeVoid("POST", "/api/system/settings", merged);
     }
 }

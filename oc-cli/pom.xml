@@ -48,6 +48,14 @@
             <groupId>org.opencrawling</groupId>
             <artifactId>oc-mcf-migrator</artifactId>
             <version>1.0.5-SNAPSHOT</version>
+            <exclusions>
+                <!-- Its logger for standalone use; the CLI logs through slf4j-nop (below), and two
+                     providers make SLF4J print warnings on every command. -->
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-simple</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- gRPC Push Repository Connector stubs & client support (`oc push`) -->

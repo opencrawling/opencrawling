@@ -44,7 +44,7 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | §8 Convention: cursor pagination, filtering | `Paging`, `page.nextCursor`, `Link: rel="next"` | Core `jobsAreFilteredSortedAndPagedWithACursor`; Unit | Done |
 | §8 Convention: RFC 9457 problem details | `ApiV1ExceptionResolver` | Core `errorsBeforeAndOutsideControllersAreProblemsToo`; every 4xx test | Done |
 | §8 Convention: ETags | `Etags`, `If-None-Match`, `If-Match` | Core `replacingAndPatchingRespectIfMatch`, `settingsHaveETagsAndRefuseStaleChanges`; Unit | Done |
-| §8 Convention: deprecation headers for old endpoints | Documented path in `docs/Platform-API.md` | — | Planned: the admin UI, SDK and CLI have moved; headers come before any removal |
+| §8 Convention: deprecation headers for old endpoints | `LegacyApi`, `LegacyDeprecationFilter`: `Deprecation` and `Link: rel="successor-version"` on every legacy management endpoint; deprecated in the "all" OpenAPI group; the SDK's earlier clients warn once | Core `legacyEndpointsAreMarkedDeprecatedWithTheirSuccessor`; Unit `legacyEndpointsHaveTheirPlatformApiSuccessor` | Done (removal: to be announced) |
 | §9 `Idempotency-Key` on start | `IdempotencyFilter` (all POSTs); keys in memory or, shared by every runtime instance, in Redis | Core `startingAJob...`, `anIdempotencyKeyCannotBeReused...`; Authorization `idempotencyKeysAreScopedToTheCaller`; Idempotency; Unit | Done |
 | §9 Follow a run (poll) | `GET /job-runs/{id}`, job `state`, executions | Core `aRunInProgressIsReadAndStoppedThroughItsOwnResource` | Done |
 | §9 SSE, webhooks, review tasks, scenario runs | — | — | Part 2 (scenario runs) |
@@ -143,7 +143,8 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | Behind a compressing proxy, ETags turn weak and every `If-Match` change would have answered `412` | Moving the admin UI to v1 |
 | `POST /connectors:check` refused a definition without a name, which a connector being written may not have yet | Moving the admin UI to v1 |
 | A dynamic job's `statusUrl` pointed at the legacy path | Sdk |
-| The SDK's settings model had 7 of the 24 settings, so saving through it would reset the others to defaults | Writing the SDK client (v1 now keeps every field; the earlier `system().updateSettings` still has the limit) |
+| The SDK's settings model had 7 of the 24 settings, so saving through it would reset the others to defaults | Writing the SDK client (v1 keeps every field; the earlier `system().updateSettings` now sends the runtime's settings with only the model's fields changed, `SystemClientTest`) |
+| The CLI jar had two SLF4J providers and printed warnings on every command | Real-stack run (the migrator's `slf4j-simple` is now excluded, as in the runtime) |
 | `oc job start --wait` never ended: it waited for a status that jobs never have | Moving the CLI to v1 (now follows the run) |
 
 ## Real-stack run
@@ -203,4 +204,17 @@ Run on 2026-11-15 on the same isolated stack, rebuilt from this branch. The API 
   - `oc report ledger` read the run's documents.
   - `oc connector delete` on a connector that jobs use was refused, with the jobs named and `--force` suggested.
 
-**Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). In the second run the API server's JVM froze for 94 s ("Thread starvation or clock leap detected"), with no request load, which points at the shared machine's Docker VM stalling rather than at the API; the API answered normally afterwards.
+### Third run: multi-page ledger and deprecation
+
+Run on 2026-11-15, rebuilt from this branch.
+
+- **Ledger paging:** a crawl of 60 documents (all 60 `SUCCESS`). In the admin UI the ledger showed "Page 1 of 3".
+  - Next, Next and Previous showed pages 2, 3 and 2 again, with the same documents on page 2 both times.
+  - Next was disabled on the last page.
+  - Each page was read with a `cursor` from the previous one.
+- **Deprecation:** `GET /api/jobs`, `/api/system/settings`, `/api/reports` and `/api/v1/admin/settings/transport` answered with `Deprecation: @1794700800` and `Link: <successor>; rel="successor-version"`.
+  - `/api/v1/jobs` and `/api/auth/config` had neither.
+  - `/v3/api-docs/all` marks 46 legacy operations deprecated.
+- **Found outside the Platform API:** Ollama's model was still being pulled when the crawl ran. `VectorOutputConnector` logged every embedding as failed, stored the chunks with a placeholder vector anyway, and the ledger reported `SUCCESS`. Reported for a separate fix.
+
+**Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). In the second run the API server's JVM froze for 94 s. The host had almost no free memory (swap 17.7 of 18.4 GB, with two Doxis lab VMs holding 18 GB; they were stopped before the third run) ("Thread starvation or clock leap detected"), with no request load, which points at the shared machine's Docker VM stalling rather than at the API. The API answered normally afterwards.
