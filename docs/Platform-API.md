@@ -113,6 +113,8 @@ Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) w
 
 Use one for `:start`, so that a network retry does not start a second run.
 
+> **zsh:** in a shell variable followed by `:start`, zsh reads `:s` as a modifier, so `"$API/jobs/$ID:start"` loses the action. Write `${ID}:start`.
+
 ---
 
 ## Endpoints
@@ -161,7 +163,7 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 | GET | `/api/v1/executions` | List, newest first (filters: `jobId`, `status`, `pipelineMode`; sort: `startTime`, `endTime`, `durationMs`, `totalDocuments`, `jobName`) |
 | GET | `/api/v1/executions/{executionId}` | The report: totals, timings, cost, report files, provenance |
 | GET | `/api/v1/executions/{executionId}/documents` | The document ledger (`status`, `q`, paged) |
-| GET | `/api/v1/executions/{executionId}/export?format=` | The report file: `json`, `csv`, `parquet`, `avro` |
+| GET | `/api/v1/executions/{executionId}/export?format=` | The report file: `json`, `csv`, `parquet`, `avro` (`avro` only when `spring.opencrawling.reporting.formats.avro` is on; otherwise `404`) |
 | POST | `/api/v1/executions:query` | DuckDB SQL over the audit lake (admins) |
 
 ### Connectors

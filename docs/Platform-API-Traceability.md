@@ -136,4 +136,31 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 
 ## Real-stack run
 
-To be recorded from the run against the full decoupled stack.
+Run on 2026-11-15 against the full decoupled stack (`docker-compose-decoupled.yml`: runtime and MCP server, ingestion, embedding and writer consumers, Kafka, PostgreSQL with pgvector, Redis, Ollama, Ozone, admin UI), built from this branch, in an isolated Compose project.
+
+**`scripts/test-platform-api-v1.sh`: 28 of 28 checks passed.** They cover the index, version, OpenAPI, `me`, connector listing with masked secrets, create with `Location`, an `Idempotency-Key` retry, `If-None-Match` (304), merge patch with `If-Match` and with a stale one (412), filtered paging, `:start` (202), the run ending `Completed`, the execution report and its documents, problem details with a request id for 404 and 400, and delete (204).
+
+**Further checks on the same stack:**
+
+| Check | Result |
+|---|---|
+| A real crawl through the pipeline | The run ended `Completed`: 1 document `SUCCESS`, 1 chunk, embedded by Ollama and stored in `vector_store` |
+| Run provenance | `triggerSource: api`, with the `X-Correlation-Id` sent on `:start` |
+| `GET /executions/{id}/export` | `json` 200, `csv` 200, `parquet` 200 (`application/vnd.apache.parquet`); `avro` 404 problem, because Avro reports are off by default (`spring.opencrawling.reporting.formats.avro`) |
+| `POST /executions:query` | SQL over the audit lake answered (`status`, `documents` = `SUCCESS`, 1) |
+| `GET /health` | 200 `HEALTHY`, with each component's state |
+| Diagnosis, traces, errors | Answered with live data |
+| `:start` twice | 202, then 409 `job-already-running` naming the run |
+
+**API Console (admin UI, browser):** the 61 operations load from `/v3/api-docs/v1`. Checked:
+
+- A list request, then a read showing the `ETag` with its explanation.
+- The same read with that ETag in `If-None-Match`, answering 304.
+- A missing job, rendered as a problem (title, type, detail, instance, request id).
+- A create from the built-in example, answering 201 with `ETag` and `Location`.
+- The Curl tab repeating the request exactly.
+- Ctrl+Enter to send.
+
+The run found one console fix: without sign-in, the console no longer claims to send a token or adds one to the curl.
+
+**Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). Nothing in the API caused it.

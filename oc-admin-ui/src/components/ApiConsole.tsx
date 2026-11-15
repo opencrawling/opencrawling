@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, ChevronDown, ChevronRight, Clock, Copy, Download, History, KeyRound, Loader2, Play, Plus, RefreshCw,
   Search, ShieldCheck, Trash2, X } from 'lucide-react'
 import { anonymousConsoleApi, consoleApi } from '../lib/consoleClient'
+import { useAuth } from '../lib/useAuth'
 import {
   addToHistory, buildUrl, filterOperations, matchPath, formatBytes, groupByTag, isProblem, isTextual, jsonError, loadHistory, METHOD_STYLE,
   missingRequired, newIdempotencyKey, NOTABLE_HEADERS, parseLink, parseOperations, prettyBody, statusStyle, toCurl,
@@ -86,7 +87,10 @@ export default function ApiConsole() {
   const [headers, setHeaders] = useState<HeaderRow[]>([])
   const [body, setBody] = useState('')
   const [contentType, setContentType] = useState('application/json')
-  const [sendToken, setSendToken] = useState(true)
+  const [tokenWanted, setTokenWanted] = useState(true)
+  // Without sign-in there is no token to send, so the requests (and their curl) go without one.
+  const signedIn = useAuth().status === 'signed-in'
+  const sendToken = signedIn && tokenWanted
   const [sending, setSending] = useState(false)
   const [response, setResponse] = useState<ConsoleResponse | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
@@ -267,14 +271,18 @@ export default function ApiConsole() {
         <div>
           <h1 className="text-2xl font-bold">API Console</h1>
           <p className="text-muted text-sm">
-            Try every Platform API operation and inspect the answer. Requests use your sign-in; the API description is
+            Try every Platform API operation and inspect the answer. Requests use your sign-in when there is one; the API description is
             at <a className="underline" href={OPENAPI_URL} target="_blank" rel="noreferrer">{OPENAPI_URL}</a>.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm cursor-pointer select-none" title="Send requests with your access token">
-          <input type="checkbox" checked={sendToken} onChange={(e) => setSendToken(e.target.checked)} />
-          <ShieldCheck className="w-4 h-4" /> Send my token
-        </label>
+        {signedIn ? (
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none" title="Send requests with your access token">
+            <input type="checkbox" checked={tokenWanted} onChange={(e) => setTokenWanted(e.target.checked)} />
+            <ShieldCheck className="w-4 h-4" /> Send my token
+          </label>
+        ) : (
+          <span className="text-sm text-muted" title="The runtime has no sign-in configured">Sign-in is off: requests carry no token</span>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
@@ -562,7 +570,7 @@ export default function ApiConsole() {
 
                       {tab === 'curl' && (
                         <CodeBlock text={toCurl(request, window.location.origin, sendToken)}
-                          note="Set OC_TOKEN to your access token. The command repeats this request exactly." />
+                          note={`${sendToken ? 'Set OC_TOKEN to your access token. ' : ''}The command repeats this request exactly.`} />
                       )}
 
                       {tab === 'history' && (
