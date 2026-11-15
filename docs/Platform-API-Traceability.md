@@ -12,9 +12,14 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | Features | `PlatformApiV1FeaturesHttpTest` | Discovery, dynamic jobs and sidecars switched on |
 | Examples | `PlatformApiV1ExamplesHttpTest` | Every documented request example is accepted by its endpoint |
 | DocumentationContract | `PlatformApiV1DocumentationContractTest` | Every operation is fully documented (description, parameters, examples, schemas, problem details, code sample) |
-| UiParity | `PlatformApiV1UiParityTest` | Every call the admin UI makes has a v1 operation, read from the UI's sources |
+| UiParity | `PlatformApiV1UiParityTest` | Every call the admin UI makes is a documented v1 operation, read from the UI's sources, and everything it did before still uses one |
+| Sdk | `PlatformApiV1SdkTest` | The Java SDK's `platform()` client against the runtime: it reaches every operation in the API description and reads each answer |
+| Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | Both idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
 | Unit | `PlatformApiV1UnitTest` | Cursors, ETags, merge patch, idempotency store, secret masking, request scoping, error mapping |
 | Console | `oc-admin-ui/src/lib/apiConsole.test.ts` | The API console's logic: reading the description, building and describing requests, history |
+| UiClient | `oc-admin-ui/src/lib/api.test.ts` | The admin UI's API client: v1 URLs and methods, cursor following, ETags and `If-Match`, problem messages |
+| SdkClient | `oc-java-client-sdk/src/test/java/org/opencrawling/sdk/v1/PlatformClientTest.java` | The SDK's paths, headers, cursor streams, errors from proxies, unhealthy health, lossless settings |
+| Cli | `oc-cli/src/test/java/org/opencrawling/cli/PlatformApiCommandsTest.java` | Each CLI command's v1 requests (method, path, headers, body) and output; no legacy endpoint called |
 | Script | `scripts/test-platform-api-v1.sh` | End to end against a real runtime (CI: "Platform API v1 Test Suite") |
 
 ## Guarantee layers
@@ -23,7 +28,7 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 2. **Documentation:** DocumentationContract fails on any operation without a summary, a description, parameter descriptions, a request example, a response schema, problem-detail error responses or a curl sample. Examples proves the examples work.
 3. **Behaviour:** every one of the 61 operations is called by at least one HTTP test (table below).
 4. **Security:** Authorization calls each admin-only route as a job creator and as a plain user and expects `403`, checks job visibility, ownership, `401` and per-caller idempotency.
-5. **Parity:** UiParity keeps the API complete as the admin UI grows.
+5. **Clients:** UiParity, Sdk and Cli check that the admin UI, the SDK and the CLI use the Platform API. Sdk fails when an operation has no SDK method.
 6. **Mutation check:** 16 deliberate breakages of the API's rules (access rules, error scoping, ETags, cursors, idempotency, secret masking, validation, request ids, Location) are each caught by a test.
 7. **Real runtime:** the script runs the API against the full decoupled stack (see [Real-stack run](#real-stack-run)).
 
@@ -39,8 +44,8 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | §8 Convention: cursor pagination, filtering | `Paging`, `page.nextCursor`, `Link: rel="next"` | Core `jobsAreFilteredSortedAndPagedWithACursor`; Unit | Done |
 | §8 Convention: RFC 9457 problem details | `ApiV1ExceptionResolver` | Core `errorsBeforeAndOutsideControllersAreProblemsToo`; every 4xx test | Done |
 | §8 Convention: ETags | `Etags`, `If-None-Match`, `If-Match` | Core `replacingAndPatchingRespectIfMatch`, `settingsHaveETagsAndRefuseStaleChanges`; Unit | Done |
-| §8 Convention: deprecation headers for old endpoints | Documented path in `docs/Platform-API.md` | — | Planned: after the admin UI moves to `/api/v1` |
-| §9 `Idempotency-Key` on start | `IdempotencyFilter` (all POSTs) | Core `startingAJob...`, `anIdempotencyKeyCannotBeReused...`; Authorization `idempotencyKeysAreScopedToTheCaller`; Unit | Done |
+| §8 Convention: deprecation headers for old endpoints | Documented path in `docs/Platform-API.md` | — | Planned: the admin UI, SDK and CLI have moved; headers come before any removal |
+| §9 `Idempotency-Key` on start | `IdempotencyFilter` (all POSTs); keys in memory or, shared by every runtime instance, in Redis | Core `startingAJob...`, `anIdempotencyKeyCannotBeReused...`; Authorization `idempotencyKeysAreScopedToTheCaller`; Idempotency; Unit | Done |
 | §9 Follow a run (poll) | `GET /job-runs/{id}`, job `state`, executions | Core `aRunInProgressIsReadAndStoppedThroughItsOwnResource` | Done |
 | §9 SSE, webhooks, review tasks, scenario runs | — | — | Part 2 (scenario runs) |
 | §10 Bearer tokens, installation roles | #187; v1 admin rules in `ManagementAuthorizationInterceptor` | Authorization | Done |
@@ -48,7 +53,8 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | §11 Who started each run | `ExecutionProvenance` via `JobController.start` | `JobStartProvenanceHttpTest`; Core start with `X-Correlation-Id` | Done |
 | §13 OpenAPI 3.1 in Swagger UI, contract-first | `/v3/api-docs/v1`, `/swagger-ui.html` | DocumentationContract; Examples | Done |
 | §13 A way to try every endpoint | API console in the admin UI; Swagger UI; curl samples; Bruno/Postman/Insomnia import | Console; Script | Done |
-| §13 SDK and CLI for `/api/v1` | — | — | Follow-up (they use the legacy endpoints, which keep working) |
+| §13 SDK and CLI for `/api/v1` | SDK `client.platform()` (`org.opencrawling.sdk.v1`); every CLI command, and `oc mcf apply` through the migrator's writer | Sdk; SdkClient; Cli | Done |
+| §2 The admin UI on the same API | `oc-admin-ui/src/lib/api.ts` on `/api/v1` | UiParity; UiClient | Done |
 | §16 Existing endpoints keep working | Legacy controllers unchanged in behaviour | Core `theLegacyEndpointsAnswerAsBefore`; all legacy test classes | Done |
 
 ## Operations
@@ -133,12 +139,18 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | A missing `mcfUrl` answered `502` instead of `400` | Operations |
 | The entry point was described twice (`/api/v1` and `/api/v1/`) | Core OpenAPI test |
 | The smoke script failed on macOS bash 3.2 | Script |
+| `/settings/transport` had no ETag, and its read answered a wrapper that its write did not take | Moving the admin UI to v1 |
+| Behind a compressing proxy, ETags turn weak and every `If-Match` change would have answered `412` | Moving the admin UI to v1 |
+| `POST /connectors:check` refused a definition without a name, which a connector being written may not have yet | Moving the admin UI to v1 |
+| A dynamic job's `statusUrl` pointed at the legacy path | Sdk |
+| The SDK's settings model had 7 of the 24 settings, so saving through it would reset the others to defaults | Writing the SDK client (v1 now keeps every field; the earlier `system().updateSettings` still has the limit) |
+| `oc job start --wait` never ended: it waited for a status that jobs never have | Moving the CLI to v1 (now follows the run) |
 
 ## Real-stack run
 
 Run on 2026-11-15 against the full decoupled stack (`docker-compose-decoupled.yml`: runtime and MCP server, ingestion, embedding and writer consumers, Kafka, PostgreSQL with pgvector, Redis, Ollama, Ozone, admin UI), built from this branch, in an isolated Compose project.
 
-**`scripts/test-platform-api-v1.sh`: 28 of 28 checks passed.** They cover the index, version, OpenAPI, `me`, connector listing with masked secrets, create with `Location`, an `Idempotency-Key` retry, `If-None-Match` (304), merge patch with `If-Match` and with a stale one (412), filtered paging, `:start` (202), the run ending `Completed`, the execution report and its documents, problem details with a request id for 404 and 400, and delete (204).
+**`scripts/test-platform-api-v1.sh`: all 27 checks passed.** They cover the index, version, OpenAPI, `me`, connector listing with masked secrets, create with `Location`, an `Idempotency-Key` retry, `If-None-Match` (304), merge patch with `If-Match` and with a stale one (412), filtered paging, `:start` (202), the run ending `Completed`, the execution report and its documents, problem details with a request id for 404 and 400, and delete (204).
 
 **Further checks on the same stack:**
 
@@ -163,4 +175,32 @@ Run on 2026-11-15 against the full decoupled stack (`docker-compose-decoupled.ym
 
 The run found one console fix: without sign-in, the console no longer claims to send a token or adds one to the curl.
 
-**Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). Nothing in the API caused it.
+### Second run: clients and the Redis store
+
+Run on 2026-11-15 on the same isolated stack, rebuilt from this branch. The API server ran with `OPENCRAWLING_API_IDEMPOTENCY_STORE=redis`, as the Compose files now set.
+
+- **Script:** all 27 checks passed again, with a real crawl.
+- **Redis idempotency store:**
+
+| Check | Result |
+|---|---|
+| A `POST /jobs` retried with the same key | Same job, `Idempotent-Replayed: true` |
+| What Redis holds | `oc:api:idempotency:<sha-256>` keys only, with no caller, path or key in them |
+| The same retry after restarting the API server | Still replayed, with the same job; one job exists |
+| A keyed `POST` while Redis is stopped | `503 idempotency-unavailable` with a request id; no job created |
+| An unkeyed `POST` while Redis is stopped | `201`, not affected |
+| The keyed `POST` again once Redis is back | `201`, runs normally |
+
+- **Admin UI (browser):**
+  - All the pages load: dashboard, jobs, connectors, settings, reports and the ledger with its status filter.
+  - Editing a job sends `PATCH /api/v1/jobs/{id}`, and the change is stored.
+  - A settings save after someone else changed the settings answered `412`. The page asked to reload and nothing was overwritten. After the reload, the system and transport saves went through with their ETags.
+  - The session sent 69 requests: 67 to `/api/v1` and 2 to the public `/api/auth/config`. All succeeded except that deliberate `412`.
+- **CLI (packaged jar):**
+  - `oc system status` worked.
+  - `oc connector check --name PGVector_Output` checked the live database.
+  - `oc job start --wait` crawled for real, and ended when the run ended (Finished, Completed, 1 document).
+  - `oc report ledger` read the run's documents.
+  - `oc connector delete` on a connector that jobs use was refused, with the jobs named and `--force` suggested.
+
+**Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). In the second run the API server's JVM froze for 94 s ("Thread starvation or clock leap detected"), with no request load, which points at the shared machine's Docker VM stalling rather than at the API; the API answered normally afterwards.

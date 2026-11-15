@@ -133,6 +133,30 @@ Runs are kept in memory: they are not shared between runtime instances and do no
 
 ---
 
+## 🧭 Platform API Idempotency Keys
+
+`POST` requests to the Platform API (`/api/v1`) may carry an `Idempotency-Key`, so a retry does not repeat the operation (see [Platform API](Platform-API.md#idempotency-keys)). These settings decide where the keys are kept:
+
+*   **`OPENCRAWLING_API_IDEMPOTENCY_STORE`** (`opencrawling.api.idempotency.store`): `memory` or `redis`.
+    *   *Type*: `string`
+    *   *Default*: `memory`
+    *   **`memory`:** keys live in the runtime that received the request. They are lost on a restart and not shared between runtime instances.
+    *   **`redis`:** keys are shared by every runtime instance and survive a restart. This mode uses the runtime's Redis connection (`spring.data.redis.*`). The Docker Compose stacks use it.
+    *   **Redis keys:** each key is stored under `oc:api:idempotency:<sha-256>`, so callers, paths and keys never appear in Redis.
+    *   **Redis outage:** while Redis cannot be reached, a `POST` with an `Idempotency-Key` is refused with `503` (`idempotency-unavailable`) and is not run. Requests without a key are not affected.
+    *   **Startup errors:** an unknown value, or `redis` with no Redis connection configured, stops the runtime at startup.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_RETENTION`** (`opencrawling.api.idempotency.retention`): how long a successful answer is replayed.
+    *   *Type*: `duration`
+    *   *Default*: `PT24H`
+*   **`OPENCRAWLING_API_IDEMPOTENCY_IN_PROGRESS_TIMEOUT`** (`opencrawling.api.idempotency.in-progress-timeout`): `redis` only. A request still running holds its key for this long; a retry in that time gets `409`. If a runtime dies mid-request, the key is free again after this time instead of after the whole retention.
+    *   *Type*: `duration`
+    *   *Default*: `PT10M`
+*   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_ENTRIES`** (`opencrawling.api.idempotency.max-entries`): `memory` only. The most keys kept; the oldest is dropped beyond it.
+    *   *Type*: `int`
+    *   *Default*: `10000`
+
+---
+
 ## 📥 OIS Ingestion Endpoint
 
 `POST /api/v1/ingest/ois/{jobId}` takes OIS documents from producers outside the runtime, such as the StormCrawler bolt, and runs them through the job's RAG pipeline.

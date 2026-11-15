@@ -63,6 +63,7 @@ Every error is `application/problem+json`:
 | `idempotency-key-reused` | 422 | The key was used for a different request |
 | `too-many-runs` | 429 | A cap on concurrent runs is reached; see `Retry-After` |
 | `upstream-error` | 502 | An external system (ManifoldCF) failed |
+| `idempotency-unavailable` | 503 | The idempotency store (Redis) cannot be reached; the request was not run |
 | `internal-error` | 500 | Unexpected; `requestId` finds it in the log |
 
 A missing or invalid token gives `401` with `WWW-Authenticate`, from Spring Security.
@@ -81,17 +82,19 @@ Every response carries `X-Request-Id`. Send your own (1 to 64 letters, digits, `
 ```
 
 - **Paging:** `limit` from 1 to 500 (default 50); pass `page.nextCursor` as `cursor` for the next page. It is also in `Link: <...>; rel="next"`. `nextCursor` is `null` on the last page.
-- **Cursors are opaque** and tied to the filters and sort they were made with; reusing one with others gives `400`.
+- **Cursors are opaque** and tied to the filters and sort they were made with; reusing one with others gives `400`. An execution's documents also tie the cursor to `limit`, so keep the page size the same while following cursors.
 - **Filters** are query parameters named after the field (`status`, `type`, `jobId`, ...); `q` searches text.
 - **Sorting:** `sort=-lastRun,name`, comma-separated fields with `-` for descending. Each collection documents its fields; an unknown one gives `400`.
 
 ### Versions and concurrency: ETags
 
-Single resources (jobs, connectors, system settings) return an `ETag`.
+Single resources (jobs, connectors, system and transport settings) return an `ETag`.
 
 - `GET` with `If-None-Match: <etag>` answers `304 Not Modified` when nothing changed.
 - `PUT`, `PATCH` and `DELETE` with `If-Match: <etag>` answer `412` when the resource changed meanwhile. Without `If-Match`, the change is applied unconditionally.
 - A job's ETag covers its definition, not its run state, so a running job can still be edited safely.
+- A weak copy of a tag (`W/"..."`) is accepted in `If-Match` too. Proxies that compress responses, such as nginx with `gzip on`, make tags weak, and the tag digests the JSON, so it still names the same version.
+- **Browsers:** the runtime sends no CORS headers, so serve browser clients from the same origin, as the admin UI is. A proxy that adds CORS must expose the headers clients read: `Access-Control-Expose-Headers: ETag, Location, Link, X-Request-Id`.
 
 ### Changes: PUT and JSON Merge Patch
 
@@ -108,7 +111,9 @@ Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) w
 
 - **Retry:** the first request runs; a retry with the same key and body gets the same answer again, with `Idempotent-Replayed: true`.
 - **Reuse:** the same key with another body gives `422`; a retry while the first request still runs gives `409`.
-- **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours in the runtime's memory.
+- **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours.
+- **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, shared by every runtime instance and kept across restarts; the Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
+- **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`) and not run. Retry later with the same key.
 - **Failures:** only successful answers are remembered, so a failed request can be retried with the same key.
 
 Use one for `:start`, so that a network retry does not start a second run.
@@ -272,7 +277,59 @@ curl -s -X PATCH "$API/jobs/1763038591234" -H "$AUTH" -H 'Content-Type: applicat
 
 Not duplicated: OIS ingest (`/api/v1/ingest/ois/{jobId}`) and BPM events (`/api/events/bpm/...`) are machine-to-machine endpoints with their own authentication; `/api/auth/config` stays public for the admin UI.
 
-**Deprecation path:** the legacy endpoints stay until the admin UI has moved to `/api/v1`. They will then be marked with `Deprecation` and `Link: rel="successor-version"` headers before any removal.
+**Deprecation path:** the admin UI, the CLI and the Java SDK's `platform()` client use `/api/v1`. The legacy endpoints stay for existing integrations, and get `Deprecation` and `Link: rel="successor-version"` headers before any removal.
+
+---
+
+## Clients
+
+### Admin UI
+
+Every call the admin UI makes goes to `/api/v1`, except the public `GET /api/auth/config`, which it reads before sign-in. A test (`PlatformApiV1UiParityTest`) reads the UI's sources and checks two things: each call is a documented v1 operation, and everything the UI did before still uses one.
+
+- Saving settings sends the ETag they were read with, so a concurrent change answers `412` and the page asks to reload.
+- Lists follow the cursors.
+- Errors show the problem's `detail` and field errors.
+
+### Java SDK
+
+`client.platform()` is the Platform API client (package `org.opencrawling.sdk.v1`):
+
+```java
+PlatformClient api = OpenCrawlingClient.builder().baseUrl("http://localhost:8080").tokenProvider(tokens).build().platform();
+
+Versioned<Job> job = api.jobs().create(JobInput.of("HR contracts", "FileSystem_Local", "PGVector_Output", "/data/hr"),
+        RequestOptions.idempotent("hr-contracts-1"));                          // a retry returns the same job
+Versioned<JobRun> run = api.jobs().start(job.value().id(), RequestOptions.idempotent("hr-run-1"));
+
+Versioned<Job> read = api.jobs().get(job.value().id());
+api.jobs().patch(read.value().id(), Map.of("path", "/data/hr/2026"), RequestOptions.ifMatch(read.etag()));
+
+api.executions().stream(ExecutionFilter.all().withJobId(job.value().id()))    // follows the cursors
+        .forEach(execution -> System.out.println(execution.status()));
+
+try {
+    api.jobs().start(job.value().id(), RequestOptions.none());
+} catch (ApiProblemException e) {
+    e.code();                     // "job-already-running"
+    e.problem().getRequestId();   // quote it when reporting a problem
+}
+```
+
+- **Coverage:** one method per operation. A test (`PlatformApiV1SdkTest`) runs the SDK against the runtime and checks that it reaches every operation in the API description.
+- **Settings:** `SystemSettings` keeps every field the runtime sends, so a read, change and replace never resets the settings you did not touch.
+- **Earlier clients:** the SDK's other clients (`jobs()`, `connectors()`, `system()`, ...) still use the legacy endpoints. Their `system().updateSettings` sends only the fields its model has.
+
+### CLI
+
+Every `oc` command uses `/api/v1`, with these exceptions and changes:
+
+- **Discovery with an asserted identity:** `oc discovery ... --user-principal/--user-roles` keeps the legacy endpoint. Asserted identities are a dev/test feature that the Platform API never accepts; it takes the caller from the token.
+- **`oc connector create`:** still creates or updates. It creates the connector, and replaces it when the name exists.
+- **`oc connector delete`:** refuses a connector that jobs use, and names them; `--force` deletes it anyway.
+- **`oc job start`:** creates and starts the job with idempotency keys. `--output` picks the output connector, and `--wait` follows the run until it ends.
+- **`oc report ledger --page N`:** follows the cursors to page N.
+- **`oc system settings`:** shows every setting.
 
 ---
 
@@ -331,5 +388,6 @@ Without `--url` it boots the decoupled stack, as CI does ("Platform API v1 Test 
 - the documented operations are exactly the implemented ones;
 - every operation is fully documented;
 - every documented example works;
-- every admin UI call has a v1 operation;
+- every admin UI call is a documented v1 operation, and nothing the UI did was lost;
+- the Java SDK reaches every operation, and each CLI command sends the requests it should;
 - every admin-only route refuses other callers.
