@@ -72,6 +72,13 @@ public interface OpenCrawlingClient extends AutoCloseable {
      */
     AuthClient auth();
 
+    /**
+     * The Platform API ({@code /api/v1}): every management operation over one versioned API, with ETags,
+     * idempotency keys, cursor paging and problem-detail errors. Prefer it to the other clients, which use the
+     * earlier, unversioned endpoints.
+     */
+    org.opencrawling.sdk.v1.PlatformClient platform();
+
     @Override
     default void close() {
         // No-op default close for resources

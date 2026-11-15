@@ -35,6 +35,31 @@ Add `oc-java-client-sdk` to your `pom.xml`:
 
 ---
 
+## 🧭 Platform API (`/api/v1`): recommended
+
+`client.platform()` covers every operation of the OpenCrawling Platform API, one method per operation. It handles the API's mechanics:
+
+- **Versions:** `Versioned<T>` carries the `ETag`. Send it back with `RequestOptions.ifMatch(etag)`, and a change made by someone else in between fails with `412` instead of being overwritten.
+- **Retries:** `RequestOptions.idempotent(key)` sends an `Idempotency-Key`, so a retry after a network error does not create or start something twice.
+- **Collections:** `Page<T>` with cursors; the `stream(...)` methods follow them as you read.
+- **Errors:** `ApiProblemException`, with the problem type (`code()`), the details, the invalid fields and the request id.
+
+```java
+PlatformClient api = client.platform();
+
+Versioned<Job> job = api.jobs().create(
+        JobInput.of("HR contracts", "FileSystem_Local", "PGVector_Output", "/data/hr").withPipelineMode("rag"),
+        RequestOptions.idempotent("hr-contracts-1"));
+Versioned<JobRun> run = api.jobs().start(job.value().id(), RequestOptions.idempotent("hr-run-1"));
+
+Versioned<SystemSettings> settings = api.settings().system();
+api.settings().replaceSystem(settings.value().withChunkSize(1000), RequestOptions.ifMatch(settings.etag()));
+```
+
+`SystemSettings` in `org.opencrawling.sdk.v1.model` keeps every field the runtime sends, so replacing the settings never resets fields you did not change. See the Platform API page of the wiki for every endpoint.
+
+The examples below use the SDK's earlier clients, which call the legacy endpoints.
+
 ## 💡 Usage Examples
 
 ### 1. Initializing the Client

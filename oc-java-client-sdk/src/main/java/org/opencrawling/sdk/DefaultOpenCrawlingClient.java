@@ -37,6 +37,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     private final OpenApiClient openApiClient;
     private final DiscoveryClient discoveryClient;
     private final AuthClient authClient;
+    private final org.opencrawling.sdk.v1.PlatformClient platformClient;
 
     public DefaultOpenCrawlingClient(
             HttpClient httpClient,
@@ -65,6 +66,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
         this.openApiClient = new DefaultOpenApiClient(transport);
         this.discoveryClient = new DefaultDiscoveryClient(transport);
         this.authClient = new DefaultAuthClient(transport);
+        this.platformClient = new org.opencrawling.sdk.v1.DefaultPlatformClient(transport);
     }
 
     @Override
@@ -110,5 +112,10 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     @Override
     public AuthClient auth() {
         return authClient;
+    }
+
+    @Override
+    public org.opencrawling.sdk.v1.PlatformClient platform() {
+        return platformClient;
     }
 }
