@@ -73,12 +73,13 @@ public class JobRunsV1Controller {
     }
 
     @Operation(operationId = "stopJobRun", summary = "Stop a run in progress",
-            description = "Asks the run to stop before its next document; the same as :stop on its job.")
+            description = "Asks this run to stop before its next document. Only this run: if it has ended, the answer is 404, and a newer run of the same job is not stopped.")
     @ApiResponse(responseCode = "202", description = "Stop requested")
     @PostMapping("/{executionId}:stop")
     public ResponseEntity<JobRunResource> stop(@PathVariable String executionId) {
         JobRunResource run = find(executionId);
-        JobsV1Controller.requireOk(jobs.stopJob(run.jobId()), "Run", executionId);
+        // Stops exactly this run: if it ended and a new run of the job started meanwhile, the new run keeps going.
+        JobsV1Controller.requireOk(jobs.stopRun(run.jobId(), run.executionId()), "Run", executionId);
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(new JobRunResource(run.executionId(), run.jobId(), run.startedAt(), true));
     }

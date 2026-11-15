@@ -104,8 +104,9 @@ public class ConnectorsV1Controller {
     @GetMapping("/connectors/{name}")
     public ResponseEntity<ConnectorResource> get(@PathVariable String name,
                                                  @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-        ConnectorResource connector = ConnectorResource.of(find(name));
-        String etag = Etags.of(connector, json);
+        ConnectorDTO stored = find(name);
+        ConnectorResource connector = ConnectorResource.of(stored);
+        String etag = etag(stored);
         if (Etags.notModified(ifNoneMatch, etag)) {
             return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).build();
         }
@@ -117,15 +118,17 @@ public class ConnectorsV1Controller {
     @PostMapping("/connectors")
     public ResponseEntity<ConnectorResource> create(@Valid @RequestBody ConnectorInput input,
                                                     @Parameter(description = "Makes retries of this request safe") @RequestHeader(value = ApiV1.IDEMPOTENCY_KEY, required = false) String idempotencyKey) {
-        if (findOrNull(input.name()) != null) {
-            throw ApiProblem.conflict("connector-exists", "A connector named '" + input.name() + "' exists; replace it with PUT.");
-        }
         ConnectorDTO saved = new ConnectorDTO(input.name(), input.description(), input.type(), input.className(),
                 input.maxConnections(), ConnectorResource.unmask(input.configuration(), Map.of()));
-        JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", input.name());
-        ConnectorResource body = ConnectorResource.of(saved);
+        // The existence check and the write under one lock: two creates of the same name cannot both succeed.
+        synchronized (connectors) {
+            if (findOrNull(input.name()) != null) {
+                throw ApiProblem.conflict("connector-exists", "A connector named '" + input.name() + "' exists; replace it with PUT.");
+            }
+            JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", input.name());
+        }
         return ResponseEntity.created(ApiV1.location("connectors", saved.name()))
-                .eTag(Etags.of(body, json)).body(body);
+                .eTag(etag(saved)).body(ConnectorResource.of(saved));
     }
 
     @Operation(operationId = "replaceConnector", summary = "Replace a connector",
@@ -135,16 +138,18 @@ public class ConnectorsV1Controller {
     @PutMapping("/connectors/{name}")
     public ResponseEntity<ConnectorResource> replace(@PathVariable String name, @Valid @RequestBody ConnectorInput input,
                                                      @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        ConnectorDTO current = find(name);
-        Etags.requireMatch(ifMatch, Etags.of(ConnectorResource.of(current), json));
-        if (!current.name().equals(input.name())) {
-            throw ApiProblem.invalid("name", "must be '" + current.name() + "', the connector's name; renaming is not supported");
+        ConnectorDTO saved;
+        synchronized (connectors) {
+            ConnectorDTO current = find(name);
+            Etags.requireMatch(ifMatch, etag(current));
+            if (!current.name().equals(input.name())) {
+                throw ApiProblem.invalid("name", "must be '" + current.name() + "', the connector's name; renaming is not supported");
+            }
+            saved = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
+                    input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration()));
+            JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", name);
         }
-        ConnectorDTO saved = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
-                input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration()));
-        JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", name);
-        ConnectorResource body = ConnectorResource.of(saved);
-        return ResponseEntity.ok().eTag(Etags.of(body, json)).body(body);
+        return ResponseEntity.ok().eTag(etag(saved)).body(ConnectorResource.of(saved));
     }
 
     @Operation(operationId = "deleteConnector", summary = "Delete a connector",
@@ -154,17 +159,19 @@ public class ConnectorsV1Controller {
     public ResponseEntity<Void> delete(@PathVariable String name,
                                        @Parameter(description = "Delete even if jobs use it") @RequestParam(defaultValue = "false") boolean force,
                                        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        ConnectorDTO current = find(name);
-        Etags.requireMatch(ifMatch, Etags.of(ConnectorResource.of(current), json));
-        List<String> usedBy = jobs.getAllJobs().stream()
-                .filter(job -> uses(job, current.name()))
-                .map(JobController.JobDTO::id)
-                .toList();
-        if (!usedBy.isEmpty() && !force) {
-            throw ApiProblem.conflict("connector-in-use", "Jobs use this connector; change them first, or delete with force=true.")
-                    .with("jobs", usedBy);
+        synchronized (connectors) {
+            ConnectorDTO current = find(name);
+            Etags.requireMatch(ifMatch, etag(current));
+            List<String> usedBy = jobs.getAllJobs().stream()
+                    .filter(job -> uses(job, current.name()))
+                    .map(JobController.JobDTO::id)
+                    .toList();
+            if (!usedBy.isEmpty() && !force) {
+                throw ApiProblem.conflict("connector-in-use", "Jobs use this connector; change them first, or delete with force=true.")
+                        .with("jobs", usedBy);
+            }
+            JobsV1Controller.requireOk(connectors.deleteConnector(current.name()), "Connector", name);
         }
-        JobsV1Controller.requireOk(connectors.deleteConnector(current.name()), "Connector", name);
         return ResponseEntity.noContent().build();
     }
 
@@ -197,6 +204,15 @@ public class ConnectorsV1Controller {
         return checked(connectors.checkConnection(new ConnectorDTO(input.name(), input.description(), input.type(),
                 input.className(), input.maxConnections(),
                 ConnectorResource.unmask(input.configuration(), stored == null ? Map.of() : stored.configuration()))));
+    }
+
+    /**
+     * The connector's version: its view as returned, plus a keyed digest of its stored secrets, so a change of a secret
+     * (which the masked view hides) changes the tag too.
+     */
+    private String etag(ConnectorDTO stored) {
+        return Etags.of(List.of(ConnectorResource.of(stored),
+                ConnectorResource.secretsDigest(stored.configuration(), EtagKey.get())), json);
     }
 
     private static ConnectionCheckResult checked(ResponseEntity<ConnectionCheckResult> result) {

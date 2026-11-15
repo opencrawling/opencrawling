@@ -27,6 +27,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -297,11 +298,46 @@ class PlatformApiV1HttpTest {
         String etag = read.headers().firstValue("ETag").orElseThrow();
 
         // Sending back what was read keeps the secrets; the legacy API (admins) shows the stored values.
+        String masks = connector.replace("s3cret", "********").replace("k-123", "********");
         HttpResponse<String> replaced = http.send("PUT", "/api/v1/connectors/" + name,
-                connector.replace("s3cret", "********").replace("k-123", "********").replace("http://repo", "http://repo2"), "If-Match", etag);
+                masks.replace("\"idpTokenUrl\":\"http://idp\"", "\"idpTokenUrl\":\"http://idp\",\"timeoutSeconds\":\"30\""), "If-Match", etag);
         assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
         String stored = http.send("GET", "/api/connectors/repository", null).body();
-        assertThat(stored).contains("\"password\":\"s3cret\"", "\"apiKey\":\"k-123\"", "http://repo2");
+        assertThat(stored).contains("\"password\":\"s3cret\"", "\"apiKey\":\"k-123\"", "\"timeoutSeconds\":\"30\"");
+
+        // Pointing the connector elsewhere while keeping the stored secrets would send them there: refused.
+        HttpResponse<String> moved = http.send("PUT", "/api/v1/connectors/" + name, masks.replace("http://repo", "http://elsewhere"));
+        assertProblem(moved, 400, "validation-failed");
+        assertThat(moved.body()).contains("configuration.password", "configuration.apiKey", "address changed (url)");
+        assertThat(http.send("GET", "/api/connectors/repository", null).body()).as("nothing changed").contains("http://repo\"")
+                .doesNotContain("elsewhere");
+        HttpResponse<String> reentered = http.send("PUT", "/api/v1/connectors/" + name,
+                connector.replace("http://repo", "http://repo2").replace("s3cret", "n3w"));
+        assertThat(reentered.statusCode()).as("with the secrets entered again").isEqualTo(200);
+        String rotatedEtag = reentered.headers().firstValue("ETag").orElseThrow();
+        HttpResponse<String> rotated = http.send("PUT", "/api/v1/connectors/" + name,
+                connector.replace("http://repo", "http://repo2").replace("s3cret", "n3wer"));
+        assertThat(rotated.body()).as("the view is the same").isEqualTo(reentered.body());
+        assertThat(rotated.headers().firstValue("ETag").orElseThrow()).as("but the secret changed, so the version did")
+                .isNotEqualTo(rotatedEtag);
+        assertProblem(http.send("PUT", "/api/v1/connectors/" + name, masks.replace("http://repo", "http://repo2"), "If-Match", rotatedEtag),
+                412, "precondition-failed");
+
+        // Secrets the key endings alone would miss, and credentials inside a URL.
+        String aws = "{\"name\":\"" + name + "_s3\",\"type\":\"output\",\"className\":\"org.example.S3\",\"configuration\":"
+                + "{\"s3SecretAccessKey\":\"AKIA-secret\",\"s3Endpoint\":\"https://minio:9000\","
+                + "\"url\":\"jdbc:postgresql://admin:dbpass@db:5432/x\",\"customHeaders\":\"Authorization: Bearer abc\"}}";
+        HttpResponse<String> awsCreated = http.send("POST", "/api/v1/connectors", aws);
+        assertThat(awsCreated.statusCode()).as(awsCreated.body()).isEqualTo(201);
+        createdConnectors.add(name + "_s3");
+        assertThat(awsCreated.body()).doesNotContain("AKIA-secret", "dbpass", "Bearer abc")
+                .contains("\"s3SecretAccessKey\":\"********\"", "jdbc:postgresql://admin:********@db:5432/x");
+        HttpResponse<String> awsRead = http.send("GET", "/api/v1/connectors/" + name + "_s3", null);
+        HttpResponse<String> awsBack = http.send("PUT", "/api/v1/connectors/" + name + "_s3", awsRead.body(),
+                "If-Match", awsRead.headers().firstValue("ETag").orElseThrow());
+        assertThat(awsBack.statusCode()).as("what was read can be sent back: " + awsBack.body()).isEqualTo(200);
+        assertThat(http.send("GET", "/api/connectors/output", null).body())
+                .contains("AKIA-secret", "jdbc:postgresql://admin:dbpass@db:5432/x", "Bearer abc");
 
         assertProblem(http.send("PUT", "/api/v1/connectors/" + name, connector.replace(name, name + "x")), 400, "validation-failed");
         assertProblem(http.send("POST", "/api/v1/connectors", connector.replace(name, name + "_new")
@@ -478,5 +514,125 @@ class PlatformApiV1HttpTest {
         if (config != null) {
             assertThat(config.get("get").has("deprecated")).isFalse();
         }
+    }
+
+    /** Holds every run until {@code release} (or a stop), so tests can act while a run is in progress. */
+    private java.util.concurrent.CountDownLatch blockRuns() {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.BooleanSupplier stop = invocation.getArgument(9);
+            for (int i = 0; i < 400 && !stop.getAsBoolean() && release.getCount() > 0; i++) {
+                Thread.sleep(25);
+            }
+            return true;
+        }).when(orchestrator).runJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        return release;
+    }
+
+    private void awaitRunEnd(String executionId) throws InterruptedException {
+        for (int i = 0; i < 200 && http.send("GET", "/api/v1/job-runs/" + executionId, null).statusCode() == 200; i++) {
+            Thread.sleep(25);
+        }
+    }
+
+    @Test
+    void aConditionalReadSeesARunsStateChangeAndAStopReachesOnlyItsOwnRun() throws Exception {
+        java.util.concurrent.CountDownLatch release = blockRuns();
+        try {
+            String id = createJob(tag).get("id").asString();
+            String before = http.send("GET", "/api/v1/jobs/" + id, null).headers().firstValue("ETag").orElseThrow();
+
+            String first = body(http.send("POST", "/api/v1/jobs/" + id + ":start", null)).get("executionId").asString();
+            HttpResponse<String> running = http.send("GET", "/api/v1/jobs/" + id, null, "If-None-Match", before);
+            assertThat(running.statusCode()).as("the state changed, so the old version is not current: no 304").isEqualTo(200);
+            assertThat(body(running).get("state").get("status").asString()).isEqualTo("Running");
+            assertProblem(http.send("PATCH", "/api/v1/jobs/" + id, "{\"name\":\"" + tag + "-x\"}",
+                    "Content-Type", "application/merge-patch+json", "If-Match", before), 412, "precondition-failed");
+
+            assertThat(http.send("POST", "/api/v1/job-runs/" + first + ":stop", null).statusCode()).isEqualTo(202);
+            awaitRunEnd(first);
+            String second = body(http.send("POST", "/api/v1/jobs/" + id + ":start", null)).get("executionId").asString();
+            assertProblem(http.send("POST", "/api/v1/job-runs/" + first + ":stop", null), 404, "not-found");
+            HttpResponse<String> stillRunning = http.send("GET", "/api/v1/job-runs/" + second, null);
+            assertThat(stillRunning.statusCode()).as("a stop of the ended run leaves the new run alone").isEqualTo(200);
+            assertThat(body(stillRunning).get("stopRequested").asBoolean()).isFalse();
+            http.send("POST", "/api/v1/job-runs/" + second + ":stop", null);
+            awaitRunEnd(second);
+        } finally {
+            release.countDown();
+            org.mockito.Mockito.reset(orchestrator);
+        }
+    }
+
+    /** Sends the same request from many threads at once and counts the answers by status. */
+    private Map<Integer, Integer> race(int threads, java.util.function.IntFunction<HttpResponse<String>> request) throws Exception {
+        Map<Integer, Integer> statuses = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        try (java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads)) {
+            List<java.util.concurrent.Future<?>> done = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                int n = i;
+                done.add(pool.submit(() -> {
+                    go.await();
+                    statuses.merge(request.apply(n).statusCode(), 1, Integer::sum);
+                    return null;
+                }));
+            }
+            go.countDown();
+            for (java.util.concurrent.Future<?> f : done) {
+                f.get();
+            }
+        }
+        return statuses;
+    }
+
+    @Test
+    void ofManyChangesMadeFromTheSameVersionExactlyOneWins() throws Exception {
+        String id = createJob(tag).get("id").asString();
+        String jobEtag = http.send("GET", "/api/v1/jobs/" + id, null).headers().firstValue("ETag").orElseThrow();
+        assertThat(race(12, n -> http.send("PATCH", "/api/v1/jobs/" + id, "{\"path\":\"/tmp/race-" + n + "\"}",
+                "Content-Type", "application/merge-patch+json", "If-Match", jobEtag)))
+                .as("jobs").containsEntry(200, 1).containsEntry(412, 11);
+
+        String name = "Race_" + tag.replace("-", "_");
+        String connector = "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo\"}";
+        createdConnectors.add(name);
+        assertThat(race(12, n -> http.send("POST", "/api/v1/connectors", connector)))
+                .as("creates of one name").containsEntry(201, 1).containsEntry(409, 11);
+        String connectorEtag = http.send("GET", "/api/v1/connectors/" + name, null).headers().firstValue("ETag").orElseThrow();
+        assertThat(race(12, n -> http.send("PUT", "/api/v1/connectors/" + name,
+                connector.replace("}", ",\"description\":\"race " + n + "\"}"), "If-Match", connectorEtag)))
+                .as("connectors").containsEntry(200, 1).containsEntry(412, 11);
+
+        HttpResponse<String> settings = http.send("GET", "/api/v1/settings/system", null);
+        String settingsEtag = settings.headers().firstValue("ETag").orElseThrow();
+        int chunkSize = body(settings).get("chunkSize").asInt();
+        try {
+            assertThat(race(12, n -> http.send("PUT", "/api/v1/settings/system",
+                    settings.body().replace("\"chunkSize\":" + chunkSize, "\"chunkSize\":" + (100 + n)), "If-Match", settingsEtag)))
+                    .as("settings").containsEntry(200, 1).containsEntry(412, 11);
+        } finally {
+            http.send("PUT", "/api/v1/settings/system", settings.body());
+        }
+    }
+
+    @Test
+    void invalidSettingsAreRefusedWithTheirFieldsAndChangeNothing() {
+        HttpResponse<String> read = http.send("GET", "/api/v1/settings/system", null);
+        String etag = read.headers().firstValue("ETag").orElseThrow();
+        String changed = read.body().replaceFirst("\"ollamaModel\":\"[^\"]*\"", "\"ollamaModel\":\"changed-model\"")
+                .replaceFirst("\"tikaJvmHeap\":(null|\"[^\"]*\")", "\"tikaJvmHeap\":\"512m\"");
+
+        HttpResponse<String> refused = http.send("PUT", "/api/v1/settings/system", changed);
+        assertProblem(refused, 400, "validation-failed");
+        assertThat(refused.body()).contains("\"field\":\"tikaJvmHeap\"", "-Xmx512m");
+        assertThat(http.send("POST", "/api/system/settings", changed).statusCode()).as("the legacy endpoint too").isEqualTo(400);
+
+        HttpResponse<String> after = http.send("GET", "/api/v1/settings/system", null);
+        assertThat(after.headers().firstValue("ETag")).as("nothing was applied").hasValue(etag);
+        assertThat(after.body()).doesNotContain("changed-model");
     }
 }

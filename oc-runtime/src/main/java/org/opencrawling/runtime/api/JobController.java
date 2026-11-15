@@ -495,6 +495,23 @@ public class JobController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Stops one run of a job, with the same access rules as {@link #stopJob}: {@code 202} when the run was asked to
+     * stop, {@code 404} when the job is not visible or that run is not running here (it ended, or another run of the
+     * job replaced it), {@code 403} when the caller may not run the job.
+     */
+    public ResponseEntity<Void> stopRun(String jobId, String executionId) {
+        JobDTO job = findJob(jobId);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
+        }
+        return runRegistry.stopExecution(job.id(), executionId)
+                ? ResponseEntity.accepted().build() : ResponseEntity.notFound().build();
+    }
+
     @Operation(summary = "List running jobs", description = "The job runs in progress in this runtime, oldest first.")
     @ApiResponse(responseCode = "200", description = "Runs in progress")
     @GetMapping("/runs")

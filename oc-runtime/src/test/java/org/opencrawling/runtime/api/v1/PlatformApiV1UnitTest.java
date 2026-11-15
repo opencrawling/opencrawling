@@ -250,4 +250,66 @@ class PlatformApiV1UnitTest {
         assertThat(LegacyApi.successor("/api/jobsx")).as("a prefix matches whole segments only").isEmpty();
         assertThat(LegacyApi.deprecationHeader()).isEqualTo("@1794700800");
     }
+
+    @Test
+    void secretsAreRecognisedByNameAndInsideUrls() {
+        for (String key : List.of("password", "dbPassword", "apiKey", "qdrantApiKey", "token", "sessionToken", "clientSecret",
+                "s3SecretAccessKey", "secretKey", "vespaTlsPrivateKey", "connectionString", "customHeaders", "Authorization")) {
+            assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret(key)).as(key).isTrue();
+        }
+        for (String key : List.of("url", "username", "s3AccessKeyId", "bucket", "keyPrefix", "primaryKeyColumn", "region")) {
+            assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret(key)).as(key).isFalse();
+        }
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "https://bob:pw@host/x"))
+                .isEqualTo("https://bob:********@host/x");
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "jdbc:postgresql://u:p%40ss@db:5432/x"))
+                .isEqualTo("jdbc:postgresql://u:********@db:5432/x");
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.masked("url", "https://host/x?y=1"))
+                .as("no credentials, nothing masked").isEqualTo("https://host/x?y=1");
+    }
+
+    @Test
+    void storedSecretsAreKeptOnlyWhileTheConnectorPointsWhereItDid() {
+        Map<String, String> stored = Map.of("url", "https://a.example/api", "password", "s3cret",
+                "dsn", "postgres://u:dbpass@db/x");
+        Map<String, String> kept = org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("url", "https://a.example/api", "password", "********", "dsn", "postgres://u:********@db/x"), stored);
+        assertThat(kept).containsEntry("password", "s3cret").containsEntry("dsn", "postgres://u:dbpass@db/x");
+
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("url", "https://evil.example/api", "password", "********"), stored))
+                .isInstanceOf(ApiProblem.class);
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("url", "https://b.example/api", "password", "new"), stored))
+                .as("with the secret entered again, the address may change").containsEntry("password", "new");
+        assertThatThrownBy(() -> org.opencrawling.runtime.api.v1.model.ConnectorResource.unmask(
+                Map.of("password", "********", "host", "elsewhere"), Map.of("password", "s3cret", "host", "here")))
+                .isInstanceOf(ApiProblem.class);
+    }
+
+    @Test
+    void theSecretsDigestChangesWithASecretAndNeedsTheKey() {
+        byte[] key = new byte[32];
+        byte[] other = new byte[32];
+        other[0] = 1;
+        Map<String, String> config = Map.of("url", "https://a", "password", "one");
+        String digest = org.opencrawling.runtime.api.v1.model.ConnectorResource.secretsDigest(config, key);
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.secretsDigest(Map.of("url", "https://a", "password", "two"), key))
+                .isNotEqualTo(digest);
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.secretsDigest(Map.of("url", "https://b", "password", "one"), key))
+                .as("only secrets go in; the rest is in the view").isEqualTo(digest);
+        assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.secretsDigest(config, other)).isNotEqualTo(digest);
+    }
+
+    @Test
+    void aRunIsStoppedOnlyWhileItIsTheJobsRun() {
+        org.opencrawling.runtime.orchestrator.JobRunRegistry registry = new org.opencrawling.runtime.orchestrator.JobRunRegistry(0);
+        var reserved = (org.opencrawling.runtime.orchestrator.JobRunRegistry.Reserved) registry.reserve("job-1", "exec-new");
+        assertThat(registry.stopExecution("job-1", "exec-old")).as("another run of the job").isFalse();
+        assertThat(registry.run("job-1").orElseThrow().stopRequested()).isFalse();
+        assertThat(registry.stopExecution("job-1", "exec-new")).isTrue();
+        assertThat(registry.run("job-1").orElseThrow().stopRequested()).isTrue();
+        reserved.reservation().release();
+        assertThat(registry.stopExecution("job-1", "exec-new")).as("ended").isFalse();
+    }
 }

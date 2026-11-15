@@ -106,7 +106,7 @@ final class ApiV1Documentation {
                      "vectorDimensions":1024,"chunkerType":"TokenTextSplitter","chunkSize":800,"chunkOverlap":100,
                      "claimCheckStore":"ozone","ozoneClientType":"NATIVE","ozoneS3Endpoint":"http://s3g:9878","ozoneOmHost":"om",
                      "ozoneOmPort":9862,"ozoneVolume":"s3v","ozoneBucket":"claims","tikaVersion":"3","tikaEngine":"tika",
-                     "tikaForkEnabled":true,"tikaTimeoutMs":30000,"tikaJvmHeap":"512m","tikaMaxFilesPerProcess":100000,
+                     "tikaForkEnabled":true,"tikaTimeoutMs":30000,"tikaJvmHeap":"-Xmx512m","tikaMaxFilesPerProcess":100000,
                      "tikaFallbackToEmbedded":true,"tikaExtractEmbedded":true,"tikaWriteLimit":-1,"tikaNumClients":2}"""),
             Map.entry("replaceTransportSettings", """
                     {"mode":"AUTO","grpcEnabled":true,"grpcPort":9095,"maxMessageSizeMb":32,"fallbackToRest":true,

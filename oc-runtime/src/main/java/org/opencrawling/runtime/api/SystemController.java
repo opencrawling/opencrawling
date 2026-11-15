@@ -343,11 +343,11 @@ public class SystemController {
     @Operation(summary = "Update global system settings", description = "Updates and persists global configuration settings for embedding, chunking, Claim-Check storage, and text extraction.")
     @ApiResponse(responseCode = "200", description = "Settings updated successfully")
     @PostMapping("/settings")
-    public ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
-        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(newSettings.chunkSize())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid chunk size: "
-                    + newSettings.chunkSize() + ". Expected 1 to "
-                    + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens.");
+    public synchronized ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
+        // Everything is checked before anything is applied: a refused request changes nothing.
+        String invalid = invalidSetting(newSettings);
+        if (invalid != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid);
         }
         this.settings = newSettings;
         if (textExtractionProperties != null) {
@@ -358,12 +358,7 @@ public class SystemController {
                 textExtractionProperties.setTimeoutMs(newSettings.tikaTimeoutMs());
             }
             if (newSettings.tikaJvmHeap() != null && !newSettings.tikaJvmHeap().isBlank()) {
-                String heap = newSettings.tikaJvmHeap().trim();
-                if (!VALID_HEAP_PATTERN.matcher(heap).matches()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Invalid JVM heap argument: '" + heap + "'. Expected pattern -Xmx<number>[k|m|g].");
-                }
-                textExtractionProperties.setJvmArgs(new ArrayList<>(List.of(heap)));
+                textExtractionProperties.setJvmArgs(new ArrayList<>(List.of(newSettings.tikaJvmHeap().trim())));
             }
             if (newSettings.tikaMaxFilesPerProcess() != null && newSettings.tikaMaxFilesPerProcess() > 0) {
                 textExtractionProperties.setMaxFilesPerProcess(newSettings.tikaMaxFilesPerProcess());
@@ -389,6 +384,26 @@ public class SystemController {
             + ". Tika Fork: " + newSettings.tikaForkEnabled() + " (Timeout: " + newSettings.tikaTimeoutMs() + "ms, Heap: " + newSettings.tikaJvmHeap() + ", Clients: " + newSettings.tikaNumClients() + ")"));
         InMemoryLogAppender.getLogs().add(formatLog("WARN", "Tika parser settings updated. Note: Reconfiguration of active child processes requires an application restart to take full effect."));
         return ResponseEntity.ok().header("X-Requires-Restart", "true").build();
+    }
+
+    /**
+     * Why these settings cannot be applied, or null when they can: a chunk size out of range, or a text extraction heap
+     * that is not {@code -Xmx<number>[k|m|g]}.
+     */
+    public static String invalidSetting(SystemSettingsDTO settings) {
+        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(settings.chunkSize())) {
+            return "Invalid chunk size: " + settings.chunkSize() + ". Expected 1 to "
+                    + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens.";
+        }
+        if (!isValidHeap(settings.tikaJvmHeap())) {
+            return "Invalid JVM heap argument: '" + settings.tikaJvmHeap().trim() + "'. Expected pattern -Xmx<number>[k|m|g].";
+        }
+        return null;
+    }
+
+    /** Whether a text extraction heap setting is absent or {@code -Xmx<number>[k|m|g]}. */
+    public static boolean isValidHeap(String heap) {
+        return heap == null || heap.isBlank() || VALID_HEAP_PATTERN.matcher(heap.trim()).matches();
     }
 
     @Schema(description = "Global runtime configuration settings")

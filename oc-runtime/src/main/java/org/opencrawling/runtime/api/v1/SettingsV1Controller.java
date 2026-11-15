@@ -35,6 +35,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /** Runtime-wide settings: crawling and extraction defaults, and the internal transport. Admins only. */
@@ -74,10 +76,23 @@ public class SettingsV1Controller {
     public ResponseEntity<SystemController.SystemSettingsDTO> replaceSystem(
             @RequestBody SystemController.SystemSettingsDTO settings,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        Etags.requireMatch(ifMatch, Etags.of(system.getSettings(), json));
-        JobsV1Controller.requireOk(system.updateSettings(settings), "Settings", "system");
-        SystemController.SystemSettingsDTO now = system.getSettings();
-        return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
+        List<ApiProblem.FieldError> errors = new ArrayList<>();
+        if (!org.opencrawling.runtime.orchestrator.ChunkingDefaults.isValidChunkSize(settings.chunkSize())) {
+            errors.add(new ApiProblem.FieldError("chunkSize", "must be 1 to "
+                    + org.opencrawling.core.messaging.ChunkingSpec.LIMIT_CHUNK_SIZE + " tokens"));
+        }
+        if (!SystemController.isValidHeap(settings.tikaJvmHeap())) {
+            errors.add(new ApiProblem.FieldError("tikaJvmHeap", "must be -Xmx<number>[k|m|g], for example -Xmx512m"));
+        }
+        if (!errors.isEmpty()) {
+            throw ApiProblem.invalid(errors);
+        }
+        synchronized (system) {
+            Etags.requireMatch(ifMatch, Etags.of(system.getSettings(), json));
+            JobsV1Controller.requireOk(system.updateSettings(settings), "Settings", "system");
+            SystemController.SystemSettingsDTO now = system.getSettings();
+            return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
+        }
     }
 
     @Operation(operationId = "getTransportSettings", summary = "Get the internal transport settings",
@@ -100,11 +115,13 @@ public class SettingsV1Controller {
     @PutMapping("/transport")
     public ResponseEntity<TransportSettingsDTO> replaceTransport(@RequestBody TransportSettingsDTO settings,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        Etags.requireMatch(ifMatch, Etags.of(currentTransport(), json));
-        ResponseEntity<TransportSettingsDTO> result = transport.updateTransportSettingsPut(settings);
-        JobsV1Controller.requireOk(result, "Settings", "transport");
-        TransportSettingsDTO now = currentTransport();
-        return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
+        synchronized (transport) {
+            Etags.requireMatch(ifMatch, Etags.of(currentTransport(), json));
+            ResponseEntity<TransportSettingsDTO> result = transport.updateTransportSettingsPut(settings);
+            JobsV1Controller.requireOk(result, "Settings", "transport");
+            TransportSettingsDTO now = currentTransport();
+            return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
+        }
     }
 
     /** The settings document inside the legacy answer, which also carries a status summary. */

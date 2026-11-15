@@ -537,10 +537,26 @@ public class ConnectorController {
     @Operation(summary = "Create or update connector", description = "Saves or updates a connector configuration definition.")
     @ApiResponse(responseCode = "201", description = "Connector definition saved successfully")
     @PostMapping
-    public ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
+    public synchronized ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
         System.out.println("Saving connector: " + connector.name());
-        storage.removeIf(c -> c.name().equals(connector.name()));
-        storage.add(connector);
+        // Replaced in place, so a concurrent read never finds the connector missing while it is being saved.
+        int index = -1;
+        for (int i = 0; i < storage.size(); i++) {
+            if (storage.get(i).name().equals(connector.name())) {
+                index = i;
+                break;
+            }
+        }
+        if (index >= 0) {
+            storage.set(index, connector);
+            for (int i = storage.size() - 1; i > index; i--) {
+                if (storage.get(i).name().equals(connector.name())) {
+                    storage.remove(i); // older duplicates, if a file ever had them
+                }
+            }
+        } else {
+            storage.add(connector);
+        }
         PersistenceHelper.save("connectors.json", storage);
         return ResponseEntity.status(201).build();
     }
@@ -578,7 +594,7 @@ public class ConnectorController {
     @Operation(summary = "Delete connector", description = "Removes a configured connector definition by its name/id.")
     @ApiResponse(responseCode = "200", description = "Connector deleted successfully")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteConnector(
+    public synchronized ResponseEntity<Void> deleteConnector(
             @Parameter(description = "Connector unique identifier or name", example = "FileSystem_Local") @PathVariable String id) {
         storage.removeIf(c -> c.name().equals(id));
         PersistenceHelper.save("connectors.json", storage);

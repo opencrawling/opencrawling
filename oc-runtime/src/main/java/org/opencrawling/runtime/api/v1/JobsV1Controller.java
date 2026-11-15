@@ -124,31 +124,31 @@ public class JobsV1Controller {
             description = "Creates a job. With management authorization on, the caller must be a job creator and becomes its owner. "
                     + "Send an Idempotency-Key to make retries safe.")
     @ApiResponse(responseCode = "201", description = "Created", headers = {
-            @Header(name = "Location", description = "URL of the new job"), @Header(name = "ETag", description = "Version of the definition")})
+            @Header(name = "Location", description = "URL of the new job"), @Header(name = "ETag", description = "Version of the job")})
     @PostMapping
     public ResponseEntity<JobResource> create(@Valid @RequestBody JobInput input,
                                               @Parameter(description = "Makes retries of this request safe") @RequestHeader(value = ApiV1.IDEMPOTENCY_KEY, required = false) String idempotencyKey) {
         checkConnectors(input);
         SaveOutcome outcome = jobs.save(input.toJob(null));
-        JobDTO created = saved(outcome, "new");
+        JobResource created = resource(saved(outcome, "new"));
         return ResponseEntity.created(ApiV1.location("jobs", created.id()))
                 .eTag(etag(created))
-                .body(resource(created));
+                .body(created);
     }
 
     @Operation(operationId = "getJob", summary = "Get a job",
             description = "The job's definition, state and the caller's permissions. Supports If-None-Match.")
-    @ApiResponse(responseCode = "200", description = "The job", headers = @Header(name = "ETag", description = "Version of the definition"))
+    @ApiResponse(responseCode = "200", description = "The job", headers = @Header(name = "ETag", description = "Version of the job as returned: its definition, state and the caller's permissions"))
     @ApiResponse(responseCode = "304", description = "Not modified since the ETag in If-None-Match")
     @GetMapping("/{id}")
     public ResponseEntity<JobResource> get(@PathVariable String id,
                                            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-        JobDTO job = find(id);
+        JobResource job = resource(find(id));
         String etag = etag(job);
         if (Etags.notModified(ifNoneMatch, etag)) {
             return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).build();
         }
-        return ResponseEntity.ok().eTag(etag).body(resource(job));
+        return ResponseEntity.ok().eTag(etag).body(job);
     }
 
     @Operation(operationId = "replaceJob", summary = "Replace a job's definition",
@@ -158,9 +158,12 @@ public class JobsV1Controller {
     @PutMapping("/{id}")
     public ResponseEntity<JobResource> replace(@PathVariable String id, @Valid @RequestBody JobInput input,
                                                @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        JobDTO current = find(id);
-        Etags.requireMatch(ifMatch, etag(current));
-        return update(id, input);
+        // The check and the write happen under the same lock as every other save, so two changes made from the same
+        // version cannot both pass the check (RFC 9110 13.1.1, the lost update).
+        synchronized (jobs) {
+            Etags.requireMatch(ifMatch, etag(resource(find(id))));
+            return update(id, input);
+        }
     }
 
     @Operation(operationId = "patchJob", summary = "Change parts of a job's definition",
@@ -172,11 +175,17 @@ public class JobsV1Controller {
                                                      schema = @Schema(implementation = JobInput.class)))
                                              @RequestBody JsonNode patch,
                                              @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        JobDTO current = find(id);
-        Etags.requireMatch(ifMatch, etag(current));
         if (patch == null || !patch.isObject()) {
             throw ApiProblem.badRequest("A merge patch is a JSON object.");
         }
+        synchronized (jobs) {
+            JobDTO current = find(id);
+            Etags.requireMatch(ifMatch, etag(resource(current)));
+            return patched(id, current, patch);
+        }
+    }
+
+    private ResponseEntity<JobResource> patched(String id, JobDTO current, JsonNode patch) {
         JsonNode merged = JsonMergePatch.apply(json.valueToTree(JobInput.of(current)), patch);
         JobInput input;
         try {
@@ -195,9 +204,11 @@ public class JobsV1Controller {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable String id,
                                        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        JobDTO current = find(id);
-        Etags.requireMatch(ifMatch, etag(current));
-        requireOk(jobs.deleteJob(current.id()), "Job", id);
+        synchronized (jobs) {
+            JobDTO current = find(id);
+            Etags.requireMatch(ifMatch, etag(resource(current)));
+            requireOk(jobs.deleteJob(current.id()), "Job", id);
+        }
         return ResponseEntity.noContent().build();
     }
 
@@ -274,8 +285,8 @@ public class JobsV1Controller {
 
     private ResponseEntity<JobResource> update(String id, JobInput input) {
         checkConnectors(input);
-        JobDTO saved = saved(jobs.save(input.toJob(id), true), id);
-        return ResponseEntity.ok().eTag(etag(saved)).body(resource(saved));
+        JobResource saved = resource(saved(jobs.save(input.toJob(id), true), id));
+        return ResponseEntity.ok().eTag(etag(saved)).body(saved);
     }
 
     private JobDTO saved(SaveOutcome outcome, String id) {
@@ -334,9 +345,13 @@ public class JobsV1Controller {
         return JobResource.of(job, jobs.getJobPermissions().get(job.id()));
     }
 
-    /** The version of the job's definition; state changes (status, documents) do not change it. */
-    private String etag(JobDTO job) {
-        return Etags.of(JobInput.of(job), json);
+    /**
+     * The version of the job as the caller gets it: definition, state and permissions. A validator identifies the
+     * representation (RFC 9110 8.8.3), so a run that changes the state changes the tag: a conditional read then gets the
+     * new state instead of 304, and a change made from an older read answers 412.
+     */
+    private String etag(JobResource job) {
+        return Etags.of(job, json);
     }
 
     static void requireOk(ResponseEntity<?> result, String what, String id) {
