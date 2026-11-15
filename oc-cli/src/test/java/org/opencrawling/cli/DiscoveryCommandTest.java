@@ -15,6 +15,7 @@
  */
 package org.opencrawling.cli;
 
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +43,8 @@ class DiscoveryCommandTest {
 
     private static HttpServer server;
     private static String serverUrl;
+    /** The paths the CLI requested, in order. */
+    private static final java.util.List<String> PATHS = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     @BeforeAll
     static void setUpAll() throws IOException {
@@ -49,7 +52,8 @@ class DiscoveryCommandTest {
         int port = server.getAddress().getPort();
         serverUrl = "http://127.0.0.1:" + port;
 
-        server.createContext("/api/discovery/connectors", exchange -> {
+        HttpHandler connectors = exchange -> {
+            PATHS.add(exchange.getRequestURI().getPath());
             String response = """
                 [
                   {
@@ -68,9 +72,12 @@ class DiscoveryCommandTest {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);
             }
-        });
+        };
+        server.createContext("/api/discovery/connectors", connectors);
+        server.createContext("/api/v1/discovery/connectors", connectors);
 
-        server.createContext("/api/discovery/cmis-live/tree", exchange -> {
+        HttpHandler tree = exchange -> {
+            PATHS.add(exchange.getRequestURI().getPath());
             String response = """
                 {
                   "connector": "cmis-live",
@@ -112,9 +119,12 @@ class DiscoveryCommandTest {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);
             }
-        });
+        };
+        server.createContext("/api/discovery/cmis-live/tree", tree);
+        server.createContext("/api/v1/discovery/connectors/cmis-live/tree", tree);
 
-        server.createContext("/api/discovery/cmis-live/dry-run", exchange -> {
+        HttpHandler dryRun = exchange -> {
+            PATHS.add(exchange.getRequestURI().getPath());
             String response = """
                 {
                   "connector": "cmis-live",
@@ -146,7 +156,9 @@ class DiscoveryCommandTest {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);
             }
-        });
+        };
+        server.createContext("/api/discovery/cmis-live/dry-run", dryRun);
+        server.createContext("/api/v1/discovery/connectors/cmis-live:dry-run", dryRun);
 
         server.start();
     }
@@ -168,6 +180,25 @@ class DiscoveryCommandTest {
     void tearDown() {
         System.setOut(originalOut);
         System.setErr(originalErr);
+    }
+
+    @Test
+    void discoveryUsesThePlatformApiByDefault() {
+        CommandLine cmd = new CommandLine(new OpenCrawlingCliCommand());
+        PATHS.clear();
+        assertEquals(0, cmd.execute("discovery", "connectors", "--url", serverUrl));
+        assertEquals(0, cmd.execute("discovery", "tree", "cmis-live", "--url", serverUrl));
+        assertEquals(0, cmd.execute("discovery", "dry-run", "cmis-live", "--url", serverUrl));
+        assertEquals(java.util.List.of("/api/v1/discovery/connectors", "/api/v1/discovery/connectors/cmis-live/tree",
+                "/api/v1/discovery/connectors/cmis-live:dry-run"), PATHS);
+    }
+
+    @Test
+    void anAssertedIdentityKeepsTheEarlierEndpointWhichAloneAcceptsOne() {
+        CommandLine cmd = new CommandLine(new OpenCrawlingCliCommand());
+        PATHS.clear();
+        assertEquals(0, cmd.execute("discovery", "connectors", "--url", serverUrl, "--user-principal", "alice"));
+        assertEquals(java.util.List.of("/api/discovery/connectors"), PATHS);
     }
 
     @Test

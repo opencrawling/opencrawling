@@ -94,7 +94,7 @@ class AuthCommandTest {
             record(exchange);
             reply(exchange, 200, "");
         });
-        server.createContext("/api/auth/me", exchange -> {
+        server.createContext("/api/v1/me", exchange -> {
             record(exchange);
             String auth = String.valueOf(exchange.getRequestHeaders().getFirst("Authorization"));
             if (auth.equals("Bearer user-access") || auth.equals("Bearer user-access-2")) {
@@ -158,18 +158,18 @@ class AuthCommandTest {
         CliConfigService.credentials().save(login("user-access", "user-refresh", 300));
 
         try (OpenCrawlingClient client = CliConfigService.createClient(base + "/", null, null)) {
-            assertEquals("hr_admin", client.auth().me().principal());
+            assertEquals("hr_admin", client.platform().me().principal());
         }
-        assertContains(seenAt("/api/auth/me").getLast(), "Bearer user-access");
+        assertContains(seenAt("/api/v1/me").getLast(), "Bearer user-access");
 
         try (OpenCrawlingClient other = CliConfigService.createClient("http://localhost:" + server.getAddress().getPort(), null, null)) {
             try {
-                other.auth().me();
+                other.platform().me();
             } catch (RuntimeException expected) {
                 // 401: no token was sent to a server the sign-in was not made for
             }
         }
-        assertContains(seenAt("/api/auth/me").getLast(), " null ");
+        assertContains(seenAt("/api/v1/me").getLast(), " null ");
     }
 
     @Test
@@ -209,7 +209,7 @@ class AuthCommandTest {
         respondToken(200, "{\"access_token\":\"robot-access\",\"expires_in\":300}");
 
         try (OpenCrawlingClient client = CliConfigService.createClient(base, null, null)) {
-            assertEquals("service-account-ci", client.auth().me().principal());
+            assertEquals("service-account-ci", client.platform().me().principal());
         }
         assertContains(seenAt("/token").getFirst(), "grant_type=client_credentials", "Basic ");
 

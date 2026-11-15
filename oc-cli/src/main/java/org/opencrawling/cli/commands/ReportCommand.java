@@ -108,7 +108,8 @@ public class ReportCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                List<JobReportSummary> summaries = client.reports().list();
+                List<JobReportSummary> summaries = client.platform().executions()
+                        .stream(org.opencrawling.sdk.v1.PlatformClient.ExecutionFilter.all()).toList();
 
                 if ("json".equalsIgnoreCase(format)) {
                     ObjectMapper mapper = new ObjectMapper();
@@ -190,7 +191,7 @@ public class ReportCommand implements Runnable {
             }
 
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                Optional<JobReportSummary> reportOpt = client.reports().get(jobId, executionId);
+                Optional<JobReportSummary> reportOpt = execution(client, jobId, executionId);
                 if (reportOpt.isEmpty()) {
                     System.err.println(AnsiColors.red("Report not found for Job " + jobId + " and Execution " + executionId));
                     return 1;
@@ -295,7 +296,11 @@ public class ReportCommand implements Runnable {
             }
 
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                PaginatedLedgerResponse ledger = client.reports().getDocumentLedger(jobId, executionId, status, query, page, size);
+                if (execution(client, jobId, executionId).isEmpty()) {
+                    System.err.println(AnsiColors.red("Report not found for Job " + jobId + " and Execution " + executionId));
+                    return 1;
+                }
+                PaginatedLedgerResponse ledger = ledgerPage(client, executionId, status, query, page, size);
 
                 if ("json".equalsIgnoreCase(format)) {
                     ObjectMapper mapper = new ObjectMapper();
@@ -388,7 +393,11 @@ public class ReportCommand implements Runnable {
 
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
                 System.out.println("Downloading " + ext.toUpperCase() + " report for Job " + jobId + " / " + executionId + "...");
-                client.reports().downloadToFile(jobId, executionId, ext, destination);
+                if (execution(client, jobId, executionId).isEmpty()) {
+                    System.err.println(AnsiColors.red("Report not found for Job " + jobId + " and Execution " + executionId));
+                    return 1;
+                }
+                client.platform().executions().exportTo(executionId, ext, destination);
 
                 long sizeBytes = Files.exists(destination) ? Files.size(destination) : 0;
                 System.out.println(AnsiColors.green("✔ Report successfully exported to: ")
@@ -432,7 +441,7 @@ public class ReportCommand implements Runnable {
 
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
                 long startNs = System.nanoTime();
-                QueryResult result = client.reports().query(sql);
+                QueryResult result = client.platform().executions().query(sql);
                 long elapsedMs = (System.nanoTime() - startNs) / 1_000_000;
 
                 if ("json".equalsIgnoreCase(format)) {
@@ -475,5 +484,41 @@ public class ReportCommand implements Runnable {
                 return 1;
             }
         }
+    }
+
+    /** The execution, if it exists, the caller may see it, and it belongs to the job. */
+    static Optional<JobReportSummary> execution(OpenCrawlingClient client, String jobId, String executionId) {
+        try {
+            JobReportSummary summary = client.platform().executions().get(executionId);
+            return summary != null && jobId.equals(summary.jobId()) ? Optional.of(summary) : Optional.empty();
+        } catch (org.opencrawling.sdk.v1.ApiProblemException e) {
+            if (e.getStatusCode() == 404) {
+                return Optional.empty();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * One page of an execution's documents, by page number: the Platform API pages with cursors, so this follows them
+     * from the first page.
+     */
+    static PaginatedLedgerResponse ledgerPage(OpenCrawlingClient client, String executionId, String status, String query,
+                                              int page, int size) {
+        String outcome = status == null || status.isBlank() || "ALL".equalsIgnoreCase(status) ? null : status.toUpperCase();
+        String text = query == null || query.isBlank() ? null : query;
+        org.opencrawling.sdk.v1.PageRequest request = org.opencrawling.sdk.v1.PageRequest.ofSize(size);
+        org.opencrawling.sdk.v1.Page<DocumentLedgerEntry> current =
+                client.platform().executions().documents(executionId, outcome, text, request);
+        for (int i = 0; i < page; i++) {
+            if (!current.hasNext()) {
+                current = new org.opencrawling.sdk.v1.Page<>(List.of(), current.page());
+                break;
+            }
+            request = request.next(current);
+            current = client.platform().executions().documents(executionId, outcome, text, request);
+        }
+        long total = current.page() != null ? current.page().totalItems() : current.items().size();
+        return new PaginatedLedgerResponse(current.items(), total, page, size);
     }
 }

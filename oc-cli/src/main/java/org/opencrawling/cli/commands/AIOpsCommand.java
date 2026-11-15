@@ -63,7 +63,7 @@ public class AIOpsCommand implements Runnable {
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
                 System.out.println(AnsiColors.cyan("Running AI Root Cause Analysis for Job ID: " + jobId + "..."));
-                DiagnosticReport report = client.observability().diagnose(jobId);
+                DiagnosticReport report = client.platform().jobs().diagnose(jobId);
 
                 System.out.println(AnsiColors.bold("\n--- AI Root Cause Analysis Report ---"));
                 System.out.println(AnsiColors.bold("Job Name: ") + report.jobName());
@@ -105,7 +105,7 @@ public class AIOpsCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                JobTraceResponse traces = client.observability().getTraces(id);
+                JobTraceResponse traces = client.platform().jobs().traces(id);
                 ObjectMapper mapper = new ObjectMapper();
 
                 System.out.println(AnsiColors.green("✔ OpenTelemetry Traces for ID: " + id));
@@ -136,7 +136,7 @@ public class AIOpsCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                var errors = client.observability().getErrors(jobId, timeframe);
+                var errors = client.platform().jobs().errors(jobId, timeframe);
                 ObjectMapper mapper = new ObjectMapper();
 
                 System.out.println(AnsiColors.green("✔ Error Logs for Job ID: " + jobId + " (" + timeframe + ")"));
@@ -164,7 +164,7 @@ public class AIOpsCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                var metrics = client.observability().getMetrics(connectorId);
+                var metrics = client.platform().operations().metrics(connectorId);
                 ObjectMapper mapper = new ObjectMapper();
 
                 System.out.println(AnsiColors.green("✔ Metrics for Connector ID: " + connectorId));

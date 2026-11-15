@@ -20,13 +20,17 @@ import org.opencrawling.sdk.DefaultOpenCrawlingClient;
 import org.opencrawling.sdk.OpenCrawlingClient;
 import org.opencrawling.sdk.models.ConnectorRequest;
 import org.opencrawling.sdk.models.JobRequest;
-import org.opencrawling.sdk.models.JobResponse;
+import org.opencrawling.sdk.v1.ApiProblemException;
+import org.opencrawling.sdk.v1.PlatformClient;
+import org.opencrawling.sdk.v1.RequestOptions;
+import org.opencrawling.sdk.v1.model.ConnectorInput;
+import org.opencrawling.sdk.v1.model.Job;
+import org.opencrawling.sdk.v1.model.JobInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,18 +39,16 @@ import java.util.Optional;
  * with the live {@code ConnectorController}/{@code JobController} and as an act of upstream
  * citizenship (reusing the platform's own published client).
  *
- * <p>Connector upserts are naturally idempotent — {@code ConnectorController.createConnector}
- * removes any existing connector with the same name before adding, confirmed in source — but job
- * creation is not: {@code POST /api/jobs} with a blank id always mints a new job, with no
- * server-side dedup by name. {@link #upsertJob} does the dedup itself: look up an existing job by
- * name first, and if found, resend the request with that job's id so the server updates in place
- * instead of creating a duplicate on every re-run.
+ * <p>Writes through the Platform API ({@code /api/v1}). Re-running a migration updates what an
+ * earlier run created instead of duplicating it: a connector is created, or replaced when one with
+ * that name exists ({@code 409 connector-exists}); a job is replaced when a job with the same name
+ * exists, since the server does not deduplicate jobs by name, and created otherwise.
  */
 public class OpenCrawlingWriter {
 
     private static final Logger log = LoggerFactory.getLogger(OpenCrawlingWriter.class);
 
-    private final OpenCrawlingClient client;
+    private final PlatformClient api;
 
     public OpenCrawlingWriter(String baseUrl, String apiKey, String bearerToken, int timeoutSeconds) {
         if ((apiKey == null || apiKey.isBlank()) && (bearerToken == null || bearerToken.isBlank())) {
@@ -56,8 +58,9 @@ public class OpenCrawlingWriter {
             // why every upsert from here started failing, rather than debugging it as a mapping bug.
             log.debug("Constructing OpenCrawlingWriter for '{}' with no API key or bearer token; requests will be unauthenticated.", baseUrl);
         }
-        this.client = new DefaultOpenCrawlingClient(
+        OpenCrawlingClient client = new DefaultOpenCrawlingClient(
             HttpClient.newHttpClient(), baseUrl, apiKey, bearerToken, Duration.ofSeconds(timeoutSeconds), new ObjectMapper());
+        this.api = client.platform();
     }
 
     /**
@@ -65,43 +68,42 @@ public class OpenCrawlingWriter {
      * {@link #upsertConnector} and {@link #upsertJob} and have no HTTP client.
      */
     protected OpenCrawlingWriter() {
-        this.client = null;
+        this.api = null;
     }
 
     public void upsertConnector(ConnectorRequest request) {
         log.info("Upserting connector '{}' (type={}, class={})", request.name(), request.type(), request.className());
-        client.connectors().create(request);
-    }
-
-    public void upsertJob(JobRequest request) {
-        Optional<JobResponse> existing = client.jobs().list().stream()
-            .filter(job -> job.name().equals(request.name()))
-            .findFirst();
-
-        if (existing.isPresent()) {
-            log.info("Job '{}' already exists (id={}); updating in place instead of creating a duplicate",
-                request.name(), existing.get().id());
-            client.jobs().create(withId(request, existing.get().id()));
-        } else {
-            log.info("Creating job '{}'", request.name());
-            client.jobs().create(request);
+        ConnectorInput input = new ConnectorInput(request.name(), request.description(), request.type(),
+            request.className(), request.maxConnections() > 0 ? request.maxConnections() : null, request.configuration());
+        try {
+            api.connectors().create(input, RequestOptions.none());
+        } catch (ApiProblemException e) {
+            if (!"connector-exists".equals(e.code())) {
+                throw e;
+            }
+            log.info("Connector '{}' already exists; replacing it", request.name());
+            api.connectors().replace(request.name(), input, RequestOptions.none());
         }
     }
 
-    private static JobRequest withId(JobRequest request, String id) {
-        return JobRequest.builder()
-            .id(id)
-            .name(request.name())
-            .repositoryConnector(request.repositoryConnector())
-            .outputConnector(request.outputConnector())
-            .authorityConnector(request.authorityConnector())
-            .path(request.path())
-            .status(request.status())
-            .currentStage(request.currentStage())
-            .documents(request.documents())
-            .lastRun(request.lastRun())
-            .transformationConnector(request.transformationConnector())
-            .narrativization(request.narrativization())
-            .build();
+    public void upsertJob(JobRequest request) {
+        JobInput input = new JobInput(request.name(), request.repositoryConnector(), request.outputConnector(),
+            blankToNull(request.authorityConnector()), blankToNull(request.transformationConnector()), request.path(),
+            blankToNull(request.pipelineMode()), null, request.narrativization(), null);
+        Optional<Job> existing = api.jobs().stream(PlatformClient.JobFilter.all().withText(request.name()))
+            .filter(job -> job.name().equals(request.name()))
+            .findFirst();
+        if (existing.isPresent()) {
+            log.info("Job '{}' already exists (id={}); updating in place instead of creating a duplicate",
+                request.name(), existing.get().id());
+            api.jobs().replace(existing.get().id(), input, RequestOptions.none());
+        } else {
+            log.info("Creating job '{}'", request.name());
+            api.jobs().create(input, RequestOptions.none());
+        }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

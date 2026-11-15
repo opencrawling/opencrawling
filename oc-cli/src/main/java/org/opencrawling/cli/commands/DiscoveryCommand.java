@@ -88,7 +88,9 @@ public class DiscoveryCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey, token)) {
-                List<DiscoveryConnectorInfo> connectors = client.discovery().listConnectors(userPrincipal, userRoles);
+                List<DiscoveryConnectorInfo> connectors = asserted(userPrincipal, userRoles)
+                        ? client.discovery().listConnectors(userPrincipal, userRoles)
+                        : client.platform().discovery().connectors();
 
                 if ("json".equalsIgnoreCase(format)) {
                     System.out.println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(connectors));
@@ -177,7 +179,9 @@ public class DiscoveryCommand implements Runnable {
                         .userRoles(userRoles)
                         .build();
 
-                DiscoveryTreeView result = client.discovery().exploreTree(connector, request);
+                DiscoveryTreeView result = asserted(userPrincipal, userRoles)
+                        ? client.discovery().exploreTree(connector, request)
+                        : client.platform().discovery().tree(connector, start, depth, maxNodes, !noDocuments);
 
                 if ("json".equalsIgnoreCase(format)) {
                     System.out.println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(result));
@@ -290,7 +294,9 @@ public class DiscoveryCommand implements Runnable {
                         .userRoles(userRoles)
                         .build();
 
-                DiscoveryDryRunView result = client.discovery().dryRun(connector, request);
+                DiscoveryDryRunView result = asserted(userPrincipal, userRoles)
+                        ? client.discovery().dryRun(connector, request)
+                        : client.platform().discovery().dryRun(connector, request);
 
                 if ("json".equalsIgnoreCase(format)) {
                     System.out.println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(result));
@@ -339,5 +345,14 @@ public class DiscoveryCommand implements Runnable {
                 return 1;
             }
         }
+    }
+
+    /**
+     * Whether the user asserted an identity (dev/test only). The Platform API never accepts one, it takes the caller
+     * from the token, so these requests keep using the earlier discovery endpoint, which honours it when the runtime
+     * sets {@code opencrawling.discovery.allow-asserted-identity}.
+     */
+    static boolean asserted(String userPrincipal, String userRoles) {
+        return (userPrincipal != null && !userPrincipal.isBlank()) || (userRoles != null && !userRoles.isBlank());
     }
 }

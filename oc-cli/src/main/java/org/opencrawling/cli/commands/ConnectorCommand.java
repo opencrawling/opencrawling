@@ -20,8 +20,11 @@ import org.opencrawling.cli.util.AnsiColors;
 import org.opencrawling.cli.util.TableFormatter;
 import org.opencrawling.sdk.OpenCrawlingClient;
 import org.opencrawling.sdk.models.ConnectionCheckResponse;
-import org.opencrawling.sdk.models.ConnectorRequest;
-import org.opencrawling.sdk.models.ConnectorResponse;
+import org.opencrawling.sdk.v1.ApiProblemException;
+import org.opencrawling.sdk.v1.PlatformClient;
+import org.opencrawling.sdk.v1.RequestOptions;
+import org.opencrawling.sdk.v1.model.Connector;
+import org.opencrawling.sdk.v1.model.ConnectorInput;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -65,17 +68,17 @@ public class ConnectorCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                List<ConnectorResponse> connectors = client.connectors().list(type);
+                List<Connector> connectors = client.platform().connectors().stream(type, null).toList();
 
                 TableFormatter table = new TableFormatter()
                         .setHeaders("NAME", "TYPE", "CLASS", "MAX CONNECTIONS", "DESCRIPTION");
 
-                for (ConnectorResponse conn : connectors) {
+                for (Connector conn : connectors) {
                     table.addRow(
                             conn.name(),
                             conn.type(),
                             conn.className() != null ? conn.className() : "N/A",
-                            String.valueOf(conn.maxConnections()),
+                            conn.maxConnections() != null ? String.valueOf(conn.maxConnections()) : "N/A",
                             conn.description() != null ? conn.description() : ""
                     );
                 }
@@ -133,14 +136,24 @@ public class ConnectorCommand implements Runnable {
                     }
                 }
 
-                ConnectorRequest req = ConnectorRequest.builder()
-                        .name(targetName)
-                        .type(type)
-                        .className(className)
-                        .configuration(configMap)
-                        .build();
-
-                ConnectionCheckResponse check = client.connectors().checkConnection(req);
+                PlatformClient.Connectors connectors = client.platform().connectors();
+                ConnectionCheckResponse check;
+                if (className == null && configMap == null) {
+                    check = connectors.check(targetName);
+                } else {
+                    // The stored definition with the overrides; its masked secrets are filled in by the runtime.
+                    ConnectorInput stored = connectors.get(targetName).value().toInput();
+                    java.util.Map<String, String> configuration = new java.util.LinkedHashMap<>();
+                    if (stored.configuration() != null) {
+                        configuration.putAll(stored.configuration());
+                    }
+                    if (configMap != null) {
+                        configuration.putAll(configMap);
+                    }
+                    check = connectors.checkDefinition(new ConnectorInput(stored.name(), stored.description(),
+                            stored.type() != null ? stored.type() : type,
+                            className != null ? className : stored.className(), stored.maxConnections(), configuration));
+                }
 
                 if (check.success()) {
                     System.out.println(AnsiColors.green("✔ Connection Successful: ") + check.message());
@@ -170,10 +183,20 @@ public class ConnectorCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                ConnectorRequest request = mapper.readValue(new java.io.File(filePath), ConnectorRequest.class);
-                client.connectors().create(request);
-                System.out.println(AnsiColors.green("✔ Connector created/updated successfully!"));
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                ConnectorInput request = mapper.readValue(new java.io.File(filePath), ConnectorInput.class);
+                PlatformClient.Connectors connectors = client.platform().connectors();
+                try {
+                    connectors.create(request, RequestOptions.none());
+                    System.out.println(AnsiColors.green("✔ Connector created successfully!"));
+                } catch (ApiProblemException e) {
+                    if (!"connector-exists".equals(e.code())) {
+                        throw e;
+                    }
+                    connectors.replace(request.name(), request, RequestOptions.none());
+                    System.out.println(AnsiColors.green("✔ Connector updated successfully!"));
+                }
                 return 0;
             } catch (Exception e) {
                 System.err.println(AnsiColors.red("Error creating connector: " + e.getMessage()));
@@ -188,6 +211,9 @@ public class ConnectorCommand implements Runnable {
         @Option(names = {"--name"}, required = true, description = "Connector name to delete")
         private String name;
 
+        @Option(names = {"--force"}, description = "Delete even if jobs use the connector")
+        private boolean force;
+
         @Option(names = {"--url"}, description = "Override OpenCrawling server URL")
         private String serverUrl;
 
@@ -197,9 +223,17 @@ public class ConnectorCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                client.connectors().delete(name);
+                client.platform().connectors().delete(name, force, RequestOptions.none());
                 System.out.println(AnsiColors.green("✔ Connector deleted: " + name));
                 return 0;
+            } catch (ApiProblemException e) {
+                if ("connector-in-use".equals(e.code())) {
+                    System.err.println(AnsiColors.red("Connector " + name + " is used by jobs "
+                            + e.problem().extensions().get("jobs") + "; change them first, or delete with --force."));
+                    return 1;
+                }
+                System.err.println(AnsiColors.red("Error deleting connector: " + e.getMessage()));
+                return 1;
             } catch (Exception e) {
                 System.err.println(AnsiColors.red("Error deleting connector: " + e.getMessage()));
                 return 1;

@@ -76,7 +76,7 @@ public class CopilotCommand implements Runnable {
                         .addField("content", "string", "Main Body Content")
                         .build();
 
-                CopilotResponse response = client.narrativization().generateTemplate(request);
+                CopilotResponse response = client.platform().narrativization().generateTemplate(request);
 
                 System.out.println(AnsiColors.green("✔ Generated Template:"));
                 System.out.println(AnsiColors.bold(response.template()));
@@ -109,7 +109,7 @@ public class CopilotCommand implements Runnable {
                         .addField("summary", "string", "Summary")
                         .build();
 
-                CopilotResponse response = client.narrativization().generateTemplate(request);
+                CopilotResponse response = client.platform().narrativization().generateTemplate(request);
 
                 ObjectMapper mapper = new ObjectMapper();
                 System.out.println(AnsiColors.green("✔ Mock Data Output:"));

@@ -20,7 +20,7 @@ import org.opencrawling.cli.config.CliConfigService;
 import org.opencrawling.cli.util.AnsiColors;
 import org.opencrawling.cli.util.TableFormatter;
 import org.opencrawling.sdk.OpenCrawlingClient;
-import org.opencrawling.sdk.models.SystemSettings;
+import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.opencrawling.sdk.models.SystemStatus;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -62,7 +62,7 @@ public class SystemCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                SystemStatus status = client.system().getStatus();
+                SystemStatus status = client.platform().operations().status();
 
                 System.out.println(AnsiColors.bold("\n--- OpenCrawling System Health Status ---"));
                 TableFormatter table = new TableFormatter().setHeaders("COMPONENT", "STATUS");
@@ -102,7 +102,7 @@ public class SystemCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                List<String> logs = client.system().getLogs();
+                List<String> logs = client.platform().operations().logs();
                 int start = Math.max(0, logs.size() - tail);
                 System.out.println(AnsiColors.bold("--- System Logs (Last " + (logs.size() - start) + " lines) ---"));
                 for (int i = start; i < logs.size(); i++) {
@@ -128,7 +128,7 @@ public class SystemCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                SystemSettings settings = client.system().getSettings();
+                SystemSettings settings = client.platform().settings().system().value();
                 ObjectMapper mapper = new ObjectMapper();
                 System.out.println(AnsiColors.green("✔ Current System Settings:"));
                 System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(settings));
@@ -152,7 +152,7 @@ public class SystemCommand implements Runnable {
         @Override
         public Integer call() {
             try (OpenCrawlingClient client = CliConfigService.createClient(serverUrl, apiKey)) {
-                List<Map<String, Object>> throughput = client.system().getThroughput();
+                List<Map<String, Object>> throughput = client.platform().operations().throughput();
                 ObjectMapper mapper = new ObjectMapper();
                 System.out.println(AnsiColors.green("✔ Ingestion Throughput Metrics:"));
                 System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(throughput));
