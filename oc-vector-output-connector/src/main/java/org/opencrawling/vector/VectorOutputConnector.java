@@ -199,23 +199,31 @@ public class VectorOutputConnector implements OutputConnector {
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
                 log.info("Split document into {} chunks for vector store.", chunks.size());
                 
+                // Every chunk needs its real vector. Without one the store would fall back to a placeholder vector:
+                // the chunk would be saved but never found by a similarity search, while the run reports success.
+                if (embeddingModel == null) {
+                    throw new IllegalStateException("No embedding model is configured, so document " + document.id()
+                            + " cannot be embedded; nothing was stored");
+                }
                 Map<String, float[]> precomputedVectors = new HashMap<>();
-                if (embeddingModel != null) {
-                    for (Document chunk : chunks) {
-                        try {
-                            float[] vector = embeddingModel.embed(chunk.getText());
-                            chunk.getMetadata().put("embedding", vector);
-                            precomputedVectors.put(chunk.getText(), vector);
-                        } catch (Exception e) {
-                            log.warn("Failed to compute embedding for chunk in document {}: {}", document.id(), e.getMessage());
-                        }
+                for (Document chunk : chunks) {
+                    float[] vector;
+                    try {
+                        vector = embeddingModel.embed(chunk.getText());
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Embedding failed for document " + document.id()
+                                + "; nothing was stored: " + e.getMessage(), e);
                     }
+                    if (vector == null || vector.length == 0) {
+                        throw new IllegalStateException("The embedding model returned no vector for document "
+                                + document.id() + "; nothing was stored");
+                    }
+                    chunk.getMetadata().put("embedding", vector);
+                    precomputedVectors.put(chunk.getText(), vector);
                 }
 
                 try {
-                    if (!precomputedVectors.isEmpty()) {
-                        PrecomputedEmbeddingModel.setPrecomputedVectors(precomputedVectors);
-                    }
+                    PrecomputedEmbeddingModel.setPrecomputedVectors(precomputedVectors);
                     // Persist the embedded chunks to the configured Vector Store
                     vectorStore.add(chunks);
                     log.info("Successfully added document {} to Vector Store.", document.id());

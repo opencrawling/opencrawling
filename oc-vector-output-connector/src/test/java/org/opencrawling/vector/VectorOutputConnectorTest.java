@@ -199,4 +199,48 @@ class VectorOutputConnectorTest {
         verify(vectorStore).add(anyList());
         verify(mockJdbc).batchUpdate(contains("UPDATE vector_store SET scope_id_ = ?, scope_type_ = ?"), anyList());
     }
+
+    private static RepositoryDocument textDocument(String id) {
+        RepositoryDocument repoDoc = mock(RepositoryDocument.class);
+        when(repoDoc.id()).thenReturn(id);
+        when(repoDoc.contentStream()).thenReturn(new ByteArrayInputStream("Some text to embed.".getBytes()));
+        when(repoDoc.metadata()).thenReturn(Map.of("mimeType", List.of("text/plain")));
+        when(repoDoc.uri()).thenReturn("file://" + id);
+        when(repoDoc.acl()).thenReturn("read");
+        when(repoDoc.lastModified()).thenReturn(Instant.now());
+        return repoDoc;
+    }
+
+    @Test
+    void aFailedEmbeddingFailsTheDocumentAndStoresNothing() {
+        when(embeddingModel.embed(anyString()))
+                .thenThrow(new RuntimeException("HTTP 404 - {\"error\":\"model 'mxbai-embed-large' not found\"}"));
+
+        RuntimeException failure = assertThrows(RuntimeException.class, () -> connector.send(textDocument("doc-x")).block());
+
+        verify(vectorStore, never()).add(any());
+        Throwable cause = failure;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        assertTrue(failure.getMessage().contains("doc-x"));
+        assertTrue(String.valueOf(cause.getMessage()).contains("model 'mxbai-embed-large' not found"));
+    }
+
+    @Test
+    void anEmptyVectorFailsTheDocumentAndStoresNothing() {
+        when(embeddingModel.embed(anyString())).thenReturn(new float[0]);
+
+        assertThrows(RuntimeException.class, () -> connector.send(textDocument("doc-y")).block());
+        verify(vectorStore, never()).add(any());
+    }
+
+    @Test
+    void withoutAnEmbeddingModelNothingIsStoredWithAPlaceholderVector() {
+        VectorOutputConnector withoutModel = new VectorOutputConnector(vectorStore);
+
+        RuntimeException failure = assertThrows(RuntimeException.class, () -> withoutModel.send(textDocument("doc-z")).block());
+        verify(vectorStore, never()).add(any());
+        assertTrue(String.valueOf(failure.getCause().getMessage()).contains("No embedding model"));
+    }
 }

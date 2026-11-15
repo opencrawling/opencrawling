@@ -112,6 +112,12 @@ public class VectorStoreWriterConsumer {
                 log.info("Successfully purged tombstone document {} from pgvector stores.", message.documentId());
                 return;
             }
+            if (message.embedding() == null || message.embedding().length == 0) {
+                // Stored without its vector, the chunk would get a placeholder one: saved, but never found by a
+                // similarity search. Refused instead, so it is retried and then dead-lettered where it can be seen.
+                throw new IllegalArgumentException("chunk " + message.chunkId() + " of document " + message.documentId()
+                        + " has no embedding");
+            }
             Map<String, Object> metadata = new HashMap<>(message.metadata());
             ensureSecurityMetadata(metadata);
             // Put the precomputed embedding into the metadata so PrecomputedEmbeddingModel can extract it
