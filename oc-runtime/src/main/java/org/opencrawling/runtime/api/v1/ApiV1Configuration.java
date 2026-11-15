@@ -76,6 +76,17 @@ public class ApiV1Configuration {
         };
     }
 
+    /** Before Spring Security and the idempotency filter, so no oversized body is read by anything. */
+    @Bean
+    public FilterRegistrationBean<RequestSizeFilter> apiV1RequestSizeFilter(
+            @Value("${opencrawling.api.max-request-bytes:1048576}") long maxRequestBytes, JsonMapper json) {
+        FilterRegistrationBean<RequestSizeFilter> registration =
+                new FilterRegistrationBean<>(new RequestSizeFilter(maxRequestBytes, json));
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 12);
+        registration.addUrlPatterns(ApiV1.BASE, ApiV1.BASE + "/*");
+        return registration;
+    }
+
     /** Before Spring Security, so a refused call to a legacy endpoint also learns its successor. */
     @Bean
     public FilterRegistrationBean<LegacyDeprecationFilter> legacyDeprecationFilter() {

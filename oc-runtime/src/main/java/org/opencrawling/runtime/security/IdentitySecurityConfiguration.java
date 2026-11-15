@@ -107,14 +107,21 @@ public class IdentitySecurityConfiguration {
     @ConditionalOnProperty(name = MODE_PROPERTY, havingValue = "jwt")
     public SecurityFilterChain verifiedCallerFilterChain(HttpSecurity http, IdentityProperties properties,
                                                          Environment environment,
-                                                         ObjectProvider<JwtDecoder> jwtDecoder) throws Exception {
+                                                         ObjectProvider<JwtDecoder> jwtDecoder,
+                                                         ObjectProvider<tools.jackson.databind.json.JsonMapper> json) throws Exception {
         if (jwtDecoder.getIfAvailable() == null) {
             throw new IllegalStateException(MODE_PROPERTY + "=jwt needs a token issuer: set "
                     + "spring.security.oauth2.resourceserver.jwt.issuer-uri or jwk-set-uri.");
         }
+        // Missing or bad tokens: 401 with WWW-Authenticate, and a problem detail on the Platform API.
+        org.opencrawling.runtime.api.v1.ProblemAuthenticationEntryPoint entryPoint =
+                new org.opencrawling.runtime.api.v1.ProblemAuthenticationEntryPoint(
+                        json.getIfAvailable(() -> tools.jackson.databind.json.JsonMapper.builder().build()));
         http.securityMatcher(protectedRequests(properties, environment))
                 .authorizeHttpRequests(requests -> requests.anyRequest().authenticated())
-                .oauth2ResourceServer(resourceServer -> resourceServer.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(resourceServer -> resourceServer.jwt(Customizer.withDefaults())
+                        .authenticationEntryPoint(entryPoint))
+                .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(entryPoint))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)

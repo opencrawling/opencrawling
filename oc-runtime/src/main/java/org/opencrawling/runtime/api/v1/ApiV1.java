@@ -39,7 +39,11 @@ public final class ApiV1 {
 
     public static final String BASE = "/api/v1";
     public static final String VERSION = "1.0.0";
-    public static final String PROBLEM_TYPE_BASE = "https://opencrawling.org/problems/";
+    /**
+     * Problem types are documented, each under its own anchor, in the guide's table of problem types; a type URI leads
+     * to its documentation (RFC 9457 3.1.1).
+     */
+    public static final String PROBLEM_TYPE_BASE = "https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-";
     public static final String REQUEST_ID = "X-Request-Id";
     public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
     public static final String CORRELATION_ID = "X-Correlation-Id";

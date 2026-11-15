@@ -26,11 +26,11 @@ The existing endpoints (`/api/jobs`, `/api/connectors`, ...) keep working unchan
 
 ### Errors: problem details (RFC 9457)
 
-Every error is `application/problem+json`:
+Every error is `application/problem+json`. The one exception is `GET /api/v1/health`, whose `503` carries the health report itself.
 
 ```json
 {
-  "type": "https://opencrawling.org/problems/validation-failed",
+  "type": "https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-validation-failed",
   "title": "Validation failed",
   "status": 400,
   "detail": "The request has 2 invalid values.",
@@ -43,34 +43,58 @@ Every error is `application/problem+json`:
 }
 ```
 
-| `type` (after `.../problems/`) | Status | When |
-|---|---|---|
-| `validation-failed` | 400 | Invalid fields or parameters; `errors` lists them |
-| `malformed-request` | 400 | Not valid JSON, or a value of the wrong type |
-| `job-invalid` | 400 | The repository connector rejects the job's settings |
-| `invalid-query` | 400 | `executions:query` SQL refused |
-| `forbidden` | 403 | The caller may not do this |
-| `not-found` | 404 | No such resource, or not visible to the caller |
-| `no-such-endpoint` | 404 | Unknown path |
-| `export-not-available` | 404 | The execution has no report file in that format |
-| `method-not-allowed` | 405 | Wrong method; see `Allow` |
-| `unsupported-media-type`, `not-acceptable` | 415, 406 | Wrong `Content-Type` or `Accept` |
-| `job-already-running` | 409 | `:start` while running; `executionId` names the run |
-| `job-not-startable` | 409 | The job's connectors or settings cannot be used; `detail` says why |
-| `connector-exists`, `connector-in-use` | 409 | Name taken; jobs still use it (`jobs` lists them) |
-| `idempotency-in-progress` | 409 | A request with the same `Idempotency-Key` is still running |
-| `precondition-failed` | 412 | `If-Match` does not match; `currentEtag` is the current one |
-| `idempotency-key-reused` | 422 | The key was used for a different request |
-| `too-many-runs` | 429 | A cap on concurrent runs is reached; see `Retry-After` |
-| `upstream-error` | 502 | An external system (ManifoldCF) failed |
-| `idempotency-unavailable` | 503 | The idempotency store (Redis) cannot be reached; the request was not run |
-| `internal-error` | 500 | Unexpected; `requestId` finds it in the log |
+- **`type`:** identifies the problem, and leads to its row in the table below (`...Platform-API#problem-<name>`). Clients should branch on the part after `#problem-`; the SDK gives it as `ApiProblem.code()`.
+- **`detail`:** says what went wrong, for people.
+- **`requestId`:** quote it when reporting a problem; it finds the request in the runtime's log.
+- **Other members:** some types add them, such as `errors`, `currentEtag`, `executionId`, `jobs` or `maxBytes`.
 
-A missing or invalid token gives `401` with `WWW-Authenticate`, from Spring Security.
+| Problem type | Status | When |
+|---|---|---|
+| <a id="problem-validation-failed"></a>`validation-failed` | 400 | Invalid fields or parameters; `errors` lists each one with its message |
+| <a id="problem-malformed-request"></a>`malformed-request` | 400 | The body is not valid JSON, or has a value of the wrong type |
+| <a id="problem-bad-request"></a>`bad-request` | 400 | Another invalid request, for example a merge patch that is not a JSON object, or a request an optional feature refuses; `detail` says why |
+| <a id="problem-job-invalid"></a>`job-invalid` | 400 | The repository connector rejects the job's settings |
+| <a id="problem-invalid-query"></a>`invalid-query` | 400 | `executions:query` refused the SQL (not read-only, or not valid) |
+| <a id="problem-unauthorized"></a>`unauthorized` | 401 | No valid bearer token, when the API requires one; `WWW-Authenticate` says why (RFC 6750) |
+| <a id="problem-forbidden"></a>`forbidden` | 403 | The caller may not do this |
+| <a id="problem-not-found"></a>`not-found` | 404 | No such resource, or one the caller may not see |
+| <a id="problem-no-such-endpoint"></a>`no-such-endpoint` | 404 | Unknown path |
+| <a id="problem-export-not-available"></a>`export-not-available` | 404 | The execution has no report file in that format (Avro needs `spring.opencrawling.reporting.formats.avro`) |
+| <a id="problem-method-not-allowed"></a>`method-not-allowed` | 405 | Wrong method for the path; `Allow` lists the right ones |
+| <a id="problem-not-acceptable"></a>`not-acceptable` | 406 | None of the media types in `Accept` can be produced |
+| <a id="problem-job-already-running"></a>`job-already-running` | 409 | `:start` while the job runs; `executionId` names the run |
+| <a id="problem-job-not-startable"></a>`job-not-startable` | 409 | The job's connectors or settings cannot be used; `detail` says why |
+| <a id="problem-connector-exists"></a>`connector-exists` | 409 | A connector with that name exists; replace it with `PUT` |
+| <a id="problem-connector-in-use"></a>`connector-in-use` | 409 | Jobs use the connector; `jobs` lists them; delete with `force=true` to delete anyway |
+| <a id="problem-idempotency-in-progress"></a>`idempotency-in-progress` | 409 | A request with the same `Idempotency-Key` is still running; see `Retry-After` |
+| <a id="problem-conflict"></a>`conflict` | 409 | Another conflict with the resource's state, reported by an optional feature |
+| <a id="problem-precondition-failed"></a>`precondition-failed` | 412 | `If-Match` does not match the current version; `currentEtag` is the current one |
+| <a id="problem-body-too-large"></a>`body-too-large` | 413 | The request body is larger than allowed; `maxBytes` says how large it may be |
+| <a id="problem-unsupported-media-type"></a>`unsupported-media-type` | 415 | The `Content-Type` is not one the operation takes |
+| <a id="problem-idempotency-key-reused"></a>`idempotency-key-reused` | 422 | The `Idempotency-Key` was used before for a different request |
+| <a id="problem-too-many-runs"></a>`too-many-runs` | 429 | A cap on concurrent runs is reached; see `Retry-After` |
+| <a id="problem-too-many-requests"></a>`too-many-requests` | 429 | Another limit reported by an optional feature |
+| <a id="problem-internal-error"></a>`internal-error` | 500 | Unexpected; `requestId` finds it in the runtime's log. The detail never shows internals |
+| <a id="problem-upstream-error"></a>`upstream-error` | 502 | An external system (ManifoldCF) failed |
+| <a id="problem-unavailable"></a>`unavailable` | 503 | Something the request needs is not available (for example identity in `/me`) |
+| <a id="problem-idempotency-unavailable"></a>`idempotency-unavailable` | 503 | The idempotency store (Redis) cannot be reached; the request was not run; see `Retry-After` |
+| <a id="problem-error"></a>`error` | 4xx | Any other error status an optional feature reports; `status` gives it |
+
+The table is the complete list: a test checks that the runtime cannot answer with a type that is not in it.
 
 ### Request ids
 
 Every response carries `X-Request-Id`. Send your own (1 to 64 letters, digits, `.`, `_`, `:` or `-`) to correlate with your logs; otherwise the runtime makes one. It is in every problem detail and in the runtime's log context (`requestId`).
+
+### Response headers and limits
+
+Every Platform API answer has these headers, whatever the identity mode (OWASP REST Security Cheat Sheet):
+
+- **`Cache-Control`:** answers depend on the caller and may hold secrets, so nothing shared may cache them. Reads are `private, no-cache`: a client may keep them, but revalidates with `If-None-Match` (RFC 9111). Everything else is `no-store`.
+- **`Vary: Authorization`:** an answer depends on who asks.
+- **`X-Content-Type-Options: nosniff`** and **`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`:** a browser never treats an answer as a page.
+
+**Request size:** a request body may have at most 1 MiB (`opencrawling.api.max-request-bytes`); a larger one answers `413 body-too-large`, whether it announces its length or not. Uploads (multipart) have their own limits (`spring.servlet.multipart.max-file-size`), and too large an upload answers `413` too. Settings maps (`crawlSpec`, connector `configuration`) may have at most 200 entries.
 
 ### Collections: cursor paging, filters, sorting
 
@@ -90,15 +114,17 @@ Every response carries `X-Request-Id`. Send your own (1 to 64 letters, digits, `
 
 Single resources (jobs, connectors, system and transport settings) return an `ETag`.
 
-- `GET` with `If-None-Match: <etag>` answers `304 Not Modified` when nothing changed.
-- `PUT`, `PATCH` and `DELETE` with `If-Match: <etag>` answer `412` when the resource changed meanwhile. Without `If-Match`, the change is applied unconditionally.
-- A job's ETag covers its definition, not its run state, so a running job can still be edited safely.
-- A weak copy of a tag (`W/"..."`) is accepted in `If-Match` too. Proxies that compress responses, such as nginx with `gzip on`, make tags weak, and the tag digests the JSON, so it still names the same version.
+- **What a tag covers:** the resource as you received it. For a job that includes its state and your permissions, so a run that changes the state changes the tag. For a connector it also includes its secrets (as a keyed digest), so changing a secret changes the tag although the masked view looks the same.
+- **Conditional reads:** `GET` with `If-None-Match: <etag>` answers `304 Not Modified` only when nothing in the answer changed.
+- **Conditional changes:** `PUT`, `PATCH` and `DELETE` with `If-Match: <etag>` answer `412` when the resource changed since you read it. Read it again, and redo the change on what is there now. A job whose run changed its state since you read it answers `412` too.
+- **Atomic:** the check and the change happen as one step, so of several changes made from the same version exactly one succeeds and the others get `412` (no lost updates, RFC 9110 13.1.1).
+- **Without `If-Match`:** the change is applied unconditionally.
+- **Weak tags (a deliberate deviation from RFC 9110):** a weak copy of a tag (`W/"..."`) is accepted in `If-Match`. RFC 9110 asks for strong comparison there, but proxies that compress responses, such as nginx with `gzip on`, turn tags weak. The tag digests the JSON, not the bytes sent, so it still names the same version.
 - **Browsers:** the runtime sends no CORS headers, so serve browser clients from the same origin, as the admin UI is. A proxy that adds CORS must expose the headers clients read: `Access-Control-Expose-Headers: ETag, Location, Link, X-Request-Id`.
 
 ### Changes: PUT and JSON Merge Patch
 
-- `PUT` replaces the whole definition; optional fields left out are cleared.
+- `PUT` replaces the whole definition; optional fields left out are cleared, except a job's `access`, which is kept when left out (it is changed only by sending it).
 - `PATCH` with `Content-Type: application/merge-patch+json` (RFC 7396) changes only the members sent; `null` removes an optional member.
 
 ### Custom methods
@@ -107,13 +133,15 @@ Operations other than create, read, update and delete are `POST` to `{resource}:
 
 ### Idempotency keys
 
-Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) with any `POST`.
+Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) with any `POST` except uploads. The key may also be sent as a Structured Field string, `Idempotency-Key: "<key>"`, as the IETF draft writes it.
 
-- **Retry:** the first request runs; a retry with the same key and body gets the same answer again, with `Idempotent-Replayed: true`.
-- **Reuse:** the same key with another body gives `422`; a retry while the first request still runs gives `409`.
-- **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours.
+- **Retry:** the first request runs; a retry with the same key and body gets the same answer again, with `Idempotent-Replayed: true` (a widely used convention; the IETF draft does not define a header for it).
+- **Reuse:** the same key with another body gives `422`; a retry while the first request still runs gives `409` with `Retry-After`.
+- **Size:** a request with a key may have at most 1 MiB of body.
+- **Uploads:** a multipart request with a key answers `400`; send uploads without one.
+- **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours. Without sign-in (`identity.mode=none`) every caller is the same anonymous caller, so clients must pick keys that cannot collide, such as UUIDs.
 - **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, shared by every runtime instance and kept across restarts; the Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
-- **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`) and not run. Retry later with the same key.
+- **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`, with `Retry-After`) and not run. Retry later with the same key.
 - **Failures:** only successful answers are remembered, so a failed request can be retried with the same key.
 
 Use one for `:start`, so that a network retry does not start a second run.
@@ -128,7 +156,7 @@ Use one for `:start`, so that a network retry does not start a second run.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/v1` | Entry point: links, enabled features, documentation |
+| GET | `/api/v1` | Entry point: `links` (`jobs`, `jobRuns`, `executions`, `connectors`, `systemSettings`, `transportSettings`, `systemStatus`, `systemThroughput`, `systemLogs`, `metrics`, `me`, and the enabled features' collections), enabled `features`, `documentation` |
 | GET | `/api/v1/version` | API and runtime versions |
 | GET | `/api/v1/health` | Health of the runtime and its dependencies (200 healthy, 503 otherwise) |
 | GET | `/api/v1/me` | The current caller |
@@ -159,7 +187,7 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 |---|---|---|
 | GET | `/api/v1/job-runs` | Runs in progress (`jobId`) |
 | GET | `/api/v1/job-runs/{executionId}` | One run; when it has ended, see its execution |
-| POST | `/api/v1/job-runs/{executionId}:stop` | Stop it |
+| POST | `/api/v1/job-runs/{executionId}:stop` | Stop exactly this run: `404` if it has ended, and a newer run of the same job is never stopped |
 
 ### Executions (finished runs)
 
@@ -183,7 +211,12 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 | POST | `/api/v1/connectors/{name}:check` | Live connectivity check of a saved connector |
 | POST | `/api/v1/connectors:check` | The same for a definition not saved yet |
 
-Secret settings (keys ending in `password`, `secret`, `token`, `apiKey`, `credential`, `privateKey`, ...) are always returned as `********`. Send `********` back to keep the stored value, so a client can `GET`, change something and `PUT` without knowing the secrets.
+**Secrets are never returned:**
+
+- **Which keys are secret:** any key that contains `secret` (`clientSecret`, `s3SecretAccessKey`), keys that end in `password`, `token`, `apiKey`, `credential`, `privateKey`, `passphrase` or `connectionString`, and header settings (`customHeaders`, `authorization`).
+- **How they look:** they are returned as `********`. A password inside a URL (`scheme://user:password@host`) is returned as `scheme://user:********@host`.
+- **Sending them back:** a value sent back as it was read keeps the stored secret, so a client can `GET`, change something and `PUT` without knowing the secrets.
+- **Changing the address:** if the change also changes where the connector connects (a setting whose name contains `url`, `uri`, `endpoint`, `host`, `server` or `bootstrap`), secrets sent back as the mask are refused (`400`, naming them) and must be entered again. Otherwise a stored password could be sent to a server of the caller's choice.
 
 ### Settings (admins)
 

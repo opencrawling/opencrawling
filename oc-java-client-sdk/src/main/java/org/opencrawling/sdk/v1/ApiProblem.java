@@ -26,7 +26,7 @@ import java.util.Map;
 /**
  * An error answer of the Platform API: an RFC 9457 problem detail.
  *
- * <p>{@link #code()} is the last segment of {@code type} (for example {@code not-found}, {@code precondition-failed},
+ * <p>{@link #code()} is the problem type's short name (for example {@code not-found}, {@code precondition-failed},
  * {@code job-already-running}); the Platform API reference lists them. Members a problem type adds, such as
  * {@code currentEtag} or {@code executionId}, are in {@link #extensions()}.
  */
@@ -80,6 +80,11 @@ public final class ApiProblem {
     public String code() {
         if (type == null) {
             return null;
+        }
+        // ".../Platform-API#problem-not-found" (the anchor of its documentation), or ".../problems/not-found"
+        int anchor = type.indexOf("#problem-");
+        if (anchor >= 0) {
+            return type.substring(anchor + "#problem-".length());
         }
         int slash = type.lastIndexOf('/');
         return slash >= 0 ? type.substring(slash + 1) : type;

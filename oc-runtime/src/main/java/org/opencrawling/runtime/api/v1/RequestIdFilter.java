@@ -48,12 +48,32 @@ public class RequestIdFilter extends OncePerRequestFilter {
         String id = incoming != null && WELL_FORMED.matcher(incoming).matches() ? incoming : UUID.randomUUID().toString();
         request.setAttribute(ATTRIBUTE, id);
         response.setHeader(ApiV1.REQUEST_ID, id);
+        protect(request, response);
         MDC.put("requestId", id);
         try {
             chain.doFilter(request, response);
         } finally {
             MDC.remove("requestId");
         }
+    }
+
+    /**
+     * Headers every Platform API answer gets, whatever the identity mode (OWASP REST Security Cheat Sheet):
+     * <ul>
+     *   <li>{@code Cache-Control}: answers are per caller and may hold secrets, so nothing shared may cache them. Reads
+     *       are {@code private, no-cache}, so a client keeps them but revalidates with {@code If-None-Match} (RFC 9111);
+     *       everything else is {@code no-store}.</li>
+     *   <li>{@code Vary: Authorization}: an answer depends on who asks.</li>
+     *   <li>{@code X-Content-Type-Options: nosniff} and a {@code Content-Security-Policy} that allows nothing, so a
+     *       browser never treats an answer as a page.</li>
+     * </ul>
+     */
+    static void protect(HttpServletRequest request, HttpServletResponse response) {
+        boolean read = "GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod());
+        response.setHeader("Cache-Control", read ? "private, no-cache" : "no-store");
+        response.addHeader("Vary", "Authorization");
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
     }
 
     /** The id of the current request, or null outside the Platform API. */

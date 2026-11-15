@@ -99,8 +99,10 @@ public class ApiV1OpenApiConfiguration {
         if (openApi.getPaths() == null) {
             return;
         }
-        openApi.getPaths().forEach((path, item) -> item.readOperationsMap().forEach((method, operation) ->
-                addErrors(operation, method, path.contains(":") || path.contains("{"))));
+        openApi.getPaths().forEach((path, item) -> item.readOperationsMap().forEach((method, operation) -> {
+            addErrors(operation, method, path.contains(":") || path.contains("{"));
+            addCommonHeaders(operation, method);
+        }));
         ApiV1Documentation.document(openApi);
     }
 
@@ -136,6 +138,58 @@ public class ApiV1OpenApiConfiguration {
             }
         });
         operation.setResponses(responses);
+    }
+
+    /**
+     * What every operation has in common, so the description shows it where it applies: the request id (sent and
+     * returned), the Idempotency-Key of POSTs, and the headers of paging, replays and retries.
+     */
+    static void addCommonHeaders(Operation operation, PathItem.HttpMethod method) {
+        boolean upload = operation.getRequestBody() != null && operation.getRequestBody().getContent() != null
+                && operation.getRequestBody().getContent().keySet().stream().anyMatch(type -> type.startsWith("multipart/"));
+        boolean paged = operation.getParameters() != null
+                && operation.getParameters().stream().anyMatch(parameter -> "cursor".equals(parameter.getName()));
+        addHeaderParameter(operation, ApiV1.REQUEST_ID, "Your own id for this request (1 to 64 letters, digits, '.', '_', "
+                + "':' or '-'), returned in X-Request-Id and in problem details; the runtime makes one otherwise");
+        if (method == PathItem.HttpMethod.POST && !upload) {
+            addHeaderParameter(operation, ApiV1.IDEMPOTENCY_KEY, "Makes retries of this request safe: a retry with the "
+                    + "same key and body gets the first answer again. 1 to 200 letters, digits, '.', '_', ':' or '-'");
+        }
+        ApiResponses responses = operation.getResponses();
+        if (operation.getRequestBody() != null) {
+            add(responses, "413", "The request body is too large");
+            add(responses, "415", "The Content-Type is not one this operation takes");
+        }
+        add(responses, "406", "None of the media types in Accept can be produced");
+        responses.forEach((code, response) -> {
+            header(response, ApiV1.REQUEST_ID, "The id of this request: the one you sent, or a new one");
+            if (code.startsWith("2") && paged) {
+                header(response, "Link", "The next page, as <url>; rel=\"next\" (RFC 8288), when there is one");
+            }
+            if (code.startsWith("2") && method == PathItem.HttpMethod.POST && !upload) {
+                header(response, "Idempotent-Replayed", "true when this is the answer to an earlier request with the same "
+                        + "Idempotency-Key (a widely used convention, not part of the IETF draft)");
+            }
+            if ("429".equals(code) || (method == PathItem.HttpMethod.POST && ("409".equals(code) || "503".equals(code)))) {
+                header(response, "Retry-After", "When to retry, in seconds, when retrying can help");
+            }
+        });
+    }
+
+    private static void addHeaderParameter(Operation operation, String name, String description) {
+        if (operation.getParameters() != null
+                && operation.getParameters().stream().anyMatch(p -> name.equalsIgnoreCase(p.getName()))) {
+            return;
+        }
+        operation.addParametersItem(new io.swagger.v3.oas.models.parameters.HeaderParameter().name(name)
+                .description(description).required(false).schema(new Schema<String>().type("string")));
+    }
+
+    private static void header(ApiResponse response, String name, String description) {
+        if (response.getHeaders() == null || !response.getHeaders().containsKey(name)) {
+            response.addHeaderObject(name, new io.swagger.v3.oas.models.headers.Header().description(description)
+                    .schema(new Schema<String>().type("string")));
+        }
     }
 
     private static void add(ApiResponses responses, String code, String description) {

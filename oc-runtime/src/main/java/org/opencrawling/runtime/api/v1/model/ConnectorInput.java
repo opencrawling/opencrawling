@@ -44,6 +44,7 @@ public record ConnectorInput(
         @Min(1) @Max(1000)
         @Schema(description = "Maximum concurrent connections", example = "10")
         Integer maxConnections,
+        @Size(max = 200, message = "may have at most 200 settings")
         @Schema(description = "Implementation-specific settings. Secret values come back masked as \"" + ConnectorResource.MASK + "\"; send the mask back to keep a stored secret unchanged")
         Map<String, String> configuration) {
 

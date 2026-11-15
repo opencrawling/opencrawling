@@ -144,7 +144,7 @@ class PlatformApiV1FeaturesHttpTest {
         when(dynamicJobs.status(any(), eq("dj-x"))).thenThrow(new DynamicJobException(HttpStatus.NOT_FOUND, "No dynamic job dj-x."));
         HttpResponse<String> missing = http.send("GET", "/api/v1/dynamic-jobs/dj-x", null);
         assertThat(missing.statusCode()).isEqualTo(404);
-        assertThat(missing.body()).contains("problems/not-found", "No dynamic job dj-x.");
+        assertThat(missing.body()).contains("#problem-not-found", "No dynamic job dj-x.");
     }
 
     @Test
@@ -199,5 +199,12 @@ class PlatformApiV1FeaturesHttpTest {
         expected.putAll(PlatformApiTestSupport.FEATURE_OPERATIONS);
         assertThat(PlatformApiTestSupport.operations(body(http.send("GET", "/v3/api-docs/v1", null))))
                 .containsExactlyInAnyOrderEntriesOf(expected);
+    }
+
+    @Test
+    void curlSamplesWithAQuoteInTheirBodyStillRunInAShell() {
+        String reject = body(http.send("GET", "/v3/api-docs/v1", null)).get("paths").get("/api/v1/dynamic-jobs/{jobId}:reject")
+                .get("post").get("x-codeSamples").get(0).get("source").asString();
+        assertThat(reject).contains("team'\\''s").doesNotContain("team's");
     }
 }

@@ -51,11 +51,11 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | §10 Bearer tokens, installation roles | #187; v1 admin rules in `ManagementAuthorizationInterceptor` | Authorization | Done |
 | §10 Document authorization never widened | v1 calls the same controllers and services | Authorization `jobsFollowTheirAccess`; Features delegation | Done (scenario-level checks: part 2) |
 | §11 Who started each run | `ExecutionProvenance` via `JobController.start` | `JobStartProvenanceHttpTest`; Core start with `X-Correlation-Id` | Done |
-| §13 OpenAPI 3.1 in Swagger UI, contract-first | `/v3/api-docs/v1`, `/swagger-ui.html` | DocumentationContract; Examples | Done |
+| §13 OpenAPI 3.1 in Swagger UI | `/v3/api-docs/v1`, `/swagger-ui.html`. Generated from the code (code-first), with the contract pinned by tests: the exact set of operations, their documentation, their examples and the problem types | DocumentationContract; Examples; Core OpenAPI test | Done (contract-first, writing the description before the code, was not used) |
 | §13 A way to try every endpoint | API console in the admin UI; Swagger UI; curl samples; Bruno/Postman/Insomnia import | Console; Script | Done |
 | §13 SDK and CLI for `/api/v1` | SDK `client.platform()` (`org.opencrawling.sdk.v1`); every CLI command, and `oc mcf apply` through the migrator's writer | Sdk; SdkClient; Cli | Done |
 | §2 The admin UI on the same API | `oc-admin-ui/src/lib/api.ts` on `/api/v1` | UiParity; UiClient | Done |
-| §16 Existing endpoints keep working | Legacy controllers unchanged in behaviour | Core `theLegacyEndpointsAnswerAsBefore`; all legacy test classes | Done |
+| §16 Existing endpoints keep working | Legacy endpoints answer as before. Inside, `JobController.save`/`start` return typed outcomes and `save` gained a replace mode, settings are validated before they are applied, and connectors are replaced in place under a lock | Core `theLegacyEndpointsAnswerAsBefore`; all legacy test classes | Done |
 
 ## Operations
 

@@ -78,7 +78,7 @@ class PlatformApiV1HttpTest {
     private static void assertProblem(HttpResponse<String> response, int status, String type) {
         assertThat(response.statusCode()).as(response.body()).isEqualTo(status);
         assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(ct -> assertThat(ct).startsWith("application/problem+json"));
-        assertThat(response.body()).contains("\"type\":\"https://opencrawling.org/problems/" + type + "\"")
+        assertThat(response.body()).contains("\"type\":\"" + ApiV1.PROBLEM_TYPE_BASE + type + "\"")
                 .contains("\"status\":" + status).contains("\"requestId\"");
         assertThat(response.headers().firstValue("X-Request-Id")).isPresent();
     }
@@ -401,7 +401,7 @@ class PlatformApiV1HttpTest {
         HttpResponse<String> malformed = http.send("POST", "/api/jobs", "{not json");
         assertThat(malformed.statusCode()).isEqualTo(400);
         assertThat(malformed.headers().firstValue("Content-Type").orElse("")).doesNotStartWith("application/problem+json");
-        assertThat(malformed.body()).doesNotContain("opencrawling.org/problems");
+        assertThat(malformed.body()).doesNotContain(ApiV1.PROBLEM_TYPE_BASE);
     }
 
     @Test
@@ -634,5 +634,79 @@ class PlatformApiV1HttpTest {
         HttpResponse<String> after = http.send("GET", "/api/v1/settings/system", null);
         assertThat(after.headers().firstValue("ETag")).as("nothing was applied").hasValue(etag);
         assertThat(after.body()).doesNotContain("changed-model");
+    }
+
+    @Test
+    void everyAnswerCarriesTheCacheAndSecurityHeaders() {
+        for (HttpResponse<String> answer : List.of(
+                http.send("GET", "/api/v1/jobs", null),
+                http.send("GET", "/api/v1/jobs/none-" + tag, null),
+                http.send("POST", "/api/v1/jobs", "{}"))) {
+            assertThat(answer.headers().firstValue("X-Content-Type-Options")).hasValue("nosniff");
+            assertThat(answer.headers().firstValue("Content-Security-Policy")).hasValue("default-src 'none'; frame-ancestors 'none'");
+            assertThat(answer.headers().allValues("Vary")).anySatisfy(vary -> assertThat(vary).contains("Authorization"));
+        }
+        assertThat(http.send("GET", "/api/v1/jobs", null).headers().firstValue("Cache-Control")).hasValue("private, no-cache");
+        assertThat(http.send("POST", "/api/v1/jobs", "{}").headers().firstValue("Cache-Control")).hasValue("no-store");
+    }
+
+    @Test
+    void anOversizedBodyIsRefusedWhetherItAnnouncesItsLengthOrNot() throws Exception {
+        String big = "{\"name\":\"" + "x".repeat(1_100_000) + "\"}";
+        HttpResponse<String> announced = http.send("POST", "/api/v1/jobs", big);
+        assertProblem(announced, 413, "body-too-large");
+        assertThat(body(announced).get("maxBytes").asLong()).isEqualTo(1_048_576L);
+
+        java.net.http.HttpRequest chunked = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port + "/api/v1/jobs"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofInputStream(
+                        () -> new java.io.ByteArrayInputStream(big.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+                .build();
+        HttpResponse<String> streamed = java.net.http.HttpClient.newHttpClient().send(chunked, HttpResponse.BodyHandlers.ofString());
+        assertProblem(streamed, 413, "body-too-large");
+
+        HttpResponse<String> keyed = http.send("POST", "/api/v1/jobs", big, "Idempotency-Key", "big-" + tag);
+        assertProblem(keyed, 413, "body-too-large");
+    }
+
+    @Test
+    void anIdempotencyKeyMayBeAStructuredFieldStringButNotOnAnUpload() {
+        HttpResponse<String> quoted = http.send("POST", "/api/v1/jobs", jobJson(tag), "Idempotency-Key", "\"sf-" + tag + "\"");
+        assertThat(quoted.statusCode()).as(quoted.body()).isEqualTo(201);
+        createdJobs.add(body(quoted).get("id").asString());
+        HttpResponse<String> bare = http.send("POST", "/api/v1/jobs", jobJson(tag), "Idempotency-Key", "sf-" + tag);
+        assertThat(bare.headers().firstValue("Idempotent-Replayed")).as("the same key, quoted or not").hasValue("true");
+        assertThat(body(bare).get("id").asString()).isEqualTo(body(quoted).get("id").asString());
+
+        HttpResponse<String> upload = http.send("POST", "/api/v1/integrations/vespa:deploy-custom", "--b--\r\n",
+                "Content-Type", "multipart/form-data; boundary=b", "Idempotency-Key", "up-" + tag);
+        assertProblem(upload, 400, "validation-failed");
+        assertThat(upload.body()).contains("not supported for uploads");
+    }
+
+    @Test
+    void theApiDescriptionShowsTheHeadersAndLimitsEveryOperationShares() {
+        JsonNode paths = body(http.send("GET", "/v3/api-docs/v1", null)).get("paths");
+        JsonNode create = paths.get("/api/v1/jobs").get("post");
+        assertThat(create.get("parameters").toString()).contains("\"name\":\"Idempotency-Key\"", "\"name\":\"X-Request-Id\"");
+        assertThat(create.get("responses").has("413")).isTrue();
+        assertThat(create.get("responses").has("415")).isTrue();
+        assertThat(create.get("responses").get("201").get("headers").has("Idempotent-Replayed")).isTrue();
+        assertThat(create.get("responses").get("409").get("headers").has("Retry-After")).isTrue();
+        JsonNode list = paths.get("/api/v1/jobs").get("get");
+        assertThat(list.get("responses").get("200").get("headers").has("Link")).isTrue();
+        assertThat(list.get("responses").get("200").get("headers").has("X-Request-Id")).isTrue();
+        assertThat(list.get("parameters").toString()).doesNotContain("Idempotency-Key");
+        JsonNode upload = paths.get("/api/v1/integrations/vespa:deploy-custom").get("post");
+        assertThat(upload.get("parameters").toString()).as("uploads take no key").doesNotContain("Idempotency-Key");
+    }
+
+    @Test
+    void theIndexNamesEachLinkOnce() {
+        JsonNode links = body(http.send("GET", "/api/v1", null)).get("links");
+        assertThat(links.get("systemSettings").asString()).isEqualTo("/api/v1/settings/system");
+        assertThat(links.get("transportSettings").asString()).isEqualTo("/api/v1/settings/transport");
+        assertThat(links.get("jobRuns").asString()).isEqualTo("/api/v1/job-runs");
+        assertThat(links.toString()).as("only resources that can be read").doesNotContain(":plan");
     }
 }

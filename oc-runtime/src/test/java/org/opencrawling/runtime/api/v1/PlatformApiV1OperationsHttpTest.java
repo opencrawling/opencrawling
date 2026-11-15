@@ -237,10 +237,10 @@ class PlatformApiV1OperationsHttpTest {
         when(reports.executeDuckDbQuery("SELECT nope FROM missing")).thenThrow(new java.sql.SQLException("Catalog Error: Table missing does not exist"));
         HttpResponse<String> failing = http.send("POST", "/api/v1/executions:query", "{\"sql\":\"SELECT nope FROM missing\"}");
         assertThat(failing.statusCode()).as("the engine's error is the author's to fix").isEqualTo(400);
-        assertThat(failing.body()).contains("problems/invalid-query", "Table missing does not exist");
+        assertThat(failing.body()).contains("#problem-invalid-query", "Table missing does not exist");
         HttpResponse<String> writing = http.send("POST", "/api/v1/executions:query", "{\"sql\":\"DELETE FROM ledger\"}");
         assertThat(writing.statusCode()).isEqualTo(400);
-        assertThat(writing.body()).contains("problems/invalid-query", "read-only");
+        assertThat(writing.body()).contains("#problem-invalid-query", "read-only");
     }
 
     @Test
@@ -285,9 +285,9 @@ class PlatformApiV1OperationsHttpTest {
             found.get("items").forEach(item -> jobsToDelete.add(item.get("id").asString()));
         });
 
-        assertThat(http.send("POST", "/api/v1/migrations/manifoldcf:plan", "{}").body()).contains("problems/validation-failed", "mcfUrl");
+        assertThat(http.send("POST", "/api/v1/migrations/manifoldcf:plan", "{}").body()).contains("#problem-validation-failed", "mcfUrl");
         HttpResponse<String> down = http.send("POST", "/api/v1/migrations/manifoldcf:plan", "{\"mcfUrl\":\"http://127.0.0.1:9\"}");
         assertThat(down.statusCode()).isEqualTo(502);
-        assertThat(down.body()).contains("problems/upstream-error");
+        assertThat(down.body()).contains("#problem-upstream-error");
     }
 }

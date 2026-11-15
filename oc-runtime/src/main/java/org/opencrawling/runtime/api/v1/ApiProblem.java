@@ -39,8 +39,26 @@ public class ApiProblem extends RuntimeException {
     private final Map<String, Object> extensions = new LinkedHashMap<>();
     private final HttpHeaders headers = new HttpHeaders();
 
+    /**
+     * Every problem type the Platform API answers with. Each one is documented, under its own anchor, in the guide's
+     * table of problem types ({@link ApiV1#PROBLEM_TYPE_BASE}); a test keeps the two the same, and a problem with a type
+     * not listed here cannot be made.
+     */
+    public static final java.util.Set<String> TYPES = java.util.Set.of(
+            "validation-failed", "malformed-request", "bad-request", "job-invalid", "invalid-query",
+            "unauthorized", "forbidden",
+            "not-found", "no-such-endpoint", "export-not-available",
+            "method-not-allowed", "not-acceptable", "unsupported-media-type",
+            "job-already-running", "job-not-startable", "connector-exists", "connector-in-use", "idempotency-in-progress",
+            "conflict", "precondition-failed", "body-too-large", "idempotency-key-reused",
+            "too-many-runs", "too-many-requests", "upstream-error", "unavailable", "idempotency-unavailable",
+            "internal-error", "error");
+
     public ApiProblem(HttpStatus status, String slug, String title, String detail) {
         super(detail);
+        if (!TYPES.contains(slug)) {
+            throw new IllegalArgumentException("Problem type '" + slug + "' is not in ApiProblem.TYPES (and the guide)");
+        }
         this.status = status;
         this.slug = slug;
         this.title = title;

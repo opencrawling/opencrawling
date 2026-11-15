@@ -78,20 +78,34 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return !"POST".equals(request.getMethod()) || request.getHeader(ApiV1.IDEMPOTENCY_KEY) == null
-                || !ApiV1.isPlatformRequest(request)
-                || (request.getContentType() != null && request.getContentType().startsWith("multipart/"));
+                || !ApiV1.isPlatformRequest(request);
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String key = request.getHeader(ApiV1.IDEMPOTENCY_KEY).strip();
+        // The IETF draft sends the key as a Structured Field string ("..."); a bare token is accepted too.
+        if (key.length() >= 2 && key.startsWith("\"") && key.endsWith("\"")) {
+            key = key.substring(1, key.length() - 1);
+        }
+        if (request.getContentType() != null && request.getContentType().startsWith("multipart/")) {
+            ProblemResponses.write(request, response, ApiProblem.invalid(ApiV1.IDEMPOTENCY_KEY,
+                    "is not supported for uploads (multipart requests); send them without one"), json);
+            return;
+        }
         if (!KEY.matcher(key).matches()) {
             ProblemResponses.write(request, response, ApiProblem.invalid(ApiV1.IDEMPOTENCY_KEY,
                     "must be 1 to 200 letters, digits, '.', '_', ':' or '-'"), json);
             return;
         }
-        byte[] body = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
+        byte[] body;
+        try {
+            body = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
+        } catch (RequestSizeFilter.BodyTooLargeException e) {
+            ProblemResponses.write(request, response, RequestSizeFilter.problem(e.maxBytes()), json);
+            return;
+        }
         if (body.length > MAX_BODY_BYTES) {
             ProblemResponses.write(request, response, new ApiProblem(HttpStatus.CONTENT_TOO_LARGE, "body-too-large",
                     "Request too large", "Requests with an Idempotency-Key may have at most 1 MB of body."), json);
@@ -104,6 +118,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             begin = store.begin(scope, key, fingerprint);
         } catch (IdempotencyStore.UnavailableException e) {
             logger.warn("Refusing a request with an Idempotency-Key: " + e.getMessage(), e);
+            response.setHeader("Retry-After", "5");
             ProblemResponses.write(request, response, new ApiProblem(HttpStatus.SERVICE_UNAVAILABLE,
                     "idempotency-unavailable", "Idempotency keys unavailable",
                     "Requests with an Idempotency-Key cannot be checked right now, so this one was not run; "
@@ -118,9 +133,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 response.setHeader("Idempotent-Replayed", "true");
                 response.getOutputStream().write(stored.body());
             }
-            case IdempotencyStore.Begin.InProgress inProgress -> ProblemResponses.write(request, response,
-                    ApiProblem.conflict("idempotency-in-progress",
-                            "A request with this Idempotency-Key is still being processed; retry later."), json);
+            case IdempotencyStore.Begin.InProgress inProgress -> {
+                response.setHeader("Retry-After", "1");
+                ProblemResponses.write(request, response, ApiProblem.conflict("idempotency-in-progress",
+                        "A request with this Idempotency-Key is still being processed; retry later."), json);
+            }
             case IdempotencyStore.Begin.Mismatch mismatch -> ProblemResponses.write(request, response,
                     new ApiProblem(HttpStatus.UNPROCESSABLE_CONTENT, "idempotency-key-reused", "Idempotency key reused",
                             "This Idempotency-Key was already used for a different request."), json);

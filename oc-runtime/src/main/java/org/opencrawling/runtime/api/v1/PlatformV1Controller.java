@@ -69,11 +69,19 @@ public class PlatformV1Controller {
     @ApiResponse(responseCode = "200", description = "The index")
     @GetMapping
     public ApiIndex index() {
+        // Each readable collection and resource, under its own name.
         Map<String, String> links = new LinkedHashMap<>();
-        for (String collection : new String[] {"jobs", "job-runs", "executions", "connectors", "settings/system",
-                "settings/transport", "system/status", "observability/metrics", "migrations/manifoldcf:plan", "me"}) {
-            links.put(collection.replaceAll("[/:].*", "").replace("-", ""), ApiV1.BASE + "/" + collection);
-        }
+        links.put("jobs", ApiV1.BASE + "/jobs");
+        links.put("jobRuns", ApiV1.BASE + "/job-runs");
+        links.put("executions", ApiV1.BASE + "/executions");
+        links.put("connectors", ApiV1.BASE + "/connectors");
+        links.put("systemSettings", ApiV1.BASE + "/settings/system");
+        links.put("transportSettings", ApiV1.BASE + "/settings/transport");
+        links.put("systemStatus", ApiV1.BASE + "/system/status");
+        links.put("systemThroughput", ApiV1.BASE + "/system/throughput");
+        links.put("systemLogs", ApiV1.BASE + "/system/logs");
+        links.put("metrics", ApiV1.BASE + "/observability/metrics");
+        links.put("me", ApiV1.BASE + "/me");
         Map<String, Boolean> features = new LinkedHashMap<>();
         if (enabled("opencrawling.discovery.enabled")) {
             links.put("discovery", ApiV1.BASE + "/discovery/connectors");

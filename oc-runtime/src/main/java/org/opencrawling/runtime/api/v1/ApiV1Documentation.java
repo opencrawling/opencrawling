@@ -198,6 +198,11 @@ final class ApiV1Documentation {
         ok.setContent(content);
     }
 
+    /** Text for inside single quotes in a POSIX shell: each ' becomes '\'' (close, escaped quote, reopen). */
+    static String shellQuoted(String text) {
+        return text.replace("'", "'\\''");
+    }
+
     /** A curl command that runs the operation against $OC_URL, with $OC_TOKEN when the API needs one. */
     static String curl(PathItem.HttpMethod method, String path, Operation operation) {
         Matcher matcher = VARIABLE.matcher(path);
@@ -244,7 +249,7 @@ final class ApiV1Documentation {
                 String type = content.containsKey(ApiV1.MERGE_PATCH_JSON) ? ApiV1.MERGE_PATCH_JSON : "application/json";
                 String example = EXAMPLES.getOrDefault(operation.getOperationId(), "{}").replaceAll("\\s*\\n\\s*", "");
                 curl.append(" \\\n  -H \"Content-Type: ").append(type).append("\"")
-                        .append(" \\\n  -d '").append(example).append("'");
+                        .append(" \\\n  -d '").append(shellQuoted(example)).append("'");
             }
         }
         if ("exportExecution".equals(operation.getOperationId())) {

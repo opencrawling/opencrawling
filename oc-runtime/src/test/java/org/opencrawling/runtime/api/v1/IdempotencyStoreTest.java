@@ -138,6 +138,7 @@ class IdempotencyStoreTest {
         assertThat(response.getStatus()).isEqualTo(503);
         assertThat(response.getContentType()).startsWith("application/problem+json");
         assertThat(response.getContentAsString()).contains("idempotency-unavailable");
+        assertThat(response.getHeader("Retry-After")).isEqualTo("5");
     }
 
     @Test

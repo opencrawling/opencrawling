@@ -182,4 +182,14 @@ class PlatformClientTest {
         assertThat(catchThrowableOfType(IllegalArgumentException.class, () -> api.jobs().get(""))).isNotNull();
         assertThat(requests).isEmpty();
     }
+
+    @Test
+    void theProblemCodeComesFromTheTypesAnchorOrItsLastSegment() {
+        ApiProblem anchored = new ApiProblem(404, "https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-not-found",
+                "Not found", null);
+        assertThat(anchored.code()).isEqualTo("not-found");
+        ApiProblem path = new ApiProblem(404, "https://opencrawling.org/problems/not-found", "Not found", null);
+        assertThat(path.code()).isEqualTo("not-found");
+        assertThat(new ApiProblem(500, null, "x", null).code()).isNull();
+    }
 }

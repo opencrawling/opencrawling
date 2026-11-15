@@ -103,6 +103,9 @@ class PlatformApiV1AuthorizationHttpTest {
         assertThat(refused.statusCode()).isEqualTo(401);
         assertThat(refused.headers().firstValue("X-Request-Id")).isPresent();
         assertThat(refused.headers().firstValue("WWW-Authenticate")).isPresent();
+        assertThat(refused.headers().firstValue("Content-Type")).hasValueSatisfying(type ->
+                assertThat(type).startsWith("application/problem+json"));
+        assertThat(refused.body()).contains("#problem-unauthorized", "\"requestId\"");
     }
 
     @Test
@@ -114,7 +117,7 @@ class PlatformApiV1AuthorizationHttpTest {
 
         HttpResponse<String> hidden = as(FINANCE, "GET", "/api/v1/jobs/" + id, null);
         assertThat(hidden.statusCode()).isEqualTo(404);
-        assertThat(hidden.body()).contains("problems/not-found");
+        assertThat(hidden.body()).contains("#problem-not-found");
         assertThat(as(FINANCE, "POST", "/api/v1/jobs/" + id + ":start", null).statusCode()).isEqualTo(404);
         assertThat(as(FINANCE, "DELETE", "/api/v1/jobs/" + id, null).statusCode()).isEqualTo(404);
         assertThat(as(FINANCE, "PATCH", "/api/v1/jobs/" + id, "{\"name\":\"x\"}", "Content-Type", "application/merge-patch+json").statusCode())
@@ -123,7 +126,7 @@ class PlatformApiV1AuthorizationHttpTest {
         HttpResponse<String> notCreator = as(FINANCE, "POST", "/api/v1/jobs", "{\"name\":\"f\",\"repositoryConnector\":\"FileSystem_Local\","
                 + "\"outputConnector\":\"PGVector_Output\",\"path\":\"/tmp\"}");
         assertThat(notCreator.statusCode()).isEqualTo(403);
-        assertThat(notCreator.body()).contains("problems/forbidden");
+        assertThat(notCreator.body()).contains("#problem-forbidden");
 
         assertThat(as(ADMIN, "GET", "/api/v1/jobs/" + id, null).statusCode()).isEqualTo(200);
         assertThat(as(ADMIN, "GET", "/api/v1/me", null).body()).contains("\"admin\":true");
@@ -163,7 +166,7 @@ class PlatformApiV1AuthorizationHttpTest {
             for (String token : List.of(HR, FINANCE)) {
                 HttpResponse<String> refused = as(token, route[0], route[1], route[2]);
                 assertThat(refused.statusCode()).as(route[0] + " " + route[1]).isEqualTo(403);
-                assertThat(refused.body()).as(route[0] + " " + route[1]).contains("problems/forbidden");
+                assertThat(refused.body()).as(route[0] + " " + route[1]).contains("#problem-forbidden");
             }
         }
         assertThat(as(ADMIN, "GET", "/api/v1/settings/system", null).statusCode()).isEqualTo(200);

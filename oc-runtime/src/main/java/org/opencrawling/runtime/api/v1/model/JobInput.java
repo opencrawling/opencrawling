@@ -49,7 +49,8 @@ public record JobInput(
         String path,
         @Schema(description = "Pipeline mode: rag or migration; default: the runtime's opencrawling.pipeline.mode", example = "rag")
         String pipelineMode,
-        @Schema(description = "Connector-specific settings, such as the web crawler's seeds and limits")
+        @Size(max = 200, message = "may have at most 200 settings")
+        @Schema(description = "Connector-specific settings, such as the web crawler's seeds and limits (at most 200)")
         Map<String, Object> crawlSpec,
         @Schema(description = "Auto-narrativization settings")
         JobController.NarrativizationConfig narrativization,

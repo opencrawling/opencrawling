@@ -134,7 +134,7 @@ class PlatformApiV1ExamplesHttpTest {
             String action = operation.startsWith("plan") ? "plan" : "apply";
             HttpResponse<String> response = send(operation, "POST", "/api/v1/migrations/manifoldcf:" + action);
             assertThat(response.statusCode()).as(operation + " " + response.body()).isEqualTo(502);
-            assertThat(response.body()).contains("problems/upstream-error");
+            assertThat(response.body()).contains("#problem-upstream-error");
         }
     }
 

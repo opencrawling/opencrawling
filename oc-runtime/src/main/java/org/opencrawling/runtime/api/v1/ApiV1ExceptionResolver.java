@@ -98,7 +98,9 @@ public class ApiV1ExceptionResolver implements HandlerExceptionResolver, Ordered
                             .map(error -> new ApiProblem.FieldError(
                                     result.getMethodParameter().getParameterName(), error.getDefaultMessage())))
                     .toList());
-            case HttpMessageNotReadableException unreadable -> new ApiProblem(HttpStatus.BAD_REQUEST, "malformed-request",
+            case HttpMessageNotReadableException unreadable -> tooLarge(unreadable) != null
+                    ? RequestSizeFilter.problem(tooLarge(unreadable).maxBytes())
+                    : new ApiProblem(HttpStatus.BAD_REQUEST, "malformed-request",
                     "Malformed request", "The request body is missing, is not valid JSON, or has a value of the wrong type.");
             case MissingServletRequestParameterException missing ->
                     ApiProblem.invalid(missing.getParameterName(), "is required");
@@ -122,6 +124,8 @@ public class ApiV1ExceptionResolver implements HandlerExceptionResolver, Ordered
                     "not-acceptable", "Not acceptable", "This resource is available as " + media.getSupportedMediaTypes() + ".");
             case NoResourceFoundException missing -> noSuchEndpoint(request);
             case NoHandlerFoundException missing -> noSuchEndpoint(request);
+            case org.springframework.web.multipart.MaxUploadSizeExceededException tooLarge -> new ApiProblem(
+                    HttpStatus.CONTENT_TOO_LARGE, "body-too-large", "Request too large", "The upload is larger than allowed.");
             case MultipartException multipart -> ApiProblem.badRequest("The multipart request is invalid.");
             case AccessDeniedException denied -> ApiProblem.forbidden("You may not do this.");
             case ResponseStatusException status -> ApiProblem.fromStatus(status.getStatusCode().value(),
@@ -148,5 +152,18 @@ public class ApiV1ExceptionResolver implements HandlerExceptionResolver, Ordered
         result.getGlobalErrors().forEach(error -> errors.add(new ApiProblem.FieldError(error.getObjectName(),
                 error.getDefaultMessage())));
         return errors;
+    }
+
+    /** The size limit a body broke while it was read, if that is why it could not be read. */
+    private static RequestSizeFilter.BodyTooLargeException tooLarge(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof RequestSizeFilter.BodyTooLargeException tooLarge) {
+                return tooLarge;
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return null;
     }
 }
