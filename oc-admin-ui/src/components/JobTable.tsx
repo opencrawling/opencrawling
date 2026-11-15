@@ -57,7 +57,7 @@ import {
   Archive,
   Cloud
 } from 'lucide-react'
-import { jobApi, connectorApi, observabilityApi, narrativizationApi } from '../lib/api'
+import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import type { JobAction } from '../lib/auth'
 
@@ -465,10 +465,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     if (showLoader) setIsLoading(true)
     try {
       const res = await jobApi.getAll()
-      setJobs(res.data || [])
+      setJobs(res.data)
       if (authorizationOn) {
-        const allowed = await jobApi.permissions()
-        setPermissions(allowed.data || {})
+        // Each job carries what the caller may do with it.
+        setPermissions(Object.fromEntries(res.data.map(job => [job.id, job.permissions])))
       }
     } catch (err) {
       console.error("Failed to fetch jobs:", err)
@@ -603,10 +603,6 @@ export default function JobTable({ setActiveView }: JobTableProps) {
         outputConnector: formOutput,
         authorityConnector: formAuthority,
         path: formPath,
-        status: editingJob ? editingJob.status : 'Ready',
-        currentStage: editingJob ? editingJob.currentStage : 'Idle',
-        documents: editingJob ? editingJob.documents : 0,
-        lastRun: editingJob ? editingJob.lastRun : 'N/A',
         transformationConnector: formTransformationConnector,
         pipelineMode: formPipelineMode,
         narrativization: {
@@ -620,7 +616,7 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       setIsFormOpen(false)
     } catch (err) {
       console.error("Failed to save job:", err)
-      setFormError('Failed to save job configuration')
+      setFormError(problemMessage(err, 'Failed to save job configuration'))
     } finally {
       setIsSaving(false)
     }
@@ -1286,8 +1282,8 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                                 setFormNarrTemplate(res.data.template)
                                 setFormNarrEnabled(true)
                               }
-                            } catch (err: any) {
-                              setNarrGenError(err?.response?.data?.message ?? err?.message ?? 'Copilot unavailable')
+                            } catch (err) {
+                              setNarrGenError(problemMessage(err, 'Copilot unavailable'))
                             } finally {
                               setIsGeneratingTemplate(false)
                             }

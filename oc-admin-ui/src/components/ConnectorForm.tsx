@@ -38,7 +38,7 @@ import {
   Cloud
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { connectorApi } from '../lib/api'
+import { connectorApi, problemMessage } from '../lib/api'
 import VespaModelInsights from './VespaModelInsights'
 
 type ConnectorType = 'repository' | 'output' | 'authority' | 'transformation'
@@ -372,12 +372,12 @@ export default function ConnectorForm() {
       const formData = getValues()
       const response = await connectorApi.checkConnection({ ...formData, type: activeTab })
       setCheckResult(response.data)
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error checking connection:', error)
       setCheckResult({
         success: false,
-        message: error.response?.data?.message || error.message || 'Failed to communicate with OpenCrawling server.',
-        details: error.toString()
+        message: problemMessage(error, 'Failed to communicate with OpenCrawling server.'),
+        details: String(error)
       })
     } finally {
       setIsCheckingConnection(false)
@@ -387,12 +387,13 @@ export default function ConnectorForm() {
   const onSubmit = async (data: ConnectorFormData) => {
     setIsSaving(true)
     try {
-      await connectorApi.create({ ...data, type: activeTab })
+      // The connector being edited is replaced; a new name creates a new connector.
+      await connectorApi.create({ ...data, type: activeTab }, selectedConnector)
       await fetchConnectors()
       handleReset()
     } catch (error) {
       console.error('Error saving connector:', error)
-      alert('Failed to save connector')
+      alert(`Failed to save connector: ${problemMessage(error, 'unknown error')}`)
     } finally {
       setIsSaving(false)
     }
@@ -407,6 +408,8 @@ export default function ConnectorForm() {
       await fetchConnectors()
     } catch (error) {
       console.error('Error deleting connector:', error)
+      // For example: jobs still use the connector.
+      alert(`Failed to delete ${name}: ${problemMessage(error, 'unknown error')}`)
     }
   }
 

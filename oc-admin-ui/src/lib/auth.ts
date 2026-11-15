@@ -23,7 +23,7 @@ export interface AuthConfig {
   oidc: { issuer: string; clientId: string; scope: string } | null
 }
 
-/** GET /api/auth/me: the current caller and what they may do on the management plane. */
+/** GET /api/v1/me: the current caller and what they may do on the management plane. */
 export interface Me {
   authenticated: boolean
   principal: string | null

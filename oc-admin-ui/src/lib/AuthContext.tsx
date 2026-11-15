@@ -107,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       try {
-        const res = await api.get<Me>('/auth/me')
+        const res = await api.get<Me>('/me')
         if (cancelled) return
         setMe(res.data)
         setStatus('signed-in')

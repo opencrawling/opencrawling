@@ -31,7 +31,7 @@ import {
   Activity,
   FileText
 } from 'lucide-react'
-import { statusApi, transportApi } from '../lib/api'
+import { isPreconditionFailed, problemMessage, statusApi, transportApi } from '../lib/api'
 
 interface TransportSettings {
   mode: 'AUTO' | 'GRPC' | 'REST'
@@ -122,19 +122,24 @@ export default function Settings() {
   const [testingGrpc, setTestingGrpc] = useState(false)
   const [grpcTestResult, setGrpcTestResult] = useState<{ status: string; message: string; latencyMs?: number } | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  // Version of the system settings as last read or saved, sent as If-Match so a save never overwrites someone else's change
+  const [settingsEtag, setSettingsEtag] = useState<string | null>(null)
+  const [transportEtag, setTransportEtag] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'embedding' | 'chunking' | 'tika' | 'storage' | 'transport'>('embedding')
 
   const fetchSettings = async () => {
     setIsLoading(true)
     try {
-      const res = await statusApi.getSettings()
+      const res = await statusApi.getSettings<Partial<SystemSettings>>()
       if (res.data) {
         setSettings(prev => ({ ...prev, ...res.data }))
       }
-      const tRes = await transportApi.getSettings()
-      if (tRes.data && tRes.data.settings) {
-        setTransportSettings(tRes.data.settings)
+      setSettingsEtag(res.etag)
+      const tRes = await transportApi.getSettings<TransportSettings>()
+      if (tRes.data) {
+        setTransportSettings(tRes.data)
       }
+      setTransportEtag(tRes.etag)
     } catch (err) {
       console.error("Failed to load settings:", err)
       setErrorMessage("Could not connect to backend to fetch system settings.")
@@ -153,13 +158,17 @@ export default function Settings() {
     setSaveSuccess(false)
     setErrorMessage('')
     try {
-      await statusApi.saveSettings(settings)
-      await transportApi.saveSettings(transportSettings)
+      const saved = await statusApi.saveSettings(settings, settingsEtag)
+      setSettingsEtag(saved.etag)
+      const savedTransport = await transportApi.saveSettings(transportSettings, transportEtag)
+      setTransportEtag(savedTransport.etag)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err) {
       console.error("Failed to save settings:", err)
-      setErrorMessage("Failed to persist updated settings.")
+      setErrorMessage(isPreconditionFailed(err)
+        ? "These settings were changed by someone else since you opened this page. Reload the page to see the current values, then make your changes again."
+        : `Failed to persist updated settings: ${problemMessage(err, 'unknown error')}`)
     } finally {
       setIsSaving(false)
     }
@@ -177,10 +186,10 @@ export default function Settings() {
           latencyMs: res.data.latencyMs
         })
       }
-    } catch (err: any) {
+    } catch (err) {
       setGrpcTestResult({
         status: 'FAILED',
-        message: 'Failed to trigger gRPC connectivity probe: ' + (err.message || 'Network error')
+        message: 'Failed to trigger gRPC connectivity probe: ' + problemMessage(err, 'Network error')
       })
     } finally {
       setTestingGrpc(false)
