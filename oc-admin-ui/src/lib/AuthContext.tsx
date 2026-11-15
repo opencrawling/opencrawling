@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import axios from 'axios'
 import type { User, UserManager } from 'oidc-client-ts'
 import api from './api'
+import { consoleApi } from './consoleClient'
 import { AuthContext, type AuthStatus } from './useAuth'
 import {
   CALLBACK_PATH, createUserManager, installTokenInterceptors, safeReturnPath, signInMode,
@@ -59,6 +60,7 @@ function startAuth(): Promise<Startup> {
     }
     const manager = createUserManager(config.oidc)
     installTokenInterceptors(api, manager, currentPath)
+    installTokenInterceptors(consoleApi, manager, currentPath)
     try {
       let user: User | null
       if (window.location.pathname === CALLBACK_PATH) {
