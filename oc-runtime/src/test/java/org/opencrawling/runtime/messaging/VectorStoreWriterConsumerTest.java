@@ -226,4 +226,20 @@ class VectorStoreWriterConsumerTest {
                 eq("chunk-flowable-1")
         );
     }
+
+    @Test
+    void aChunkWithoutAnEmbeddingIsRefusedRatherThanStoredWithAPlaceholderVector() {
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            DocumentEmbeddedMessage message = new DocumentEmbeddedMessage("doc-novec", "chunk-novec-0", "Text content",
+                    Map.of("acl", "public"), missing);
+
+            IllegalStateException refused = assertThrows(IllegalStateException.class, () -> consumer.consume(message));
+
+            assertTrue(refused.getCause().getMessage().contains("has no embedding"));
+        }
+        verify(defaultStore, never()).add(any());
+        verify(store384, never()).add(any());
+        verify(store768, never()).add(any());
+        verify(store1024, never()).add(any());
+    }
 }

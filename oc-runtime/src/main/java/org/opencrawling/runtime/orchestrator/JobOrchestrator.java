@@ -407,6 +407,8 @@ public class JobOrchestrator {
                                     log.info("Successfully ingested document {} directly into OutputConnector: {}", doc.id(), outputConnector.getName());
                                 } catch (Exception outEx) {
                                     log.error("Direct OutputConnector ingestion failed for doc {}: {}", doc.id(), outEx.getMessage(), outEx);
+                                    // Recorded as a failure below, never as a success: the output did not take the document.
+                                    throw new OutputFailure(outputConnector.getName(), rootMessage(outEx), outEx);
                                 }
                             }
 
@@ -456,10 +458,13 @@ public class JobOrchestrator {
                                         currentJobId, currentExecutionId, pipelineMode, initialDoc.id(), initialDoc.uri(),
                                         repositoryConnector.getClass().getSimpleName(),
                                         outputConnector != null ? outputConnector.getClass().getSimpleName() : "Kafka",
-                                        docDuration, "PROCESSING_ERROR", e.getMessage()
+                                        docDuration, e instanceof OutputFailure ? "OUTPUT_ERROR" : "PROCESSING_ERROR", e.getMessage()
                                 ));
                             }
-                            traceStore.recordError(currentJobId, "ERROR", "RepositoryConnector", "Scan failed for doc " + initialDoc.id() + ": " + e.getMessage(), e.toString());
+                            traceStore.recordError(currentJobId, "ERROR",
+                                    e instanceof OutputFailure ? "OutputConnector" : "RepositoryConnector",
+                                    (e instanceof OutputFailure ? "Output failed for doc " : "Scan failed for doc ") + initialDoc.id() + ": " + e.getMessage(),
+                                    e.toString());
                             return new ScanResult.Failure(initialDoc.id(), e);
                         }
                 };
@@ -692,5 +697,21 @@ public class JobOrchestrator {
             localData.mkdirs();
         }
         return localData.getAbsolutePath();
+    }
+
+    /** A direct output connector did not take a document; the ledger records it as {@code OUTPUT_ERROR}. */
+    static final class OutputFailure extends RuntimeException {
+        OutputFailure(String output, String reason, Throwable cause) {
+            super(output + " did not store the document: " + reason, cause);
+        }
+    }
+
+    /** The innermost message, which says what went wrong (wrappers only say that something did). */
+    static String rootMessage(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() != null ? cause.getMessage() : cause.toString();
     }
 }
