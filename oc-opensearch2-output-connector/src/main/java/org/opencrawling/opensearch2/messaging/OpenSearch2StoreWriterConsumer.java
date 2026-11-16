@@ -27,7 +27,6 @@ import org.opensearch.client.opensearch.core.DeleteByQueryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -36,7 +35,7 @@ import java.util.*;
 
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "opensearch2")
-@ConditionalOnExpression("'${opencrawling.consumer.writer.enabled:false}' == 'true'")
+@ConditionalOnProperty(name = "opencrawling.consumer.writer.enabled", havingValue = "true", matchIfMissing = true)
 public class OpenSearch2StoreWriterConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(OpenSearch2StoreWriterConsumer.class);

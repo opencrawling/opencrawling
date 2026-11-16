@@ -18,6 +18,7 @@ package org.opencrawling.seatunnel;
 import org.opencrawling.core.embedding.RequiredEmbeddings;
 import java.util.concurrent.ExecutionException;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -88,6 +89,12 @@ public class SeaTunnelOutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "SeaTunnelOutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

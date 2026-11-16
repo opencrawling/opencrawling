@@ -147,7 +147,8 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
   - `opencrawling.mcp.server.enabled`
 - **Output selection:** `spring.opencrawling.output.type` picks the active writer.
   - Values: `pgvector` (default), `milvus`, `qdrant`, `vespa`, `solr`, `opensearch2`, `opensearch3`, `elasticsearch`, `seatunnel`, `ozone`, `luxir`, `doxis`.
-  - Each writer consumer is gated on this property with `@ConditionalOnProperty` or `@ConditionalOnExpression`. New outputs must follow the same pattern.
+  - Each writer consumer is gated on this property with `@ConditionalOnProperty` or `@ConditionalOnExpression`, and on `opencrawling.consumer.writer.enabled` with `matchIfMissing = true` (on by default, like every stage toggle; OpenArch's is still off). New outputs must follow the same pattern.
+- **One write path per run:** a job run always publishes its documents to the documents topic. It calls the output connector's `send` directly only if the output's pipeline writer does not store them in that mode (`OutputConnector.writtenByPipeline(mode)`, checked by `JobOrchestrator.sendsDirectly`). The vector stores (pgvector, Qdrant, Milvus, Vespa, Solr, OpenSearch 2/3, Elasticsearch, Luxir, SeaTunnel) return `true` for RAG, so a RAG run writes them through Kafka only; writing both ways stored every document twice under different chunk ids. Outputs with no pipeline writer for the mode (Hyland CIC, the migration and document outputs, OpenArch for now) keep the direct write. A new vector store must override `writtenByPipeline` and be listed in `OutputWritePathContractTest`.
 - **Push ingestion:** `OisIngestController` accepts documents without a crawler. It writes each UPSERT's text to the claim-check store.
 
 ### Concurrency and tracing constraints
@@ -183,7 +184,7 @@ With `opencrawling.governance.enabled=true` (off by default), `IngestionConsumer
 - **Permissions:** hooks can never change the protected metadata keys (`GovernanceGate.isProtectedKey`).
 - **Failures:** a hook that fails means nothing is embedded.
 - **Rejections:** a rejection publishes a tombstone for the earlier version unless `on-rejected-update=keep`. It also publishes `IngestionMessage.governanceRejection` on the documents topic, so `AuthorizationSyncConsumer` removes the OpenFGA tuples (unless a later version was synced since); `IngestionConsumer` skips that notice.
-- **Direct outputs:** with the gate on, `JobOrchestrator.bypassesGovernance` refuses RAG runs that have an output connector, because their direct `send` would embed without the gate. The job API answers `409`.
+- **Direct outputs:** with the gate on, `JobOrchestrator.bypassesGovernance` refuses RAG runs that would `send` documents directly to an output that embeds them itself, since that skips the gate. The job API answers `409`. RAG runs on the vector stores are not refused: they write through the pipeline only.
 
 ### Security / ACL model
 

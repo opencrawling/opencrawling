@@ -26,6 +26,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,6 +102,12 @@ public class VectorOutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "VectorStoreOutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

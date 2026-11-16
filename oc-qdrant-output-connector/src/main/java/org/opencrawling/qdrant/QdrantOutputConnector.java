@@ -24,6 +24,7 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.qdrant.config.QdrantOutputProperties;
 import org.slf4j.Logger;
@@ -91,6 +92,12 @@ public class QdrantOutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "QdrantOutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

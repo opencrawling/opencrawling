@@ -24,7 +24,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
@@ -91,10 +90,23 @@ class JobOrchestratorGovernanceTest {
         assertThat(orchestrator.bypassesGovernance(output, PipelineMode.RAG)).isTrue();
         assertThat(run(output, PipelineMode.RAG)).isFalse();
 
-        verifyNoInteractions(output);
+        verify(output, never()).send(any());
         verify(connector, never()).scan(anyString());
         verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
-        verify(traceStore).recordError(eq("job-1"), eq("ERROR"), eq("Governance"), contains("decoupled"), any());
+        verify(traceStore).recordError(eq("job-1"), eq("ERROR"), eq("Governance"), contains("pipeline writer"), any());
+    }
+
+    @Test
+    void withGovernanceOnARagRunWithAnOutputItsPipelineWriterStoresRuns() {
+        // The vector stores: their documents only reach them through the pipeline, so through the gate.
+        governance.setEnabled(true);
+        when(output.writtenByPipeline(PipelineMode.RAG)).thenReturn(true);
+
+        assertThat(orchestrator.bypassesGovernance(output, PipelineMode.RAG)).isFalse();
+        assertThat(run(output, PipelineMode.RAG)).isTrue();
+
+        verify(kafkaTemplate).send(eq(KafkaConfig.TOPIC_NAME), eq("doc-1"), any());
+        verify(output, never()).send(any());
     }
 
     @Test
