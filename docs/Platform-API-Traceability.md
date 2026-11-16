@@ -266,3 +266,23 @@ Run on 2026-11-15, rebuilt from this branch.
 - **Found outside the Platform API:** Ollama's model was still being pulled when the crawl ran. `VectorOutputConnector` logged every embedding as failed, stored the chunks with a placeholder vector anyway, and the ledger reported `SUCCESS`. Fixed separately: #329 (PR #330).
 
 **Environment note:** during the run, a PostgreSQL backend process exited with code 2 and PostgreSQL restarted and recovered. The runtime stalled until the database came back, then answered normally. The database log shows very slow disk writes on the shared test machine just before (a 2.5 MB checkpoint took 117 s). In the second run the API server's JVM froze for 94 s. The host had almost no free memory (swap 17.7 of 18.4 GB, with two Doxis lab VMs holding 18 GB; they were stopped before the third run) ("Thread starvation or clock leap detected"), with no request load, which points at the shared machine's Docker VM stalling rather than at the API. The API answered normally afterwards.
+
+
+### Fourth run: after both reviews
+
+Run on 2026-11-16, rebuilt from this branch after both review rounds, so their fixes ran on the full decoupled stack (Redis idempotency store, Kafka, pgvector, Ollama).
+
+- **`scripts/test-platform-api-v1.sh`:** 27 of 27 checks, with a real crawl of 5 documents to the end (`Finished`); the 5 stored chunks have real vectors, not the placeholder.
+- **The review fixes, 36 of 36 checks:**
+  - **Headers:** `Cache-Control`, `Vary`, `nosniff`, CSP and `X-Request-Id` on v1 answers.
+  - **Size limits:** a 2 MB body answered `413`, with `Content-Length` and chunked.
+  - **Atomic `If-Match`:** 12 concurrent `PUT`s of one connector from the same version gave one `200` and eleven `412`; 8 concurrent job `PATCH`es gave one `200` and seven `412`.
+  - **Job ETags:** an unchanged job answered `304`; after `:start`, the old tag answered `200`.
+  - **`job-runs/{id}:stop`** of a finished run answered `404`.
+  - **Masking:** no secret in the v1 or the deprecated connector reads, while `connectors.json` kept them; the deprecated save took back what it read and kept the secrets, and refused (`400`) the same body pointed at another host.
+  - **Redis idempotency:** a retry replayed; the same key with another body gave `422`; the kept answer had its full 24-hour TTL (the renewer did not cut it); no key text in Redis; a Structured Field key was accepted.
+  - **Settings:** an invalid heap value gave `400` and changed nothing (same ETag).
+  - **Deprecation:** `rel="successor-version"` and `rel="deprecation"` links on the legacy connector list.
+- **Found and fixed on this run:**
+  - `executions:query` answered `500 internal-error` for a query the engine cannot run (unknown column, missing file): the engine's `SQLException` came through reflection wrapped in an `InvocationTargetException`, which the unit test, mocking the service, never produced. Fixed; the new tests use the real engine (`DuckDbParquetQueryTest`).
+  - `scripts/test-platform-api-v1.sh` still expected the old problem type URI, so the CI job would have failed. Fixed, with the SDK and CLI test fixtures.
