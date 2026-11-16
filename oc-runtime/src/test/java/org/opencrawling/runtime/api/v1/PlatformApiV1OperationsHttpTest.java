@@ -225,11 +225,16 @@ class PlatformApiV1OperationsHttpTest {
         File csv = Files.writeString(tmp.resolve("manifest.csv"), "document_id,status\ndoc-1,SUCCESS\n").toFile();
         when(reports.getExportFile(PlatformApiTestSupport.EXECUTION_ID, "csv")).thenReturn(Optional.of(csv));
         when(reports.isAllowedReportFile(csv)).thenReturn(true);
-        HttpResponse<String> file = http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID + "/export?format=csv", null);
-        assertThat(file.statusCode()).isEqualTo(200);
-        assertThat(file.headers().firstValue("Content-Type")).hasValueSatisfying(ct -> assertThat(ct).startsWith("text/csv"));
-        assertThat(file.headers().firstValue("Content-Disposition")).hasValueSatisfying(cd -> assertThat(cd).contains("manifest.csv"));
-        assertThat(file.body()).contains("doc-1,SUCCESS");
+        try {
+            HttpResponse<String> file = http.send("GET", "/api/v1/executions/" + PlatformApiTestSupport.EXECUTION_ID + "/export?format=csv", null);
+            assertThat(file.statusCode()).isEqualTo(200);
+            assertThat(file.headers().firstValue("Content-Type")).hasValueSatisfying(ct -> assertThat(ct).startsWith("text/csv"));
+            assertThat(file.headers().firstValue("Content-Disposition")).hasValueSatisfying(cd -> assertThat(cd).contains("manifest.csv"));
+            assertThat(file.body()).contains("doc-1,SUCCESS");
+        } finally {
+            // The mock is shared by every test on this cached context; leave its default for them.
+            when(reports.getExportFile(anyString(), anyString())).thenReturn(Optional.empty());
+        }
 
         when(reports.executeDuckDbQuery("SELECT 1 AS one")).thenReturn(new JobReportService.QueryResult(List.of("one"), List.of(List.of(1))));
         JsonNode result = body(http.send("POST", "/api/v1/executions:query", "{\"sql\":\"SELECT 1 AS one\"}"));

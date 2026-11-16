@@ -291,8 +291,13 @@ class PlatformApiV1SdkTest {
         File csv = Files.writeString(tmp.resolve("manifest.csv"), "document_id,status\ndoc-1,SUCCESS\n").toFile();
         when(reports.getExportFile(PlatformApiTestSupport.EXECUTION_ID, "csv")).thenReturn(Optional.of(csv));
         when(reports.isAllowedReportFile(csv)).thenReturn(true);
-        Path saved = api.executions().exportTo(PlatformApiTestSupport.EXECUTION_ID, "csv", tmp.resolve("out.csv"));
-        assertThat(Files.readString(saved)).contains("doc-1,SUCCESS");
+        try {
+            Path saved = api.executions().exportTo(PlatformApiTestSupport.EXECUTION_ID, "csv", tmp.resolve("out.csv"));
+            assertThat(Files.readString(saved)).contains("doc-1,SUCCESS");
+        } finally {
+            // The mock is shared by every test on this cached context; leave its default for them.
+            when(reports.getExportFile(anyString(), anyString())).thenReturn(Optional.empty());
+        }
         when(reports.executeDuckDbQuery("SELECT 1 AS one")).thenReturn(new JobReportService.QueryResult(List.of("one"), List.of(List.of(1))));
         assertThat(api.executions().query("SELECT 1 AS one").columns()).containsExactly("one");
     }
