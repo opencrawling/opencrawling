@@ -286,6 +286,18 @@ class AlfrescoDiscoveryTest {
     }
 
     @Test
+    void aPathLosesOnlyItsEdgeSlashesEvenWhenItIsAllSlashes() {
+        assertThat(AlfrescoRepositoryConnector.withoutEdgeSlashes("//Sites/hr//")).isEqualTo("Sites/hr");
+        assertThat(AlfrescoRepositoryConnector.withoutEdgeSlashes("Sites/hr")).isEqualTo("Sites/hr");
+        assertThat(AlfrescoRepositoryConnector.withoutEdgeSlashes("/")).isEmpty();
+        String hostile = "/".repeat(200_000) + "x" + "/".repeat(200_000);
+        long started = System.nanoTime();
+        assertThat(AlfrescoRepositoryConnector.withoutEdgeSlashes(hostile)).isEqualTo("x");
+        assertThat(AlfrescoRepositoryConnector.withoutEdgeSlashes("/".repeat(200_000) + "a/b")).isEqualTo("a/b");
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).as("linear, not polynomial").isLessThan(Duration.ofSeconds(1));
+    }
+
+    @Test
     void exploreListsTheFirstLevelOfFoldersAndSaysDeeperOnesWereNotOpened() {
         DiscoveryResult result = connector().explore(new ExploreRequest(null, 1, 100, false, TIMEOUT));
 
