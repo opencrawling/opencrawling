@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import {
   reportApi,
+  problemMessage,
   JobReportSummary,
   DocumentLedgerEntry
 } from '../lib/api'
@@ -52,8 +53,13 @@ export default function ReportDashboard() {
   const [selectedReport, setSelectedReport] = useState<JobReportSummary | null>(null)
   const [ledgerEntries, setLedgerEntries] = useState<DocumentLedgerEntry[]>([])
   const [ledgerTotal, setLedgerTotal] = useState(0)
-  const [ledgerPage, setLedgerPage] = useState(0)
+  // Cursor of every page from the first to the one shown (undefined = the first page): Previous drops the last one
+  const [ledgerCursors, setLedgerCursors] = useState<(string | undefined)[]>([undefined])
+  const [ledgerNextCursor, setLedgerNextCursor] = useState<string | null>(null)
+  // The text search the shown pages were read with; a cursor only works with the filters it was made for
+  const [ledgerAppliedQuery, setLedgerAppliedQuery] = useState('')
   const [ledgerSize] = useState(25)
+  const ledgerPage = ledgerCursors.length - 1
   const [ledgerStatusFilter, setLedgerStatusFilter] = useState('ALL')
   const [ledgerQuery, setLedgerQuery] = useState('')
   const [isLedgerLoading, setIsLedgerLoading] = useState(false)
@@ -87,22 +93,26 @@ export default function ReportDashboard() {
     }
   }
 
-  const fetchLedger = async (jobId: string, executionId: string, page = 0, status = ledgerStatusFilter, query = ledgerQuery) => {
+  const fetchLedger = async (executionId: string, cursors: (string | undefined)[] = [undefined], status = ledgerStatusFilter, query = ledgerQuery) => {
     setIsLedgerLoading(true)
     try {
-      const res = await reportApi.getDocumentLedger(jobId, executionId, {
-        page,
-        size: ledgerSize,
+      const res = await reportApi.getDocumentLedger(executionId, {
+        cursor: cursors[cursors.length - 1],
+        limit: ledgerSize,
         status: status !== 'ALL' ? status : undefined,
         query: query.trim() ? query.trim() : undefined
       })
-      setLedgerEntries(res.data.items || [])
-      setLedgerTotal(res.data.total || 0)
-      setLedgerPage(page)
+      setLedgerEntries(res.data.items)
+      setLedgerTotal(res.data.total)
+      setLedgerNextCursor(res.data.nextCursor)
+      setLedgerCursors(cursors)
+      setLedgerAppliedQuery(query)
     } catch (err) {
       console.error('Failed to load document ledger:', err)
       setLedgerEntries([])
       setLedgerTotal(0)
+      setLedgerNextCursor(null)
+      setLedgerCursors([undefined])
     } finally {
       setIsLedgerLoading(false)
     }
@@ -114,14 +124,14 @@ export default function ReportDashboard() {
 
   useEffect(() => {
     if (selectedReport) {
-      fetchLedger(selectedReport.jobId, selectedReport.executionId, 0, ledgerStatusFilter, ledgerQuery)
+      fetchLedger(selectedReport.executionId, [undefined], ledgerStatusFilter, ledgerQuery)
     }
   }, [selectedReport, ledgerStatusFilter])
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedReport) {
-      fetchLedger(selectedReport.jobId, selectedReport.executionId, 0, ledgerStatusFilter, ledgerQuery)
+      fetchLedger(selectedReport.executionId, [undefined], ledgerStatusFilter, ledgerQuery)
     }
   }
 
@@ -133,9 +143,9 @@ export default function ReportDashboard() {
     setTimeout(() => setCopiedSql(false), 2500)
   }
 
-  const handleDownload = async (jobId: string, executionId: string, format: 'csv' | 'parquet' | 'json', filename: string) => {
+  const handleDownload = async (executionId: string, format: 'csv' | 'parquet' | 'json', filename: string) => {
     try {
-      await reportApi.downloadExport(jobId, executionId, format, filename)
+      await reportApi.downloadExport(executionId, format, filename)
     } catch (err) {
       console.error(`Failed to download the ${format} export:`, err)
     }
@@ -156,8 +166,8 @@ export default function ReportDashboard() {
     try {
       const res = await reportApi.runQuery(sqlQuery)
       setQueryResult(res.data)
-    } catch (err: any) {
-      setQueryError(err?.response?.data || err.message || 'Query failed')
+    } catch (err) {
+      setQueryError(problemMessage(err, 'Query failed'))
     } finally {
       setIsQueryRunning(false)
     }
@@ -458,7 +468,7 @@ export default function ReportDashboard() {
                         <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => handleDownload(report.jobId, report.executionId, 'csv', `manifest_${report.executionId}.csv`)}
+                            onClick={() => handleDownload(report.executionId, 'csv', `manifest_${report.executionId}.csv`)}
                             className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
                             title="Download CSV Compliance Manifest"
                           >
@@ -514,7 +524,7 @@ export default function ReportDashboard() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'csv', `manifest_${selectedReport.executionId}.csv`)}
+                onClick={() => handleDownload(selectedReport.executionId, 'csv', `manifest_${selectedReport.executionId}.csv`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-green-400" />
@@ -523,7 +533,7 @@ export default function ReportDashboard() {
 
               <button
                 type="button"
-                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'parquet', `job_${selectedReport.jobId}_exec_${selectedReport.executionId}.parquet`)}
+                onClick={() => handleDownload(selectedReport.executionId, 'parquet', `job_${selectedReport.jobId}_exec_${selectedReport.executionId}.parquet`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-purple-400" />
@@ -532,7 +542,7 @@ export default function ReportDashboard() {
 
               <button
                 type="button"
-                onClick={() => handleDownload(selectedReport.jobId, selectedReport.executionId, 'json', `summary_${selectedReport.executionId}.json`)}
+                onClick={() => handleDownload(selectedReport.executionId, 'json', `summary_${selectedReport.executionId}.json`)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground text-xs font-medium border border-border transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-yellow-400" />
@@ -779,7 +789,7 @@ export default function ReportDashboard() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => fetchLedger(selectedReport.jobId, selectedReport.executionId, Math.max(0, ledgerPage - 1))}
+                  onClick={() => fetchLedger(selectedReport.executionId, ledgerCursors.slice(0, -1), ledgerStatusFilter, ledgerAppliedQuery)}
                   disabled={ledgerPage === 0 || isLedgerLoading}
                   className="p-1 rounded bg-secondary hover:bg-secondary/80 disabled:opacity-50 text-foreground transition-colors"
                 >
@@ -789,8 +799,8 @@ export default function ReportDashboard() {
                   Page {ledgerPage + 1} of {Math.max(1, Math.ceil(ledgerTotal / ledgerSize))}
                 </span>
                 <button
-                  onClick={() => fetchLedger(selectedReport.jobId, selectedReport.executionId, ledgerPage + 1)}
-                  disabled={(ledgerPage + 1) * ledgerSize >= ledgerTotal || isLedgerLoading}
+                  onClick={() => ledgerNextCursor && fetchLedger(selectedReport.executionId, [...ledgerCursors, ledgerNextCursor], ledgerStatusFilter, ledgerAppliedQuery)}
+                  disabled={!ledgerNextCursor || isLedgerLoading}
                   className="p-1 rounded bg-secondary hover:bg-secondary/80 disabled:opacity-50 text-foreground transition-colors"
                 >
                   <ChevronRight className="w-4 h-4" />

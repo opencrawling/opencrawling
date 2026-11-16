@@ -98,6 +98,14 @@ public class ReportController {
         return ResponseEntity.ok(summaries);
     }
 
+    /** One execution's summary, read directly by its id, if it exists and the caller may see it. */
+    public java.util.Optional<JobReportSummary> findReport(String executionId) {
+        if (!isValidId(executionId)) {
+            return java.util.Optional.empty();
+        }
+        return reportService.getSummary(executionId).filter(this::visible);
+    }
+
     @Operation(summary = "Get execution report summary", description = "Retrieves the execution summary and key performance indicators for a specific job run.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "Job execution report summary successfully retrieved"),
@@ -190,17 +198,41 @@ public class ReportController {
     })
     @PostMapping("/query")
     public ResponseEntity<?> executeQuery(@RequestBody QueryRequest request) {
-        if (request == null || request.sql() == null || request.sql().isBlank()) {
-            return ResponseEntity.badRequest().body("SQL query must not be empty");
+        return switch (query(request == null ? null : request.sql())) {
+            case QueryOutcome.Rows rows -> ResponseEntity.ok(rows.result());
+            case QueryOutcome.Refused refused -> ResponseEntity.badRequest().body(refused.message());
+            case QueryOutcome.EngineError engine -> ResponseEntity.internalServerError()
+                    .body("Query execution failed: " + engine.message());
+            case QueryOutcome.Failed failed -> ResponseEntity.internalServerError()
+                    .body("Query execution failed: " + failed.message());
+        };
+    }
+
+    /** How a query went: its rows, refused (empty or not read-only), refused by the engine, or a server fault. */
+    public sealed interface QueryOutcome {
+        record Rows(JobReportService.QueryResult result) implements QueryOutcome {}
+        record Refused(String message) implements QueryOutcome {}
+        /** The engine could not run it (syntax, unknown column, missing file): the caller's to fix. */
+        record EngineError(String message) implements QueryOutcome {}
+        /** Anything else, such as running out of memory: the server's fault. */
+        record Failed(String message) implements QueryOutcome {}
+    }
+
+    public QueryOutcome query(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return new QueryOutcome.Refused("SQL query must not be empty");
         }
         try {
-            JobReportService.validateReadOnlySql(request.sql());
-            return ResponseEntity.ok(reportService.executeDuckDbQuery(request.sql()));
+            JobReportService.validateReadOnlySql(sql);
+            return new QueryOutcome.Rows(reportService.executeDuckDbQuery(sql));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body("Invalid SQL query: " + e.getMessage());
+            return new QueryOutcome.Refused("Invalid SQL query: " + e.getMessage());
+        } catch (java.sql.SQLException e) {
+            log.warn("DuckDB SQL query refused by the engine: {}", e.getMessage());
+            return new QueryOutcome.EngineError(e.getMessage());
         } catch (Throwable e) {
             log.error("DuckDB SQL query failed: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body("Query execution failed: " + e.getMessage());
+            return new QueryOutcome.Failed(String.valueOf(e.getMessage()));
         }
     }
 

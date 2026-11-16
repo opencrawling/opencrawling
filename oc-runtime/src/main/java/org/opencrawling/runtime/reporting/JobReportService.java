@@ -393,7 +393,16 @@ public class JobReportService {
 
     private ResultSet executeQuerySafely(Statement stmt, String query) throws Exception {
         Method executeQueryMethod = Statement.class.getMethod("executeQuery", String.class);
-        return (ResultSet) executeQueryMethod.invoke(stmt, query);
+        try {
+            return (ResultSet) executeQueryMethod.invoke(stmt, query);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // The engine's own error (syntax, unknown column, missing file), not the reflective call's wrapper, so
+            // callers can tell a query the caller must fix from a server fault.
+            if (e.getCause() instanceof Exception cause) {
+                throw cause;
+            }
+            throw e;
+        }
     }
 
     private String resolveParquetPathInSql(String sql, File reportsDir, Set<String> searchPaths) {

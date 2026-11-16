@@ -62,7 +62,7 @@ public class TransportSettingsController {
     @Operation(summary = "Update transport settings (PUT)", description = "Updates and applies internal communication transport configuration.")
     @ApiResponse(responseCode = "200", description = "Updated transport settings")
     @PutMapping({"/api/v1/admin/settings/transport", "/api/system/settings/transport"})
-    public ResponseEntity<TransportSettingsDTO> updateTransportSettingsPut(@RequestBody TransportSettingsDTO newSettings) {
+    public synchronized ResponseEntity<TransportSettingsDTO> updateTransportSettingsPut(@RequestBody TransportSettingsDTO newSettings) {
         transportManager.updateSettings(newSettings);
         return ResponseEntity.ok(transportManager.getSettings());
     }
@@ -70,7 +70,7 @@ public class TransportSettingsController {
     @Operation(summary = "Update transport settings (POST)", description = "Alternative POST endpoint for updating internal communication transport configuration.")
     @ApiResponse(responseCode = "200", description = "Updated transport settings")
     @PostMapping({"/api/v1/admin/settings/transport", "/api/system/settings/transport"})
-    public ResponseEntity<TransportSettingsDTO> updateTransportSettingsPost(@RequestBody TransportSettingsDTO newSettings) {
+    public synchronized ResponseEntity<TransportSettingsDTO> updateTransportSettingsPost(@RequestBody TransportSettingsDTO newSettings) {
         transportManager.updateSettings(newSettings);
         return ResponseEntity.ok(transportManager.getSettings());
     }

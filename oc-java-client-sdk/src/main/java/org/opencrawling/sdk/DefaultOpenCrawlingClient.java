@@ -37,6 +37,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     private final OpenApiClient openApiClient;
     private final DiscoveryClient discoveryClient;
     private final AuthClient authClient;
+    private final org.opencrawling.sdk.v1.PlatformClient platformClient;
 
     public DefaultOpenCrawlingClient(
             HttpClient httpClient,
@@ -55,6 +56,18 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
             TokenProvider tokenProvider,
             Duration readTimeout,
             ObjectMapper objectMapper) {
+        this(httpClient, baseUrl, apiKey, tokenProvider, readTimeout, objectMapper,
+                org.opencrawling.sdk.v1.RetryPolicy.defaults());
+    }
+
+    public DefaultOpenCrawlingClient(
+            HttpClient httpClient,
+            String baseUrl,
+            String apiKey,
+            TokenProvider tokenProvider,
+            Duration readTimeout,
+            ObjectMapper objectMapper,
+            org.opencrawling.sdk.v1.RetryPolicy retryPolicy) {
         this.transport = new HttpTransport(httpClient, baseUrl, apiKey, tokenProvider, readTimeout, objectMapper);
         this.jobClient = new DefaultJobClient(transport);
         this.connectorClient = new DefaultConnectorClient(transport);
@@ -65,6 +78,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
         this.openApiClient = new DefaultOpenApiClient(transport);
         this.discoveryClient = new DefaultDiscoveryClient(transport);
         this.authClient = new DefaultAuthClient(transport);
+        this.platformClient = new org.opencrawling.sdk.v1.DefaultPlatformClient(transport, retryPolicy);
     }
 
     @Override
@@ -110,5 +124,10 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     @Override
     public AuthClient auth() {
         return authClient;
+    }
+
+    @Override
+    public org.opencrawling.sdk.v1.PlatformClient platform() {
+        return platformClient;
     }
 }

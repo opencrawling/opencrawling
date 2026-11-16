@@ -23,7 +23,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react'
-import { vespaInsightsApi } from '../lib/api'
+import { vespaInsightsApi, problemMessage } from '../lib/api'
 
 interface VespaModelInsightsProps {
   endpoint: string
@@ -96,8 +96,8 @@ export default function VespaModelInsights({ endpoint }: VespaModelInsightsProps
       ])
       setHealth(healthRes.data)
       setDocumentCounts(countsRes.data)
-    } catch (error: any) {
-      setInsightsError(error.response?.data?.message || error.message || 'Failed to reach the admin backend.')
+    } catch (error) {
+      setInsightsError(problemMessage(error, 'Failed to reach the admin backend.'))
     } finally {
       setIsLoadingInsights(false)
     }
@@ -115,12 +115,12 @@ export default function VespaModelInsights({ endpoint }: VespaModelInsightsProps
         rankProfile,
       })
       setQueryResult(response.data)
-    } catch (error: any) {
+    } catch (error) {
       setQueryResult({
         hits: [],
         totalCount: 0,
         degraded: true,
-        message: error.response?.data?.message || error.message || 'Query failed.',
+        message: problemMessage(error, 'Query failed.'),
       })
     } finally {
       setIsRunningQuery(false)
@@ -135,10 +135,10 @@ export default function VespaModelInsights({ endpoint }: VespaModelInsightsProps
     try {
       const response = await vespaInsightsApi.deployBundledSchema(configServerEndpoint)
       setDeployResult(response.data)
-    } catch (error: any) {
+    } catch (error) {
       setDeployResult({
         success: false,
-        message: error.response?.data?.message || error.message || 'Deploy failed.',
+        message: problemMessage(error, 'Deploy failed.'),
         rawResponse: null,
       })
     } finally {
@@ -154,10 +154,10 @@ export default function VespaModelInsights({ endpoint }: VespaModelInsightsProps
     try {
       const response = await vespaInsightsApi.deployCustomSchema(configServerEndpoint, selectedFile)
       setDeployResult(response.data)
-    } catch (error: any) {
+    } catch (error) {
       setDeployResult({
         success: false,
-        message: error.response?.data?.message || error.message || 'Deploy failed.',
+        message: problemMessage(error, 'Deploy failed.'),
         rawResponse: null,
       })
     } finally {

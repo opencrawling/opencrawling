@@ -111,4 +111,20 @@ class DuckDbParquetQueryTest {
         JobReportService.QueryResult resultMigration = reportService.executeDuckDbQuery(sqlMigration);
         assertEquals(5242880L, ((Number) resultMigration.rows().get(0).get(0)).longValue());
     }
+
+    @Test
+    void aQueryTheEngineCannotRunFailsWithTheEnginesSqlException() {
+        // Not the reflective call's InvocationTargetException (no message): the API tells the caller what to fix.
+        java.sql.SQLException refused = assertThrows(java.sql.SQLException.class,
+                () -> reportService.executeDuckDbQuery("SELECT nope FROM read_parquet('none/*.parquet')"));
+        assertNotNull(refused.getMessage());
+        assertThrows(java.sql.SQLException.class, () -> reportService.executeDuckDbQuery("SELECT nope"));
+    }
+
+    @Test
+    void theApiReportsAnEngineErrorAsTheCallersToFix() {
+        org.opencrawling.runtime.api.ReportController.QueryOutcome outcome =
+                new org.opencrawling.runtime.api.ReportController(reportService).query("SELECT nope");
+        assertInstanceOf(org.opencrawling.runtime.api.ReportController.QueryOutcome.EngineError.class, outcome);
+    }
 }

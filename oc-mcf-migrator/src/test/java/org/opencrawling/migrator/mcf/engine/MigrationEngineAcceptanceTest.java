@@ -58,6 +58,7 @@ class MigrationEngineAcceptanceTest {
 
     private static HttpServer mcfServer;
     private static HttpServer ocServer;
+    private static final String EMPTY_PAGE = "{\"items\":[],\"page\":{\"limit\":50,\"nextCursor\":null,\"totalItems\":0}}";
     private static List<String> capturedConnectorPosts;
     private static List<String> capturedJobPosts;
     private static MigrationEngine engine;
@@ -77,21 +78,21 @@ class MigrationEngineAcceptanceTest {
         capturedJobPosts = new CopyOnWriteArrayList<>();
         ocServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int ocPort = ocServer.getAddress().getPort();
-        ocServer.createContext("/api/connectors", exchange -> {
+        ocServer.createContext("/api/v1/connectors", exchange -> {
             if ("POST".equals(exchange.getRequestMethod())) {
                 capturedConnectorPosts.add(readBody(exchange));
-                respond(exchange, 201, "");
+                respond(exchange, 201, "{}");
             } else {
-                respond(exchange, 200, "[]");
+                respond(exchange, 200, EMPTY_PAGE);
             }
         });
-        ocServer.createContext("/api/jobs", exchange -> {
+        ocServer.createContext("/api/v1/jobs", exchange -> {
             if ("POST".equals(exchange.getRequestMethod())) {
                 capturedJobPosts.add(readBody(exchange));
-                respond(exchange, 201, "");
+                respond(exchange, 201, "{}");
             } else {
                 // OpenCrawlingWriter.upsertJob always lists first to dedup by name; empty means "always create".
-                respond(exchange, 200, "[]");
+                respond(exchange, 200, EMPTY_PAGE);
             }
         });
         ocServer.start();

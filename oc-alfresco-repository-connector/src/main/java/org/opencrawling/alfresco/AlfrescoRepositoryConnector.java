@@ -1105,13 +1105,26 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         return node;
     }
 
+    /** The path without its leading and trailing slashes, in linear time (no regex over caller input). */
+    static String withoutEdgeSlashes(String path) {
+        int start = 0;
+        int end = path.length();
+        while (start < end && path.charAt(start) == '/') {
+            start++;
+        }
+        while (end > start && path.charAt(end - 1) == '/') {
+            end--;
+        }
+        return path.substring(start, end);
+    }
+
     /** A node by id or by path from the repository root, with its path and permissions; {@code null} when absent. */
     private JsonNode discoveryNode(String reference) throws IOException, InterruptedException {
         String ref = reference == null ? "/" : reference.strip();
         StringBuilder uri = new StringBuilder(url).append("/nodes/");
         if (ref.startsWith("/")) {
             uri.append("-root-?include=path,permissions");
-            String relative = ref.replaceAll("^/+", "").replaceAll("/+$", "");
+            String relative = withoutEdgeSlashes(ref);
             if (!relative.isEmpty()) {
                 uri.append("&relativePath=").append(URLEncoder.encode(relative, StandardCharsets.UTF_8));
             }

@@ -30,7 +30,7 @@ import {
   ChevronUp,
   Info,
 } from 'lucide-react'
-import { narrativizationApi } from '../lib/api'
+import { narrativizationApi, problemMessage } from '../lib/api'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,8 +129,8 @@ export default function Narrativization() {
       if (res.data?.template && res.data?.mockData) {
         setRendered(renderMustache(res.data.template, res.data.mockData))
       }
-    } catch (err: any) {
-      const msg = err?.response?.data?.message ?? err?.message ?? 'Unknown error'
+    } catch (err) {
+      const msg = problemMessage(err, 'Unknown error')
       setError(`Copilot API error: ${msg}`)
     } finally {
       setIsGenerating(false)

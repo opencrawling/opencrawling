@@ -151,6 +151,25 @@ public class JobRunRegistry {
         return true;
     }
 
+    /**
+     * Asks one run to stop: only if it is still the job's run here. A run that ended, or a newer run of the same job,
+     * is left alone.
+     *
+     * @return {@code false} when that run is not running here
+     */
+    public boolean stopExecution(String jobId, String executionId) {
+        Run run;
+        synchronized (this) {
+            run = runs.get(jobId);
+        }
+        if (run == null || !run.executionId.equals(executionId)) {
+            return false;
+        }
+        run.requestStop();
+        log.info("Stop requested for job {} [Exec ID: {}].", jobId, executionId);
+        return true;
+    }
+
     public synchronized Optional<RunInfo> run(String jobId) {
         Run run = runs.get(jobId);
         return run == null ? Optional.empty() : Optional.of(run.info());

@@ -72,6 +72,13 @@ public interface OpenCrawlingClient extends AutoCloseable {
      */
     AuthClient auth();
 
+    /**
+     * The Platform API ({@code /api/v1}): every management operation over one versioned API, with ETags,
+     * idempotency keys, cursor paging and problem-detail errors. Prefer it to the other clients, which use the
+     * earlier, unversioned endpoints.
+     */
+    org.opencrawling.sdk.v1.PlatformClient platform();
+
     @Override
     default void close() {
         // No-op default close for resources
@@ -92,6 +99,7 @@ public interface OpenCrawlingClient extends AutoCloseable {
         private Duration connectTimeout = Duration.ofSeconds(10);
         private Duration readTimeout = Duration.ofSeconds(30);
         private HttpClient httpClient;
+        private org.opencrawling.sdk.v1.RetryPolicy retryPolicy = org.opencrawling.sdk.v1.RetryPolicy.defaults();
         private ObjectMapper objectMapper;
 
         public Builder baseUrl(String baseUrl) {
@@ -148,6 +156,12 @@ public interface OpenCrawlingClient extends AutoCloseable {
             return this;
         }
 
+        /** When the Platform API client repeats a request; {@link org.opencrawling.sdk.v1.RetryPolicy#defaults()} unless set. */
+        public Builder retryPolicy(org.opencrawling.sdk.v1.RetryPolicy retryPolicy) {
+            this.retryPolicy = retryPolicy;
+            return this;
+        }
+
         public OpenCrawlingClient build() {
             HttpClient client = httpClient != null ? httpClient : HttpClient.newBuilder()
                     .connectTimeout(connectTimeout != null ? connectTimeout : Duration.ofSeconds(10))
@@ -162,7 +176,8 @@ public interface OpenCrawlingClient extends AutoCloseable {
                     apiKey,
                     tokenProvider != null ? tokenProvider : TokenProvider.of(bearerToken),
                     readTimeout,
-                    objectMapper
+                    objectMapper,
+                    retryPolicy
             );
         }
     }

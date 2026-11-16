@@ -164,24 +164,62 @@ public class JobController {
         @ApiResponse(responseCode = "400", description = "Invalid job configuration or unrecognized pipeline mode")
     })
     @PostMapping
-    public synchronized ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
+    public ResponseEntity<?> saveJob(@RequestBody JobDTO job) {
+        return switch (save(job)) {
+            case SaveOutcome.Saved saved -> ResponseEntity.status(201).build();
+            case SaveOutcome.Missing missing -> ResponseEntity.status(201).build(); // unchanged legacy behaviour
+            case SaveOutcome.InvalidMode invalid -> ResponseEntity.badRequest().build();
+            case SaveOutcome.Invalid invalid -> ResponseEntity.badRequest().body(Map.of("error", invalid.reason()));
+            case SaveOutcome.Forbidden forbidden -> ResponseEntity.status(403).build();
+            case SaveOutcome.NotFound notFound -> ResponseEntity.notFound().build();
+        };
+    }
+
+    /** The result of {@link #save}: what the REST endpoints (legacy and {@code /api/v1}) turn into a response. */
+    public sealed interface SaveOutcome {
+        /** Saved; {@code created} when it was a new job. */
+        record Saved(JobDTO job, boolean created) implements SaveOutcome {}
+        /** An update of an id that does not exist; nothing was saved. */
+        record Missing(String id) implements SaveOutcome {}
+        record InvalidMode(String reason) implements SaveOutcome {}
+        record Invalid(String reason) implements SaveOutcome {}
+        record Forbidden() implements SaveOutcome {}
+        record NotFound() implements SaveOutcome {}
+    }
+
+    /**
+     * Creates the job (no id, or id {@code new}) or updates the one with this id, checking the pipeline mode, the
+     * repository connector's validation and the caller's access.
+     */
+    public synchronized SaveOutcome save(JobDTO job) {
+        return save(job, false);
+    }
+
+    /**
+     * @param replace on update, take the optional fields (transformation connector, pipeline mode, crawl spec,
+     *                narrativization) as sent, so a null clears them; otherwise a null keeps the stored value, as the
+     *                admin UI expects
+     */
+    public synchronized SaveOutcome save(JobDTO job, boolean replace) {
         log.info("Saving job: {}", job.name());
         try {
             PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
             job = job.withPipelineMode(requestedMode != null ? requestedMode.externalName() : null);
         } catch (IllegalArgumentException e) {
             log.warn("Rejecting job '{}': {}", job.name(), e.getMessage());
-            return ResponseEntity.badRequest().build();
+            return new SaveOutcome.InvalidMode(e.getMessage());
         }
         String validationError = validate(job);
         if (validationError != null) {
             log.warn("Rejecting job '{}': {}", job.name(), validationError);
-            return ResponseEntity.badRequest().body(Map.of("error", validationError));
+            return new SaveOutcome.Invalid(validationError);
         }
+        JobDTO saved = null;
+        boolean created = false;
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
             if (authorization != null && !authorization.canCreateJobs()) {
                 log.warn("Rejecting job '{}': the caller may not create jobs.", job.name());
-                return ResponseEntity.status(403).build();
+                return new SaveOutcome.Forbidden();
             }
             // Timestamp-based id, moved forward while taken: jobs saved in the same millisecond used to share one.
             String newId = newJobId();
@@ -203,20 +241,22 @@ public class JobController {
                 accessForNewJob(job.access())
             );
             jobs.add(newJob);
+            saved = newJob;
+            created = true;
         } else {
             // Edit/Update existing job
             JobDTO target = findJobById(job.id());
             if (target != null && !allowed(target, JobAction.READ)) {
-                return ResponseEntity.notFound().build();
+                return new SaveOutcome.NotFound();
             }
             if (target != null && !allowed(target, JobAction.MANAGE)) {
                 log.warn("Rejecting update of job {}: only its owner or an admin may edit it.", target.id());
-                return ResponseEntity.status(403).build();
+                return new SaveOutcome.Forbidden();
             }
             for (int i = 0; i < jobs.size(); i++) {
                 if (jobs.get(i).id().equals(job.id())) {
                     JobDTO existing = jobs.get(i);
-                    jobs.set(i, new JobDTO(
+                    saved = new JobDTO(
                         job.id(),
                         job.name(),
                         job.repositoryConnector(),
@@ -227,24 +267,26 @@ public class JobController {
                         job.currentStage() != null ? job.currentStage() : existing.currentStage(),
                         existing.documents(),
                         existing.lastRun(),
-                        job.transformationConnector() != null ? job.transformationConnector() : existing.transformationConnector(),
-                        job.narrativization() != null ? job.narrativization() : existing.narrativization(),
-                        job.pipelineMode() != null ? job.pipelineMode() : existing.pipelineMode(),
-                        job.crawlSpec() != null ? job.crawlSpec() : existing.crawlSpec(),
+                        job.transformationConnector() != null ? job.transformationConnector()
+                                : replace ? "Ollama_Embedding_Default" : existing.transformationConnector(),
+                        job.narrativization() != null || replace ? job.narrativization() : existing.narrativization(),
+                        job.pipelineMode() != null || replace ? job.pipelineMode() : existing.pipelineMode(),
+                        job.crawlSpec() != null || replace ? job.crawlSpec() : existing.crawlSpec(),
                         accessForUpdate(existing.access(), job.access())
-                    ));
+                    );
+                    jobs.set(i, saved);
                     break;
                 }
             }
         }
         PersistenceHelper.save("jobs.json", jobs);
-        return ResponseEntity.status(201).build();
+        return saved == null ? new SaveOutcome.Missing(job.id()) : new SaveOutcome.Saved(saved, created);
     }
 
     @Operation(summary = "Delete a pipeline job", description = "Removes a pipeline job definition by its identifier.")
     @ApiResponse(responseCode = "200", description = "Job successfully deleted")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteJob(
+    public synchronized ResponseEntity<Void> deleteJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
         log.info("Deleting job: {}", id);
         if (authorizationOn()) {
@@ -274,6 +316,33 @@ public class JobController {
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id,
             @Parameter(description = "Optional id that ties this run to the caller's own request or workflow; recorded in the run's ledger")
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        return switch (start(id, correlationId)) {
+            case StartOutcome.Started started -> ResponseEntity.ok().build();
+            case StartOutcome.NotFound notFound -> ResponseEntity.notFound().build();
+            case StartOutcome.Forbidden forbidden -> ResponseEntity.status(403).build();
+            case StartOutcome.AlreadyRunning running -> ResponseEntity.status(409).build();
+            case StartOutcome.Rejected rejected -> ResponseEntity.status(409).build();
+            case StartOutcome.LimitReached limit -> ResponseEntity.status(429).build();
+        };
+    }
+
+    /** The result of {@link #start}. */
+    public sealed interface StartOutcome {
+        record Started(String jobId, String executionId) implements StartOutcome {}
+        record NotFound() implements StartOutcome {}
+        record Forbidden() implements StartOutcome {}
+        record AlreadyRunning(String executionId) implements StartOutcome {}
+        /** The job's connectors or settings cannot be used; {@code reason} says why. */
+        record Rejected(String reason) implements StartOutcome {}
+        /** A cap on runs at the same time is reached; {@code perCaller} for the caller's own cap. */
+        record LimitReached(int limit, boolean perCaller) implements StartOutcome {}
+    }
+
+    /**
+     * Starts the job on a virtual thread. Must be called on the request thread: the caller's identity is taken from
+     * it for the run's provenance.
+     */
+    public StartOutcome start(String id, String correlationId) {
         log.info("Starting job {}", id);
         // Taken here, on the request thread: the run's own thread has no security context.
         final ExecutionProvenance provenance = provenance(correlationId);
@@ -288,10 +357,10 @@ public class JobController {
             
         if (activeJob == null || !allowed(activeJob, JobAction.READ)) {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
-            return ResponseEntity.notFound().build();
+            return new StartOutcome.NotFound();
         } else if (!allowed(activeJob, JobAction.EXECUTE)) {
             log.warn("Job {} not started: the caller may see it but not run it.", activeJob.id());
-            return ResponseEntity.status(403).build();
+            return new StartOutcome.Forbidden();
         } else {
             log.info("Found activeJob: {} [path: {}, outputConnector: {}]", activeJob.name(), activeJob.path(), activeJob.outputConnector());
             String executionId = "exec-" + java.util.UUID.randomUUID().toString().substring(0, 8);
@@ -299,15 +368,15 @@ public class JobController {
             switch (runRegistry.reserve(activeJob.id(), executionId, callerKey(provenance))) {
                 case JobRunRegistry.AlreadyRunning running -> {
                     log.warn("Job {} is already running [Exec ID: {}]; start rejected.", activeJob.id(), running.run().executionId());
-                    return ResponseEntity.status(409).build();
+                    return new StartOutcome.AlreadyRunning(running.run().executionId());
                 }
                 case JobRunRegistry.LimitReached limit -> {
                     log.warn("Job {} not started: {} runs are already in progress (opencrawling.jobs.max-concurrent-runs).", activeJob.id(), limit.limit());
-                    return ResponseEntity.status(429).build();
+                    return new StartOutcome.LimitReached(limit.limit(), false);
                 }
                 case JobRunRegistry.CallerLimitReached callerLimit -> {
                     log.warn("Job {} not started: its caller already has {} runs in progress (opencrawling.jobs.max-concurrent-runs-per-caller).", activeJob.id(), callerLimit.limit());
-                    return ResponseEntity.status(429).build();
+                    return new StartOutcome.LimitReached(callerLimit.limit(), true);
                 }
                 case JobRunRegistry.Reserved reserved -> reservation = reserved.reservation();
             }
@@ -336,7 +405,7 @@ public class JobController {
                         reservation.release();
                         log.error("Job {} rejected: invalid configuration: {}", id, e.getMessage(), e);
                         updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
-                        return ResponseEntity.status(409).build();
+                        return new StartOutcome.Rejected("Invalid configuration: " + e.getMessage());
                     }
                 } else {
                     resolvedConnector = connectorFactory.repository(connConfig);
@@ -346,7 +415,7 @@ public class JobController {
                 reservation.release();
                 log.error("Job {} rejected: {}", id, e.getMessage(), e);
                 updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
-                return ResponseEntity.status(409).build();
+                return new StartOutcome.Rejected(e.getMessage());
             }
 
             // Fail fast: the Apache Ozone and AWS S3 output connectors are dedicated to Migration Mode only
@@ -356,7 +425,7 @@ public class JobController {
                 String connectorName = resolvedOutputConnector.getClass().getSimpleName();
                 log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
                 updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
-                return ResponseEntity.status(409).build();
+                return new StartOutcome.Rejected(connectorName + " requires pipeline mode 'migration'");
             }
 
             // With pre-embedding governance on, nothing may be embedded without passing the gate.
@@ -365,7 +434,7 @@ public class JobController {
                 log.error("Job {} rejected: {}", id, JobOrchestrator.GOVERNANCE_BYPASS);
                 updateJobStatusAndStage(id, "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
                         getActualDbDocCount());
-                return ResponseEntity.status(409).build();
+                return new StartOutcome.Rejected("Governance is on: run RAG jobs on the decoupled pipeline");
             }
             
             final RepositoryConnector finalConnector = resolvedConnector;
@@ -398,9 +467,8 @@ public class JobController {
                     updateJobStatusAndStage(id, "Error", "Failed", docCount);
                 }
             });
+            return new StartOutcome.Started(activeJob.id(), executionId);
         }
-
-        return ResponseEntity.ok().build();
     }
 
     @Operation(summary = "Stop a pipeline job", description = "Stops a running pipeline job: the crawl ends at the latest before its next document, "
@@ -427,6 +495,23 @@ public class JobController {
         }
         updateJobStatus(id, "Finished");
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Stops one run of a job, with the same access rules as {@link #stopJob}: {@code 202} when the run was asked to
+     * stop, {@code 404} when the job is not visible or that run is not running here (it ended, or another run of the
+     * job replaced it), {@code 403} when the caller may not run the job.
+     */
+    public ResponseEntity<Void> stopRun(String jobId, String executionId) {
+        JobDTO job = findJob(jobId);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
+        }
+        return runRegistry.stopExecution(job.id(), executionId)
+                ? ResponseEntity.accepted().build() : ResponseEntity.notFound().build();
     }
 
     @Operation(summary = "List running jobs", description = "The job runs in progress in this runtime, oldest first.")
@@ -561,7 +646,9 @@ public class JobController {
         return globalProperties != null ? globalProperties.getMode() : PipelineMode.RAG;
     }
 
-    private void updateJobStatus(String id, String status) {
+    // Every change of the job list holds this controller's lock, the one the Platform API takes around a conditional
+    // change (If-Match), so no writer can revert a saved definition or overwrite another job.
+    private synchronized void updateJobStatus(String id, String status) {
         String cleanId = id != null ? id.trim() : "";
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
@@ -605,7 +692,7 @@ public class JobController {
         PersistenceHelper.save("jobs.json", jobs);
     }
 
-    private void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
+    private synchronized void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
             if (job.id().equals(id)) {
@@ -632,7 +719,7 @@ public class JobController {
         PersistenceHelper.save("jobs.json", jobs);
     }
 
-    public void recordPushExecution(String id, long pushedDocs, boolean success) {
+    public synchronized void recordPushExecution(String id, long pushedDocs, boolean success) {
         if (id == null || id.isBlank()) return;
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);

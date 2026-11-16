@@ -3,6 +3,8 @@
 * **[Home](Home)**
 * **[Architecture](Architecture)**
 * **[Configuration Guide](Configuration-Guide)**
+* **[Platform API](Platform-API)**
+* **[Platform API: Traceability](Platform-API-Traceability)**
 * **[Lakehouse Audit Reporting & Ledger](Lakehouse-Audit-Reporting-and-Ledger)**
 * **[Model Context Protocol](Model-Context-Protocol)**
 * **[Web Crawler Specification](Web-Crawler-Specification)**

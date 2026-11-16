@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SystemClientTest {
 
     private static HttpServer server;
+    private static final java.util.concurrent.atomic.AtomicReference<String> POSTED = new java.util.concurrent.atomic.AtomicReference<>();
     private static OpenCrawlingClient client;
 
     @BeforeAll
@@ -61,10 +62,14 @@ class SystemClientTest {
                           "vectorDimensions": 1024,
                           "chunkerType": "TokenTextSplitter",
                           "chunkSize": 800,
-                          "chunkOverlap": 100
+                          "chunkOverlap": 100,
+                          "tikaEngine": "PipesForkParser (Process-Isolated)",
+                          "tikaTimeoutMs": 45000,
+                          "claimCheckStore": "ozone"
                         }
                         """;
                 } else {
+                    POSTED.set(new String(exchange.getRequestBody().readAllBytes()));
                     status = 200;
                     response = "";
                 }
@@ -109,5 +114,10 @@ class SystemClientTest {
         assertThat(settings.ollamaModel()).isEqualTo("mxbai-embed-large");
 
         client.system().updateSettings(SystemSettings.builder().vectorDimensions(1536).build());
+        String posted = POSTED.get();
+        assertThat(posted).as("the model's fields are changed").contains("\"vectorDimensions\":1536");
+        assertThat(posted).as("settings the model does not have are kept, not reset")
+                .contains("\"tikaEngine\":\"PipesForkParser (Process-Isolated)\"", "\"tikaTimeoutMs\":45000",
+                        "\"claimCheckStore\":\"ozone\"");
     }
 }

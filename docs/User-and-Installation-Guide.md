@@ -381,6 +381,8 @@ The bundled CLI wrapper in `bin/oc` allows administrators to monitor and orchest
 ./bin/oc report list
 ```
 
+The CLI talks to the Platform API (`/api/v1`); see [Platform API → CLI](Platform-API.md#cli) for what changed, such as `oc connector delete --force`.
+
 Alternatively, if running the standalone fat JAR without extracting the ZIP distribution:
 
 ```bash

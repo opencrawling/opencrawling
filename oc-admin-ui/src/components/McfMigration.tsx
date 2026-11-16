@@ -39,6 +39,7 @@ import {
 import {
   mcfMigrationApi,
   jobApi,
+  problemMessage,
   type McfMigrationResponse,
   type McfConnectionSummary,
   type McfJobSummary,
@@ -208,8 +209,8 @@ export default function McfMigration() {
       setSelectedConnections(new Set(res.data.connections.filter((c) => c.supported).map((c) => c.name)))
       setSelectedJobs(new Set(res.data.jobs.filter((j) => j.supported).map((j) => j.name)))
       setStep('review')
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to reach ManifoldCF.')
+    } catch (err) {
+      setError(problemMessage(err, 'Failed to reach ManifoldCF.'))
       setStep('configure')
     }
   }
@@ -266,8 +267,8 @@ export default function McfMigration() {
       })
       setApplyResult(res.data)
       setStep('results')
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to apply migration.')
+    } catch (err) {
+      setError(problemMessage(err, 'Failed to apply migration.'))
       setStep('review')
     }
   }

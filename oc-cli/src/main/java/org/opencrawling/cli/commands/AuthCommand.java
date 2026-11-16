@@ -138,7 +138,7 @@ public class AuthCommand implements Runnable {
             String server = CliConfigService.serverUrl(serverUrl);
             CredentialStore.Login login = CliConfigService.credentials().find(server);
             try (OpenCrawlingClient client = CliConfigService.createClient(server, null, null)) {
-                CallerInfo me = client.auth().me();
+                CallerInfo me = client.platform().me();
                 if (!me.authenticated()) {
                     System.out.println("Not signed in to " + server + " (it accepts requests without a token).");
                     return login == null ? 0 : 1;
@@ -205,7 +205,7 @@ public class AuthCommand implements Runnable {
 
     private static String whoAmI(String server) {
         try (OpenCrawlingClient client = CliConfigService.createClient(server, null, null)) {
-            CallerInfo me = client.auth().me();
+            CallerInfo me = client.platform().me();
             return me != null && me.authenticated() ? me.principal() : null;
         } catch (Exception e) {
             return null;

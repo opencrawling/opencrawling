@@ -45,6 +45,8 @@ public class HttpTransport {
     private final TokenProvider tokenProvider;
     private final Duration requestTimeout;
     private final ObjectMapper objectMapper;
+    /** Whether the deprecation of a legacy endpoint was already reported: once per client is enough. */
+    private final java.util.concurrent.atomic.AtomicBoolean deprecationReported = new java.util.concurrent.atomic.AtomicBoolean();
 
     public HttpTransport(
             HttpClient httpClient,
@@ -143,6 +145,110 @@ public class HttpTransport {
         }
     }
 
+    /** A response as it came: status, headers (names in lower case) and body. */
+    public record RawResponse(int status, java.util.Map<String, java.util.List<String>> headers, byte[] body) {
+        /** The first value of a header, or null. */
+        public String header(String name) {
+            java.util.List<String> values = headers.get(name.toLowerCase(java.util.Locale.ROOT));
+            return values == null || values.isEmpty() ? null : values.get(0);
+        }
+    }
+
+    /**
+     * Sends a request and returns whatever comes back, without treating error statuses as exceptions, so callers can
+     * read status codes and headers such as {@code ETag} and {@code Location}. Sends the token like every request,
+     * and repeats once after a {@code 401} if the provider could get a new one.
+     *
+     * @param headers     extra request headers; null values are left out
+     * @param body        the request body, or null
+     * @param contentType the body's media type, or null when there is no body
+     * @throws OpenCrawlingNetworkException when the runtime cannot be reached
+     */
+    public RawResponse exchange(String method, String path, java.util.Map<String, String> headers, byte[] body,
+                                String contentType) {
+        String fullUrl = path.startsWith("http://") || path.startsWith("https://")
+                ? path
+                : baseUrl + (path.startsWith("/") ? path : "/" + path);
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(fullUrl)).timeout(requestTimeout);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("X-API-Key", apiKey);
+        }
+        if (headers != null) {
+            headers.forEach((name, value) -> {
+                if (value != null) {
+                    builder.header(name, value);
+                }
+            });
+        }
+        if (body != null && contentType != null) {
+            builder.header("Content-Type", contentType);
+        }
+        HttpRequest.BodyPublisher publisher = body != null
+                ? HttpRequest.BodyPublishers.ofByteArray(body)
+                : HttpRequest.BodyPublishers.noBody();
+        builder.method(method.toUpperCase(java.util.Locale.ROOT), publisher);
+        try {
+            log.debug("Executing HTTP {} to {}", method, fullUrl);
+            HttpResponse<byte[]> response = sendWithToken(builder, HttpResponse.BodyHandlers.ofByteArray());
+            log.debug("Received HTTP {} from {}", response.statusCode(), fullUrl);
+            java.util.Map<String, java.util.List<String>> lowerCase = new java.util.LinkedHashMap<>();
+            response.headers().map().forEach((name, values) ->
+                    lowerCase.put(name.toLowerCase(java.util.Locale.ROOT), java.util.List.copyOf(values)));
+            return new RawResponse(response.statusCode(), lowerCase,
+                    response.body() != null ? response.body() : new byte[0]);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new OpenCrawlingNetworkException("Network error while communicating with OpenCrawling endpoint: " + fullUrl, e);
+        }
+    }
+
+    /** A response whose body is read as it arrives; close it when done. */
+    public record StreamResponse(int status, java.util.Map<String, java.util.List<String>> headers,
+                                 java.io.InputStream body) implements AutoCloseable {
+        public String header(String name) {
+            java.util.List<String> values = headers.get(name.toLowerCase(java.util.Locale.ROOT));
+            return values == null || values.isEmpty() ? null : values.get(0);
+        }
+
+        @Override
+        public void close() throws IOException {
+            body.close();
+        }
+    }
+
+    /** Sends a request without a body and returns the answer's body as a stream, for large files. */
+    public StreamResponse openStream(String method, String path, java.util.Map<String, String> headers) {
+        String fullUrl = path.startsWith("http://") || path.startsWith("https://")
+                ? path
+                : baseUrl + (path.startsWith("/") ? path : "/" + path);
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(fullUrl)).timeout(requestTimeout);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("X-API-Key", apiKey);
+        }
+        if (headers != null) {
+            headers.forEach((name, value) -> {
+                if (value != null) {
+                    builder.header(name, value);
+                }
+            });
+        }
+        builder.method(method.toUpperCase(java.util.Locale.ROOT), HttpRequest.BodyPublishers.noBody());
+        try {
+            HttpResponse<java.io.InputStream> response = sendWithToken(builder, HttpResponse.BodyHandlers.ofInputStream());
+            java.util.Map<String, java.util.List<String>> lowerCase = new java.util.LinkedHashMap<>();
+            response.headers().map().forEach((name, values) ->
+                    lowerCase.put(name.toLowerCase(java.util.Locale.ROOT), java.util.List.copyOf(values)));
+            return new StreamResponse(response.statusCode(), lowerCase, response.body());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new OpenCrawlingNetworkException("Network error while communicating with OpenCrawling endpoint: " + fullUrl, e);
+        }
+    }
+
     /** Sends with the current token; after a {@code 401}, once more with a new one if the provider could get it. */
     private <T> HttpResponse<T> sendWithToken(HttpRequest.Builder builder, HttpResponse.BodyHandler<T> handler)
             throws IOException, InterruptedException {
@@ -151,7 +257,21 @@ public class HttpTransport {
             log.debug("Token refused; retrying once with a new one");
             response = httpClient.send(withToken(builder).build(), handler);
         }
+        reportDeprecation(response);
         return response;
+    }
+
+    /** Warns once when the runtime says an endpoint this client uses is deprecated, naming its successor. */
+    private void reportDeprecation(HttpResponse<?> response) {
+        if (response.headers().firstValue("Deprecation").isEmpty() || !deprecationReported.compareAndSet(false, true)) {
+            return;
+        }
+        String successor = response.headers().allValues("Link").stream()
+                .filter(link -> link.contains("rel=\"successor-version\""))
+                .map(link -> link.substring(link.indexOf('<') + 1, Math.max(link.indexOf('<') + 1, link.indexOf('>'))))
+                .findFirst().orElse("the Platform API (/api/v1)");
+        log.warn("OpenCrawling: {} is deprecated; its successor is {}. Use OpenCrawlingClient.platform(), the Platform "
+                + "API client.", response.uri().getPath(), successor);
     }
 
     private HttpRequest.Builder withToken(HttpRequest.Builder builder) {

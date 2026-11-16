@@ -33,6 +33,8 @@ import org.opencrawling.migrator.mcf.report.PlanSummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -59,9 +61,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * <p>{@code /apply} deliberately re-runs extract+plan itself rather than requiring the frontend to
  * round-trip a previously-fetched plan: avoids re-serializing the engine's internal result types
  * across an HTTP boundary just to send them back, and avoids acting on a plan that's gone stale
- * since it was fetched. Its {@link OpenCrawlingWriter} points at this very server (self-loopback
- * over HTTP to {@code /api/connectors} / {@code /api/jobs}) — the same code path the standalone
- * CLI takes against a remote OpenCrawling instance, just addressed at itself.
+ * since it was fetched. Inside the runtime it writes in-process through {@link ConnectorController}
+ * and {@link JobController} ({@link InProcessMigrationWriter}), as the calling admin, so it works
+ * with {@code protect-api} on and behind any port or context path. Without those controllers it
+ * falls back to an HTTP {@link OpenCrawlingWriter} addressed at this server.
  *
  * <p>{@code selectedConnections}/{@code selectedJobs} on {@code /apply} reuse the same
  * {@code onlyConnections}/{@code onlyJobs} scoping the CLI's {@code --only-connections}/
@@ -82,6 +85,15 @@ public class McfMigrationController {
 
     @Value("${server.port:8080}")
     private int serverPort;
+
+    /** Present inside the runtime: the migration is then written in-process, as the calling admin. */
+    @Autowired(required = false)
+    @Lazy
+    private ConnectorController connectorController;
+
+    @Autowired(required = false)
+    @Lazy
+    private JobController jobController;
 
     @Operation(summary = "Plan migration from ManifoldCF", description = "Connects to a running Apache ManifoldCF instance, extracts connector and job configurations, and produces a migration preview report.")
     @ApiResponse(responseCode = "200", description = "Migration plan preview generated")
@@ -108,8 +120,9 @@ public class McfMigrationController {
         MigrationOptions options = toOptions(request, true);
         ManifoldCFClient mcfClient = new ManifoldCFClient(
             request.mcfUrl(), request.mcfUsername(), request.mcfPassword(), TIMEOUT_SECONDS);
-        OpenCrawlingWriter writer = new OpenCrawlingWriter(
-            "http://localhost:" + serverPort, null, null, TIMEOUT_SECONDS);
+        OpenCrawlingWriter writer = connectorController != null && jobController != null
+            ? new InProcessMigrationWriter(connectorController, jobController)
+            : new OpenCrawlingWriter("http://localhost:" + serverPort, null, null, TIMEOUT_SECONDS);
         MigrationEngine engine = new MigrationEngine(mcfClient, new ConnectorMapperRegistry(), writer, options);
 
         MigrationSnapshot snapshot = engine.extract();

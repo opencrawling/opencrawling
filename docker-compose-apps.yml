@@ -27,6 +27,7 @@ services:
       - "9096:9096"
     environment:
       - SPRING_DATA_REDIS_HOST=redis-stack
+      - OPENCRAWLING_API_IDEMPOTENCY_STORE=redis
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
       - SPRING_AI_VECTORSTORE_PGVECTOR_URL=jdbc:postgresql://postgres-vector:5432/opencrawling

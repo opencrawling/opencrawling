@@ -27,6 +27,7 @@ import {
   Wand2,
   ArrowRightLeft,
   FileSpreadsheet,
+  Terminal,
   LogIn,
   LogOut,
   ShieldAlert
@@ -38,11 +39,12 @@ import Settings from './components/Settings'
 import Narrativization from './components/Narrativization'
 import McfMigration from './components/McfMigration'
 import ReportDashboard from './components/ReportDashboard'
+import ApiConsole from './components/ApiConsole'
 import { statusApi } from './lib/api'
 import { useAuth } from './lib/useAuth'
 import { initials, type Me } from './lib/auth'
 
-type View = 'dashboard' | 'jobs' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings'
+type View = 'dashboard' | 'jobs' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings' | 'api-console'
 
 /** Which views a caller may open; the runtime enforces the same rules on the API. */
 function canOpen(view: View, me: Me): boolean {
@@ -178,6 +180,7 @@ function Console({ me }: { me: Me }) {
     { id: 'logs',            label: 'Real-time Logs',         icon: Activity },
     { id: 'narrativization', label: 'Narrativization',        icon: Wand2 },
     { id: 'settings',        label: 'Settings',                icon: SettingsIcon },
+    { id: 'api-console',     label: 'API Console',             icon: Terminal },
   ] as { id: View; label: string; icon: typeof LayoutDashboard }[]).filter(item => canOpen(item.id, me))
 
   return (
@@ -234,7 +237,7 @@ function Console({ me }: { me: Me }) {
             <span>Admin</span>
             <ChevronRight className="w-4 h-4" />
             <span className="text-foreground font-medium capitalize">
-              {activeView === 'mcf-migration' ? 'ManifoldCF Migration' : activeView === 'reports' ? 'Reports & Audit Ledger' : activeView}
+              {activeView === 'mcf-migration' ? 'ManifoldCF Migration' : activeView === 'reports' ? 'Reports & Audit Ledger' : activeView === 'api-console' ? 'API Console' : activeView}
             </span>
           </div>
           
@@ -271,6 +274,7 @@ function Console({ me }: { me: Me }) {
           {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
           {activeView === 'connectors' && canOpen('connectors', me) && <ConnectorForm />}
           {activeView === 'reports' && <ReportDashboard />}
+          {activeView === 'api-console' && <ApiConsole />}
           {activeView === 'mcf-migration' && canOpen('mcf-migration', me) && <McfMigration />}
           {activeView === 'settings' && canOpen('settings', me) && <Settings />}
           {activeView === 'narrativization' && canOpen('narrativization', me) && <Narrativization />}

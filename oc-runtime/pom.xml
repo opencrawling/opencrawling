@@ -387,6 +387,13 @@
             <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The Java SDK: oc-mcf-migrator brings it already (InProcessMigrationWriter uses its models); declared
+             so PlatformApiV1SdkTest can test the SDK's Platform API client against this runtime. -->
+        <dependency>
+            <groupId>org.opencrawling</groupId>
+            <artifactId>oc-java-client-sdk</artifactId>
+            <version>${oc-java-client-sdk.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>openfga</artifactId>
