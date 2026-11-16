@@ -19,7 +19,7 @@ Every document OpenCrawling retrieves for a caller (through the MCP tools, and s
                          only readable candidates are returned
 ```
 
-- All nine store backends (pgvector, Qdrant, Milvus, OpenSearch 2/3, Solr, Vespa, Luxir, OpenArch) hand their candidates to one component, the `DocumentAccessGate`. No backend makes its own access decision.
+- All 11 store backends (pgvector, Qdrant, Milvus, OpenSearch 2/3, Elasticsearch 8/9, Solr, Vespa, Luxir, OpenArch, and Apache Iceberg `IcebergMcpSearchBackend`) plus `IcebergMcpTools` hand their candidates to one component, the `DocumentAccessGate`. No backend makes its own access decision.
 - The gate asks the configured `AuthorizationProvider` about the whole page of candidates at once (one round trip for a remote engine).
 - **Fail closed.** A document with no permission data is denied. If the provider cannot decide (engine down, timeout, malformed answer), the whole request fails with an error. It never falls back to weaker rules.
 
