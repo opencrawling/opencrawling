@@ -53,6 +53,7 @@ COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
 COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
 COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
 COPY oc-doxis-client/pom.xml oc-doxis-client/
+COPY oc-doxis-output-connector/pom.xml oc-doxis-output-connector/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
 COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
@@ -106,6 +107,7 @@ COPY oc-vespa-output-connector/vespa-app/ /app/oc-vespa-output-connector/vespa-a
 COPY oc-solr-output-connector/src/ /app/oc-solr-output-connector/src/
 COPY oc-luxir-output-connector/src/ /app/oc-luxir-output-connector/src/
 COPY oc-doxis-client/src/ /app/oc-doxis-client/src/
+COPY oc-doxis-output-connector/src/ /app/oc-doxis-output-connector/src/
 COPY oc-seatunnel-output-connector/src/ /app/oc-seatunnel-output-connector/src/
 COPY oc-ozone-output-connector/src/ /app/oc-ozone-output-connector/src/
 COPY oc-s3-output-connector/src/ /app/oc-s3-output-connector/src/

@@ -58,6 +58,7 @@ COPY oc-vespa-output-connector/pom.xml oc-vespa-output-connector/
 COPY oc-solr-output-connector/pom.xml oc-solr-output-connector/
 COPY oc-luxir-output-connector/pom.xml oc-luxir-output-connector/
 COPY oc-doxis-client/pom.xml oc-doxis-client/
+COPY oc-doxis-output-connector/pom.xml oc-doxis-output-connector/
 COPY oc-seatunnel-output-connector/pom.xml oc-seatunnel-output-connector/
 COPY oc-ozone-output-connector/pom.xml oc-ozone-output-connector/
 COPY oc-s3-output-connector/pom.xml oc-s3-output-connector/
