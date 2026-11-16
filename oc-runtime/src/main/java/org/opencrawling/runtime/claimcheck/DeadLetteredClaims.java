@@ -72,13 +72,17 @@ public class DeadLetteredClaims {
      *                   nothing, since any claim could still be referenced
      */
     public Set<String> referencedClaims() throws Exception {
+        // One budget for the whole read: every blocking call below gets only what is left of it, close() included.
+        long deadline = System.nanoTime() + timeout.toNanos();
         Map<String, Object> config = Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
                 ConsumerConfig.CLIENT_ID_CONFIG, "opencrawling-claim-gc",
-                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-        try (KafkaConsumer<byte[], byte[]> consumer =
-                     new KafkaConsumer<>(config, new ByteArrayDeserializer(), new ByteArrayDeserializer())) {
-            List<PartitionInfo> infos = consumer.partitionsFor(TOPIC, timeout);
+                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false,
+                ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) Math.min(Integer.MAX_VALUE, timeout.toMillis()));
+        KafkaConsumer<byte[], byte[]> consumer =
+                new KafkaConsumer<>(config, new ByteArrayDeserializer(), new ByteArrayDeserializer());
+        try {
+            List<PartitionInfo> infos = consumer.partitionsFor(TOPIC, remaining(deadline));
             if (infos == null || infos.isEmpty()) {
                 return Set.of();
             }
@@ -87,15 +91,12 @@ public class DeadLetteredClaims {
                     .toList();
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
-            Map<TopicPartition, Long> end = consumer.endOffsets(partitions, timeout);
+            Map<TopicPartition, Long> end = consumer.endOffsets(partitions, remaining(deadline));
 
             Set<String> claims = new HashSet<>();
-            long deadline = System.nanoTime() + timeout.toNanos();
-            while (!reachedEnd(consumer, end)) {
-                if (System.nanoTime() > deadline) {
-                    throw new TimeoutException("Reading " + TOPIC + " did not reach its end within " + timeout);
-                }
-                for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofMillis(500))) {
+            while (!reachedEnd(consumer, end, deadline)) {
+                Duration poll = remaining(deadline);
+                for (ConsumerRecord<byte[], byte[]> record : consumer.poll(poll.compareTo(POLL) < 0 ? poll : POLL)) {
                     String uri = claimUri(record.value());
                     if (uri != null) {
                         claims.add(normalize(uri));
@@ -103,7 +104,22 @@ public class DeadLetteredClaims {
                 }
             }
             return claims;
+        } catch (org.apache.kafka.common.errors.TimeoutException e) {
+            throw new TimeoutException("Reading " + TOPIC + " did not complete within " + timeout + ": " + e.getMessage());
+        } finally {
+            consumer.close(Duration.ofNanos(Math.max(0, deadline - System.nanoTime())));
         }
+    }
+
+    private static final Duration POLL = Duration.ofMillis(500);
+
+    /** What is left of the read's budget; a {@link TimeoutException} once it is spent. */
+    private Duration remaining(long deadline) throws TimeoutException {
+        long left = deadline - System.nanoTime();
+        if (left <= 0) {
+            throw new TimeoutException("Reading " + TOPIC + " did not complete within " + timeout);
+        }
+        return Duration.ofNanos(left);
     }
 
     /** Keeps the claims whose URI is one of {@code referenced} (as {@link #referencedClaims} returns them). */
@@ -111,9 +127,10 @@ public class DeadLetteredClaims {
         return uri -> uri != null && referenced.contains(normalize(uri.toString()));
     }
 
-    private static boolean reachedEnd(KafkaConsumer<?, ?> consumer, Map<TopicPartition, Long> end) {
+    private boolean reachedEnd(KafkaConsumer<?, ?> consumer, Map<TopicPartition, Long> end, long deadline)
+            throws TimeoutException {
         for (Map.Entry<TopicPartition, Long> partition : end.entrySet()) {
-            if (consumer.position(partition.getKey()) < partition.getValue()) {
+            if (consumer.position(partition.getKey(), remaining(deadline)) < partition.getValue()) {
                 return false;
             }
         }

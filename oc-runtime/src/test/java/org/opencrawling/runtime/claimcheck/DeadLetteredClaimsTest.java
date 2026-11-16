@@ -22,10 +22,13 @@ import java.io.File;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DeadLetteredClaimsTest {
 
@@ -58,6 +61,17 @@ class DeadLetteredClaimsTest {
         assertThat(retain.test(claim.toPath().toUri())).isTrue();
         assertThat(retain.test(claim.toURI())).isTrue();
         assertThat(retain.test(tempDir.resolve("other.pdf").toUri())).isFalse();
+    }
+
+    @Test
+    void anUnreachableBrokerFailsTheReadWithinItsBudget() {
+        // Nothing listens on port 1: every call keeps retrying until its timeout. They share one budget.
+        DeadLetteredClaims deadLetters = new DeadLetteredClaims("127.0.0.1:1", 1_000);
+        long start = System.nanoTime();
+
+        assertThatThrownBy(deadLetters::referencedClaims).isInstanceOf(TimeoutException.class);
+
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(4));
     }
 
     @Test
