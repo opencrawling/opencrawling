@@ -188,7 +188,7 @@ Each finding was checked against the code first; all of the ones below held up.
 | SDK: a timed-out POST's retry failed on `409 idempotency-in-progress`; defaults shared one key across calls; uploads got a key | That 409 is retried; defaults keep only ids; uploads never get a key; a longer `Retry-After` than allowed gives up | SDK `PlatformClientTest` |
 | Masking gaps: `sessionTicket`, `password=` parameters, `@` in passwords, ports and TLS switches, `className` changes, edited masked values | All covered; `changeLogToken` is no longer treated as a secret | Unit masking tests |
 | Minor: exact successors for dynamic-job actions and the report query; keyed-request size limit; reader-based bodies; case of `multipart`; dynamic-job order; lock-order notes; duplicated settings validation; export to a partial file | All fixed | Unit; Core; SDK |
-| The guide said secrets are never returned, but the deprecated `GET /api/connectors` returns them to admins | The legacy endpoint is unchanged (compatibility); the guide says so | Guide |
+| The guide said secrets are never returned, but the deprecated `GET /api/connectors` returns them to admins | The legacy reads mask secrets too; the legacy save and check accept the mask back under the same address rule. The runtime's own callers use `ConnectorController.connectorsWithSecrets`, `save` and `check` | `PlatformApiV1HttpTest`; `JobVisibilityTest` |
 
 **Deferred, with reasons:**
 - **`RateLimit` headers and `429` on writes:** the runtime has no rate limiter yet, so there are no limits to advertise.

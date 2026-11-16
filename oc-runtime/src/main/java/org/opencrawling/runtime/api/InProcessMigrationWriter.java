@@ -38,7 +38,7 @@ class InProcessMigrationWriter extends OpenCrawlingWriter {
 
     @Override
     public void upsertConnector(ConnectorRequest request) {
-        ResponseEntity<Void> result = connectors.createConnector(new ConnectorController.ConnectorDTO(request.name(),
+        ResponseEntity<Void> result = connectors.save(new ConnectorController.ConnectorDTO(request.name(),
                 request.description(), request.type(), request.className(), request.maxConnections(), request.configuration()));
         if (result.getStatusCode().isError()) {
             throw new ManifoldCFApiException("Saving connector '" + request.name() + "' failed: HTTP " + result.getStatusCode().value());

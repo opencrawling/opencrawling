@@ -284,7 +284,7 @@ public class JobsV1Controller {
     }
 
     /**
-     * Called holding the jobs' lock. Lock order: it reads connectors without their lock (getAllConnectors takes none).
+     * Called holding the jobs' lock. Lock order: it reads connectors without their lock (connectorsWithSecrets takes none).
      * Never call a synchronized ConnectorController method under the jobs' lock; ConnectorsV1Controller holds the
      * connectors' lock and reads jobs.
      */
@@ -310,7 +310,7 @@ public class JobsV1Controller {
 
     /** Every connector the job names must exist and be of the right category. */
     private void checkConnectors(JobInput input) {
-        List<ConnectorController.ConnectorDTO> configured = connectors.getAllConnectors();
+        List<ConnectorController.ConnectorDTO> configured = connectors.connectorsWithSecrets();
         List<ApiProblem.FieldError> errors = new ArrayList<>();
         check(configured, "repositoryConnector", input.repositoryConnector(), Set.of("repository"), errors);
         check(configured, "outputConnector", input.outputConnector(), Set.of("output"), errors);

@@ -38,6 +38,15 @@ import static org.assertj.core.api.Assertions.assertThat;
         properties = {"spring.ai.mcp.server.protocol=STREAMABLE"})
 class PlatformApiV1HttpTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.opencrawling.runtime.api.ConnectorController connectorController;
+
+    /** The stored connectors of a category, with their secrets, as JSON. */
+    private String stored(String type) {
+        return JsonMapper.builder().build().writeValueAsString(connectorController.connectorsWithSecrets().stream()
+                .filter(c -> type.equalsIgnoreCase(c.type())).toList());
+    }
+
     @LocalServerPort
     int port;
 
@@ -297,19 +306,19 @@ class PlatformApiV1HttpTest {
         assertThat(masked).doesNotContain("s3cret");
         String etag = read.headers().firstValue("ETag").orElseThrow();
 
-        // Sending back what was read keeps the secrets; the legacy API (admins) shows the stored values.
+        // Sending back what was read keeps the secrets (checked on the stored connectors: no API returns them).
         String masks = connector.replace("s3cret", "********").replace("k-123", "********");
         HttpResponse<String> replaced = http.send("PUT", "/api/v1/connectors/" + name,
                 masks.replace("\"idpTokenUrl\":\"http://idp\"", "\"idpTokenUrl\":\"http://idp\",\"timeoutSeconds\":\"30\""), "If-Match", etag);
         assertThat(replaced.statusCode()).as(replaced.body()).isEqualTo(200);
-        String stored = http.send("GET", "/api/connectors/repository", null).body();
+        String stored = stored("repository");
         assertThat(stored).contains("\"password\":\"s3cret\"", "\"apiKey\":\"k-123\"", "\"timeoutSeconds\":\"30\"");
 
         // Pointing the connector elsewhere while keeping the stored secrets would send them there: refused.
         HttpResponse<String> moved = http.send("PUT", "/api/v1/connectors/" + name, masks.replace("http://repo", "http://elsewhere"));
         assertProblem(moved, 400, "validation-failed");
         assertThat(moved.body()).contains("configuration.password", "configuration.apiKey", "address changed (url)");
-        assertThat(http.send("GET", "/api/connectors/repository", null).body()).as("nothing changed").contains("http://repo\"")
+        assertThat(stored("repository")).as("nothing changed").contains("http://repo\"")
                 .doesNotContain("elsewhere");
         HttpResponse<String> reentered = http.send("PUT", "/api/v1/connectors/" + name,
                 connector.replace("http://repo", "http://repo2").replace("s3cret", "n3w"));
@@ -336,8 +345,25 @@ class PlatformApiV1HttpTest {
         HttpResponse<String> awsBack = http.send("PUT", "/api/v1/connectors/" + name + "_s3", awsRead.body(),
                 "If-Match", awsRead.headers().firstValue("ETag").orElseThrow());
         assertThat(awsBack.statusCode()).as("what was read can be sent back: " + awsBack.body()).isEqualTo(200);
-        assertThat(http.send("GET", "/api/connectors/output", null).body())
-                .contains("AKIA-secret", "jdbc:postgresql://admin:dbpass@db:5432/x", "Bearer abc");
+        assertThat(stored("output")).contains("AKIA-secret", "jdbc:postgresql://admin:dbpass@db:5432/x", "Bearer abc");
+
+        // The deprecated endpoints mask secrets too, and take back what they show.
+        HttpResponse<String> legacyRead = http.send("GET", "/api/connectors/output", null);
+        assertThat(legacyRead.body()).doesNotContain("AKIA-secret", "dbpass", "Bearer abc")
+                .contains("\"s3SecretAccessKey\":\"********\"", "jdbc:postgresql://admin:********@db:5432/x");
+        assertThat(http.send("GET", "/api/connectors", null).body()).doesNotContain("AKIA-secret", "dbpass", "n3wer");
+        String legacyBack = aws.replace("AKIA-secret", "********").replace("dbpass", "********").replace("Authorization: Bearer abc", "********");
+        assertThat(http.send("POST", "/api/connectors", legacyBack).statusCode()).isEqualTo(201);
+        assertThat(stored("output")).as("kept").contains("AKIA-secret", "admin:dbpass@db", "Bearer abc");
+        HttpResponse<String> legacyMoved = http.send("POST", "/api/connectors",
+                legacyBack.replace("https://minio:9000", "https://elsewhere:9000"));
+        assertThat(legacyMoved.statusCode()).as("stored secrets are not sent to a new address").isEqualTo(400);
+        assertThat(legacyMoved.headers().firstValue("X-OpenCrawling-Error").orElse("")).contains("configuration.s3SecretAccessKey");
+        assertThat(stored("output")).doesNotContain("elsewhere");
+        HttpResponse<String> legacyCheck = http.send("POST", "/api/connectors/check",
+                legacyBack.replace("https://minio:9000", "https://elsewhere:9000"));
+        assertThat(legacyCheck.statusCode()).as("nor checked against one").isEqualTo(400);
+        assertThat(legacyCheck.body()).contains("\"success\":false").doesNotContain("AKIA-secret");
 
         assertProblem(http.send("PUT", "/api/v1/connectors/" + name, connector.replace(name, name + "x")), 400, "validation-failed");
         assertProblem(http.send("POST", "/api/v1/connectors", connector.replace(name, name + "_new")

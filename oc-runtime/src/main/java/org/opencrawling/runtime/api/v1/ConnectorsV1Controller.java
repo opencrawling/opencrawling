@@ -87,7 +87,7 @@ public class ConnectorsV1Controller {
             @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
             HttpServletResponse response) {
         String text = q == null ? null : q.toLowerCase(Locale.ROOT);
-        List<ConnectorResource> items = connectors.getAllConnectors().stream()
+        List<ConnectorResource> items = connectors.connectorsWithSecrets().stream()
                 .filter(c -> type == null || type.equalsIgnoreCase(c.type()))
                 .filter(c -> text == null || (c.name() != null && c.name().toLowerCase(Locale.ROOT).contains(text))
                         || (c.description() != null && c.description().toLowerCase(Locale.ROOT).contains(text)))
@@ -126,7 +126,7 @@ public class ConnectorsV1Controller {
             if (findOrNull(input.name()) != null) {
                 throw ApiProblem.conflict("connector-exists", "A connector named '" + input.name() + "' exists; replace it with PUT.");
             }
-            JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", input.name());
+            JobsV1Controller.requireOk(connectors.save(saved), "Connector", input.name());
         }
         return ResponseEntity.created(ApiV1.location("connectors", saved.name()))
                 .eTag(etag(saved)).body(ConnectorResource.of(saved));
@@ -149,7 +149,7 @@ public class ConnectorsV1Controller {
             saved = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
                     input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration(),
                     !java.util.Objects.equals(input.className(), current.className())));
-            JobsV1Controller.requireOk(connectors.createConnector(saved), "Connector", name);
+            JobsV1Controller.requireOk(connectors.save(saved), "Connector", name);
         }
         return ResponseEntity.ok().eTag(etag(saved)).body(ConnectorResource.of(saved));
     }
@@ -185,7 +185,7 @@ public class ConnectorsV1Controller {
     @PostMapping("/connectors/{name}:check")
     public ConnectionCheckResult check(@PathVariable String name) {
         ConnectorDTO current = find(name);
-        return checked(connectors.checkConnection(new ConnectorDTO(current.name(), null, null, null, null, null)));
+        return checked(connectors.check(new ConnectorDTO(current.name(), null, null, null, null, null)));
     }
 
     @Operation(operationId = "checkConnectorDefinition", summary = "Test a connector definition before saving it",
@@ -205,7 +205,7 @@ public class ConnectorsV1Controller {
             throw ApiProblem.invalid(errors);
         }
         ConnectorDTO stored = unnamed ? null : findOrNull(input.name());
-        return checked(connectors.checkConnection(new ConnectorDTO(input.name(), input.description(), input.type(),
+        return checked(connectors.check(new ConnectorDTO(input.name(), input.description(), input.type(),
                 input.className(), input.maxConnections(),
                 ConnectorResource.unmask(input.configuration(), stored == null ? Map.of() : stored.configuration(),
                         stored != null && !java.util.Objects.equals(input.className(), stored.className())))));
@@ -239,7 +239,7 @@ public class ConnectorsV1Controller {
     }
 
     private ConnectorDTO findOrNull(String name) {
-        return connectors.getAllConnectors().stream()
+        return connectors.connectorsWithSecrets().stream()
                 .filter(c -> c.name() != null && c.name().equalsIgnoreCase(name))
                 .findFirst().orElse(null);
     }

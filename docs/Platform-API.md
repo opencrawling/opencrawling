@@ -218,7 +218,7 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 | POST | `/api/v1/connectors/{name}:check` | Live connectivity check of a saved connector |
 | POST | `/api/v1/connectors:check` | The same for a definition not saved yet |
 
-**The Platform API never returns secrets.** The deprecated `GET /api/connectors` still returns them to admins, unchanged for existing integrations; that is one more reason to move off it.
+**No API returns secrets.** The Platform API masks them as described below, and so do the deprecated `GET /api/connectors` and `GET /api/connectors/{type}`. The deprecated `POST /api/connectors` and `POST /api/connectors/check` accept a value sent back as it was read, under the same rules; when one is refused, they answer `400`, and the save's `X-OpenCrawling-Error` header (or the check result's `message`) names the setting.
 
 - **Which keys are secret:** any key that contains `secret` (`clientSecret`, `s3SecretAccessKey`), keys that end in `password`, `token`, `apiKey`, `credential`, `privateKey`, `passphrase`, `ticket` or `connectionString` (but not `changeLogToken`, a position in a change log), and header settings (`customHeaders`, `authorization`).
 - **How they look:** they are returned as `********`. A password inside a URL (`scheme://user:password@host`) is returned as `scheme://user:********@host`, and a `password=` parameter of a URL or connection string as `password=********`.

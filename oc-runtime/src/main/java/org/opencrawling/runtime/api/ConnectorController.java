@@ -28,6 +28,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 
 import org.opencrawling.runtime.security.ManagementAuthorization;
+import org.opencrawling.runtime.api.v1.ApiProblem;
+import org.opencrawling.runtime.api.v1.model.ConnectorResource;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -504,10 +506,19 @@ public class ConnectorController {
         }
     }
 
-    @Operation(summary = "List all connectors", description = "Retrieves all configured connectors across all categories.")
+    @Operation(summary = "List all connectors", description = "Retrieves all configured connectors across all categories. "
+            + "Secrets are returned as " + ConnectorResource.MASK + "; send them back as read to keep them.")
     @ApiResponse(responseCode = "200", description = "List of all configured connectors successfully retrieved")
     @GetMapping
     public List<ConnectorDTO> getAllConnectors() {
+        return masked(visible(storage));
+    }
+
+    /**
+     * The connectors the caller may see, with their secrets: for the runtime's own use (the Platform API's controllers,
+     * which mask what they return), never for an HTTP answer.
+     */
+    public List<ConnectorDTO> connectorsWithSecrets() {
         return visible(storage);
     }
 
@@ -516,10 +527,50 @@ public class ConnectorController {
     @GetMapping("/{type}")
     public List<ConnectorDTO> getConnectors(
             @Parameter(description = "Connector category type ('repository', 'output', or 'transformation')", example = "repository") @PathVariable String type) {
-        return visible(storage.stream()
+        return masked(visible(storage.stream()
                 .filter(c -> c.type().equalsIgnoreCase(type))
-                .toList());
+                .toList()));
     }
+
+    /** Connectors as an HTTP answer shows them: secrets as the mask, URLs with their password masked. */
+    private static List<ConnectorDTO> masked(List<ConnectorDTO> connectors) {
+        return connectors.stream().map(c -> {
+            if (c.configuration() == null) {
+                return c;
+            }
+            Map<String, String> configuration = new java.util.LinkedHashMap<>();
+            c.configuration().forEach((key, value) -> configuration.put(key, ConnectorResource.masked(key, value)));
+            return new ConnectorDTO(c.name(), c.description(), c.type(), c.className(), c.maxConnections(), configuration);
+        }).toList();
+    }
+
+    /**
+     * A connector sent to the legacy endpoints, with the secrets it sends back as read (the mask) replaced by the
+     * stored ones, under the Platform API's rules: not when its address or class changes.
+     *
+     * @return the connector to use, or the reason it is refused
+     */
+    private Unmasked unmasked(ConnectorDTO connector) {
+        if (connector.configuration() == null || connector.name() == null) {
+            return new Unmasked(connector, null);
+        }
+        ConnectorDTO stored = storage.stream().filter(c -> c.name().equalsIgnoreCase(connector.name())).findFirst().orElse(null);
+        try {
+            Map<String, String> configuration = ConnectorResource.unmask(connector.configuration(),
+                    stored == null ? Map.of() : stored.configuration(),
+                    stored != null && connector.className() != null && !connector.className().equals(stored.className()));
+            return new Unmasked(new ConnectorDTO(connector.name(), connector.description(), connector.type(),
+                    connector.className(), connector.maxConnections(), configuration), null);
+        } catch (ApiProblem problem) {
+            Object errors = problem.extensions().get("errors");
+            String reason = errors instanceof List<?> list ? list.stream()
+                    .map(e -> e instanceof ApiProblem.FieldError f ? f.field() + " " + f.message() : String.valueOf(e))
+                    .collect(java.util.stream.Collectors.joining("; ")) : problem.detail();
+            return new Unmasked(null, reason);
+        }
+    }
+
+    private record Unmasked(ConnectorDTO connector, String refusal) {}
 
     /**
      * Connectors as the caller may see them: complete for admins (and with authorization off), without their
@@ -538,6 +589,15 @@ public class ConnectorController {
     @ApiResponse(responseCode = "201", description = "Connector definition saved successfully")
     @PostMapping
     public synchronized ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
+        Unmasked unmasked = unmasked(connector);
+        if (unmasked.refusal() != null) {
+            return ResponseEntity.badRequest().header("X-OpenCrawling-Error", unmasked.refusal()).build();
+        }
+        return save(unmasked.connector());
+    }
+
+    /** Saves a connector whose configuration holds its real secrets (no mask): for the Platform API's controllers. */
+    public synchronized ResponseEntity<Void> save(ConnectorDTO connector) {
         System.out.println("Saving connector: " + connector.name());
         // Replaced in place, so a concurrent read never finds the connector missing while it is being saved.
         int index = -1;
@@ -565,6 +625,15 @@ public class ConnectorController {
     @ApiResponse(responseCode = "200", description = "Connection check result with status and diagnostic message")
     @PostMapping("/check")
     public ResponseEntity<ConnectionCheckResult> checkConnection(@RequestBody ConnectorDTO connector) {
+        Unmasked unmasked = unmasked(connector);
+        if (unmasked.refusal() != null) {
+            return ResponseEntity.badRequest().body(new ConnectionCheckResult(false, unmasked.refusal(), null));
+        }
+        return check(unmasked.connector());
+    }
+
+    /** Checks a connector whose configuration holds its real secrets (no mask): for the Platform API's controllers. */
+    public ResponseEntity<ConnectionCheckResult> check(ConnectorDTO connector) {
         System.out.println("Checking connection for connector: " + connector.name() + " (" + connector.className() + ")");
         ConnectorDTO target = connector;
         if (target.className() == null && target.name() != null) {
