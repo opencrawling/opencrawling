@@ -76,9 +76,10 @@ public interface ClaimCheckStore {
      * Delete expired claim check objects older than given maxAge, except those {@code retain} keeps, such as the
      * claims of messages waiting in a dead-letter topic, which a replay will read again.
      *
-     * <p>{@code retain} is given each object's URI in the form {@link #put} returned it. The default ignores
-     * {@code retain} and runs {@link #deleteExpired(java.time.Duration)}: a store that cannot list its objects as
-     * URIs keeps sweeping as before.
+     * <p>This is the sweep the claim garbage collector runs. A store implements it by giving {@code retain} each
+     * object's URI exactly as {@link #put} returned it. The default deletes nothing: a store that has not implemented
+     * it cannot honor {@code retain}, and sweeping it anyway could delete claims a replay still needs, so it is left
+     * unswept rather than risk that.
      *
      * @param maxAge Maximum age duration for stored claim check objects
      * @param retain Objects to keep whatever their age
@@ -86,7 +87,7 @@ public interface ClaimCheckStore {
      * @throws Exception if deletion sweep fails
      */
     default int deleteExpired(java.time.Duration maxAge, Predicate<URI> retain) throws Exception {
-        return deleteExpired(maxAge);
+        return 0;
     }
 
     /**

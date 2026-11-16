@@ -54,28 +54,27 @@ public interface OzoneClientStrategy {
     void delete(URI claimCheckUri) throws Exception;
 
     /**
-     * Delete expired objects older than given maxAge.
+     * Delete expired objects older than given maxAge, keeping none.
      *
      * @param maxAge Maximum age duration
      * @return Number of deleted objects
      * @throws Exception if sweep fails
      */
     default int deleteExpired(java.time.Duration maxAge) throws Exception {
-        return 0;
+        return deleteExpired(maxAge, uri -> false);
     }
 
     /**
-     * Delete expired objects older than given maxAge, except those {@code retain} keeps (given each object's URI as
-     * {@link #put} returned it). The default ignores {@code retain}, as {@link ClaimCheckStore} does.
+     * Delete expired objects older than given maxAge, except those {@code retain} keeps, such as the claims of
+     * dead-lettered messages. Every strategy must implement it, giving {@code retain} each object's URI exactly as
+     * {@link #put} returned it: a sweep that ignored {@code retain} would delete claims a replay still needs.
      *
      * @param maxAge Maximum age duration
      * @param retain Objects to keep whatever their age
      * @return Number of deleted objects
      * @throws Exception if sweep fails
      */
-    default int deleteExpired(java.time.Duration maxAge, Predicate<URI> retain) throws Exception {
-        return deleteExpired(maxAge);
-    }
+    int deleteExpired(java.time.Duration maxAge, Predicate<URI> retain) throws Exception;
 
     /**
      * Check if given URI is supported by this client strategy.
