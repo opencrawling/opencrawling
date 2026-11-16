@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.claimcheck;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -72,6 +73,15 @@ class DeadLetteredClaimsTest {
         assertThatThrownBy(deadLetters::referencedClaims).isInstanceOf(TimeoutException.class);
 
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(4));
+    }
+
+    @Test
+    void anInvalidOffsetFailsTheReadInsteadOfSkippingDeadLetters() {
+        // With Kafka's default (latest), retention deleting the segment being read would move the read to the end:
+        // it would succeed with an incomplete list, and the sweep would delete claims still referenced.
+        assertThat(new DeadLetteredClaims("127.0.0.1:9092", 30_000).consumerConfig())
+                .containsEntry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none")
+                .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
     }
 
     @Test

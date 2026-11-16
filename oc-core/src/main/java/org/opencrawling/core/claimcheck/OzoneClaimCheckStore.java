@@ -34,6 +34,8 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
 
     private final OzoneClientStrategy primaryStrategy;
     private final List<OzoneClientStrategy> strategies;
+    /** The volume the S3 gateway serves; see {@link ClaimCheckProperties.Ozone#getS3GatewayVolume()}. */
+    private final String s3GatewayVolume;
 
     public OzoneClaimCheckStore(ClaimCheckProperties.Ozone ozoneProps) {
         this(ozoneProps, new OzoneNativeClientStrategy(ozoneProps));
@@ -56,6 +58,7 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
         }
 
         this.strategies = List.of(s3Strategy, nativeStrategy);
+        this.s3GatewayVolume = gatewayVolume(ozoneProps.getS3GatewayVolume());
     }
 
     public OzoneClaimCheckStore(S3Client s3Client, String bucket, boolean autoCreateBucket) {
@@ -67,11 +70,22 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
 
         this.primaryStrategy = nativeStrategy;
         this.strategies = List.of(nativeStrategy, s3Strategy);
+        this.s3GatewayVolume = gatewayVolume(defaultProps.getS3GatewayVolume());
     }
 
     public OzoneClaimCheckStore(OzoneClientStrategy primaryStrategy, List<OzoneClientStrategy> strategies) {
+        this(primaryStrategy, strategies, DEFAULT_S3_GATEWAY_VOLUME);
+    }
+
+    public OzoneClaimCheckStore(OzoneClientStrategy primaryStrategy, List<OzoneClientStrategy> strategies,
+                                String s3GatewayVolume) {
         this.primaryStrategy = primaryStrategy;
         this.strategies = strategies != null ? strategies : List.of(primaryStrategy);
+        this.s3GatewayVolume = gatewayVolume(s3GatewayVolume);
+    }
+
+    private static String gatewayVolume(String configured) {
+        return configured != null && !configured.isBlank() ? configured : DEFAULT_S3_GATEWAY_VOLUME;
     }
 
     @Override
@@ -112,7 +126,7 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
      */
     @Override
     public int deleteExpired(java.time.Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
-        java.util.function.Predicate<URI> retainUnderAnyName = acrossTransports(retain);
+        java.util.function.Predicate<URI> retainUnderAnyName = acrossTransports(retain, s3GatewayVolume);
         int total = 0;
         for (OzoneClientStrategy strategy : strategies) {
             try {
@@ -132,20 +146,22 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
         return strategies.stream().anyMatch(s -> s.supports(claimCheckUri));
     }
 
-    /** The volume whose buckets Ozone's S3 gateway serves (Ozone's default {@code ozone.s3g.volume.name}). */
-    static final String S3_VOLUME = "s3v";
+    /** Ozone's default {@code ozone.s3g.volume.name}. */
+    static final String DEFAULT_S3_GATEWAY_VOLUME = "s3v";
 
     /** {@code retain}, also applied to the other names of the same object ({@link #aliases}). */
-    static java.util.function.Predicate<URI> acrossTransports(java.util.function.Predicate<URI> retain) {
-        return uri -> retain.test(uri) || aliases(uri).stream().anyMatch(retain);
+    static java.util.function.Predicate<URI> acrossTransports(java.util.function.Predicate<URI> retain,
+                                                              String s3GatewayVolume) {
+        return uri -> retain.test(uri) || aliases(uri, s3GatewayVolume).stream().anyMatch(retain);
     }
 
     /**
-     * The other names of the object {@code uri} names: {@code s3://<bucket>/<key>} is
-     * {@code ofs://s3v/<bucket>/<key>} and {@code o3fs://<bucket>.s3v/<key>}, and the other way round. An
-     * {@code ofs}/{@code o3fs} object outside the S3 volume has no S3 name.
+     * The other names of the object {@code uri} names, where {@code s3GatewayVolume} is the volume the S3 gateway
+     * serves: {@code s3://<bucket>/<key>} is {@code ofs://<s3GatewayVolume>/<bucket>/<key>} and
+     * {@code o3fs://<bucket>.<s3GatewayVolume>/<key>}, and the other way round. An {@code ofs}/{@code o3fs} object
+     * in another volume has no S3 name.
      */
-    static List<URI> aliases(URI uri) {
+    static List<URI> aliases(URI uri, String s3GatewayVolume) {
         if (uri == null || uri.getScheme() == null || uri.getHost() == null) {
             return List.of();
         }
@@ -160,7 +176,7 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
             }
             case "ofs" -> {
                 int slash = path.indexOf('/');
-                if (!S3_VOLUME.equals(uri.getHost()) || slash <= 0) {
+                if (!s3GatewayVolume.equals(uri.getHost()) || slash <= 0) {
                     return List.of();
                 }
                 bucket = path.substring(0, slash);
@@ -168,7 +184,7 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
             }
             case "o3fs" -> {
                 int dot = uri.getHost().indexOf('.');
-                if (dot <= 0 || !S3_VOLUME.equals(uri.getHost().substring(dot + 1))) {
+                if (dot <= 0 || !s3GatewayVolume.equals(uri.getHost().substring(dot + 1))) {
                     return List.of();
                 }
                 bucket = uri.getHost().substring(0, dot);
@@ -183,8 +199,8 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
         }
         return java.util.stream.Stream.of(
                         "s3://" + bucket + "/" + key,
-                        "ofs://" + S3_VOLUME + "/" + bucket + "/" + key,
-                        "o3fs://" + bucket + "." + S3_VOLUME + "/" + key)
+                        "ofs://" + s3GatewayVolume + "/" + bucket + "/" + key,
+                        "o3fs://" + bucket + "." + s3GatewayVolume + "/" + key)
                 .map(URI::create)
                 .filter(alias -> !alias.getScheme().equalsIgnoreCase(scheme))
                 .toList();

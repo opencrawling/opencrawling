@@ -74,13 +74,8 @@ public class DeadLetteredClaims {
     public Set<String> referencedClaims() throws Exception {
         // One budget for the whole read: every blocking call below gets only what is left of it, close() included.
         long deadline = System.nanoTime() + timeout.toNanos();
-        Map<String, Object> config = Map.of(
-                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                ConsumerConfig.CLIENT_ID_CONFIG, "opencrawling-claim-gc",
-                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false,
-                ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) Math.min(Integer.MAX_VALUE, timeout.toMillis()));
         KafkaConsumer<byte[], byte[]> consumer =
-                new KafkaConsumer<>(config, new ByteArrayDeserializer(), new ByteArrayDeserializer());
+                new KafkaConsumer<>(consumerConfig(), new ByteArrayDeserializer(), new ByteArrayDeserializer());
         try {
             List<PartitionInfo> infos = consumer.partitionsFor(TOPIC, remaining(deadline));
             if (infos == null || infos.isEmpty()) {
@@ -112,6 +107,20 @@ public class DeadLetteredClaims {
     }
 
     private static final Duration POLL = Duration.ofMillis(500);
+
+    /**
+     * The reader's settings. {@code auto.offset.reset=none}: the read starts with an explicit seek to the beginning,
+     * and an offset that becomes invalid during it (retention deleting the segment being read) must fail the read,
+     * so the sweep is skipped, rather than jump to the end and return an incomplete list of claims.
+     */
+    Map<String, Object> consumerConfig() {
+        return Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                ConsumerConfig.CLIENT_ID_CONFIG, "opencrawling-claim-gc",
+                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false,
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none",
+                ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) Math.min(Integer.MAX_VALUE, timeout.toMillis()));
+    }
 
     /** What is left of the read's budget; a {@link TimeoutException} once it is spent. */
     private Duration remaining(long deadline) throws TimeoutException {

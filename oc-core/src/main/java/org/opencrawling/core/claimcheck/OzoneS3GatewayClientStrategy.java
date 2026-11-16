@@ -182,21 +182,29 @@ public class OzoneS3GatewayClientStrategy implements OzoneClientStrategy {
         int count = 0;
         java.time.Instant cutoff = java.time.Instant.now().minus(maxAge);
         try {
-            var listResponse = s3Client.listObjectsV2(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder()
-                    .bucket(bucket)
-                    .build());
-            for (var obj : listResponse.contents()) {
-                if (obj.lastModified() != null && obj.lastModified().isBefore(cutoff)) {
-                    // The URI as put() returned it.
-                    if (retain.test(URI.create("s3://" + bucket + "/" + obj.key()))) {
-                        log.debug("Garbage collector kept expired Ozone S3 object still referenced: s3://{}/{}", bucket, obj.key());
-                        continue;
+            // Every page: a listing returns at most 1,000 objects, and a first page of retained claims must not hide
+            // the expired orphans after it.
+            String continuationToken = null;
+            do {
+                var listResponse = s3Client.listObjectsV2(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder()
+                        .bucket(bucket)
+                        .continuationToken(continuationToken)
+                        .build());
+                for (var obj : listResponse.contents()) {
+                    if (obj.lastModified() != null && obj.lastModified().isBefore(cutoff)) {
+                        // The URI as put() returned it.
+                        if (retain.test(URI.create("s3://" + bucket + "/" + obj.key()))) {
+                            log.debug("Garbage collector kept expired Ozone S3 object still referenced: s3://{}/{}", bucket, obj.key());
+                            continue;
+                        }
+                        s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(obj.key()).build());
+                        count++;
+                        log.info("Garbage collector deleted expired Ozone S3 object: s3://{}/{}", bucket, obj.key());
                     }
-                    s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(obj.key()).build());
-                    count++;
-                    log.info("Garbage collector deleted expired Ozone S3 object: s3://{}/{}", bucket, obj.key());
                 }
-            }
+                continuationToken = Boolean.TRUE.equals(listResponse.isTruncated())
+                        ? listResponse.nextContinuationToken() : null;
+            } while (continuationToken != null);
         } catch (Exception e) {
             log.debug("Ozone S3 Gateway expired objects cleanup sweep completed with exception: {}", e.getMessage());
         }
