@@ -78,7 +78,7 @@ class PlatformApiCommandsTest {
             exchange.getRequestHeaders().forEach((name, values) -> headers.put(name.toLowerCase(), values.get(0)));
             seen.add(new Seen(key, headers, new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
             Answer answer = answers.getOrDefault(key, new Answer(404,
-                    "{\"type\":\"https://opencrawling.org/problems/not-found\",\"title\":\"Not found\",\"status\":404,"
+                    "{\"type\":\"https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-not-found\",\"title\":\"Not found\",\"status\":404,"
                             + "\"detail\":\"Nothing at " + key + "\"}", Map.of()));
             byte[] body = answer.body().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", answer.status() >= 400 ? "application/problem+json" : "application/json");
@@ -204,7 +204,7 @@ class PlatformApiCommandsTest {
 
         Path file = Files.writeString(tmp.resolve("connector.json"),
                 "{\"name\":\"HR Share\",\"type\":\"repository\",\"className\":\"x.Fs\",\"configuration\":{\"basePath\":\"/data\"}}");
-        answer("POST /api/v1/connectors", 409, "{\"type\":\"https://opencrawling.org/problems/connector-exists\",\"title\":\"Conflict\",\"status\":409}");
+        answer("POST /api/v1/connectors", 409, "{\"type\":\"https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-connector-exists\",\"title\":\"Conflict\",\"status\":409}");
         answer("PUT /api/v1/connectors/HR%20Share", 200, "{\"name\":\"HR Share\"}");
         answer("GET /api/v1/connectors/HR%20Share", 200, "{\"name\":\"HR Share\"}", "ETag", "\"c7\"");
         assertEquals(0, oc("connector", "create", "--file", file.toString()));
@@ -215,7 +215,7 @@ class PlatformApiCommandsTest {
     @Test
     void aConnectorJobsUseIsOnlyDeletedWithForce() {
         answer("GET /api/v1/connectors/HR_Share", 200, "{\"name\":\"HR_Share\"}", "ETag", "\"c3\"");
-        answer("DELETE /api/v1/connectors/HR_Share", 409, "{\"type\":\"https://opencrawling.org/problems/connector-in-use\","
+        answer("DELETE /api/v1/connectors/HR_Share", 409, "{\"type\":\"https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-connector-in-use\","
                 + "\"title\":\"Conflict\",\"status\":409,\"jobs\":[\"42\"]}");
         assertEquals(1, oc("connector", "delete", "--name", "HR_Share"));
         assertTrue(text().contains("used by jobs [42]") && text().contains("--force"), text());

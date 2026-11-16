@@ -64,7 +64,7 @@ class PlatformClientTest {
             java.util.Deque<Answer> once = queued.get(key);
             Answer next = once != null ? once.poll() : null;
             Answer answer = next != null ? next : answers.getOrDefault(key, new Answer(404, "application/problem+json",
-                    "{\"type\":\"https://opencrawling.org/problems/not-found\",\"title\":\"Not found\",\"status\":404}", Map.of()));
+                    "{\"type\":\"https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-not-found\",\"title\":\"Not found\",\"status\":404}", Map.of()));
             byte[] body = answer.body().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", answer.contentType());
             answer.headers().forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
@@ -117,7 +117,7 @@ class PlatformClientTest {
     @Test
     void problemsBecomeExceptionsWithTheirDetailsEvenWhenAProxyAnswersWithoutOne() {
         answers.put("GET /api/v1/jobs/1", new Answer(409, "application/problem+json",
-                "{\"type\":\"https://opencrawling.org/problems/job-already-running\",\"title\":\"Conflict\",\"status\":409,"
+                "{\"type\":\"https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-job-already-running\",\"title\":\"Conflict\",\"status\":409,"
                         + "\"detail\":\"Job 1 is running\",\"requestId\":\"r-9\",\"executionId\":\"exec-1\","
                         + "\"errors\":[{\"field\":\"name\",\"message\":\"must not be blank\"}]}", Map.of()));
         ApiProblemException problem = catchThrowableOfType(ApiProblemException.class, () -> api.jobs().get("1"));

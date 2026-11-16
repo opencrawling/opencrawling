@@ -200,7 +200,7 @@ fi
 # --- Errors ---
 request GET "/api/v1/jobs/does-not-exist-$NAME" ""
 expect 404 "GET of an unknown job"
-[ "$(echo "$BODY" | jq -r '.type')" = "https://opencrawling.org/problems/not-found" ] && [ -n "$(header X-Request-Id)" ] \
+[ "$(echo "$BODY" | jq -r '.type')" = "https://github.com/opencrawling/opencrawling/wiki/Platform-API#problem-not-found" ] && [ -n "$(header X-Request-Id)" ] \
   && pass "errors are problem details with a request id" || fail "problem detail: $BODY"
 request POST /api/v1/jobs "{\"name\":\"\"}"
 expect 400 "POST of an invalid job"
