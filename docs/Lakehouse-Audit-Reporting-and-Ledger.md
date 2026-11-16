@@ -277,6 +277,7 @@ duckdb -c "SELECT status, count(*) AS doc_count, sum(rag_token_count) AS tokens 
   WHERE status = 'FAILED' 
   GROUP BY error_code, error_message;
   ```
+  > **Direct Output & Embedding Failure Recording (`OUTPUT_ERROR`, `#329` / PR `#330`):** When a job runs with a direct `OutputConnector` (such as `VectorOutputConnector`) and `outputConnector.send(doc)` fails—for example, because the embedding model is unavailable or vector persistence throws—`JobOrchestrator` records the document with `status = 'FAILED'`, `error_code = 'OUTPUT_ERROR'`, and `error_message` set to the innermost root cause message (`failedDocuments` is incremented in `summary_exec_<execId>.json`), while remaining documents in the crawl continue processing.
 
 * **Migration Checksum Validation**:
   ```sql
