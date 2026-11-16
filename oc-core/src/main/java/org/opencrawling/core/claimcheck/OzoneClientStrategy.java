@@ -17,6 +17,7 @@ package org.opencrawling.core.claimcheck;
 
 import java.io.InputStream;
 import java.net.URI;
+import java.util.function.Predicate;
 
 /**
  * Strategy interface abstraction for Apache Ozone client backends (S3 Gateway vs Native RPC client).
@@ -61,6 +62,19 @@ public interface OzoneClientStrategy {
      */
     default int deleteExpired(java.time.Duration maxAge) throws Exception {
         return 0;
+    }
+
+    /**
+     * Delete expired objects older than given maxAge, except those {@code retain} keeps (given each object's URI as
+     * {@link #put} returned it). The default ignores {@code retain}, as {@link ClaimCheckStore} does.
+     *
+     * @param maxAge Maximum age duration
+     * @param retain Objects to keep whatever their age
+     * @return Number of deleted objects
+     * @throws Exception if sweep fails
+     */
+    default int deleteExpired(java.time.Duration maxAge, Predicate<URI> retain) throws Exception {
+        return deleteExpired(maxAge);
     }
 
     /**

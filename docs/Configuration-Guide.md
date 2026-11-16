@@ -108,6 +108,10 @@ A pipeline stage that cannot process a Kafka message (the ingestion consumer, th
 - **While a message is retried, its partition waits.** Messages are keyed by document id, so the order within a document is kept; other documents on that partition are delayed until the retries end.
 - **No retries for messages that can never succeed:** a payload that cannot be deserialized goes to the dead-letter topic at once, with its original bytes.
 - **Diagnostics:** each dead letter carries Spring Kafka's headers: `kafka_dlt-original-topic`, `-partition` and `-offset`, and `kafka_dlt-exception-fqcn` and `-message`. Once the cause is fixed, a dead letter can be republished to its original topic: writes are idempotent (chunks are stored under their own ids).
+- **Content of dead-lettered documents is kept:** a message on `opencrawling-documents.DLT` carries only the URI of its claim-check content. The claim garbage collector keeps every claim such a dead letter references, whatever its age, so a replay can read it again.
+  - **How long:** as long as the dead letter exists, so set the retention of `opencrawling-documents.DLT` (Kafka's default is 7 days) to the window you need for recovery.
+  - **Release:** a replay that succeeds deletes the claim, like any other ingestion.
+  - **Fail safe:** before each sweep the collector reads the dead-letter topic to its end. If it cannot, the sweep is skipped, never run without that list. `spring.opencrawling.claim-check.lifecycle.dead-letter-read-timeout-ms` (default `30000`) bounds the read.
 - **Not retried:** an ingestion message whose claim-check content no longer exists or that has no claim-check content (metadata-only documents) is skipped, since a retry cannot bring content back. A governance hook that cannot decide still means the document is not embedded (see [Pre-Embedding Governance](#️-pre-embedding-governance)).
 
 ---

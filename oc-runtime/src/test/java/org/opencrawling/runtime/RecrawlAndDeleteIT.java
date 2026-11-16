@@ -30,6 +30,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -55,16 +57,18 @@ import static org.assertj.core.api.Assertions.fail;
  * <p>Requires PostgreSQL and Kafka from {@code docker-compose.yml}.
  */
 @SpringBootTest(properties = {
-    // KafkaConfig forces auto.offset.reset=earliest, so a new group replays every message ever
-    // published to the topics. -Dit.kafka.group lets a local run use a group already moved to
-    // the end of the topics.
-    "spring.kafka.consumer.group-id=${it.kafka.group:test-group-${random.uuid}}",
     // Free ports: every IT's cached context keeps its gRPC push listener bound, so fixed ports collide.
     "opencrawling.connector.grpc-push.port=0",
     "spring.grpc.server.port=0"
 })
 @ActiveProfiles("test")
 class RecrawlAndDeleteIT {
+
+    /** A fresh consumer group, starting at the end of the topics: see {@link KafkaTestGroup}. */
+    @DynamicPropertySource
+    static void kafkaGroup(DynamicPropertyRegistry registry) {
+        KafkaTestGroup.register(registry);
+    }
 
     private static final Logger log = LoggerFactory.getLogger(RecrawlAndDeleteIT.class);
     private static final int PAGES = 100;

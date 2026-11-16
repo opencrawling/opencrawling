@@ -1,0 +1,152 @@
+/*
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opencrawling.runtime.claimcheck;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.opencrawling.runtime.config.KafkaConfig;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.net.URI;
+import java.nio.file.Paths;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Predicate;
+
+/**
+ * The claim-check URIs that the documents topic's dead letters ({@code opencrawling-documents.DLT}) still reference.
+ * A dead-lettered document message carries only the URI of its content, so a replay reads that claim again: the
+ * claim garbage collector keeps these claims, whatever their age, for as long as their dead letters exist.
+ *
+ * <p>The topic is read from its start to its current end on every call, with no consumer group (nothing is
+ * committed). Dead letters whose payload is not a JSON message with a {@code uri} (for example a malformed payload
+ * kept as raw bytes) reference no claim.
+ */
+@Component
+public class DeadLetteredClaims {
+
+    /** The dead-letter topic of the documents topic, whose messages reference claims. */
+    static final String TOPIC = KafkaConfig.TOPIC_NAME + KafkaConfig.DLT_SUFFIX;
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private final String bootstrapServers;
+    private final Duration timeout;
+
+    public DeadLetteredClaims(
+            @Value("${spring.kafka.bootstrap-servers:127.0.0.1:9092}") String bootstrapServers,
+            @Value("${spring.opencrawling.claim-check.lifecycle.dead-letter-read-timeout-ms:30000}") long timeoutMs) {
+        this.bootstrapServers = bootstrapServers;
+        this.timeout = Duration.ofMillis(timeoutMs);
+    }
+
+    /**
+     * Reads the dead-letter topic to its current end.
+     *
+     * @return the normalized URIs of the claims the dead letters reference (see {@link #retaining})
+     * @throws Exception if the topic cannot be read to its end within the timeout; the caller must then delete
+     *                   nothing, since any claim could still be referenced
+     */
+    public Set<String> referencedClaims() throws Exception {
+        Map<String, Object> config = Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                ConsumerConfig.CLIENT_ID_CONFIG, "opencrawling-claim-gc",
+                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        try (KafkaConsumer<byte[], byte[]> consumer =
+                     new KafkaConsumer<>(config, new ByteArrayDeserializer(), new ByteArrayDeserializer())) {
+            List<PartitionInfo> infos = consumer.partitionsFor(TOPIC, timeout);
+            if (infos == null || infos.isEmpty()) {
+                return Set.of();
+            }
+            List<TopicPartition> partitions = infos.stream()
+                    .map(info -> new TopicPartition(info.topic(), info.partition()))
+                    .toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
+            Map<TopicPartition, Long> end = consumer.endOffsets(partitions, timeout);
+
+            Set<String> claims = new HashSet<>();
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (!reachedEnd(consumer, end)) {
+                if (System.nanoTime() > deadline) {
+                    throw new TimeoutException("Reading " + TOPIC + " did not reach its end within " + timeout);
+                }
+                for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofMillis(500))) {
+                    String uri = claimUri(record.value());
+                    if (uri != null) {
+                        claims.add(normalize(uri));
+                    }
+                }
+            }
+            return claims;
+        }
+    }
+
+    /** Keeps the claims whose URI is one of {@code referenced} (as {@link #referencedClaims} returns them). */
+    public static Predicate<URI> retaining(Set<String> referenced) {
+        return uri -> uri != null && referenced.contains(normalize(uri.toString()));
+    }
+
+    private static boolean reachedEnd(KafkaConsumer<?, ?> consumer, Map<TopicPartition, Long> end) {
+        for (Map.Entry<TopicPartition, Long> partition : end.entrySet()) {
+            if (consumer.position(partition.getKey()) < partition.getValue()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The {@code uri} of a dead-lettered document message, or {@code null} if it has none. */
+    static String claimUri(byte[] value) {
+        if (value == null || value.length == 0) {
+            return null;
+        }
+        try {
+            JsonNode uri = JSON.readTree(value).path("uri");
+            return uri.isTextual() && !uri.asText().isBlank() ? uri.asText() : null;
+        } catch (Exception e) {
+            return null; // not a JSON message, such as a malformed payload kept as raw bytes
+        }
+    }
+
+    /**
+     * One form for a claim URI, whoever wrote it: a {@code file} URI becomes its absolute path, because
+     * {@code File.toURI()} ({@code file:/x}) and {@code Path.toUri()} ({@code file:///x}) spell the same file
+     * differently.
+     */
+    static String normalize(String uri) {
+        try {
+            URI parsed = URI.create(uri);
+            if ("file".equalsIgnoreCase(parsed.getScheme())) {
+                return Paths.get(parsed).toAbsolutePath().normalize().toString();
+            }
+            return parsed.normalize().toString();
+        } catch (Exception e) {
+            return uri;
+        }
+    }
+}

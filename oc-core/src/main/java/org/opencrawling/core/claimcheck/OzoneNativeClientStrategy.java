@@ -89,8 +89,16 @@ public class OzoneNativeClientStrategy implements OzoneClientStrategy {
 
     @Override
     public int deleteExpired(java.time.Duration maxAge) throws Exception {
-        int count = nativeStorage.size();
-        nativeStorage.clear();
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    /** The in-process store keeps no timestamps: a sweep clears every entry, except those {@code retain} keeps. */
+    @Override
+    public int deleteExpired(java.time.Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
+        int before = nativeStorage.size();
+        // The URI as put() returned it.
+        nativeStorage.keySet().removeIf(key -> !retain.test(URI.create("ofs://" + volume + "/" + bucket + "/" + key)));
+        int count = before - nativeStorage.size();
         if (count > 0) {
             log.info("Garbage collector cleared {} native Ozone claim check entries", count);
         }

@@ -171,6 +171,11 @@ public class OzoneS3GatewayClientStrategy implements OzoneClientStrategy {
 
     @Override
     public int deleteExpired(Duration maxAge) throws Exception {
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    @Override
+    public int deleteExpired(Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
         if (s3Client == null) {
             return 0;
         }
@@ -182,6 +187,11 @@ public class OzoneS3GatewayClientStrategy implements OzoneClientStrategy {
                     .build());
             for (var obj : listResponse.contents()) {
                 if (obj.lastModified() != null && obj.lastModified().isBefore(cutoff)) {
+                    // The URI as put() returned it.
+                    if (retain.test(URI.create("s3://" + bucket + "/" + obj.key()))) {
+                        log.debug("Garbage collector kept expired Ozone S3 object still referenced: s3://{}/{}", bucket, obj.key());
+                        continue;
+                    }
                     s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(obj.key()).build());
                     count++;
                     log.info("Garbage collector deleted expired Ozone S3 object: s3://{}/{}", bucket, obj.key());

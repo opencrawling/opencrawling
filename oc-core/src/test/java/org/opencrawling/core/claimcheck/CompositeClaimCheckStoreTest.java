@@ -23,9 +23,15 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class CompositeClaimCheckStoreTest {
 
@@ -49,5 +55,20 @@ class CompositeClaimCheckStoreTest {
 
         compositeStore.delete(uri);
         assertThat(Path.of(uri)).doesNotExist();
+    }
+
+    @Test
+    void theSweepPassesWhatToRetainToEveryStore() throws Exception {
+        ClaimCheckStore primary = mock(ClaimCheckStore.class);
+        ClaimCheckStore other = mock(ClaimCheckStore.class);
+        when(primary.deleteExpired(any(Duration.class), any())).thenReturn(1);
+        when(other.deleteExpired(any(Duration.class), any())).thenReturn(2);
+        Predicate<URI> retain = uri -> true;
+
+        int removed = new CompositeClaimCheckStore(primary, List.of(primary, other)).deleteExpired(Duration.ofHours(24), retain);
+
+        assertThat(removed).isEqualTo(3);
+        verify(primary).deleteExpired(Duration.ofHours(24), retain);
+        verify(other).deleteExpired(Duration.ofHours(24), retain);
     }
 }

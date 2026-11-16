@@ -72,7 +72,7 @@ Logs go to `logs/integration-tests/`. CI runs these scripts as a matrix (`.githu
 
 - **Docker:** the ITs need the infrastructure from `docker compose up -d`. The `docker-maven-plugin` in `oc-runtime/pom.xml` has `<skip>true</skip>`, so Maven won't start it for you.
 - **Configuration:** the ITs use `@ActiveProfiles("test")`, but there is no `application-test.yml`. Each IT sets its overrides through `@SpringBootTest` properties.
-- **Kafka groups:** `spring.kafka.consumer.group-id` is randomized per run (`test-group-${random.uuid}`) so runs don't collide on offsets.
+- **Kafka groups:** each Spring IT gets a fresh `spring.kafka.consumer.group-id` from `KafkaTestGroup.register` (a `@DynamicPropertySource`), created with its offsets committed at the current end of the pipeline topics, so runs don't collide on offsets and a long-lived local broker's history is never replayed. New ITs must do the same rather than set a random `group-id` (`KafkaConfig` forces `auto.offset.reset=earliest`).
 - **Similarity threshold:** `TestEmbeddingConsumer` emits `[1.0, 0, ...]` vectors, so the IT searches use `similarityThreshold(0.0)`.
 - **Unit tests** use Mockito with no Spring context.
 
@@ -135,7 +135,7 @@ RepositoryConnector.scan()
 The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.java`. `oc-embedding-service` has its own `KafkaConfig` copy, so if you rename a topic, change both.
 
 - **Claim-check store:** `spring.opencrawling.claim-check.store` is `local` (default dir `target/claims`) or `ozone`.
-  - Claims are deleted on consume (`cleanup-on-consume`). `ClaimCheckGarbageCollector` sweeps orphans every hour by default.
+  - Claims are deleted on consume (`cleanup-on-consume`). `ClaimCheckGarbageCollector` sweeps orphans every hour by default, keeping the claims that messages on `opencrawling-documents.DLT` still reference (`DeadLetteredClaims`, passed to `ClaimCheckStore.deleteExpired(maxAge, retain)`); if it cannot read that topic it skips the sweep. A store must give `retain` each object's URI exactly as `put()` returned it.
   - In decoupled deployments every stage must be able to reach the store: use a shared volume or Ozone.
 - **Tombstones:** `DocumentAction.DELETE` skips claim-check storage, Tika, chunking and embedding. The writer then purges that document's chunks.
 - **Failures:** listeners must rethrow, never log and swallow. Each service's `KafkaConfig` sets a `DefaultErrorHandler` that retries with exponential back-off (`opencrawling.kafka.retry.*`) and then publishes the record to `<topic>.DLT`; a payload that cannot be deserialized goes there at once. Messages are keyed by document id (`partitionKey()`), so a document's chunks and its DELETE stay in order.

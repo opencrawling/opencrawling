@@ -102,10 +102,15 @@ public class OzoneClaimCheckStore implements ClaimCheckStore {
 
     @Override
     public int deleteExpired(java.time.Duration maxAge) throws Exception {
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    @Override
+    public int deleteExpired(java.time.Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
         int total = 0;
         for (OzoneClientStrategy strategy : strategies) {
             try {
-                total += strategy.deleteExpired(maxAge);
+                total += strategy.deleteExpired(maxAge, retain);
             } catch (Exception e) {
                 log.warn("Failed deleteExpired sweep for strategy {}: {}", strategy.getClass().getSimpleName(), e.getMessage());
             }

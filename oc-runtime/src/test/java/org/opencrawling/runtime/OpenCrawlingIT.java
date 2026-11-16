@@ -23,6 +23,8 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
@@ -37,13 +39,18 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = {
-    "spring.kafka.consumer.group-id=test-group-${random.uuid}",
     // Free ports: every IT's cached context keeps its gRPC push listener bound, so fixed ports collide.
     "opencrawling.connector.grpc-push.port=0",
     "spring.grpc.server.port=0"
 })
 @ActiveProfiles("test")
 class OpenCrawlingIT {
+
+    /** A fresh consumer group, starting at the end of the topics: see {@link KafkaTestGroup}. */
+    @DynamicPropertySource
+    static void kafkaGroup(DynamicPropertyRegistry registry) {
+        KafkaTestGroup.register(registry);
+    }
 
     private static final Logger log = LoggerFactory.getLogger(OpenCrawlingIT.class);
 

@@ -17,6 +17,7 @@ package org.opencrawling.core.claimcheck;
 
 import java.io.InputStream;
 import java.net.URI;
+import java.util.function.Predicate;
 
 /**
  * Interface defining the Claim Check Pattern storage abstraction.
@@ -69,6 +70,23 @@ public interface ClaimCheckStore {
      */
     default int deleteExpired(java.time.Duration maxAge) throws Exception {
         return 0;
+    }
+
+    /**
+     * Delete expired claim check objects older than given maxAge, except those {@code retain} keeps, such as the
+     * claims of messages waiting in a dead-letter topic, which a replay will read again.
+     *
+     * <p>{@code retain} is given each object's URI in the form {@link #put} returned it. The default ignores
+     * {@code retain} and runs {@link #deleteExpired(java.time.Duration)}: a store that cannot list its objects as
+     * URIs keeps sweeping as before.
+     *
+     * @param maxAge Maximum age duration for stored claim check objects
+     * @param retain Objects to keep whatever their age
+     * @return Number of expired objects deleted
+     * @throws Exception if deletion sweep fails
+     */
+    default int deleteExpired(java.time.Duration maxAge, Predicate<URI> retain) throws Exception {
+        return deleteExpired(maxAge);
     }
 
     /**

@@ -191,6 +191,24 @@ class OzoneS3GatewayClientStrategyTest {
     }
 
     @Test
+    void deleteExpiredKeepsTheObjectsItIsToldToRetain() throws Exception {
+        Instant twoDaysAgo = Instant.now().minus(Duration.ofHours(48));
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(ListObjectsV2Response.builder()
+                .contents(
+                        S3Object.builder().key("dead-lettered").lastModified(twoDaysAgo).build(),
+                        S3Object.builder().key("orphan").lastModified(twoDaysAgo).build())
+                .build());
+        OzoneS3GatewayClientStrategy strategy = new OzoneS3GatewayClientStrategy(s3, BUCKET, false);
+
+        // The sweep is given each object's URI as put() returns it.
+        int removed = strategy.deleteExpired(Duration.ofHours(24),
+                URI.create("s3://" + BUCKET + "/dead-lettered")::equals);
+
+        assertThat(removed).isEqualTo(1);
+        assertThat(deleted).containsExactly("claims/orphan");
+    }
+
+    @Test
     void supportsOnlyS3Scheme() {
         OzoneS3GatewayClientStrategy strategy = new OzoneS3GatewayClientStrategy(s3, BUCKET, false);
         assertThat(strategy.supports(URI.create("s3://claims/x"))).isTrue();
