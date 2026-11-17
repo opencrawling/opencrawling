@@ -15,6 +15,8 @@
  */
 package org.opencrawling.runtime.api;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -65,6 +67,7 @@ public class JobController {
     private static final Logger log = LoggerFactory.getLogger(JobController.class);
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private final List<JobDTO> jobs;
+    private final ControlPlaneStore controlPlaneStore;
     private final JobOrchestrator jobOrchestrator;
     private final ConnectorFactory connectorFactory;
     private final JobRunRegistry runRegistry;
@@ -87,12 +90,25 @@ public class JobController {
     @Autowired(required = false)
     private ManagementAuthorization authorization;
 
+    public JobController(JobOrchestrator jobOrchestrator, ConnectorFactory connectorFactory, JobRunRegistry runRegistry,
+                         JdbcTemplate jdbcTemplate) {
+        this(jobOrchestrator, connectorFactory, runRegistry, jdbcTemplate, ControlPlaneStore.files());
+    }
+
     @Autowired
+    public JobController(JobOrchestrator jobOrchestrator, ConnectorFactory connectorFactory, JobRunRegistry runRegistry,
+                         JdbcTemplate jdbcTemplate, ObjectProvider<ControlPlaneStore> controlPlaneStore) {
+        this(jobOrchestrator, connectorFactory, runRegistry, jdbcTemplate, controlPlaneStore.getIfAvailable(ControlPlaneStore::files));
+    }
+
+    /** With the store that keeps the jobs (#315). */
     public JobController(
             JobOrchestrator jobOrchestrator,
             ConnectorFactory connectorFactory,
             JobRunRegistry runRegistry,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbcTemplate,
+            ControlPlaneStore controlPlaneStore) {
+        this.controlPlaneStore = controlPlaneStore;
         this.jobOrchestrator = jobOrchestrator;
         this.connectorFactory = connectorFactory;
         this.runRegistry = runRegistry;
@@ -103,7 +119,7 @@ public class JobController {
         defaults.add(new JobDTO("1", "Default_Job", "FileSystem_Local", "PGVector_Output", "", "/data", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default", null));
         
         // Load persisted list
-        this.jobs = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("jobs.json", JobDTO.class, defaults));
+        this.jobs = new CopyOnWriteArrayList<>(controlPlaneStore.loadList("jobs.json", JobDTO.class, defaults));
     }
 
     @Operation(summary = "List all pipeline jobs", description = "Returns a list of all configured crawling pipeline jobs and their latest execution state.")
@@ -279,7 +295,7 @@ public class JobController {
                 }
             }
         }
-        PersistenceHelper.save("jobs.json", jobs);
+        controlPlaneStore.save("jobs.json", jobs);
         return saved == null ? new SaveOutcome.Missing(job.id()) : new SaveOutcome.Saved(saved, created);
     }
 
@@ -300,7 +316,7 @@ public class JobController {
             }
         }
         jobs.removeIf(j -> j.id().equals(id));
-        PersistenceHelper.save("jobs.json", jobs);
+        controlPlaneStore.save("jobs.json", jobs);
         return ResponseEntity.ok().build();
     }
 
@@ -386,7 +402,7 @@ public class JobController {
             OutputConnector resolvedOutputConnector;
             try {
                 List<ConnectorController.ConnectorDTO> connectors =
-                    PersistenceHelper.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
+                    controlPlaneStore.loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of());
 
                 ConnectorController.ConnectorDTO connConfig = connectors.stream()
                     .filter(c -> c.name() != null && c.name().equalsIgnoreCase(activeJob.repositoryConnector()))
@@ -689,7 +705,7 @@ public class JobController {
                 break;
             }
         }
-        PersistenceHelper.save("jobs.json", jobs);
+        controlPlaneStore.save("jobs.json", jobs);
     }
 
     private synchronized void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
@@ -716,7 +732,7 @@ public class JobController {
                 break;
             }
         }
-        PersistenceHelper.save("jobs.json", jobs);
+        controlPlaneStore.save("jobs.json", jobs);
     }
 
     public synchronized void recordPushExecution(String id, long pushedDocs, boolean success) {
@@ -742,7 +758,7 @@ public class JobController {
                     job.crawlSpec(),
                     job.access()
                 ));
-                PersistenceHelper.save("jobs.json", jobs);
+                controlPlaneStore.save("jobs.json", jobs);
                 break;
             }
         }
@@ -830,7 +846,7 @@ public class JobController {
      * @return the validation error, or null if the job is valid
      */
     private String validate(JobDTO job) {
-        ConnectorController.ConnectorDTO connConfig = PersistenceHelper
+        ConnectorController.ConnectorDTO connConfig = controlPlaneStore
             .loadList("connectors.json", ConnectorController.ConnectorDTO.class, List.of()).stream()
             .filter(c -> c.name().equalsIgnoreCase(job.repositoryConnector()))
             .findFirst()

@@ -26,7 +26,7 @@ import org.opencrawling.iceberg.output.IcebergOutputConnector;
 import org.opencrawling.iceberg.output.config.IcebergOutputProperties;
 import org.opencrawling.iceberg.output.schema.IcebergTableManager;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
-import org.opencrawling.runtime.api.PersistenceHelper;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.opencrawling.runtime.authorization.DocumentAccessGate;
 import org.opencrawling.runtime.security.CallerResolver;
 import org.opencrawling.runtime.security.VerifiedCallerRequiredException;
@@ -90,10 +90,12 @@ public class IcebergMcpTools {
             ObjectProvider<Catalog> catalogProvider,
             ObjectProvider<IcebergOutputConnector> outputConnectorProvider,
             ObjectProvider<CallerResolver> callerResolverProvider,
-            ObjectProvider<DocumentAccessGate> accessGateProvider) {
+            ObjectProvider<DocumentAccessGate> accessGateProvider,
+            ObjectProvider<ControlPlaneStore> controlPlaneStore) {
         this.mcpProperties = mcpProperties != null ? mcpProperties : new IcebergMcpProperties();
         this.defaultOutputProperties = defaultOutputProperties != null ? defaultOutputProperties : new IcebergOutputProperties();
-        this.registeredConnectors = () -> PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, List.of());
+        this.registeredConnectors = () -> controlPlaneStore.getIfAvailable(ControlPlaneStore::files)
+                .loadList("connectors.json", ConnectorDTO.class, List.of());
         this.catalogProvider = catalogProvider;
         this.outputConnectorProvider = outputConnectorProvider;
         this.directCatalog = null;

@@ -88,6 +88,7 @@ final class PlatformApiTestSupport {
             ObservabilityController.class, TransportSettingsController.class, McfMigrationController.class,
             VespaInsightsController.class, NarrativizationCopilotController.class,
             ApiV1Configuration.class, ApiV1OpenApiConfiguration.class,
+            org.opencrawling.runtime.controlplane.ControlPlaneConfiguration.class,
             PlatformV1Controller.class, JobsV1Controller.class, JobRunsV1Controller.class, ExecutionsV1Controller.class,
             ConnectorsV1Controller.class, SettingsV1Controller.class, OperationsV1Controller.class, ToolsV1Controller.class})
     static class PlatformApi {

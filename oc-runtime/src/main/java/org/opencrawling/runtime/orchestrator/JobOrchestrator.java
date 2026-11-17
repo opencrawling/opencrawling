@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.orchestrator;
 
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -72,6 +73,14 @@ public class JobOrchestrator {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ClaimCheckStore claimCheckStore;
     private final TelemetryTraceStore traceStore;
+
+    @Autowired(required = false)
+    private ControlPlaneStore controlPlaneStore;
+
+    /** The store that keeps definitions (#315); the JSON files when none is injected, as in unit tests. */
+    private ControlPlaneStore controlPlaneStore() {
+        return controlPlaneStore != null ? controlPlaneStore : ControlPlaneStore.files();
+    }
 
     @Autowired(required = false)
     private PipelineProperties pipelineProperties;
@@ -666,7 +675,7 @@ public class JobOrchestrator {
         if (transformationConnector != null && !transformationConnector.isBlank()) {
             try {
                 java.util.List<org.opencrawling.runtime.api.ConnectorController.ConnectorDTO> connectors = 
-                    org.opencrawling.runtime.api.PersistenceHelper.loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
+                    controlPlaneStore().loadList("connectors.json", org.opencrawling.runtime.api.ConnectorController.ConnectorDTO.class, java.util.List.of());
                 for (org.opencrawling.runtime.api.ConnectorController.ConnectorDTO conn : connectors) {
                     if (conn.name().equals(transformationConnector)) {
                         engine = conn.configuration().getOrDefault("engine", "ollama");

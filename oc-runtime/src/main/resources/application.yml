@@ -13,6 +13,12 @@ spring:
       enabled: true
       path: /h2-console
 
+  # Schema migrations of the control-plane tables (#315). The database may already hold other tables (the vector
+  # store, Spring Batch), so a schema without Flyway's history is baselined below V1, and V1 still runs.
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+
   jpa:
     open-in-view: false
     hibernate:
@@ -133,6 +139,10 @@ spring:
           target: "static://127.0.0.1:9095"
 
 opencrawling:
+  # Where jobs, connectors and settings are kept (#315): file (JSON files in data/) or jdbc (the datasource above,
+  # with Flyway migrations; imports data/*.json on its first start).
+  control-plane:
+    store: ${OPENCRAWLING_CONTROL_PLANE_STORE:file}
   transport:
     mode: AUTO # Options: AUTO, GRPC, REST
     grpc:
