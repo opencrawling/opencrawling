@@ -57,7 +57,7 @@ import {
   Archive,
   Cloud
 } from 'lucide-react'
-import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage, isPreconditionFailed } from '../lib/api'
+import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage, isPreconditionFailed, isNotRunning } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import type { JobAction } from '../lib/auth'
 
@@ -506,10 +506,11 @@ export default function JobTable({ setActiveView }: JobTableProps) {
     return () => clearInterval(interval)
   }, [])
 
-  const triggerAction = async (id: string, action: 'start' | 'pause' | 'stop') => {
+  const triggerAction = async (id: string, action: 'start' | 'resume' | 'pause' | 'stop') => {
     setActionLoading(`${id}-${action}`)
     try {
       if (action === 'start') await jobApi.start(id)
+      else if (action === 'resume') await resumeOrStart(id)
       else if (action === 'pause') await jobApi.pause(id)
       else if (action === 'stop') await jobApi.stop(id)
       await fetchJobs(false)
@@ -517,6 +518,16 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       console.error(`Failed to ${action} job ${id}:`, err)
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  /** A paused job's run goes on; a job marked Paused with no run left (it ended or was interrupted) starts again. */
+  const resumeOrStart = async (id: string) => {
+    try {
+      await jobApi.resume(id)
+    } catch (err) {
+      if (isNotRunning(err)) await jobApi.start(id)
+      else throw err
     }
   }
 
@@ -862,10 +873,10 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                     <td className="px-3 sm:px-6 py-4">
                       <div className="flex items-center justify-center gap-1">
                         <button 
-                          onClick={() => triggerAction(job.id, 'start')}
+                          onClick={() => triggerAction(job.id, job.status === 'Paused' ? 'resume' : 'start')}
                           disabled={!may(job.id, 'EXECUTE') || job.status === 'Running' || actionLoading !== null}
                           className="p-1.5 rounded hover:bg-cyan-500/10 hover:text-cyan-500 transition-colors disabled:opacity-30" 
-                          title="Start crawl job"
+                          title={job.status === 'Paused' ? 'Resume crawl job' : 'Start crawl job'}
                         >
                           <Play className="w-4 h-4 fill-current" />
                         </button>

@@ -44,6 +44,7 @@ import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
+import org.opencrawling.sdk.v1.model.JobRunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
 
 import java.nio.file.Path;
@@ -205,6 +206,9 @@ public interface PlatformClient {
 
         Job pause(String id);
 
+        /** Resumes the job's paused run; a job with no run to resume answers 409 {@code job-not-running}. */
+        Job resume(String id);
+
         DiagnosticReport diagnose(String id);
 
         JobTraceResponse traces(String id);
@@ -220,6 +224,14 @@ public interface PlatformClient {
         JobRun get(String executionId);
 
         JobRun stop(String executionId);
+
+        /** Pauses the run: it holds before its next document until {@link #resume} or {@link #stop}. */
+        JobRun pause(String executionId);
+
+        JobRun resume(String executionId);
+
+        /** The run, in progress or ended, with the history of its states, while it is kept. */
+        JobRunHistory history(String executionId);
     }
 
     interface Executions {

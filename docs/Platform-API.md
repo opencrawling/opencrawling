@@ -63,6 +63,7 @@ Every error is `application/problem+json`. The one exception is `GET /api/v1/hea
 | <a id="problem-method-not-allowed"></a>`method-not-allowed` | 405 | Wrong method for the path; `Allow` lists the right ones |
 | <a id="problem-not-acceptable"></a>`not-acceptable` | 406 | None of the media types in `Accept` can be produced |
 | <a id="problem-job-already-running"></a>`job-already-running` | 409 | `:start` while the job runs; `executionId` names the run |
+| <a id="problem-job-not-running"></a>`job-not-running` | 409 | `:resume` of a job with no run to resume; start it instead |
 | <a id="problem-job-not-startable"></a>`job-not-startable` | 409 | The job's connectors or settings cannot be used; `detail` says why |
 | <a id="problem-connector-exists"></a>`connector-exists` | 409 | A connector with that name exists; replace it with `PUT` |
 | <a id="problem-connector-in-use"></a>`connector-in-use` | 409 | Jobs use the connector; `jobs` lists them; delete with `force=true` to delete anyway |
@@ -180,7 +181,8 @@ Use one for `:start`, so that a network retry does not start a second run.
 | DELETE | `/api/v1/jobs/{id}` | Delete (`204`) |
 | POST | `/api/v1/jobs/{id}:start` | Start a run: `202` with the run and `Location: /api/v1/job-runs/{executionId}` |
 | POST | `/api/v1/jobs/{id}:stop` | Stop the run (`202`), or mark a job with no run Finished (`200`) |
-| POST | `/api/v1/jobs/{id}:pause` | Mark the job Paused, as the UI does; does not suspend a run |
+| POST | `/api/v1/jobs/{id}:pause` | Pause the job's run: it holds before its next document. The job is marked Paused (a job with no run only that) |
+| POST | `/api/v1/jobs/{id}:resume` | Resume the job's paused run (`409` `job-not-running` when there is none) |
 | GET | `/api/v1/jobs/{id}/executions` | The job's executions |
 | GET | `/api/v1/jobs/{id}/diagnosis` | AIOps root-cause analysis |
 | GET | `/api/v1/jobs/{id}/traces` | OpenTelemetry spans |
@@ -195,6 +197,11 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 | GET | `/api/v1/job-runs` | Runs in progress (`jobId`) |
 | GET | `/api/v1/job-runs/{executionId}` | One run; when it has ended, see its execution |
 | POST | `/api/v1/job-runs/{executionId}:stop` | Stop exactly this run: `404` if it has ended, and a newer run of the same job is never stopped |
+| POST | `/api/v1/job-runs/{executionId}:pause` | Pause exactly this run: it holds before its next document until `:resume` or `:stop` |
+| POST | `/api/v1/job-runs/{executionId}:resume` | Resume this paused run |
+| GET | `/api/v1/job-runs/{executionId}/history` | The run, in progress or ended, with every change of its state; kept for the run retention |
+
+A run has a `state`: `RUNNING` or `PAUSED` while in progress. With the `jdbc` control-plane store the runs are shared by every runtime on the database: a run of another runtime is listed, paused, resumed and stopped like a local one (its runtime notices within `opencrawling.control-plane.run-heartbeat-interval`), and `runtimeId` names the runtime that runs it. A run's history (`STARTED`, `PAUSED`, `RESUMED`, `STOP_REQUESTED`, then `COMPLETED`, `STOPPED`, `FAILED` or `INTERRUPTED`) outlives a restart.
 
 ### Executions (finished runs)
 

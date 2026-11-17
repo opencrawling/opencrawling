@@ -184,6 +184,17 @@ public class JobLedgerAccumulator {
         return Collections.unmodifiableCollection(completedExecutions.values());
     }
 
+    /**
+     * Forgets the completed executions that ended before {@code cutoff}, with their ledgers (the run retention, #315).
+     *
+     * @return how many it forgot
+     */
+    public int forgetCompletedBefore(java.time.Instant cutoff) {
+        int before = completedExecutions.size();
+        completedExecutions.values().removeIf(event -> event.endTime() != null && event.endTime().isBefore(cutoff));
+        return before - completedExecutions.size();
+    }
+
     public List<DocumentLedgerEntry> getEntries(String executionId) {
         ExecutionContext active = activeExecutions.get(executionId);
         if (active != null) {

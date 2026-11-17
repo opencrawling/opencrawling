@@ -145,6 +145,15 @@ opencrawling:
     store: ${OPENCRAWLING_CONTROL_PLANE_STORE:file}
     # How often a runtime applies system and transport settings that another runtime saved (jdbc, several runtimes).
     refresh-interval: ${OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL:10s}
+    # Job runs (#315): each runtime renews its runs' heartbeat; with jdbc, a run whose heartbeat is older than the
+    # timeout is marked INTERRUPTED by any runtime, so its job can run again.
+    run-heartbeat-interval: ${OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_INTERVAL:5s}
+    run-heartbeat-timeout: ${OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_TIMEOUT:60s}
+    runtime-id: ${OPENCRAWLING_CONTROL_PLANE_RUNTIME_ID:}
+    # What finished runs leave (runs and their history, local report files, completed executions in memory) is
+    # deleted after this; 0 keeps everything.
+    run-retention: ${OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION:90d}
+    run-retention-interval: ${OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION_INTERVAL:6h}
   transport:
     mode: AUTO # Options: AUTO, GRPC, REST
     grpc:

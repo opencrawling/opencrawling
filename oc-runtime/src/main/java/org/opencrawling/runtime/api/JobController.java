@@ -120,6 +120,21 @@ public class JobController {
         
         this.defaultJobs = List.copyOf(defaults);
         controlPlaneStore.loadList("jobs.json", JobDTO.class, defaultJobs); // saves or imports them on the first start
+        if (runRegistry != null) {
+            runRegistry.onInterrupted(this::runInterrupted);
+        }
+    }
+
+    /** A run whose runtime stopped renewing its heartbeat: the job no longer runs, so it may not say it does. */
+    private void runInterrupted(JobRunRegistry.RunInfo run) {
+        locked(() -> {
+            JobDTO job = findJobById(run.jobId());
+            if (job != null && ("Running".equals(job.status()) || "Paused".equals(job.status()))
+                    && runRegistry.run(job.id()).isEmpty()) {
+                updateJobStatusAndStage(job.id(), "Error", "Interrupted", job.documents());
+            }
+            return null;
+        });
     }
 
     /** The saved jobs, read on every call: another runtime that shares the store may have changed them (#315). */
@@ -485,7 +500,7 @@ public class JobController {
             log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
-            reservation.start(stopRequested -> {
+            reservation.startJob(stopRequested -> {
                 boolean succeeded = false;
                 try {
                     log.info("Background Virtual Thread running [Exec ID: {}]. Path: {}, OutputConnector: {}", executionId, finalActiveJob.path(), finalOutputConnector.getName());
@@ -507,6 +522,7 @@ public class JobController {
                 } else {
                     updateJobStatusAndStage(id, "Error", "Failed", docCount);
                 }
+                return succeeded;
             });
             return new StartOutcome.Started(activeJob.id(), executionId);
         }
@@ -554,6 +570,61 @@ public class JobController {
         return runRegistry.stopExecution(job.id(), executionId)
                 ? ResponseEntity.accepted().build() : ResponseEntity.notFound().build();
     }
+
+    /**
+     * Pauses one run of a job, with the same access rules as {@link #stopRun}: {@code 202} when the run will hold
+     * before its next document, {@code 404} when the job is not visible or that run is not running.
+     */
+    public ResponseEntity<Void> pauseRun(String jobId, String executionId) {
+        return changeRun(jobId, executionId, true);
+    }
+
+    /** Resumes a paused run of a job, with the same access rules and answers as {@link #pauseRun}. */
+    public ResponseEntity<Void> resumeRun(String jobId, String executionId) {
+        return changeRun(jobId, executionId, false);
+    }
+
+    private ResponseEntity<Void> changeRun(String jobId, String executionId, boolean pause) {
+        JobDTO job = findJob(jobId);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return dynamicRun(jobId) ? changeDynamicRun(jobId, executionId, pause) : ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
+        }
+        boolean changed = pause ? runRegistry.pause(job.id(), executionId) : runRegistry.resume(job.id(), executionId);
+        if (!changed) {
+            return ResponseEntity.notFound().build();
+        }
+        updateJobStatus(job.id(), pause ? "Paused" : "Running");
+        return ResponseEntity.accepted().build();
+    }
+
+    /** A run of a job outside the job list (a dynamic job): only admins may act on it here, as {@link #getRuns} lists. */
+    private boolean dynamicRun(String jobId) {
+        return findJob(jobId) == null && (!authorizationOn() || authorization.isAdmin());
+    }
+
+    private ResponseEntity<Void> changeDynamicRun(String jobId, String executionId, boolean pause) {
+        boolean changed = pause ? runRegistry.pause(jobId, executionId) : runRegistry.resume(jobId, executionId);
+        return changed ? ResponseEntity.accepted().build() : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * A run, active or ended, while it is kept (#315), with its history; empty when it is unknown or the caller may
+     * not see its job.
+     */
+    public Optional<RunHistory> runHistory(String executionId) {
+        return runRegistry.execution(executionId)
+                .filter(run -> {
+                    JobDTO job = findJob(run.jobId());
+                    return job != null ? allowed(job, JobAction.READ) : !authorizationOn() || authorization.isAdmin();
+                })
+                .map(run -> new RunHistory(run, runRegistry.steps(executionId)));
+    }
+
+    /** A run and its history. */
+    public record RunHistory(JobRunRegistry.RunInfo run, List<org.opencrawling.runtime.orchestrator.RunStore.RunStep> steps) {}
 
     @Operation(summary = "List running jobs", description = "The job runs in progress in this runtime, oldest first.")
     @ApiResponse(responseCode = "200", description = "Runs in progress")
@@ -647,7 +718,7 @@ public class JobController {
             .orElse(null);
     }
 
-    @Operation(summary = "Pause a pipeline job", description = "Signals a running pipeline job to pause execution.")
+    @Operation(summary = "Pause a pipeline job", description = "Pauses the job's run: it holds before its next document until it is resumed or stopped. A job with no run is marked Paused.")
     @ApiResponse(responseCode = "200", description = "Job pause signal processed")
     @PostMapping("/{id}/pause")
     public ResponseEntity<Void> pauseJob(
@@ -662,7 +733,33 @@ public class JobController {
                 return ResponseEntity.status(403).build();
             }
         }
+        JobDTO job = findJobById(id);
+        Optional<JobRunRegistry.RunInfo> run = job == null ? Optional.empty() : runRegistry.run(job.id());
+        if (run.isPresent() && runRegistry.pause(job.id(), run.get().executionId())) {
+            log.info("Job {} run [Exec ID: {}] paused: it holds before its next document.", job.id(), run.get().executionId());
+        }
         updateJobStatus(id, "Paused");
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Resumes the job's paused run. {@code 200} when it runs again, {@code 409} when the job has no run to resume (it
+     * can be started), {@code 404}/{@code 403} as for {@link #pauseJob}.
+     */
+    public ResponseEntity<Void> resumeJob(String id) {
+        JobDTO job = findJobById(id);
+        if (job == null || !allowed(job, JobAction.READ)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!allowed(job, JobAction.EXECUTE)) {
+            return ResponseEntity.status(403).build();
+        }
+        Optional<JobRunRegistry.RunInfo> run = runRegistry.run(job.id());
+        if (run.isEmpty() || !runRegistry.resume(job.id(), run.get().executionId())) {
+            return ResponseEntity.status(409).build();
+        }
+        log.info("Job {} run [Exec ID: {}] resumed.", job.id(), run.get().executionId());
+        updateJobStatus(job.id(), "Running");
         return ResponseEntity.ok().build();
     }
 

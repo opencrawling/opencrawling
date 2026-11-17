@@ -19,6 +19,8 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.opencrawling.runtime.controlplane.JdbcControlPlaneStore;
+import org.opencrawling.runtime.controlplane.JdbcRunStore;
+import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -93,5 +95,37 @@ class JobControllerSharedStoreTest {
 
         assertThat(second.findJobById(jobId)).isNull();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM oc_job WHERE id = ?", Integer.class, jobId)).isZero();
+    }
+
+    @Test
+    void aJobWhoseRunWasInterruptedNoLongerSaysItRuns() {
+        freshDatabase();
+        java.util.concurrent.atomic.AtomicReference<java.time.Instant> now =
+                new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.parse("2026-11-17T10:00:00Z"));
+        java.time.Clock clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public java.time.Instant instant() { return now.get(); }
+        };
+        JdbcControlPlaneStore storeA = new JdbcControlPlaneStore(jdbc,
+                new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource())), dataDir);
+        JdbcControlPlaneStore storeB = new JdbcControlPlaneStore(jdbc,
+                new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource())), dataDir);
+        JobRunRegistry registryA = new JobRunRegistry(0, 0, new JdbcRunStore(jdbc, storeA), "rt-a", java.time.Duration.ofSeconds(60), clock);
+        JobRunRegistry registryB = new JobRunRegistry(0, 0, new JdbcRunStore(jdbc, storeB), "rt-b", java.time.Duration.ofSeconds(60), clock);
+        JobController a = new JobController(null, null, registryA, null, storeA);
+        JobController b = new JobController(null, null, registryB, null, storeB);
+        String jobId = a.getAllJobs().getFirst().id();
+        // A run on A (its thread never starts: A's runtime is gone), paused through B.
+        registryA.reserve(jobId, "exec-gone");
+        a.pauseJob(jobId);
+        assertThat(b.findJobById(jobId).status()).isEqualTo("Paused");
+
+        now.set(now.get().plusSeconds(61));
+        registryB.heartbeat();
+
+        assertThat(b.findJobById(jobId).status()).isEqualTo("Error");
+        assertThat(b.findJobById(jobId).currentStage()).isEqualTo("Interrupted");
+        assertThat(registryB.run(jobId)).isEmpty();
     }
 }
