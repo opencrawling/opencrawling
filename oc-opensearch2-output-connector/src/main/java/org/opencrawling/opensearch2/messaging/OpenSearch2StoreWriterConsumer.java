@@ -21,7 +21,9 @@ import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.opensearch2.OpenSearch2Constants;
 import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.BulkIndexByScrollFailure;
 import org.opensearch.client.opensearch._types.FieldValue;
+import org.opensearch.client.opensearch.core.DeleteByQueryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,6 +55,24 @@ public class OpenSearch2StoreWriterConsumer {
         log.info("OpenSearch2StoreWriterConsumer (2.x) initialized successfully!");
     }
 
+    /**
+     * Throws when a document purge did not complete. A delete-by-query can answer normally yet have timed out or
+     * failed on some chunks (shard failures, version conflicts); committing that tombstone would leave those chunks
+     * indexed, so it is retried instead.
+     */
+    static void requireComplete(DeleteByQueryResponse response, String documentId) {
+        if (response == null) {
+            return;
+        }
+        List<BulkIndexByScrollFailure> failures = response.failures() != null ? response.failures() : List.of();
+        if (Boolean.TRUE.equals(response.timedOut()) || !failures.isEmpty()) {
+            String firstCause = failures.isEmpty() || failures.get(0).cause() == null ? "timed out"
+                    : failures.get(0).cause().type() + ": " + failures.get(0).cause().reason();
+            throw new IllegalStateException("Incomplete purge of document " + documentId + " (timedOut="
+                    + response.timedOut() + ", failures=" + failures.size() + ", first: " + firstCause + ")");
+        }
+    }
+
     @KafkaListener(topics = "opencrawling-embedded")
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for OpenSearch 2.x storage: {} (Dimensions: {})", message.chunkId(), 
@@ -68,11 +88,12 @@ public class OpenSearch2StoreWriterConsumer {
                         : message.chunkId();
                 log.info("Received DELETE tombstone for OpenSearch 2.x: documentId={}, chunkId={}", docId, message.chunkId());
                 // The delete that purges the document's chunks; a failure propagates, so the tombstone is retried.
-                client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
+                DeleteByQueryResponse purge = client.deleteByQuery(q -> q.index(indexName).query(m -> m.bool(b -> b
                         .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_DOCUMENT_ID).value(FieldValue.of(docId))))
                         .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(docId))))
                         .should(s -> s.term(t -> t.field(OpenSearch2Constants.FIELD_ID).value(FieldValue.of(message.chunkId()))))
                 )));
+                requireComplete(purge, docId);
                 try {
                     client.delete(d -> d.index(indexName).id(message.chunkId()));
                 } catch (Exception ignored) {

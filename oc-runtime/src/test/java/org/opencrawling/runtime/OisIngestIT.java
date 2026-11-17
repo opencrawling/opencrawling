@@ -24,6 +24,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -43,7 +45,6 @@ import static org.assertj.core.api.Assertions.fail;
  * <p>Requires PostgreSQL and Kafka from {@code docker-compose.yml}.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-    "spring.kafka.consumer.group-id=${it.kafka.group:test-group-${random.uuid}}",
     "opencrawling.ingest.ois.token=" + OisIngestIT.TOKEN,
     // Free ports: every IT's cached context keeps its gRPC push listener bound, so fixed ports collide.
     "opencrawling.connector.grpc-push.port=0",
@@ -51,6 +52,12 @@ import static org.assertj.core.api.Assertions.fail;
 })
 @ActiveProfiles("test")
 class OisIngestIT {
+
+    /** A fresh consumer group, starting at the end of the topics: see {@link KafkaTestGroup}. */
+    @DynamicPropertySource
+    static void kafkaGroup(DynamicPropertyRegistry registry) {
+        KafkaTestGroup.register(registry);
+    }
 
     static final String TOKEN = "ois-it-token";
     private static final long TIMEOUT_MS = 60_000;

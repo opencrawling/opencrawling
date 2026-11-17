@@ -19,12 +19,17 @@ import org.junit.jupiter.api.Test;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.BulkIndexByScrollFailure;
+import org.opensearch.client.opensearch._types.ErrorCause;
+import org.opensearch.client.opensearch.core.DeleteByQueryResponse;
 import org.opensearch.client.opensearch.core.DeleteResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -92,5 +97,52 @@ class OpenSearch2StoreWriterConsumerTest {
                     .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
         }
         org.mockito.Mockito.verifyNoInteractions(client);
+    }
+
+    @Test
+    void aPurgeThatTimedOutIsRetried() throws Exception {
+        DeleteByQueryResponse timedOut = mock(DeleteByQueryResponse.class);
+        when(timedOut.timedOut()).thenReturn(true);
+        when(timedOut.failures()).thenReturn(List.of());
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> tombstoneAnswered(timedOut));
+        assertTrue(thrown.getCause().getMessage().contains("doc-opensearch2-1"));
+    }
+
+    @Test
+    void aPurgeWithFailedChunksIsRetried() throws Exception {
+        // The request succeeds, but a chunk could not be deleted: committing the tombstone would leave it indexed.
+        ErrorCause cause = mock(ErrorCause.class);
+        when(cause.type()).thenReturn("version_conflict_engine_exception");
+        when(cause.reason()).thenReturn("version conflict");
+        BulkIndexByScrollFailure failure = mock(BulkIndexByScrollFailure.class);
+        when(failure.cause()).thenReturn(cause);
+        DeleteByQueryResponse partial = mock(DeleteByQueryResponse.class);
+        when(partial.timedOut()).thenReturn(false);
+        when(partial.failures()).thenReturn(List.of(failure));
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> tombstoneAnswered(partial));
+        assertTrue(thrown.getCause().getMessage().contains("version_conflict_engine_exception"));
+    }
+
+    @Test
+    void aCompletePurgeIsCommitted() throws Exception {
+        DeleteByQueryResponse complete = mock(DeleteByQueryResponse.class);
+        when(complete.timedOut()).thenReturn(false);
+        when(complete.failures()).thenReturn(List.of());
+
+        assertDoesNotThrow(() -> tombstoneAnswered(complete));
+    }
+
+    /** Consumes a tombstone whose delete-by-query answers {@code response}. */
+    private static void tombstoneAnswered(DeleteByQueryResponse response) throws Exception {
+        OpenSearchClient client = mock(OpenSearchClient.class);
+        when(client.deleteByQuery(any(Function.class))).thenReturn(response);
+        when(client.delete(any(Function.class))).thenReturn(mock(DeleteResponse.class));
+        OpenSearch2StoreWriterConsumer consumer = new OpenSearch2StoreWriterConsumer(client);
+        ReflectionTestUtils.setField(consumer, "indexName", "enterprise_kb");
+
+        consumer.consume(new DocumentEmbeddedMessage("doc-opensearch2-1", "chunk-opensearch2-1", "", Map.of(),
+                new float[0], DocumentAction.DELETE));
     }
 }

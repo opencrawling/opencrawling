@@ -86,6 +86,12 @@ public class ClaimCheckProperties {
         private String omHost = "localhost";
         private int omPort = 9862;
         private String volume = "s3v";
+        /**
+         * The volume whose buckets the Ozone S3 gateway serves: the cluster's {@code ozone.s3g.volume.name}. Objects
+         * in it are reached by both transports ({@code s3://b/k} is {@code ofs://<this>/b/k}), which the claim
+         * garbage collector must know to keep a claim referenced under either name.
+         */
+        private String s3GatewayVolume = "s3v";
         private String bucket = "claims";
         private String accessKey = "ozone";
         private String secretKey = "ozone-secret";
@@ -131,6 +137,14 @@ public class ClaimCheckProperties {
 
         public void setVolume(String volume) {
             this.volume = volume;
+        }
+
+        public String getS3GatewayVolume() {
+            return s3GatewayVolume;
+        }
+
+        public void setS3GatewayVolume(String s3GatewayVolume) {
+            this.s3GatewayVolume = s3GatewayVolume;
         }
 
         public String getBucket() {

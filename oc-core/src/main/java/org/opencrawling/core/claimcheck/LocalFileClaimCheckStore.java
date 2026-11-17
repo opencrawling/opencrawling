@@ -99,6 +99,11 @@ public class LocalFileClaimCheckStore implements ClaimCheckStore {
 
     @Override
     public int deleteExpired(java.time.Duration maxAge) throws Exception {
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    @Override
+    public int deleteExpired(java.time.Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
         if (!Files.exists(claimsDir)) {
             return 0;
         }
@@ -108,6 +113,11 @@ public class LocalFileClaimCheckStore implements ClaimCheckStore {
         try (var stream = Files.list(claimsDir)) {
             for (Path path : stream.toList()) {
                 if (Files.isRegularFile(path) && Files.getLastModifiedTime(path).toMillis() < cutoffMillis) {
+                    // The URI as put() returned it.
+                    if (retain.test(path.toFile().toURI())) {
+                        log.debug("Garbage collector kept expired local claim check file still referenced: {}", path);
+                        continue;
+                    }
                     if (Files.deleteIfExists(path)) {
                         deletedCount++;
                         log.info("Garbage collector deleted expired local claim check file: {}", path);

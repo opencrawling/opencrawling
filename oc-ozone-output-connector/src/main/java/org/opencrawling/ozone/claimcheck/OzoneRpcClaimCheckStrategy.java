@@ -38,6 +38,7 @@ import java.nio.file.NoSuchFileException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Iterator;
+import java.util.function.Predicate;
 
 /**
  * Real NATIVE (`ofs` / Ozone RPC) claim-check transport: talks to the Ozone Manager over Hadoop RPC and streams
@@ -206,6 +207,11 @@ public class OzoneRpcClaimCheckStrategy implements OzoneClientStrategy, AutoClos
 
     @Override
     public int deleteExpired(Duration maxAge) throws Exception {
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    @Override
+    public int deleteExpired(Duration maxAge, Predicate<URI> retain) throws Exception {
         Instant cutoff = Instant.now().minus(maxAge);
         OzoneBucket b = bucket();
         int count = 0;
@@ -214,6 +220,12 @@ public class OzoneRpcClaimCheckStrategy implements OzoneClientStrategy, AutoClos
             OzoneKey key = keys.next();
             Instant modified = key.getModificationTime();
             if (modified != null && modified.isBefore(cutoff)) {
+                // The URI as put() returned it.
+                if (retain.test(URI.create("ofs://" + volume + "/" + bucket + "/" + key.getName()))) {
+                    log.debug("Garbage collector kept expired Ozone claim check object still referenced: ofs://{}/{}/{}",
+                            volume, bucket, key.getName());
+                    continue;
+                }
                 try {
                     b.deleteKey(key.getName());
                     count++;

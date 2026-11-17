@@ -24,6 +24,9 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -73,5 +76,22 @@ class LocalFileClaimCheckStoreTest {
         // Delete should NOT remove external file outside managed claims dir
         store.delete(externalUri);
         assertThat(Files.exists(externalFile)).isTrue();
+    }
+
+    @Test
+    void anExpiredClaimTheSweepIsToldToRetainIsKept() throws Exception {
+        LocalFileClaimCheckStore store = new LocalFileClaimCheckStore(tempDir);
+        URI retained = store.put("dead-lettered.pdf", new ByteArrayInputStream(new byte[] {1}), 1);
+        URI expired = store.put("orphan.pdf", new ByteArrayInputStream(new byte[] {2}), 1);
+        FileTime twoDaysAgo = FileTime.from(Instant.now().minus(Duration.ofHours(48)));
+        Files.setLastModifiedTime(Path.of(retained), twoDaysAgo);
+        Files.setLastModifiedTime(Path.of(expired), twoDaysAgo);
+
+        // The sweep is given each file's URI exactly as put() returned it.
+        int removed = store.deleteExpired(Duration.ofHours(24), retained::equals);
+
+        assertThat(removed).isEqualTo(1);
+        assertThat(Files.exists(Path.of(retained))).isTrue();
+        assertThat(Files.exists(Path.of(expired))).isFalse();
     }
 }
