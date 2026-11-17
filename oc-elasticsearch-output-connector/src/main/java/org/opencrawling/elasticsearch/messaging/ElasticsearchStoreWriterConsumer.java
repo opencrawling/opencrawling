@@ -15,6 +15,7 @@
  */
 package org.opencrawling.elasticsearch.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.Conflicts;
 import co.elastic.clients.elasticsearch._types.FieldValue;
@@ -64,6 +65,10 @@ public class ElasticsearchStoreWriterConsumer {
     @KafkaListener(topics = "opencrawling-embedded")
     public void consume(DocumentEmbeddedMessage message) {
         try {
+            if (message.action() != DocumentAction.DELETE) {
+                // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+                RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
+            }
             if (message.action() == DocumentAction.DELETE) {
                 delete(message);
             } else {

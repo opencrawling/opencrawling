@@ -15,6 +15,7 @@
  */
 package org.opencrawling.luxir.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import jakarta.annotation.PostConstruct;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
@@ -94,6 +95,10 @@ public class LuxirStoreWriterConsumer {
         log.info("Received embedded chunk for Luxir storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() != DocumentAction.DELETE) {
+                // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+                RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
+            }
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for Luxir storage: document {}", message.documentId());
                 List<String> deleteIds = new ArrayList<>();

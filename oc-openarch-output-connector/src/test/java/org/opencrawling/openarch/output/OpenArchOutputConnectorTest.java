@@ -43,6 +43,8 @@ public class OpenArchOutputConnectorTest {
     private OpenArchOutputConnector connector;
     private ObjectMapper mapper = new ObjectMapper();
 
+    private org.springframework.ai.embedding.EmbeddingModel embeddingModel;
+
     @BeforeEach
     public void setup() throws Exception {
         mockClient = mock(OpenArchClient.class);
@@ -61,7 +63,9 @@ public class OpenArchOutputConnectorTest {
 
         when(mockClient.ping(anyString())).thenReturn(true);
 
-        connector = new OpenArchOutputConnector(mockClient, properties);
+        embeddingModel = mock(org.springframework.ai.embedding.EmbeddingModel.class);
+        when(embeddingModel.embed(anyString())).thenReturn(new float[] {0.1f, 0.2f, 0.3f});
+        connector = new OpenArchOutputConnector(properties, mockClient, embeddingModel, null);
     }
 
     @Test
@@ -98,9 +102,43 @@ public class OpenArchOutputConnectorTest {
 
         try {
             verify(mockClient).uploadBlob(any(InputStream.class), eq("doc-test-1"), eq("text/plain"));
+            verify(mockClient).uploadBlob(any(InputStream.class), eq("embeddings-doc-uuid-5678.parquet"), eq("application/vnd.apache.parquet"));
             verify(mockClient).createOrUpdateDocument(eq("default"), eq("00000000-0000-0000-0000-000000000000"), anyMap(), eq(true));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** #333: the document is marked SysHasEmbeddings, so it is written only with its vectors. */
+    @Test
+    public void aDocumentWithoutItsRealVectorsIsNotStored() throws Exception {
+        OpenArchOutputConnector noModel = new OpenArchOutputConnector(mockClient, properties);
+        StepVerifier.create(noModel.send(document("doc-333-a"))).expectErrorMatches(e ->
+                e.getMessage().contains("No embedding model is configured")).verify();
+
+        when(embeddingModel.embed(anyString())).thenReturn(new float[0]);
+        StepVerifier.create(connector.send(document("doc-333-b"))).expectErrorMatches(e ->
+                e.getMessage().contains("returned no vector")).verify();
+
+        when(embeddingModel.embed(anyString())).thenThrow(new RuntimeException("model down"));
+        StepVerifier.create(connector.send(document("doc-333-c"))).expectErrorMatches(e ->
+                e.getMessage().contains("model down")).verify();
+
+        verify(mockClient, org.mockito.Mockito.never()).uploadBlob(any(InputStream.class), anyString(), anyString());
+        verify(mockClient, org.mockito.Mockito.never()).createOrUpdateDocument(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    /** #333: a failed Parquet vector upload fails the document instead of being logged and dropped. */
+    @Test
+    public void aFailedVectorUploadFailsTheDocument() throws Exception {
+        when(mockClient.uploadBlob(any(InputStream.class), eq("embeddings-doc-uuid-5678.parquet"), anyString()))
+                .thenThrow(new java.io.IOException("upload refused"));
+        StepVerifier.create(connector.send(document("doc-333-d"))).expectErrorMatches(e ->
+                e.getMessage().contains("upload refused")).verify();
+    }
+
+    private static RepositoryDocument document(String id) {
+        return new RepositoryDocument(id, "file:///tmp/" + id, new ByteArrayInputStream("Content for OpenArch".getBytes()),
+                Map.of("mimeType", List.of("text/plain")), "", SecurityConfig.createPublic(), Instant.now());
     }
 }

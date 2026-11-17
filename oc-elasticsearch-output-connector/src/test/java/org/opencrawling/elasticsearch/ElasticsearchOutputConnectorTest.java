@@ -174,17 +174,23 @@ class ElasticsearchOutputConnectorTest {
     }
 
     @Test
-    void sendWithoutEmbeddingModelUsesPlaceholderVectorOfConfiguredDimensions() throws Exception {
+    void aDocumentWithoutItsRealVectorsIsNotStored() throws Exception {
+        // #333: no placeholder vector; a missing model, a failed call or an empty vector fails the document.
         ElasticsearchOutputConnector noModel = new ElasticsearchOutputConnector(client, properties(500), null);
+        assertThatThrownBy(() -> noModel.send(document("doc-nomodel", "Text without a model.")).block())
+                .hasStackTraceContaining("No embedding model is configured");
 
-        noModel.send(document("doc-nomodel", "Text without a model.")).block();
+        when(embeddingModel.embed(any(Document.class))).thenReturn(new float[0]);
+        assertThatThrownBy(() -> connector(500).send(document("doc-empty-vector", "Text with an empty vector.")).block())
+                .hasStackTraceContaining("returned no vector");
 
-        ArgumentCaptor<BulkRequest> captor = ArgumentCaptor.forClass(BulkRequest.class);
-        verify(client).bulk(captor.capture());
-        Map<String, Object> source = (Map<String, Object>) captor.getValue().operations().get(0).index().document();
-        float[] vector = (float[]) source.get(ElasticsearchConstants.FIELD_EMBEDDINGS);
-        assertThat(vector).hasSize(4);
-        assertThat(vector[0]).isEqualTo(1.0f);
+        org.mockito.Mockito.doThrow(new RuntimeException("model down")).when(embeddingModel).embed(any(Document.class));
+        org.mockito.Mockito.doThrow(new RuntimeException("model down")).when(embeddingModel).embed(org.mockito.ArgumentMatchers.anyString());
+        assertThatThrownBy(() -> connector(500).send(document("doc-model-down", "Text the model cannot embed.")).block())
+                .hasStackTraceContaining("model down");
+
+        verify(client, never()).bulk(any(BulkRequest.class));
+        verify(client, never()).deleteByQuery(any(Function.class));
     }
 
     @Test

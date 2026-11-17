@@ -15,6 +15,8 @@
  */
 package org.opencrawling.seatunnel;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
+import java.util.concurrent.ExecutionException;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
@@ -137,7 +139,7 @@ public class SeaTunnelOutputConnector implements OutputConnector {
                             DocumentAction.DELETE
                     );
 
-                    publishToKafkaOrBuffer(tombstoneMsg);
+                    publish(tombstoneMsg);
                     return;
                 }
 
@@ -167,9 +169,11 @@ public class SeaTunnelOutputConnector implements OutputConnector {
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
                 log.info("Split document {} into {} chunks for SeaTunnel fan-out.", document.id(), chunks.size());
 
+                // Every chunk is embedded before anything is published, so a failed chunk sends nothing of the document (#333).
+                List<DocumentEmbeddedMessage> messages = new ArrayList<>(chunks.size());
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
-                    float[] embedding = computeEmbedding(chunk);
+                    float[] embedding = computeEmbedding(chunk, document.id());
 
                     Map<String, Object> chunkMetadata = new LinkedHashMap<>(metadata);
                     chunkMetadata.put(SeaTunnelConstants.FIELD_DOC_ID, document.id());
@@ -193,7 +197,10 @@ public class SeaTunnelOutputConnector implements OutputConnector {
                             DocumentAction.UPSERT
                     );
 
-                    publishToKafkaOrBuffer(embeddedMessage);
+                    messages.add(embeddedMessage);
+                }
+                for (DocumentEmbeddedMessage message : messages) {
+                    publish(message);
                 }
                 log.info("Successfully dispatched {} chunks for document {} to SeaTunnel stream topic '{}'.",
                         chunks.size(), document.id(), properties.kafkaTopic());
@@ -204,11 +211,16 @@ public class SeaTunnelOutputConnector implements OutputConnector {
         });
     }
 
-    private void publishToKafkaOrBuffer(DocumentEmbeddedMessage message) {
-        if (kafkaTemplate != null) {
-            kafkaTemplate.send(properties.kafkaTopic(), message.partitionKey(), message);
-        } else {
-            log.debug("KafkaTemplate not injected, buffered message {} for SeaTunnel topic {}", message.chunkId(), properties.kafkaTopic());
+    /** Publishes and waits for the broker, so a failed send fails the document instead of losing the chunk (#333). */
+    private void publish(DocumentEmbeddedMessage message) throws Exception {
+        if (kafkaTemplate == null) {
+            throw new IllegalStateException("No Kafka template is configured, so chunk " + message.chunkId()
+                    + " cannot be published to SeaTunnel topic " + properties.kafkaTopic());
+        }
+        try {
+            kafkaTemplate.send(properties.kafkaTopic(), message.partitionKey(), message).get();
+        } catch (ExecutionException e) {
+            throw e.getCause() instanceof Exception cause ? cause : e;
         }
     }
 
@@ -234,18 +246,17 @@ public class SeaTunnelOutputConnector implements OutputConnector {
         return metadata;
     }
 
-    private float[] computeEmbedding(Document chunk) {
-        if (embeddingModel == null) {
-            float[] fallback = new float[properties.dimensions()];
-            fallback[0] = 1.0f;
-            return fallback;
-        }
-        try {
-            return embeddingModel.embed(chunk);
-        } catch (Exception e) {
-            log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
-            return embeddingModel.embed(chunk.getText());
-        }
+    /** The chunk's real vector; a missing model, a failed call or an empty vector fails the document (#333). */
+    private float[] computeEmbedding(Document chunk, String documentId) {
+        RequiredEmbeddings.requireModel(embeddingModel, documentId);
+        return RequiredEmbeddings.embed(text -> {
+            try {
+                return embeddingModel.embed(chunk);
+            } catch (Exception e) {
+                log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
+                return embeddingModel.embed(text);
+            }
+        }, chunk.getText(), documentId);
     }
 
     public SeaTunnelRestClient getRestClient() {

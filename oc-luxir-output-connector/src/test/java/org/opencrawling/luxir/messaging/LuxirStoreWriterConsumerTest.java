@@ -182,4 +182,18 @@ class LuxirStoreWriterConsumerTest {
         org.junit.jupiter.api.Assertions.assertTrue(doc.keySet().stream().noneMatch(k -> k.contains(":") || k.contains(".")),
                 "every field name must be valid in Luxir: " + doc.keySet());
     }
+
+    /** #333: an upsert without its real vector is refused (retried, then dead-lettered) and nothing is written. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
+        LuxirClient client = mock(LuxirClient.class);
+        LuxirStoreWriterConsumer consumer = new LuxirStoreWriterConsumer(client);
+        org.mockito.Mockito.clearInvocations(client);
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new org.opencrawling.core.messaging.DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, org.opencrawling.core.document.DocumentAction.UPSERT)))
+                    .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        org.mockito.Mockito.verifyNoInteractions(client);
+    }
 }

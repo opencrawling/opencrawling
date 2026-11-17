@@ -62,8 +62,10 @@ public class DoxisStoreWriterConsumer {
                 message.action() == DocumentAction.DELETE ? "DELETE" : "UPSERT");
         try {
             connector.send(toDocument(message)).block();
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.error("Failed to archive document {} into Doxis: {}", message.documentId(), e.getMessage(), e);
+            // Rethrown so the container's error handler retries and then dead-letters the document (#312, #333).
+            throw new IllegalStateException("Doxis archiving failed for document " + message.documentId(), e);
         }
     }
 

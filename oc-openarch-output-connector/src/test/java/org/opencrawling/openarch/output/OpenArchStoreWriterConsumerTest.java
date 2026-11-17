@@ -76,4 +76,56 @@ class OpenArchStoreWriterConsumerTest {
 
         verify(client, times(1)).uploadBlob(any(InputStream.class), contains(".parquet"), eq("application/vnd.apache.parquet"));
     }
+
+    /** #333: an upsert without its real vector is refused, and nothing is buffered or uploaded. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefused() {
+        OpenArchClient client = mock(OpenArchClient.class);
+        OpenArchOutputProperties properties = new OpenArchOutputProperties();
+        properties.setParquetBatchThreshold(1);
+        OpenArchStoreWriterConsumer consumer = new OpenArchStoreWriterConsumer(client, properties);
+
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", Map.of(), missing, DocumentAction.UPSERT)))
+                    .hasMessage("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        verifyNoInteractions(client);
+    }
+
+    /**
+     * #333: a failed batch upload is rethrown so Kafka retries the record, and the batch is kept: the retry flushes
+     * every chunk of it once, the retried record's chunk included.
+     */
+    @Test
+    void aFailedBatchUploadIsRethrownAndTheBatchIsKeptForTheRetry() throws Exception {
+        OpenArchClient client = mock(OpenArchClient.class);
+        when(client.uploadBlob(any(InputStream.class), anyString(), anyString()))
+                .thenThrow(new java.io.IOException("OpenArch unavailable"))
+                .thenReturn(new ObjectMapper().readTree("{\"id\":\"blob-1\"}"));
+        OpenArchOutputProperties properties = new OpenArchOutputProperties();
+        properties.setParquetBatchThreshold(2);
+        OpenArchStoreWriterConsumer consumer = new OpenArchStoreWriterConsumer(client, properties);
+        DocumentEmbeddedMessage first = new DocumentEmbeddedMessage("doc-1", "chunk-1", "first", Map.of(),
+                new float[] {0.1f, 0.2f}, DocumentAction.UPSERT);
+        DocumentEmbeddedMessage second = new DocumentEmbeddedMessage("doc-1", "chunk-2", "second", Map.of(),
+                new float[] {0.3f, 0.4f}, DocumentAction.UPSERT);
+
+        consumer.consume(first);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(second))
+                .isInstanceOf(IllegalStateException.class)
+                .hasRootCauseMessage("OpenArch unavailable");
+        org.assertj.core.api.Assertions.assertThat(buffered(consumer)).as("the first chunk is kept, the retried one is not doubled")
+                .hasSize(1);
+        consumer.consume(second); // Kafka's retry of the same record
+
+        verify(client, times(2)).uploadBlob(any(InputStream.class), contains(".parquet"), eq("application/vnd.apache.parquet"));
+        org.assertj.core.api.Assertions.assertThat(buffered(consumer)).isEmpty();
+    }
+
+    private static java.util.List<?> buffered(OpenArchStoreWriterConsumer consumer) throws Exception {
+        java.lang.reflect.Field buffer = OpenArchStoreWriterConsumer.class.getDeclaredField("chunkBuffer");
+        buffer.setAccessible(true);
+        return (java.util.List<?>) buffer.get(consumer);
+    }
 }

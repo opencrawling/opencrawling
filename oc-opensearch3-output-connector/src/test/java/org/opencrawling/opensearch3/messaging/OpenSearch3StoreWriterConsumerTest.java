@@ -86,6 +86,20 @@ class OpenSearch3StoreWriterConsumerTest {
                         new float[]{1f, 0f}, DocumentAction.UPSERT)));
     }
 
+    /** #333: an upsert without its real vector is refused (retried, then dead-lettered) and nothing is written. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
+        OpenSearchClient client = mock(OpenSearchClient.class);
+        OpenSearch3StoreWriterConsumer consumer = new OpenSearch3StoreWriterConsumer(client);
+        org.mockito.Mockito.clearInvocations(client);
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new org.opencrawling.core.messaging.DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, org.opencrawling.core.document.DocumentAction.UPSERT)))
+                    .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        org.mockito.Mockito.verifyNoInteractions(client);
+    }
+
     @Test
     void aPurgeThatTimedOutIsRetried() throws Exception {
         DeleteByQueryResponse timedOut = mock(DeleteByQueryResponse.class);

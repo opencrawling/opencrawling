@@ -15,6 +15,7 @@
  */
 package org.opencrawling.openarch.output.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -63,6 +64,8 @@ public class OpenArchStoreWriterConsumer {
             log.info("Received DELETE tombstone for OpenArch chunk: {}", message.chunkId());
             return;
         }
+        // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+        RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
 
         String embeddingsType = properties.getEmbeddingsType();
         EmbeddingChunk chunk = EmbeddingChunk.of(
@@ -76,7 +79,13 @@ public class OpenArchStoreWriterConsumer {
         chunkBuffer.add(chunk);
 
         if (chunkBuffer.size() >= properties.getParquetBatchThreshold()) {
-            flushBatch();
+            try {
+                flushBatch();
+            } catch (RuntimeException e) {
+                // The retry of this record adds its chunk again; the rest of the batch stays buffered for it.
+                chunkBuffer.remove(chunk);
+                throw e;
+            }
         }
     }
 
@@ -105,7 +114,10 @@ public class OpenArchStoreWriterConsumer {
                 }
             }
         } catch (Exception e) {
+            // Kept for the next flush and rethrown, so Kafka retries and dead-letters instead of losing the batch (#333).
+            chunkBuffer.addAll(0, batchToFlush);
             log.error("Failed to flush Parquet embeddings batch to OpenArch: {}", e.getMessage(), e);
+            throw new IllegalStateException("OpenArch Parquet batch upload failed for " + batchToFlush.size() + " chunks", e);
         }
     }
 }

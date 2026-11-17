@@ -15,6 +15,7 @@
  */
 package org.opencrawling.vespa.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import ai.vespa.feed.client.DocumentId;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
@@ -60,6 +61,10 @@ public class VespaStoreWriterConsumer {
         log.info("Received embedded chunk for Vespa storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() != DocumentAction.DELETE) {
+                // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+                RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
+            }
             if (message.action() == DocumentAction.DELETE) {
                 log.info("Received DELETE tombstone for Vespa storage: {}", message.chunkId());
                 String documentType = properties.documentType();

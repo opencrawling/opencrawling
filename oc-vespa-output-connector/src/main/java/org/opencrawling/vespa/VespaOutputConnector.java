@@ -15,6 +15,7 @@
  */
 package org.opencrawling.vespa;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
 import ai.vespa.feed.client.Result;
@@ -122,10 +123,11 @@ public class VespaOutputConnector implements OutputConnector {
                 List<Document> chunks = textSplitter.apply(List.of(aiDoc));
                 log.info("Split document into {} chunks for Vespa.", chunks.size());
 
-                List<CompletableFuture<Result>> feeds = new ArrayList<>();
+                // Every chunk is embedded before anything is fed, so a failed chunk stores nothing of the document (#333).
+                List<VespaDocumentMapper.VespaDocument> vespaDocuments = new ArrayList<>(chunks.size());
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
-                    float[] embedding = computeEmbedding(chunk);
+                    float[] embedding = computeEmbedding(chunk, document.id());
                     // Route to a dimension-specific document type dynamically based on the actual embedding
                     // produced, so a model change on the embedding side needs no redeploy or restart here.
                     String documentType = VespaDocumentMapper.resolveDocumentType(embedding.length, properties.documentType());
@@ -133,6 +135,11 @@ public class VespaOutputConnector implements OutputConnector {
                             properties.namespace(), documentType, chunkId, chunk.getText(),
                             document.uri(), document.acl(), document.lastModified().toString(),
                             document.security(), embedding, metadata);
+                    vespaDocuments.add(vespaDocument);
+                }
+
+                List<CompletableFuture<Result>> feeds = new ArrayList<>(vespaDocuments.size());
+                for (VespaDocumentMapper.VespaDocument vespaDocument : vespaDocuments) {
                     feeds.add(client.put(vespaDocument.id(), vespaDocument.json(), OperationParameters.empty()));
                 }
 
@@ -170,17 +177,16 @@ public class VespaOutputConnector implements OutputConnector {
         return metadata;
     }
 
-    private float[] computeEmbedding(Document chunk) {
-        if (embeddingModel == null) {
-            float[] fallback = new float[properties.dimensions()];
-            fallback[0] = 1.0f;
-            return fallback;
-        }
-        try {
-            return embeddingModel.embed(chunk);
-        } catch (Exception e) {
-            log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
-            return embeddingModel.embed(chunk.getText());
-        }
+    /** The chunk's real vector; a missing model, a failed call or an empty vector fails the document (#333). */
+    private float[] computeEmbedding(Document chunk, String documentId) {
+        RequiredEmbeddings.requireModel(embeddingModel, documentId);
+        return RequiredEmbeddings.embed(text -> {
+            try {
+                return embeddingModel.embed(chunk);
+            } catch (Exception e) {
+                log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
+                return embeddingModel.embed(text);
+            }
+        }, chunk.getText(), documentId);
     }
 }

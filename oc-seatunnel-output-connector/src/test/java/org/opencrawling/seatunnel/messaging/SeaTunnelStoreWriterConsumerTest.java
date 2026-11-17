@@ -78,4 +78,15 @@ class SeaTunnelStoreWriterConsumerTest {
         assertThat(consumer.getUpsertCount()).isEqualTo(0);
         assertThat(consumer.getDeleteCount()).isEqualTo(0);
     }
+
+    /** #333: an upsert without its real vector is refused, so Kafka retries and then dead-letters it. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefused() {
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, DocumentAction.UPSERT)))
+                    .hasMessage("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        assertThat(consumer.getUpsertCount()).isZero();
+    }
 }

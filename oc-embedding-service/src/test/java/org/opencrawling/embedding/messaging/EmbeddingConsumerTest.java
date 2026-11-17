@@ -82,6 +82,20 @@ class EmbeddingConsumerTest {
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
     }
 
+    /** #333: a model that returns no vector is refused here, so no unsearchable chunk goes downstream. */
+    @Test
+    void aMissingVectorIsRethrownSoKafkaRetriesItAndNothingIsPublished() {
+        when(model.embed(anyString())).thenReturn(null).thenReturn(new float[0]);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertThatThrownBy(() -> consumer.consume(chunk()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("chunk-1")
+                    .hasStackTraceContaining("returned no vector");
+        }
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+    }
+
     private static DocumentChunkMessage chunk() {
         return new DocumentChunkMessage("doc-1", "chunk-1", "some text", Map.of(), null, "ollama", Map.of());
     }

@@ -15,6 +15,7 @@
  */
 package org.opencrawling.solr;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.common.SolrInputDocument;
 import org.opencrawling.core.text.TextExtractionService;
@@ -113,7 +114,7 @@ public class SolrOutputConnector implements OutputConnector {
                 List<SolrInputDocument> solrDocs = new ArrayList<>();
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
-                    float[] embedding = computeEmbedding(chunk);
+                    float[] embedding = computeEmbedding(chunk, document.id());
 
                     SolrInputDocument doc = new SolrInputDocument();
                     doc.addField(SolrConstants.FIELD_ID, chunkId);
@@ -176,17 +177,16 @@ public class SolrOutputConnector implements OutputConnector {
         return metadata;
     }
 
-    private float[] computeEmbedding(Document chunk) {
-        if (embeddingModel == null) {
-            float[] fallback = new float[properties.dimensions()];
-            fallback[0] = 1.0f;
-            return fallback;
-        }
-        try {
-            return embeddingModel.embed(chunk);
-        } catch (Exception e) {
-            log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
-            return embeddingModel.embed(chunk.getText());
-        }
+    /** The chunk's real vector; a missing model, a failed call or an empty vector fails the document (#333). */
+    private float[] computeEmbedding(Document chunk, String documentId) {
+        RequiredEmbeddings.requireModel(embeddingModel, documentId);
+        return RequiredEmbeddings.embed(text -> {
+            try {
+                return embeddingModel.embed(chunk);
+            } catch (Exception e) {
+                log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
+                return embeddingModel.embed(text);
+            }
+        }, chunk.getText(), documentId);
     }
 }
