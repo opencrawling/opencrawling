@@ -139,12 +139,12 @@ The stack exposes the following services and endpoints:
 | Container Name | Service Image | Published Port | Functionality |
 | :--- | :--- | :--- | :--- |
 | `oc-admin-ui-service` | `opencrawling/oc-admin-ui:latest` | `3000:80` | **Web Management Dashboard** (React 19 SPA) |
-| `oc-mcp-server-service` | `opencrawling/oc-mcp-server:latest` | `8080:8080`<br/>`9095:9095`<br/>`9096:9096` | **Secure MCP Server** (`/mcp`), REST API, gRPC Transport (`9095`), gRPC Push (`9096`) |
+| `oc-mcp-server-service` | `opencrawling/oc-mcp-server:latest` | `8080:8080`<br/>`9095:9095`<br/>`9096:9096` | **Secure MCP Server** (`/mcp`), Platform REST API (`/api/v1` with `OPENCRAWLING_CONTROL_PLANE_STORE=jdbc`, `#315`), gRPC Transport (`9095`), gRPC Push (`9096`) |
 | `oc-embedding-consumer-service` | `opencrawling/oc-embedding-consumer:latest` | `8082:8082` | **Embedding Consumer Microservice** |
 | `oc-ingestion-consumer-service` | `opencrawling/oc-ingestion-consumer:latest` | — | **Tika 4.x Isolated Text Extraction Consumer** |
 | `oc-writer-service` | `opencrawling/oc-writer-consumer:latest` | — | **Vector Store Writer Consumer** |
 | `oc-crawler-service` | `opencrawling/oc-crawler:latest` | — | **Repository Crawler** (scans `/data` and exits on completion) |
-| `postgres-vector-decoupled` | `pgvector/pgvector:pg17` | `5432:5432` | **PostgreSQL 17 Vector Store** (`pgvector`) |
+| `postgres-vector-decoupled` | `pgvector/pgvector:pg17` | `5432:5432` | **PostgreSQL 17 Vector & Control-Plane Store** (`pgvector` + Flyway `oc_job`, `oc_connector`, `oc_setting` tables) |
 | `redis-stack-decoupled` | `redis/redis-stack:7.4.0-v8` | `6379:6379`<br/>`8001:8001` | **Redis Cache & RedisInsight Web UI** (`:8001`) |
 | `ollama-decoupled` | `ollama/ollama:0.40.5` | `11434:11434` | **Local Ollama Model Server** |
 | `ollama-model-puller-decoupled` | `ollama/ollama:0.40.5` | — | **One-shot initializer**: pulls `mxbai-embed-large` and `llama3.2` |

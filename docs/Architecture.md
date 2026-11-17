@@ -9,7 +9,7 @@ OpenCrawling is designed for high-throughput, horizontal scalability. The platfo
 The architecture is divided into the following primary layers:
 
 ### 1. Ingestion Runtime Bootstrap (`oc-runtime`)
-The central orchestrator that schedules, runs, and monitors crawling jobs. It executes the crawlers, manages rate-limiting, and stores job states in PostgreSQL.
+The central orchestrator that schedules, runs, and monitors crawling jobs. It executes the crawlers, manages rate-limiting, and persists control-plane definitions (jobs, connectors, system settings, and transport settings) through the `ControlPlaneStore` abstraction (`opencrawling.control-plane.store=file|jdbc`, `#315`, PR `#338`)—either as JSON files in `data/` (`file`, default) or in PostgreSQL/H2 tables (`oc_job`, `oc_connector`, `oc_setting`) managed by Flyway (`db/migration/V1__control_plane.sql`, automatically importing `data/*.json` on the first start).
 
 ### 2. Core Ingestion Engine (`oc-core`)
 Houses the main crawler SPI definitions. Once a crawler discovers a document, the core engine saves the file content to shared storage and publishes a lightweight pointer to the queue.
