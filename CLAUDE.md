@@ -162,7 +162,7 @@ The runtime's topic names are constants in `oc-runtime/.../config/KafkaConfig.ja
 
 `McpVectorServer` uses Spring AI MCP with the `STREAMABLE_HTTP` transport on the runtime port and exposes three `@McpTool` methods:
 - **`secureVectorSearch`** runs a similarity search pre-filtered on the `security_read_keys`, `security_allowed_read` and `acl` metadata fields (pgvector), then authoritatively re-checks each hit against `SecurityConfig` via `McpAclEvaluator`.
-- **`getDocumentContent`** returns a document's chunks by URI, behind the same ACL guard.
+- **`getDocumentContent`** returns a document by URI or id, behind the same ACL guard: every backend fetches its chunks (up to `opencrawling.mcp.document-content.max-chunks`, default 200), keeps the readable ones and joins them in `chunk_index` order through `DocumentChunks`, which also places chunks stored without an index by their pipeline id (`UUID(documentId#index)`) and reports `chunkCount`, `totalChunks` and `complete`.
 - **`listAccessibleSources`** lists the indexed URIs that a principal and its groups can see.
 
 When the output type is `vespa`, `VespaMcpVectorServer` replaces it.

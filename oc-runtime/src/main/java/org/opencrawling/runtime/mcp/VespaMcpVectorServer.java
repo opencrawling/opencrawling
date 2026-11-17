@@ -71,7 +71,13 @@ public class VespaMcpVectorServer {
 
     public record VespaSecureSearchResult(List<VespaSearchHit> hits, int totalCount, boolean degraded, String message) {}
 
-    public record VespaDocumentDetails(String chunkId, String uri, String content, String acl, List<String> allowedRead) {}
+    /**
+     * The legacy Vespa tool's answer. {@code chunkId} keeps its name for existing clients; it holds the id the backend
+     * returns for the document (its document id, as the tool now returns the whole document). See
+     * {@link McpVectorServer.DocumentDetailsResult} for {@code chunkCount}, {@code totalChunks} and {@code complete}.
+     */
+    public record VespaDocumentDetails(String chunkId, String uri, String content, String acl, List<String> allowedRead,
+                                       int chunkCount, Integer totalChunks, boolean complete) {}
 
     public record RawHit(String chunkId, String uri, String content, String acl, List<String> allowedRead, List<String> deniedRead, double relevance) {}
 
@@ -104,7 +110,7 @@ public class VespaMcpVectorServer {
         }
     }
 
-    @McpTool(description = "Retrieve the full text content of a specific document chunk stored in Vespa by its URI, enforcing security checks to ensure the caller has read access.")
+    @McpTool(description = "Retrieve the full text of a document stored in Vespa by its URI: the chunks the caller may read, joined in order, enforcing security checks to ensure the caller has read access. 'complete' is false when part of the document is missing (not readable, still being indexed) or past the server's limit.")
     public VespaDocumentDetails vespaGetDocumentContent(
             @McpToolParam(description = "The URI of the document to retrieve (e.g. file:///path/to/doc.txt)", required = true) String documentUri,
             @McpToolParam(description = "The user principal identity of the caller." + McpVectorServer.IDENTITY_NOTE, required = false) String userPrincipal,
@@ -122,7 +128,8 @@ public class VespaMcpVectorServer {
                 allowed = l;
             }
         }
-        return new VespaDocumentDetails(details.id(), details.uri(), details.content(), details.acl(), allowed);
+        return new VespaDocumentDetails(details.id(), details.uri(), details.content(), details.acl(), allowed,
+                details.chunkCount(), details.totalChunks(), details.complete());
     }
 
     @McpTool(description = "List documents currently indexed in Vespa that are accessible to the caller, showing their URIs and access rules.")

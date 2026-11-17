@@ -152,7 +152,7 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             Points.ScrollPoints scrollPoints = Points.ScrollPoints.newBuilder()
                     .setCollectionName(properties.collectionName())
                     .setFilter(filter)
-                    .setLimit(20)
+                    .setLimit(documentFetchSize())
                     .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
                     .build();
 
@@ -161,15 +161,20 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             List<Map<String, Object>> candidates = scrollResp.getResultList().stream()
                     .map(point -> convertPayload(point.getPayloadMap()))
                     .toList();
-            return readable(userPrincipal, userRoles, candidates, QdrantMcpSearchBackend::toResourceRef).stream()
-                    .findFirst()
-                    .map(payload -> new McpVectorServer.DocumentDetailsResult(
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, "")),
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_URI, "")),
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_TEXT, "")),
-                            payload,
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_ACL, "public"))
-                    ))
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    QdrantMcpSearchBackend::toResourceRef).stream()
+                    .map(payload -> {
+                        Object documentId = payload.get(QdrantFields.FIELD_DOCUMENT_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, "")),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_URI, "")),
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_TEXT, "")),
+                                payload,
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;

@@ -28,11 +28,13 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.*;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
 
 class MilvusMcpSearchBackendTest {
 
@@ -141,5 +143,32 @@ class MilvusMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() {
+        // The collection keeps no chunk position or document id: the chunks are placed by their pipeline ids.
+        QueryResp queryResp = mock(QueryResp.class);
+        when(queryResp.getQueryResults()).thenReturn(List.of(milvusChunk(1, "second"), milvusChunk(0, "first")));
+        when(milvusClient.query(any(QueryReq.class))).thenReturn(queryResp);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///milvus.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///milvus.txt");
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<QueryReq> request = ArgumentCaptor.forClass(QueryReq.class);
+        verify(milvusClient).query(request.capture());
+        assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+    }
+
+    private static QueryResp.QueryResult milvusChunk(int index, String text) {
+        return QueryResp.QueryResult.builder()
+                .entity(Map.of(
+                        MilvusConstants.FIELD_ID, DocumentChunksTest.pipelineId("file:///milvus.txt", index),
+                        MilvusConstants.FIELD_URI, "file:///milvus.txt",
+                        MilvusConstants.FIELD_TEXT, text,
+                        MilvusConstants.FIELD_ACL, "public"))
+                .build();
     }
 }

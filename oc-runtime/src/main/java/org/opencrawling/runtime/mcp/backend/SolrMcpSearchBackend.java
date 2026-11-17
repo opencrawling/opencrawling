@@ -142,24 +142,30 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
         ModifiableSolrParams params = new ModifiableSolrParams();
         params.set("q", "uri:\"" + ClientUtils.escapeQueryChars(documentUri) + "\"");
-        params.set("rows", 20);
+        params.set("rows", documentFetchSize());
 
         try {
             QueryResponse response = solrClient.query(properties.collection(), params);
             SolrDocumentList docs = response.getResults();
-
-            if (docs != null) {
-                for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
-                    Map<String, Object> fieldMap = doc.getFieldValueMap();
-                    String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
-                    String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
-                    String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
-                    String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, fieldMap, acl);
-                }
-            }
-            throw new NoSuchElementException("Document not found or access denied.");
+            List<SolrDocument> candidates = docs != null ? docs : List.of();
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    doc -> ResourceRef.fromMetadata(doc.getFieldValueMap())).stream()
+                    .map(doc -> {
+                        // Solr's field map is a read-only view; the copy leaves out the stored vector.
+                        Map<String, Object> fieldMap = new LinkedHashMap<>();
+                        doc.getFieldNames().forEach(name -> fieldMap.put(name, doc.getFieldValue(name)));
+                        fieldMap.remove(SolrConstants.FIELD_EMBEDDINGS);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID)),
+                                stringValue(doc.getFirstValue("documentId")),
+                                Objects.toString(stringValue(doc.getFirstValue(SolrConstants.FIELD_URI)), ""),
+                                Objects.toString(stringValue(doc.getFirstValue(SolrConstants.FIELD_TEXT)), ""),
+                                fieldMap,
+                                Objects.toString(stringValue(doc.getFieldValue(SolrConstants.FIELD_ACL)), "public"));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {
@@ -206,5 +212,9 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static double scoreOf(SolrDocument doc) {
         return doc.getFieldValue("score") instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private static String stringValue(Object value) {
+        return value != null ? String.valueOf(value) : null;
     }
 }

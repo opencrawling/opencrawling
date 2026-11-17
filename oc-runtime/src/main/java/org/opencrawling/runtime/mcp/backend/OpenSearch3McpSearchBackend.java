@@ -145,7 +145,9 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
         try {
             SearchResponse<Map> response = openSearchClient.search(s -> s
                     .index(indexName)
-                    .size(20)
+                    .size(documentFetchSize())
+                    // The chunks' vectors are of no use to the caller, and a document can have many chunks.
+                    .source(src -> src.filter(f -> f.excludes(OpenSearch3Constants.FIELD_EMBEDDINGS)))
                     .query(q -> q
                             .term(t -> t
                                     .field(OpenSearch3Constants.FIELD_URI)
@@ -155,21 +157,25 @@ public class OpenSearch3McpSearchBackend extends GatedMcpSearchBackend {
                     Map.class
             );
 
-            if (response != null && response.hits() != null && response.hits().hits() != null) {
-                List<Hit<Map>> candidates = response.hits().hits().stream()
-                        .filter(hit -> hit.source() != null)
-                        .toList();
-                for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates,
-                        hit -> ResourceRef.fromMetadata(sourceOf(hit)))) {
-                    Map<String, Object> source = sourceOf(hit);
-                    String id = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ID, hit.id()));
-                    String uri = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_URI, ""));
-                    String text = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_TEXT, ""));
-                    String acl = String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ACL, "public"));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, source, acl);
-                }
-            }
-            throw new NoSuchElementException("Document not found or access denied.");
+            List<Hit<Map>> candidates = response != null && response.hits() != null && response.hits().hits() != null
+                    ? response.hits().hits().stream().filter(hit -> hit.source() != null).toList()
+                    : List.of();
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    hit -> ResourceRef.fromMetadata(sourceOf(hit))).stream()
+                    .map(hit -> {
+                        Map<String, Object> source = sourceOf(hit);
+                        Object documentId = source.get(OpenSearch3Constants.FIELD_DOCUMENT_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ID, hit.id())),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_URI, "")),
+                                String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_TEXT, "")),
+                                source,
+                                String.valueOf(source.getOrDefault(OpenSearch3Constants.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {

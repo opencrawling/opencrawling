@@ -32,6 +32,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.atLeastOnce;
 import org.mockito.ArgumentCaptor;
 
 class PgVectorMcpSearchBackendTest {
@@ -278,8 +280,8 @@ class PgVectorMcpSearchBackendTest {
 
         when(mockJdbc.queryForObject(anyString(), eq(Integer.class), eq("vector_store"))).thenReturn(1);
 
-        McpVectorServer.DocumentDetailsResult expectedDoc = new McpVectorServer.DocumentDetailsResult(
-                "5001", "flowable://historic-process-instances/5001", "Process Instance Content",
+        DocumentChunks.Chunk expectedDoc = new DocumentChunks.Chunk(
+                "5001", null, "flowable://historic-process-instances/5001", "Process Instance Content",
                 Map.of("acl", "public", "flowable_scope_id", "5001"), "public"
         );
 
@@ -405,8 +407,8 @@ class PgVectorMcpSearchBackendTest {
     @SuppressWarnings("unchecked")
     void withoutDimensionsDocumentContentIsFoundInWhicheverTableHoldsIt() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        McpVectorServer.DocumentDetailsResult doc = new McpVectorServer.DocumentDetailsResult(
-                "c1", "doc-1", "Finance Q3 forecast", Map.of("uri", "doc-1", "acl", "public"), "public");
+        DocumentChunks.Chunk doc = new DocumentChunks.Chunk(
+                "c1", null, "doc-1", "Finance Q3 forecast", Map.of("uri", "doc-1", "acl", "public"), "public");
         when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation -> {
             String sql = invocation.getArgument(0);
             if (sql.contains("FROM vector_store_1024 ")) {
@@ -425,8 +427,8 @@ class PgVectorMcpSearchBackendTest {
     @SuppressWarnings("unchecked")
     void emptyTablesAreSkippedUntilTheOneHoldingTheDocument() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        McpVectorServer.DocumentDetailsResult doc = new McpVectorServer.DocumentDetailsResult(
-                "c3", "doc-3", "Small model chunk", Map.of("uri", "doc-3", "acl", "public"), "public");
+        DocumentChunks.Chunk doc = new DocumentChunks.Chunk(
+                "c3", null, "doc-3", "Small model chunk", Map.of("uri", "doc-3", "acl", "public"), "public");
         when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
                 ((String) invocation.getArgument(0)).contains("FROM vector_store_384 ") ? List.of(doc) : List.of());
 
@@ -437,8 +439,8 @@ class PgVectorMcpSearchBackendTest {
     @SuppressWarnings("unchecked")
     void documentContentIsStillHiddenWhenNoTableHasAReadableCopy() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        McpVectorServer.DocumentDetailsResult secret = new McpVectorServer.DocumentDetailsResult(
-                "c2", "doc-2", "Board pack", Map.of("uri", "doc-2", "acl", "executive"), "executive");
+        DocumentChunks.Chunk secret = new DocumentChunks.Chunk(
+                "c2", null, "doc-2", "Board pack", Map.of("uri", "doc-2", "acl", "executive"), "executive");
         when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of(secret));
 
         assertThatThrownBy(() -> routedBackend(jdbc).getDocumentContent("doc-2", "john", List.of(), null))
@@ -477,5 +479,29 @@ class PgVectorMcpSearchBackendTest {
         List<Map<String, Object>> sources = routedBackend(jdbc).listAccessibleSources("john", List.of(), null);
 
         assertThat(sources).extracting(row -> row.get("id")).containsExactlyInAnyOrder("big", "small");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void documentContentJoinsTheDocumentsChunksInOrder() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        List<DocumentChunks.Chunk> rows = List.of(pgChunk(2, "third"), pgChunk(0, "first"), pgChunk(1, "second"));
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
+                ((String) invocation.getArgument(0)).contains("FROM vector_store_1024 ") ? rows : List.of());
+
+        McpVectorServer.DocumentDetailsResult result = routedBackend(jdbc).getDocumentContent("doc-9", "john", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond\nthird");
+        assertThat(result.id()).isEqualTo("doc-9");
+        assertThat(result.chunkCount()).isEqualTo(3);
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, atLeastOnce()).query(sql.capture(), any(RowMapper.class), any(Object[].class));
+        assertThat(sql.getAllValues()).allMatch(query -> query.endsWith("LIMIT " + (GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1)));
+    }
+
+    private static DocumentChunks.Chunk pgChunk(int index, String text) {
+        return new DocumentChunks.Chunk("c" + index, "doc-9", "doc-9", text, Map.of("documentId", "doc-9",
+                "acl", "public", DocumentChunks.CHUNK_INDEX, index, DocumentChunks.TOTAL_CHUNKS, 3), "public");
     }
 }

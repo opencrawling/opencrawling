@@ -50,7 +50,6 @@ public class ElasticsearchMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static final Logger log = LoggerFactory.getLogger(ElasticsearchMcpSearchBackend.class);
 
-    static final int DOCUMENT_CHUNK_LIMIT = 20;
     static final int SOURCES_LIMIT = 200;
 
     /** Hits are returned to MCP clients as metadata; the stored vector is never useful there. */
@@ -141,17 +140,21 @@ public class ElasticsearchMcpSearchBackend extends GatedMcpSearchBackend {
         try {
             SearchResponse<Map> response = client.search(s -> s
                     .index(properties.indexName())
-                    .size(DOCUMENT_CHUNK_LIMIT)
+                    .size(documentFetchSize())
                     .source(NO_VECTORS)
                     .query(withAclFilter(byDocument, userPrincipal, userRoles)), Map.class);
             List<Hit<Map>> candidates = hits(response).stream().filter(hit -> hit.source() != null).toList();
-            for (Hit<Map> hit : readable(userPrincipal, userRoles, candidates, hit -> ResourceRef.fromMetadata(sourceOf(hit)))) {
-                Map<String, Object> source = sourceOf(hit);
-                return new McpVectorServer.DocumentDetailsResult(
-                        idOf(hit), str(source, FIELD_URI, ""), str(source, FIELD_TEXT, ""), source,
-                        str(source, FIELD_ACL, "public"));
-            }
-            throw new NoSuchElementException("Document not found or access denied.");
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    hit -> ResourceRef.fromMetadata(sourceOf(hit))).stream()
+                    .map(hit -> {
+                        Map<String, Object> source = sourceOf(hit);
+                        return new DocumentChunks.Chunk(idOf(hit), str(source, FIELD_DOCUMENT_ID, null),
+                                str(source, FIELD_URI, ""), str(source, FIELD_TEXT, ""), source,
+                                str(source, FIELD_ACL, "public"));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {

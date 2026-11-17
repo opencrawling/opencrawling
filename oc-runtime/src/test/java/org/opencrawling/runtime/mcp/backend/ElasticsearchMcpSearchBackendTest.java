@@ -137,7 +137,8 @@ class ElasticsearchMcpSearchBackendTest {
 
         McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "alice", List.of(), null);
 
-        assertThat(result.id()).isEqualTo("doc_0");
+        // The document, not one of its chunks.
+        assertThat(result.id()).isEqualTo("doc");
         assertThat(result.uri()).isEqualTo("file:///doc.txt");
         assertThat(result.content()).isEqualTo("text of doc_0");
 
@@ -236,5 +237,24 @@ class ElasticsearchMcpSearchBackendTest {
                 return false;
             }
         };
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws Exception {
+        Map<String, Object> second = source("doc_1", "file:///doc.txt", List.of("alice"), List.of());
+        second.put(DocumentChunks.CHUNK_INDEX, 1);
+        second.put(DocumentChunks.TOTAL_CHUNKS, 2);
+        Map<String, Object> first = source("doc_0", "file:///doc.txt", List.of("alice"), List.of());
+        first.put(DocumentChunks.CHUNK_INDEX, 0);
+        first.put(DocumentChunks.TOTAL_CHUNKS, 2);
+        when(client.search(any(Function.class), eq(Map.class))).thenReturn(response(
+                hit("doc_1", 1.0, second), hit("doc_0", 1.0, first)));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "alice", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("text of doc_0\ntext of doc_1");
+        assertThat(result.chunkCount()).isEqualTo(2);
+        assertThat(result.complete()).isTrue();
+        assertThat(capturedFunctionSearchRequest().size()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
     }
 }

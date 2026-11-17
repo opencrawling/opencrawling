@@ -29,12 +29,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Function;
+import org.mockito.ArgumentCaptor;
+import org.opensearch.client.opensearch.core.SearchRequest;
+import org.opensearch.client.util.ObjectBuilder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
 
 @SuppressWarnings("unchecked")
 class OpenSearch3McpSearchBackendTest {
@@ -152,5 +156,44 @@ class OpenSearch3McpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws IOException {
+        SearchResponse<Map> response = mock(SearchResponse.class);
+        HitsMetadata<Map> hitsMetadata = mock(HitsMetadata.class);
+        List<Hit<Map>> hits = List.of(openSearchChunk(1, "second"), openSearchChunk(0, "first"));
+        when(hitsMetadata.hits()).thenReturn(hits);
+        when(response.hits()).thenReturn(hitsMetadata);
+        when(openSearchClient.search(any(Function.class), eq(Map.class))).thenReturn(response);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<Function<SearchRequest.Builder, ObjectBuilder<SearchRequest>>> request =
+                ArgumentCaptor.forClass(Function.class);
+        verify(openSearchClient).search(request.capture(), eq(Map.class));
+        SearchRequest searchRequest = request.getValue().apply(new SearchRequest.Builder()).build();
+        assertThat(searchRequest.size()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        // The chunks' vectors are not fetched.
+        assertThat(searchRequest.source().filter().excludes()).containsExactly(OpenSearch3Constants.FIELD_EMBEDDINGS);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Hit<Map> openSearchChunk(int index, String text) {
+        Hit<Map> hit = mock(Hit.class);
+        when(hit.id()).thenReturn("chunk-" + index);
+        when(hit.source()).thenReturn(Map.of(
+                OpenSearch3Constants.FIELD_ID, "chunk-" + index,
+                OpenSearch3Constants.FIELD_DOCUMENT_ID, "file:///doc.txt",
+                OpenSearch3Constants.FIELD_URI, "file:///doc.txt",
+                OpenSearch3Constants.FIELD_TEXT, text,
+                OpenSearch3Constants.FIELD_ACL, "public",
+                DocumentChunks.CHUNK_INDEX, index,
+                DocumentChunks.TOTAL_CHUNKS, 2));
+        return hit;
     }
 }

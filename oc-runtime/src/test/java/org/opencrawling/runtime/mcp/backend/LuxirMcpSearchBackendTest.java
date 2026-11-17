@@ -25,12 +25,15 @@ import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.io.IOException;
 import java.util.*;
+import org.mockito.ArgumentCaptor;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
 
 class LuxirMcpSearchBackendTest {
 
@@ -126,5 +129,33 @@ class LuxirMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws IOException, InterruptedException {
+        // The collection keeps no chunk position: the chunks are placed by their pipeline ids.
+        when(luxirClient.search(eq("opencrawling"), any()))
+                .thenReturn(new LuxirClient.LuxirSearchResult(2, List.of(luxirChunk(1, "second"), luxirChunk(0, "first"))));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        assertThat(result.metadata()).doesNotContainKey(properties.vectorField());
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(luxirClient).search(eq("opencrawling"), payload.capture());
+        assertThat(payload.getValue()).containsEntry("limit", GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+    }
+
+    private Map<String, Object> luxirChunk(int index, String text) {
+        return Map.of(
+                LuxirConstants.FIELD_ID, DocumentChunksTest.pipelineId("file:///doc.txt", index),
+                LuxirConstants.FIELD_DOC_ID, "file:///doc.txt",
+                LuxirConstants.FIELD_URI, "file:///doc.txt",
+                LuxirConstants.FIELD_TEXT, text,
+                LuxirConstants.FIELD_ACL, "public",
+                properties.vectorField(), List.of(0.1f, 0.2f));
     }
 }

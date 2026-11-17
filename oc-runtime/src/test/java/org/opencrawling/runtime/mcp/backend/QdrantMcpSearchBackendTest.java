@@ -28,11 +28,13 @@ import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.util.*;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
 
 class QdrantMcpSearchBackendTest {
 
@@ -144,5 +146,37 @@ class QdrantMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() {
+        Points.ScrollResponse scrollResponse = Points.ScrollResponse.newBuilder()
+                .addResult(qdrantChunk(1, "second"))
+                .addResult(qdrantChunk(0, "first"))
+                .build();
+        when(qdrantClient.scrollAsync(any(Points.ScrollPoints.class)))
+                .thenReturn(Futures.immediateFuture(scrollResponse));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<Points.ScrollPoints> request = ArgumentCaptor.forClass(Points.ScrollPoints.class);
+        verify(qdrantClient).scrollAsync(request.capture());
+        assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+    }
+
+    private static Points.RetrievedPoint qdrantChunk(int index, String text) {
+        return Points.RetrievedPoint.newBuilder()
+                .setId(PointIdFactory.id(UUID.randomUUID()))
+                .putPayload(QdrantFields.FIELD_CHUNK_ID, ValueFactory.value("chunk-" + index))
+                .putPayload(QdrantFields.FIELD_DOCUMENT_ID, ValueFactory.value("file:///doc.txt"))
+                .putPayload(QdrantFields.FIELD_URI, ValueFactory.value("file:///doc.txt"))
+                .putPayload(QdrantFields.FIELD_TEXT, ValueFactory.value(text))
+                .putPayload(QdrantFields.FIELD_ACL, ValueFactory.value("public"))
+                .putPayload(DocumentChunks.CHUNK_INDEX, ValueFactory.value(index))
+                .putPayload(DocumentChunks.TOTAL_CHUNKS, ValueFactory.value(2))
+                .build();
     }
 }

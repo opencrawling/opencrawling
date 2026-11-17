@@ -30,12 +30,14 @@ import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.io.IOException;
 import java.util.*;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
 
 class SolrMcpSearchBackendTest {
 
@@ -143,5 +145,40 @@ class SolrMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws SolrServerException, IOException {
+        SolrDocumentList docs = new SolrDocumentList();
+        docs.add(solrChunk(1, "second"));
+        docs.add(solrChunk(0, "first"));
+        QueryResponse response = mock(QueryResponse.class);
+        when(response.getResults()).thenReturn(docs);
+        when(solrClient.query(eq("enterprise_kb"), any(SolrParams.class))).thenReturn(response);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        // The stored vector stays out of the answer.
+        assertThat(result.metadata()).doesNotContainKey(SolrConstants.FIELD_EMBEDDINGS);
+        ArgumentCaptor<SolrParams> params = ArgumentCaptor.forClass(SolrParams.class);
+        verify(solrClient).query(eq("enterprise_kb"), params.capture());
+        assertThat(params.getValue().get("rows")).isEqualTo(String.valueOf(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1));
+    }
+
+    private static SolrDocument solrChunk(int index, String text) {
+        SolrDocument doc = new SolrDocument();
+        doc.addField(SolrConstants.FIELD_ID, "chunk-" + index);
+        doc.addField("documentId", "file:///doc.txt");
+        doc.addField(SolrConstants.FIELD_URI, "file:///doc.txt");
+        doc.addField(SolrConstants.FIELD_TEXT, text);
+        doc.addField(SolrConstants.FIELD_ACL, "public");
+        // Solr returns the dynamic metadata fields multi-valued.
+        doc.addField(DocumentChunks.CHUNK_INDEX, List.of((long) index));
+        doc.addField(DocumentChunks.TOTAL_CHUNKS, List.of(2L));
+        doc.addField(SolrConstants.FIELD_EMBEDDINGS, List.of(0.1f, 0.2f));
+        return doc;
     }
 }

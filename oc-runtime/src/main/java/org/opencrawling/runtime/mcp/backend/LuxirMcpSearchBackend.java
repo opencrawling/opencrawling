@@ -133,25 +133,33 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
     ) {
         log.info("Luxir backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
-        Map<String, Object> queryPayload = Map.of("query", "uri_s:\"" + escape(documentUri) + "\"");
+        Map<String, Object> queryPayload = Map.of("query", "uri_s:\"" + escape(documentUri) + "\"",
+                "limit", documentFetchSize());
 
         try {
             LuxirClient.LuxirSearchResult result = luxirClient.search(properties.collection(), queryPayload);
 
-            if (result != null && result.docs() != null) {
-                List<Map<String, Object>> candidates = result.docs().stream()
-                        .filter(Objects::nonNull)
-                        .toList();
-                for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
-                        LuxirMcpSearchBackend::toResourceRef)) {
-                    String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
-                    String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
-                    String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
-                    String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, doc, acl);
-                }
-            }
-            throw new NoSuchElementException("Document not found or access denied.");
+            List<Map<String, Object>> candidates = result != null && result.docs() != null
+                    ? result.docs().stream().filter(Objects::nonNull).toList()
+                    : List.of();
+            // The collection keeps no chunk position: DocumentChunks places each chunk by its id.
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    LuxirMcpSearchBackend::toResourceRef).stream()
+                    .map(doc -> {
+                        Map<String, Object> fields = new LinkedHashMap<>(doc);
+                        fields.remove(properties.vectorField());
+                        Object documentId = doc.get(LuxirConstants.FIELD_DOC_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", ""))),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", ""))),
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", ""))),
+                                fields,
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {

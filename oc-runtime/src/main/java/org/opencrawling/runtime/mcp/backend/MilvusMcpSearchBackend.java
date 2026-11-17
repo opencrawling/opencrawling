@@ -161,26 +161,30 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
                     .collectionName(collectionName)
                     .filter("uri == \"" + escapeFilter(documentUri) + "\"")
                     .outputFields(OUTPUT_FIELDS)
-                    .limit(20)
+                    .limit(documentFetchSize())
                     .build();
 
             QueryResp queryResp = milvusClient.query(queryReq);
 
-            if (queryResp != null && queryResp.getQueryResults() != null) {
-                List<QueryResp.QueryResult> candidates = queryResp.getQueryResults().stream()
-                        .filter(qr -> qr.getEntity() != null)
-                        .toList();
-                for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
-                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
-                    Map<String, Object> entity = qr.getEntity();
-                    String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
-                    String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
-                    String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
-                    String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, entity, acl);
-                }
-            }
-            throw new NoSuchElementException("Document not found or access denied.");
+            List<QueryResp.QueryResult> candidates = queryResp != null && queryResp.getQueryResults() != null
+                    ? queryResp.getQueryResults().stream().filter(qr -> qr.getEntity() != null).toList()
+                    : List.of();
+            // The collection keeps no document id or chunk position: DocumentChunks places each chunk by its id.
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    qr -> ResourceRef.fromMetadata(qr.getEntity())).stream()
+                    .map(qr -> {
+                        Map<String, Object> entity = qr.getEntity();
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, "")),
+                                null,
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, "")),
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, "")),
+                                entity,
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri, candidates.size())
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {

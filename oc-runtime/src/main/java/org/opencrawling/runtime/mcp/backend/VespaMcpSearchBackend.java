@@ -124,18 +124,14 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
             ObjectNode body = MAPPER.createObjectNode();
             body.put("yql", "select * from " + documentType + " where (" + storeDenyExclusion(userPrincipal, userRoles) + ") and "
                     + VespaFields.FIELD_URI + " contains \"" + escapeYql(documentUri) + "\"");
-            body.put("hits", 20);
+            body.put("hits", documentFetchSize());
             List<RawHit> hits = parseHits(postSearch(body)).hits();
 
-            return readableHits(userPrincipal, userRoles, hits).stream()
-                    .findFirst()
-                    .map(hit -> new McpVectorServer.DocumentDetailsResult(
-                            hit.chunkId(),
-                            hit.uri(),
-                            hit.content(),
-                            hit.metadata(),
-                            hit.acl()
-                    ))
+            List<DocumentChunks.Chunk> chunks = readableHits(userPrincipal, userRoles, hits).stream()
+                    .map(hit -> new DocumentChunks.Chunk(hit.chunkId(), documentIdOf(hit), hit.uri(), hit.content(),
+                            withChunkPosition(hit), hit.acl()))
+                    .toList();
+            return assembleDocument(chunks, documentUri, hits.size())
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
@@ -281,6 +277,28 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
             }
         }
         return null;
+    }
+
+    /**
+     * The hit's metadata with the chunk's position, which a strict Vespa schema keeps only inside
+     * {@code metadata_json}.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> withChunkPosition(RawHit hit) {
+        Map<String, Object> metadata = new LinkedHashMap<>(hit.metadata() != null ? hit.metadata() : Map.of());
+        if (metadata.get(VespaFields.FIELD_METADATA_JSON) instanceof String json && !json.isBlank()) {
+            try {
+                Map<String, Object> stored = MAPPER.readValue(json, Map.class);
+                for (String key : List.of(DocumentChunks.CHUNK_INDEX, DocumentChunks.TOTAL_CHUNKS)) {
+                    if (stored.get(key) != null) {
+                        metadata.putIfAbsent(key, stored.get(key));
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Unreadable metadata_json on Vespa hit {}: {}", hit.chunkId(), e.getMessage());
+            }
+        }
+        return metadata;
     }
 
     public RawSearchResult parseHits(JsonNode response) {

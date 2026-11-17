@@ -289,6 +289,16 @@ See [Document Authorization](Document-Authorization) for the full property list,
 
 ---
 
+## 📄 MCP Document Content
+
+`getDocumentContent` returns a document's chunks that the caller may read, joined in `chunk_index` order. Its answer also says how many chunks it joined (`chunkCount`), how many the document has (`totalChunks`), and whether the text is the whole document (`complete`).
+
+*   **`OPENCRAWLING_MCP_DOCUMENT_CONTENT_MAX_CHUNKS`** (`opencrawling.mcp.document-content.max-chunks`): the most chunks one answer joins. It bounds the size of the answer: a longer document returns its first chunks with `complete` set to `false`. Each store's lookup fetches one chunk more than this. On Vespa, keep it below the query profile's hit limit (400 by default).
+    *   *Type*: `int`
+    *   *Default*: `200`
+
+---
+
 ## 🔭 Repository Discovery
 
 Lets agents and API clients list a registered repository's tree and preview a crawl before ingesting (REST `/api/discovery/**`, MCP tools `listRepositoryConnectors`, `exploreRepositoryTree`, `queryRepositoryDryRun`). Results show only what the caller may read by the source repository's ACL; see [Model Context Protocol, Repository discovery](Model-Context-Protocol#-repository-discovery).
