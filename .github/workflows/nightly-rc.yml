@@ -500,28 +500,39 @@ jobs:
           LATEST_GA: ${{ needs.prepare.outputs.latest_ga_tag }}
           BUILD_TIME: ${{ needs.prepare.outputs.build_time_cet }}
         run: |
-          SHORT_SHA="${HEAD_SHA:0:8}"
+          python3 - <<'PY'
+          import os, pathlib
 
-          COMPARE_LINE=""
-          if [ -n "$LATEST_GA" ]; then
-            COMPARE_LINE="- **Changes since ${LATEST_GA}**: [${LATEST_GA}...${SHORT_SHA}](https://github.com/${GITHUB_REPOSITORY}/compare/${LATEST_GA}...${HEAD_SHA})"
-          fi
+          repo = os.environ["GITHUB_REPOSITORY"]
+          rc_ver = os.environ["RC_VER"]
+          head_sha = os.environ["HEAD_SHA"]
+          short_sha = head_sha[:8]
+          latest_ga = os.environ.get("LATEST_GA", "")
+          build_time = os.environ["BUILD_TIME"]
 
-          cat > rc-notes.md <<EOF
-          > **Daily Nightly Release Candidate (Pre-Release)** — Built automatically from \`main\` for evaluation and early testing. For production deployments, use the latest stable GA release${LATEST_GA:+ (\`${LATEST_GA}\`)}.
-
-          ### Build Metadata
-          - **Version**: \`${RC_VER}\`
-          - **Source Commit**: [\`${SHORT_SHA}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}) on \`main\`
-          - **Built At**: ${BUILD_TIME}
-          ${COMPARE_LINE}
-
-          ### Docker Images (Isolated from \`:latest\`)
-          \`\`\`bash
-          # Pull latest daily RC (or pin :${RC_VER})
-          OPENCRAWLING_IMAGE_TAG=${RC_VER} docker compose -f docker-compose-decoupled-rc.yml up -d
-          \`\`\`
-          EOF
+          ga_note = f" (`{latest_ga}`)" if latest_ga else ""
+          lines = [
+              f"> **Daily Nightly Release Candidate (Pre-Release)** — Built automatically from `main` for evaluation and early testing. For production deployments, use the latest stable GA release{ga_note}.",
+              "",
+              "### Build Metadata",
+              f"- **Version**: `{rc_ver}`",
+              f"- **Source Commit**: [`{short_sha}`](https://github.com/{repo}/commit/{head_sha}) on `main`",
+              f"- **Built At**: {build_time}",
+          ]
+          if latest_ga:
+              lines.append(f"- **Changes since {latest_ga}**: [{latest_ga}...{short_sha}](https://github.com/{repo}/compare/{latest_ga}...{head_sha})")
+          lines.extend([
+              "",
+              "### Docker Images (Isolated from `:latest`)",
+              "```bash",
+              f"# Pull latest daily RC (or pin :{rc_ver})",
+              f"OPENCRAWLING_IMAGE_TAG={rc_ver} docker compose -f docker-compose-decoupled-rc.yml up -d",
+              "```",
+              "",
+          ])
+          pathlib.Path("rc-notes.md").write_text("\n".join(lines), encoding="utf-8")
+          PY
+          cat rc-notes.md
 
       - name: Create GitHub Pre-Release & Upload Assets
         uses: softprops/action-gh-release@v3.0.3
