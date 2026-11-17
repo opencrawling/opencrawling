@@ -23,7 +23,12 @@ import org.opencrawling.filesystem.FileSystemRepositoryConnector;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.opencrawling.core.text.TextExtractionService;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -52,13 +57,35 @@ public class ConnectorFactory {
     private final FileSystemRepositoryConnector fileSystemRepositoryConnector;
     private final OutputConnector activeOutputConnector;
     private final ObjectProvider<PipelineProperties> pipelinePropertiesProvider;
+    // The runtime's collaborators for per-job outputs: without them a per-job vector output has no embedding model
+    // and fails every document (#333). Null when built without them, as in some tests.
+    private final ObjectProvider<EmbeddingModel> embeddingModels;
+    private final ObjectProvider<TextExtractionService> textExtractionServices;
+    private final ObjectProvider<KafkaTemplate<String, Object>> kafkaTemplates;
 
     public ConnectorFactory(FileSystemRepositoryConnector fileSystemRepositoryConnector,
                             OutputConnector activeOutputConnector,
                             ObjectProvider<PipelineProperties> pipelinePropertiesProvider) {
+        this(fileSystemRepositoryConnector, activeOutputConnector, pipelinePropertiesProvider, null, null, null);
+    }
+
+    @Autowired
+    public ConnectorFactory(FileSystemRepositoryConnector fileSystemRepositoryConnector,
+                            OutputConnector activeOutputConnector,
+                            ObjectProvider<PipelineProperties> pipelinePropertiesProvider,
+                            @Qualifier("ollamaEmbeddingModel") ObjectProvider<EmbeddingModel> embeddingModels,
+                            ObjectProvider<TextExtractionService> textExtractionServices,
+                            ObjectProvider<KafkaTemplate<String, Object>> kafkaTemplates) {
         this.fileSystemRepositoryConnector = fileSystemRepositoryConnector;
         this.activeOutputConnector = activeOutputConnector;
         this.pipelinePropertiesProvider = pipelinePropertiesProvider;
+        this.embeddingModels = embeddingModels;
+        this.textExtractionServices = textExtractionServices;
+        this.kafkaTemplates = kafkaTemplates;
+    }
+
+    private static <T> T available(ObjectProvider<T> provider) {
+        return provider == null ? null : provider.getIfAvailable();
     }
 
     /**
@@ -412,7 +439,8 @@ public class ConnectorFactory {
 
         org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
         log.info("Resolving dynamic Qdrant output connector for collection '{}'", collectionName);
-        return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper, null);
+        return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper,
+                available(embeddingModels), available(textExtractionServices));
     }
 
     private OutputConnector buildVespa(Map<String, String> config, PipelineMode mode) {
@@ -450,7 +478,8 @@ public class ConnectorFactory {
 
         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
         log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
-        return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper, null);
+        return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper,
+                available(embeddingModels), available(textExtractionServices));
     }
 
     private OutputConnector buildSeaTunnel(Map<String, String> config, PipelineMode mode) {
@@ -465,7 +494,8 @@ public class ConnectorFactory {
         );
         org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
         log.info("Resolving dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
-        return new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps, null, null);
+        return new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps,
+                available(embeddingModels), available(kafkaTemplates), available(textExtractionServices));
     }
 
     private OutputConnector buildOzone(Map<String, String> config, PipelineMode mode) {

@@ -15,6 +15,7 @@
  */
 package org.opencrawling.seatunnel.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import jakarta.annotation.PostConstruct;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -72,12 +73,16 @@ public class SeaTunnelStoreWriterConsumer {
                 return;
             }
 
+            // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+            RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
             upsertCount.incrementAndGet();
             int dims = message.embedding() != null ? message.embedding().length : 0;
             log.info("Received embedded chunk for SeaTunnel stream (RowKind: {}): chunk {} (Doc: {}, Dimensions: {})",
                     SeaTunnelConstants.ROW_KIND_INSERT, message.chunkId(), message.documentId(), dims);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.error("Error processing message for SeaTunnel stream: {}", e.getMessage(), e);
+            // Rethrown so the container's error handler retries and then dead-letters the record (#312, #333).
+            throw e;
         }
     }
 

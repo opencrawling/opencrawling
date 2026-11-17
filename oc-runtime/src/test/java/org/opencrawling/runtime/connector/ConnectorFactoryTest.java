@@ -31,6 +31,7 @@ import org.opencrawling.seatunnel.SeaTunnelOutputConnector;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -171,6 +172,54 @@ class ConnectorFactoryTest {
         assertThat(factory.output(connector("SeaTunnel_Output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector",
                 Map.of("seatunnelRestUrl", "http://seatunnel.test:5801")), PipelineMode.RAG))
                 .isInstanceOf(SeaTunnelOutputConnector.class);
+    }
+
+    /**
+     * #333: per-job vector outputs get the runtime's embedding model and text extraction, and SeaTunnel its Kafka
+     * template; built with none, they stored placeholder vectors. Qdrant and Vespa get them the same way, but their
+     * clients need a live server to be built, so SeaTunnel shows the wiring here.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void perJobVectorOutputsUseTheRuntimesEmbeddingModelTextExtractionAndKafka() {
+        org.springframework.ai.embedding.EmbeddingModel model = mock(org.springframework.ai.embedding.EmbeddingModel.class);
+        when(model.embed(org.mockito.ArgumentMatchers.any(org.springframework.ai.document.Document.class)))
+                .thenReturn(new float[] {0.1f, 0.2f});
+        org.opencrawling.core.text.TextExtractionService extraction = mock(org.opencrawling.core.text.TextExtractionService.class);
+        when(extraction.extractText(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyMap()))
+                .thenReturn(org.opencrawling.core.text.TextExtractionResult.success("Extracted by the runtime.", Map.of(), false));
+        org.springframework.kafka.core.KafkaTemplate<String, Object> kafka = mock(org.springframework.kafka.core.KafkaTemplate.class);
+        when(kafka.send(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        ConnectorFactory wired = new ConnectorFactory(fileSystem, activeOutput, pipelineProperties(),
+                provider(model), provider(extraction), provider(kafka));
+        ConnectorDTO seaTunnel = connector("SeaTunnel_Output", "org.opencrawling.seatunnel.SeaTunnelOutputConnector",
+                Map.of("seatunnelRestUrl", "http://seatunnel.test:5801"));
+
+        wired.output(seaTunnel, PipelineMode.RAG).send(textDocument("doc-wired")).block();
+
+        verify(extraction).extractText(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyMap());
+        verify(model).embed(org.mockito.ArgumentMatchers.any(org.springframework.ai.document.Document.class));
+        verify(kafka).send(org.mockito.ArgumentMatchers.eq("opencrawling-embedded"), org.mockito.ArgumentMatchers.eq("doc-wired"),
+                org.mockito.ArgumentMatchers.any());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> factory.output(seaTunnel, PipelineMode.RAG)
+                        .send(textDocument("doc-unwired")).block())
+                .as("without the runtime's model a document fails instead of getting a placeholder vector")
+                .hasStackTraceContaining("No embedding model is configured");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> ObjectProvider<T> provider(T bean) {
+        ObjectProvider<T> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(bean);
+        return provider;
+    }
+
+    private static org.opencrawling.core.document.RepositoryDocument textDocument(String id) {
+        return new org.opencrawling.core.document.RepositoryDocument(id, "file://tmp/" + id + ".txt",
+                new java.io.ByteArrayInputStream("Text for the stream.".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                Map.of("mimeType", List.of("text/plain")), "", org.opencrawling.core.security.SecurityConfig.createPublic(),
+                java.time.Instant.now());
     }
 
     @Test

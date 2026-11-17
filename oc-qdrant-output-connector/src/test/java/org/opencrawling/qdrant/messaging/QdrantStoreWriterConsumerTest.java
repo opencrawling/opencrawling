@@ -115,4 +115,19 @@ class QdrantStoreWriterConsumerTest {
                         new float[]{0.1f, 0.2f, 0.3f, 0.4f}, DocumentAction.UPSERT)));
         assertTrue(thrown.getMessage().contains("chunk-qdrant-1"));
     }
+
+    /** #333: an upsert without its real vector is refused (retried, then dead-lettered) and nothing is written. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
+        QdrantClient client = mock(QdrantClient.class);
+        QdrantOutputProperties properties = new QdrantOutputProperties("localhost", 6334, null, "enterprise_kb", 384, QdrantOutputProperties.Distance.COSINE, QdrantOutputProperties.Quantization.NONE, false, 64);
+        QdrantStoreWriterConsumer consumer = new QdrantStoreWriterConsumer(client, properties, new QdrantPointMapper());
+        org.mockito.Mockito.clearInvocations(client);
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new org.opencrawling.core.messaging.DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, org.opencrawling.core.document.DocumentAction.UPSERT)))
+                    .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        org.mockito.Mockito.verifyNoInteractions(client);
+    }
 }

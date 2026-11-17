@@ -15,6 +15,7 @@
  */
 package org.opencrawling.embedding.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentChunkMessage;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -66,8 +67,9 @@ public class EmbeddingConsumer {
                 message.transformationConfig()
             );
 
-            // Generate embedding for chunk text
-            float[] embedding = model.embed(message.text());
+            // Generate embedding for chunk text; a failed call or an empty vector is retried and then dead-lettered
+            // here, rather than sending a chunk downstream that no search can find (#333).
+            float[] embedding = RequiredEmbeddings.embed(model::embed, message.text(), message.documentId());
 
             DocumentEmbeddedMessage embeddedMessage = new DocumentEmbeddedMessage(
                 message.documentId(),

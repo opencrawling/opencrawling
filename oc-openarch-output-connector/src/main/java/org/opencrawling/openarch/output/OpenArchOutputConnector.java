@@ -15,6 +15,7 @@
  */
 package org.opencrawling.openarch.output;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.document.DocumentAction;
@@ -136,6 +137,22 @@ public class OpenArchOutputConnector implements OutputConnector {
         String title = getFirstMetadata(document.metadata(), "title", document.id());
         String description = getFirstMetadata(document.metadata(), "description", null);
 
+        // 0. Embed every chunk before anything is written: the document is marked SysHasEmbeddings, so a missing
+        //    model or a failed chunk fails it instead of storing it without its vectors (#333).
+        List<Document> chunks = List.of();
+        List<float[]> vectors = new ArrayList<>();
+        if (contentBytes != null && contentBytes.length > 0) {
+            RequiredEmbeddings.requireModel(embeddingModel, document.id());
+            TextExtractionResult extraction = textExtractionService.extractText(contentBytes, document.metadata() != null ? document.metadata() : Map.of());
+            String text = extraction.text();
+            if (text != null && !text.isBlank()) {
+                chunks = textSplitter.split(new Document(text));
+                for (Document chunk : chunks) {
+                    vectors.add(RequiredEmbeddings.embed(embeddingModel::embed, chunk.getText(), document.id()));
+                }
+            }
+        }
+
         // 1. Binary streaming to OpenArch /api/upload if content is present
         String uploadedBlobId = null;
         if (properties.isUploadBinaries() && contentBytes != null && contentBytes.length > 0) {
@@ -194,47 +211,26 @@ public class OpenArchOutputConnector implements OutputConnector {
                 : document.id();
         log.info("Document {} indexed in OpenArch under parent {} (Target ID: {})", document.id(), rootFolder, targetDocId);
 
-        // 6. Parquet Vector Bridging (embedding.avsc)
-        if (embeddingModel != null && contentBytes != null && contentBytes.length > 0) {
+        // 6. Parquet Vector Bridging (embedding.avsc); a failure fails the document (#333)
+        if (!chunks.isEmpty()) {
+            List<EmbeddingChunk> embeddingChunks = new ArrayList<>(chunks.size());
+            for (int i = 0; i < chunks.size(); i++) {
+                String chunkId = UUID.nameUUIDFromBytes((targetDocId + "#" + i).getBytes()).toString();
+                embeddingChunks.add(EmbeddingChunk.of(chunkId, properties.getEmbeddingsType(), vectors.get(i),
+                        chunks.get(i).getText(), uploadedBlobId));
+            }
+            File tempParquet = File.createTempFile("openarch-embeddings-", ".parquet");
             try {
-                TextExtractionResult extraction = textExtractionService.extractText(contentBytes, document.metadata() != null ? document.metadata() : Map.of());
-                String text = extraction.text();
-                if (text != null && !text.isBlank()) {
-                    List<Document> chunks = textSplitter.split(new Document(text));
-                    List<EmbeddingChunk> embeddingChunks = new ArrayList<>();
-
-                    for (int i = 0; i < chunks.size(); i++) {
-                        Document chunk = chunks.get(i);
-                        float[] vector = embeddingModel.embed(chunk.getText());
-                        String chunkId = UUID.nameUUIDFromBytes((targetDocId + "#" + i).getBytes()).toString();
-
-                        embeddingChunks.add(EmbeddingChunk.of(
-                                chunkId,
-                                properties.getEmbeddingsType(),
-                                vector,
-                                chunk.getText(),
-                                uploadedBlobId
-                        ));
-                    }
-
-                    if (!embeddingChunks.isEmpty()) {
-                        File tempParquet = File.createTempFile("openarch-embeddings-", ".parquet");
-                        try {
-                            parquetWriter.writeParquet(embeddingChunks, tempParquet);
-                            try (InputStream parquetIn = new FileInputStream(tempParquet)) {
-                                JsonNode parquetUpload = client.uploadBlob(parquetIn, "embeddings-" + targetDocId + ".parquet", "application/vnd.apache.parquet");
-                                log.info("Successfully uploaded Parquet vector bridge blob for document {} ({} chunks): {}",
-                                        targetDocId, embeddingChunks.size(), parquetUpload != null ? parquetUpload.get("id") : "ok");
-                            }
-                        } finally {
-                            if (tempParquet.exists()) {
-                                tempParquet.delete();
-                            }
-                        }
-                    }
+                parquetWriter.writeParquet(embeddingChunks, tempParquet);
+                try (InputStream parquetIn = new FileInputStream(tempParquet)) {
+                    JsonNode parquetUpload = client.uploadBlob(parquetIn, "embeddings-" + targetDocId + ".parquet", "application/vnd.apache.parquet");
+                    log.info("Successfully uploaded Parquet vector bridge blob for document {} ({} chunks): {}",
+                            targetDocId, embeddingChunks.size(), parquetUpload != null ? parquetUpload.get("id") : "ok");
                 }
-            } catch (Exception embEx) {
-                log.warn("Vector embedding or Parquet generation failed for document {}: {}", document.id(), embEx.getMessage());
+            } finally {
+                if (tempParquet.exists()) {
+                    tempParquet.delete();
+                }
             }
         }
     }

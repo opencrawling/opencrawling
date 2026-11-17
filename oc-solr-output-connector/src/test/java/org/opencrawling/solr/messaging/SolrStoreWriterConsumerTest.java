@@ -100,4 +100,18 @@ class SolrStoreWriterConsumerTest {
         assertThat(doc.getFieldValue("acl")).isEqualTo("finance");
         assertThat(doc.getFieldValue("title")).isEqualTo("A");
     }
+
+    /** #333: an upsert without its real vector is refused (retried, then dead-lettered) and nothing is written. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
+        SolrClient client = mock(SolrClient.class);
+        SolrStoreWriterConsumer consumer = new SolrStoreWriterConsumer(client);
+        org.mockito.Mockito.clearInvocations(client);
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new org.opencrawling.core.messaging.DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, org.opencrawling.core.document.DocumentAction.UPSERT)))
+                    .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        org.mockito.Mockito.verifyNoInteractions(client);
+    }
 }

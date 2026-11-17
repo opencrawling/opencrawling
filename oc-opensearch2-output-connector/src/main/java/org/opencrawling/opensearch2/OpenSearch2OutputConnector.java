@@ -15,6 +15,7 @@
  */
 package org.opencrawling.opensearch2;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import org.apache.hc.client5.http.auth.AuthScope;
 import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
 import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
@@ -185,20 +186,16 @@ public class OpenSearch2OutputConnector implements OutputConnector {
                 for (Document chunk : chunks) {
                     String chunkId = document.id() + "_" + (chunk.getId() != null ? chunk.getId() : UUID.randomUUID().toString());
 
-                    // Get or compute embedding
-                    float[] embedding = null;
-                    if (embeddingModel != null) {
+                    // The chunk's real vector; a missing model, a failed call or an empty vector fails the document (#333).
+                    RequiredEmbeddings.requireModel(embeddingModel, document.id());
+                    float[] embedding = RequiredEmbeddings.embed(chunkText -> {
                         try {
-                            embedding = embeddingModel.embed(chunk);
+                            return embeddingModel.embed(chunk);
                         } catch (Exception e) {
                             log.debug("Failed embedding from document metadata, trying to embed text directly.", e);
-                            embedding = embeddingModel.embed(chunk.getText());
+                            return embeddingModel.embed(chunkText);
                         }
-                    } else {
-                        // Fallback/Simulated vector if no model is present (e.g. tests)
-                        embedding = new float[dimensions];
-                        embedding[0] = 1.0f;
-                    }
+                    }, chunk.getText(), document.id());
 
                     // Map ACL lists (one normalization for every store, see EffectiveAcl)
                     EffectiveAcl effectiveAcl = EffectiveAcl.resolve(document.security(), document.acl());

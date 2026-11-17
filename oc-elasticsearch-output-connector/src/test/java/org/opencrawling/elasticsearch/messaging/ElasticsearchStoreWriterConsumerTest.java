@@ -175,4 +175,16 @@ class ElasticsearchStoreWriterConsumerTest {
         Function<IndexRequest.Builder<Map<String, Object>>, ObjectBuilder<IndexRequest<Map<String, Object>>>> fn = captor.getValue();
         return fn.apply(new IndexRequest.Builder<>()).build();
     }
+
+    /** #333: an upsert without its real vector is refused (retried, then dead-lettered) and nothing is written. */
+    @Test
+    void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
+        org.mockito.Mockito.clearInvocations(client);
+        for (float[] missing : new float[][] {null, new float[0]}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(new org.opencrawling.core.messaging.DocumentEmbeddedMessage(
+                            "doc-333", "chunk-333", "text", java.util.Map.of(), missing, org.opencrawling.core.document.DocumentAction.UPSERT)))
+                    .hasStackTraceContaining("chunk chunk-333 of document doc-333 has no embedding");
+        }
+        org.mockito.Mockito.verifyNoInteractions(client);
+    }
 }

@@ -15,6 +15,7 @@
  */
 package org.opencrawling.elasticsearch;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.Conflicts;
 import co.elastic.clients.elasticsearch._types.FieldValue;
@@ -163,7 +164,7 @@ public class ElasticsearchOutputConnector implements OutputConnector {
                             document.acl(),
                             lastModified,
                             effectiveAcl,
-                            embed(chunk),
+                            embed(chunk, document.id()),
                             metadata)));
                 }
 
@@ -185,19 +186,17 @@ public class ElasticsearchOutputConnector implements OutputConnector {
         return documentId + "_" + index;
     }
 
-    private float[] embed(Document chunk) {
-        if (embeddingModel == null) {
-            // Placeholder vector when no model is wired (tests, connector checks).
-            float[] placeholder = new float[properties.dimensions()];
-            placeholder[0] = 1.0f;
-            return placeholder;
-        }
-        try {
-            return embeddingModel.embed(chunk);
-        } catch (Exception e) {
-            log.debug("Embedding the chunk document failed, embedding its text directly.", e);
-            return embeddingModel.embed(chunk.getText());
-        }
+    /** The chunk's real vector; a missing model, a failed call or an empty vector fails the document (#333). */
+    private float[] embed(Document chunk, String documentId) {
+        RequiredEmbeddings.requireModel(embeddingModel, documentId);
+        return RequiredEmbeddings.embed(text -> {
+            try {
+                return embeddingModel.embed(chunk);
+            } catch (Exception e) {
+                log.debug("Embedding the chunk document failed, embedding its text directly.", e);
+                return embeddingModel.embed(text);
+            }
+        }, chunk.getText(), documentId);
     }
 
     private void purgeDocument(ElasticsearchClient es, String documentId) throws IOException {

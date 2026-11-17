@@ -15,6 +15,7 @@
  */
 package org.opencrawling.qdrant.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Points.PointStruct;
@@ -68,6 +69,10 @@ public class QdrantStoreWriterConsumer {
         log.info("Received embedded chunk for Qdrant storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() != DocumentAction.DELETE) {
+                // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+                RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
+            }
             if (message.action() == DocumentAction.DELETE) {
                 String docId = (message.documentId() != null && !message.documentId().isBlank())
                         ? message.documentId()

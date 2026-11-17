@@ -86,9 +86,13 @@ class DoxisStoreWriterConsumerTest {
     }
 
     @Test
-    void failuresAreLoggedNotPropagated() {
+    void aFailedArchiveIsRethrownSoKafkaRetriesAndDeadLettersIt() {
+        // #333 / #312: logging and returning would commit the offset and lose the document.
         when(connector.send(any())).thenReturn(Mono.error(new RuntimeException("Doxis down")));
 
-        assertDoesNotThrow(() -> consumer.consume(message("file:///mnt/share/a.pdf", DocumentAction.UPSERT)));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(message("file:///mnt/share/a.pdf", DocumentAction.UPSERT)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("doc-1")
+                .hasRootCauseMessage("Doxis down");
     }
 }

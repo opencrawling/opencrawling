@@ -15,6 +15,7 @@
  */
 package org.opencrawling.opensearch3.messaging;
 
+import org.opencrawling.core.embedding.RequiredEmbeddings;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -57,6 +58,10 @@ public class OpenSearch3StoreWriterConsumer {
         log.info("Received embedded chunk for OpenSearch 3.x storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);
         try {
+            if (message.action() != DocumentAction.DELETE) {
+                // An upsert is stored only with its real vector; refusing it retries and then dead-letters it (#333).
+                RequiredEmbeddings.ofMessage(message.embedding(), message.chunkId(), message.documentId());
+            }
             if (message.action() == DocumentAction.DELETE) {
                 String docId = (message.documentId() != null && !message.documentId().isBlank())
                         ? message.documentId()

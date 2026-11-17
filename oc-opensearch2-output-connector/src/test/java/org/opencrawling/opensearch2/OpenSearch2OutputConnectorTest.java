@@ -37,6 +37,17 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.atLeast;
 
 class OpenSearch2OutputConnectorTest {
 
@@ -99,5 +110,30 @@ class OpenSearch2OutputConnectorTest {
 
         BulkRequest capturedReq = captor.getValue();
         assertThat(capturedReq.operations()).isNotEmpty();
+    }
+
+    /** #333: a missing model, a failed embedding call or an empty vector fails the document, and nothing is written. */
+    @Test
+    void aDocumentWithoutItsRealVectorsIsNotStored() throws Exception {
+        assertThatThrownBy(() -> new OpenSearch2OutputConnector(client, (EmbeddingModel) null).send(failFastDocument("doc-333-a", "Text that needs its vector.")).block())
+                .hasStackTraceContaining("No embedding model is configured");
+
+        when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[0]);
+        assertThatThrownBy(() -> connector.send(failFastDocument("doc-333-b", "Text that needs its vector.")).block())
+                .hasStackTraceContaining("returned no vector");
+
+        doThrow(new RuntimeException("model down")).when(embeddingModel).embed(any(org.springframework.ai.document.Document.class));
+        doThrow(new RuntimeException("model down")).when(embeddingModel).embed(anyString());
+        assertThatThrownBy(() -> connector.send(failFastDocument("doc-333-c", "Text that needs its vector.")).block())
+                .hasStackTraceContaining("model down");
+
+        verify(client, never()).bulk(any(BulkRequest.class));
+    }
+
+    private static org.opencrawling.core.document.RepositoryDocument failFastDocument(String id, String text) {
+        return new org.opencrawling.core.document.RepositoryDocument(id, "file://tmp/" + id + ".txt",
+                new java.io.ByteArrayInputStream(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                java.util.Map.of("mimeType", java.util.List.of("text/plain")), "",
+                org.opencrawling.core.security.SecurityConfig.createPublic(), java.time.Instant.now());
     }
 }
