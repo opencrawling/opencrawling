@@ -44,6 +44,7 @@ import org.opencrawling.runtime.service.ConnectorCheckerService;
 import org.opencrawling.runtime.service.VespaInsightsService;
 import org.opencrawling.runtime.transport.InternalTransportManager;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -74,6 +75,14 @@ final class PlatformApiTestSupport {
 
     static final String EXECUTION_ID = "exec-v1test01";
 
+    /**
+     * {@code @TestComponent} keeps this configuration out of component scanning: the runtime's
+     * {@code @SpringBootApplication} scans {@code org.opencrawling}, and this class is not a test class (which Spring
+     * Boot's test filter skips), so every {@code @SpringBootTest} of the full application (the JUnit ITs) would
+     * otherwise also get its mocked beans, such as a second {@code AIOpsDiagnosticService}, and fail to start. Tests
+     * that want it name it in {@code @SpringBootTest(classes = ...)}.
+     */
+    @TestComponent
     @Configuration
     @ImportAutoConfiguration({
             org.springframework.boot.validation.autoconfigure.ValidationAutoConfiguration.class,
