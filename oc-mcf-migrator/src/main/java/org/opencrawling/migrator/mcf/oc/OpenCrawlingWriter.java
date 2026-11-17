@@ -42,7 +42,9 @@ import java.util.Optional;
  * <p>Writes through the Platform API ({@code /api/v1}). Re-running a migration updates what an
  * earlier run created instead of duplicating it: a connector is created, or replaced when one with
  * that name exists ({@code 409 connector-exists}); a job is replaced when a job with the same name
- * exists, since the server does not deduplicate jobs by name, and created otherwise.
+ * exists, since the server does not deduplicate jobs by name, and created otherwise. A replace names
+ * the version it replaces ({@code If-Match}), so re-runs also work on a runtime that sets
+ * {@code opencrawling.api.require-if-match=true}.
  */
 public class OpenCrawlingWriter {
 
@@ -82,7 +84,8 @@ public class OpenCrawlingWriter {
                 throw e;
             }
             log.info("Connector '{}' already exists; replacing it", request.name());
-            api.connectors().replace(request.name(), input, RequestOptions.none());
+            // Names the version it replaces, so it also works on a runtime with opencrawling.api.require-if-match.
+            api.connectors().replace(request.name(), input, versionOf(api.connectors().get(request.name()).etag()));
         }
     }
 
@@ -96,11 +99,16 @@ public class OpenCrawlingWriter {
         if (existing.isPresent()) {
             log.info("Job '{}' already exists (id={}); updating in place instead of creating a duplicate",
                 request.name(), existing.get().id());
-            api.jobs().replace(existing.get().id(), input, RequestOptions.none());
+            api.jobs().replace(existing.get().id(), input, versionOf(api.jobs().get(existing.get().id()).etag()));
         } else {
             log.info("Creating job '{}'", request.name());
             api.jobs().create(input, RequestOptions.none());
         }
+    }
+
+    /** If-Match on the version just read; none when the runtime sent no ETag. */
+    private static RequestOptions versionOf(String etag) {
+        return etag == null ? RequestOptions.none() : RequestOptions.ifMatch(etag);
     }
 
     private static String blankToNull(String value) {
