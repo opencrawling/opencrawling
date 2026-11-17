@@ -382,9 +382,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check Docker Hub Credentials Availability
+        id: dockerhub-creds
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to Docker Hub (When Configured)
         id: dockerhub-auth
-        if: secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+        if: steps.dockerhub-creds.outputs.enabled == 'true'
         uses: docker/login-action@v4.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -575,12 +587,15 @@ jobs:
           done
 
       - name: Trigger Website Download Manifest Sync (Optional)
-        if: secrets.WEBSITE_DISPATCH_TOKEN != ''
         env:
           DISPATCH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
         run: |
+          if [ -z "${DISPATCH_TOKEN:-}" ]; then
+            echo "WEBSITE_DISPATCH_TOKEN secret not configured; skipping immediate dispatch (daily cron will sync)."
+            exit 0
+          fi
           curl -fsSL -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${DISPATCH_TOKEN}" \
