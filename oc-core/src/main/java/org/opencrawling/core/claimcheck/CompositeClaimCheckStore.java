@@ -71,10 +71,15 @@ public class CompositeClaimCheckStore implements ClaimCheckStore {
 
     @Override
     public int deleteExpired(java.time.Duration maxAge) throws Exception {
+        return deleteExpired(maxAge, uri -> false);
+    }
+
+    @Override
+    public int deleteExpired(java.time.Duration maxAge, java.util.function.Predicate<URI> retain) throws Exception {
         int totalDeleted = 0;
         for (ClaimCheckStore store : stores) {
             try {
-                totalDeleted += store.deleteExpired(maxAge);
+                totalDeleted += store.deleteExpired(maxAge, retain);
             } catch (Exception e) {
                 log.warn("Error running deleteExpired on ClaimCheckStore {}: {}", store.getClass().getSimpleName(), e.getMessage());
             }

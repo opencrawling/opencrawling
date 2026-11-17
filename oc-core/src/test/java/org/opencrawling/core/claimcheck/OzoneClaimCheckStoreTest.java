@@ -16,15 +16,22 @@
 package org.opencrawling.core.claimcheck;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
+import java.time.Duration;
+import java.util.List;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class OzoneClaimCheckStoreTest {
 
@@ -91,5 +98,68 @@ class OzoneClaimCheckStoreTest {
         assertThatThrownBy(() -> writerSideStore.get(URI.create("ofs://s3v/claims/_crawl_doc.txt_doc.txt")))
                 .isInstanceOf(NoSuchFileException.class)
                 .hasMessageContaining("in-process only");
+    }
+
+    @Test
+    void aClaimReferencedUnderItsNativeNameIsKeptByTheS3GatewaySweep() throws Exception {
+        // Both transports reach the bucket of the S3 volume: ofs://s3v/claims/x and s3://claims/x are one object.
+        OzoneClientStrategy s3Gateway = mock(OzoneClientStrategy.class);
+        OzoneClientStrategy nativeRpc = mock(OzoneClientStrategy.class);
+        OzoneClaimCheckStore store = new OzoneClaimCheckStore(nativeRpc, List.of(s3Gateway, nativeRpc));
+        Predicate<URI> deadLettered = URI.create("ofs://s3v/claims/doc-1_report.pdf")::equals;
+
+        store.deleteExpired(Duration.ofHours(24), deadLettered);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Predicate<URI>> s3Retain = ArgumentCaptor.forClass(Predicate.class);
+        verify(s3Gateway).deleteExpired(eq(Duration.ofHours(24)), s3Retain.capture());
+        assertThat(s3Retain.getValue().test(URI.create("s3://claims/doc-1_report.pdf"))).isTrue();
+        assertThat(s3Retain.getValue().test(URI.create("s3://claims/orphan.pdf"))).isFalse();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Predicate<URI>> nativeRetain = ArgumentCaptor.forClass(Predicate.class);
+        verify(nativeRpc).deleteExpired(eq(Duration.ofHours(24)), nativeRetain.capture());
+        assertThat(nativeRetain.getValue().test(URI.create("ofs://s3v/claims/doc-1_report.pdf"))).isTrue();
+    }
+
+    @Test
+    void theOtherNamesOfAnObjectAreItsNamesOnTheOtherTransports() {
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("s3://claims/a.pdf"), "s3v")).containsExactlyInAnyOrder(
+                URI.create("ofs://s3v/claims/a.pdf"), URI.create("o3fs://claims.s3v/a.pdf"));
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("ofs://s3v/claims/a.pdf"), "s3v")).containsExactlyInAnyOrder(
+                URI.create("s3://claims/a.pdf"), URI.create("o3fs://claims.s3v/a.pdf"));
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("o3fs://claims.s3v/a.pdf"), "s3v")).containsExactlyInAnyOrder(
+                URI.create("s3://claims/a.pdf"), URI.create("ofs://s3v/claims/a.pdf"));
+        // Outside the S3 volume an object has no S3 name, so nothing else names it.
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("ofs://archive/claims/a.pdf"), "s3v")).isEmpty();
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("file:///data/claims/a.pdf"), "s3v")).isEmpty();
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("s3://claims/"), "s3v")).isEmpty();
+    }
+
+    @Test
+    void aClusterWhoseS3GatewayServesAnotherVolumeUsesThatVolume() throws Exception {
+        // ozone.s3g.volume.name=custom: s3://claims/doc-1.pdf is ofs://custom/claims/doc-1.pdf.
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("s3://claims/doc-1.pdf"), "custom")).containsExactlyInAnyOrder(
+                URI.create("ofs://custom/claims/doc-1.pdf"), URI.create("o3fs://claims.custom/doc-1.pdf"));
+        assertThat(OzoneClaimCheckStore.aliases(URI.create("ofs://s3v/claims/doc-1.pdf"), "custom")).isEmpty();
+
+        OzoneClientStrategy s3Gateway = mock(OzoneClientStrategy.class);
+        OzoneClientStrategy nativeRpc = mock(OzoneClientStrategy.class);
+        ClaimCheckProperties.Ozone props = new ClaimCheckProperties.Ozone();
+        props.setS3GatewayVolume("custom");
+        OzoneClaimCheckStore store = new OzoneClaimCheckStore(nativeRpc, List.of(s3Gateway, nativeRpc), props.getS3GatewayVolume());
+
+        store.deleteExpired(Duration.ofHours(24), URI.create("ofs://custom/claims/doc-1.pdf")::equals);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Predicate<URI>> s3Retain = ArgumentCaptor.forClass(Predicate.class);
+        verify(s3Gateway).deleteExpired(eq(Duration.ofHours(24)), s3Retain.capture());
+        assertThat(s3Retain.getValue().test(URI.create("s3://claims/doc-1.pdf"))).isTrue();
+    }
+
+    @Test
+    void theGatewayVolumeComesFromTheSettings() {
+        ClaimCheckProperties.Ozone props = new ClaimCheckProperties.Ozone();
+        assertThat(props.getS3GatewayVolume()).as("Ozone's default").isEqualTo("s3v");
     }
 }

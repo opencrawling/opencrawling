@@ -130,6 +130,20 @@ class OzoneRpcClaimCheckStrategyTest {
     }
 
     @Test
+    void deleteExpiredKeepsAnExpiredKeyItIsToldToRetain() throws Exception {
+        OzoneKey deadLettered = key("dead-lettered.pdf", Instant.now().minus(Duration.ofHours(2)));
+        OzoneKey orphan = key("orphan.pdf", Instant.now().minus(Duration.ofHours(2)));
+        when(bucket.listKeys(null)).thenAnswer(inv -> List.of(deadLettered, orphan).iterator());
+
+        // The sweep is given each key's URI as put() returns it.
+        int deleted = strategy.deleteExpired(Duration.ofHours(1), URI.create("ofs://s3v/claims/dead-lettered.pdf")::equals);
+
+        assertThat(deleted).isEqualTo(1);
+        verify(bucket).deleteKey("orphan.pdf");
+        verify(bucket, never()).deleteKey("dead-lettered.pdf");
+    }
+
+    @Test
     void supportsOnlyOfsSchemes() {
         assertThat(strategy.supports(URI.create("ofs://s3v/claims/a"))).isTrue();
         assertThat(strategy.supports(URI.create("o3fs://claims.s3v/a"))).isTrue();

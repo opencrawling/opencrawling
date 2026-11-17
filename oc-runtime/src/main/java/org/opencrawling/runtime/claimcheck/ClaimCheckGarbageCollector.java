@@ -19,14 +19,22 @@ import org.opencrawling.core.claimcheck.ClaimCheckProperties;
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.time.Duration;
+import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Scheduled background Garbage Collector for orphaned Claim-Check payload objects.
  * Sweeps the active ClaimCheckStore (Apache Ozone / Local Disk) to purge payloads older than configured TTL.
+ *
+ * <p>Claims that a dead-lettered document message still references are kept, whatever their age, so replaying the
+ * dead letter can read its content again ({@link DeadLetteredClaims}). If the dead letters cannot be read, the sweep
+ * is skipped rather than risk deleting one of those claims.
  */
 @Component
 public class ClaimCheckGarbageCollector {
@@ -35,10 +43,17 @@ public class ClaimCheckGarbageCollector {
 
     private final ClaimCheckStore claimCheckStore;
     private final ClaimCheckProperties properties;
+    private DeadLetteredClaims deadLetteredClaims;
 
     public ClaimCheckGarbageCollector(ClaimCheckStore claimCheckStore, ClaimCheckProperties properties) {
         this.claimCheckStore = claimCheckStore;
         this.properties = properties;
+    }
+
+    /** The dead letters whose claims are kept; without it (tests, programmatic use) nothing is kept. */
+    @Autowired(required = false)
+    public void setDeadLetteredClaims(DeadLetteredClaims deadLetteredClaims) {
+        this.deadLetteredClaims = deadLetteredClaims;
     }
 
     /**
@@ -55,10 +70,25 @@ public class ClaimCheckGarbageCollector {
                 : 24;
 
         Duration ttl = Duration.ofHours(ttlHours);
+
+        Predicate<URI> retain = uri -> false;
+        if (deadLetteredClaims != null) {
+            try {
+                Set<String> referenced = deadLetteredClaims.referencedClaims();
+                retain = DeadLetteredClaims.retaining(referenced);
+                if (!referenced.isEmpty()) {
+                    log.info("Claim-Check Garbage Collection keeps the {} claims referenced by dead-lettered documents.", referenced.size());
+                }
+            } catch (Exception e) {
+                log.warn("Skipping Claim-Check Garbage Collection: the dead letters that may reference claims could not be read ({}).",
+                        e.getMessage());
+                return;
+            }
+        }
         log.info("Starting Claim-Check Garbage Collection sweep (Purging objects older than {} hours)...", ttlHours);
 
         try {
-            int deletedCount = claimCheckStore.deleteExpired(ttl);
+            int deletedCount = claimCheckStore.deleteExpired(ttl, retain);
             if (deletedCount > 0) {
                 log.info("Claim-Check Garbage Collection completed. Purged {} orphaned payload objects.", deletedCount);
             } else {
