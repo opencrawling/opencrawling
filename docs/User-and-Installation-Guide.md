@@ -144,7 +144,7 @@ The stack exposes the following services and endpoints:
 | `oc-ingestion-consumer-service` | `opencrawling/oc-ingestion-consumer:latest` | — | **Tika 4.x Isolated Text Extraction Consumer** |
 | `oc-writer-service` | `opencrawling/oc-writer-consumer:latest` | — | **Vector Store Writer Consumer** |
 | `oc-crawler-service` | `opencrawling/oc-crawler:latest` | — | **Repository Crawler** (scans `/data` and exits on completion) |
-| `postgres-vector-decoupled` | `pgvector/pgvector:pg17` | `5432:5432` | **PostgreSQL 17 Vector & Control-Plane Store** (`pgvector` + Flyway `oc_job`, `oc_connector`, `oc_setting` tables) |
+| `postgres-vector-decoupled` | `pgvector/pgvector:pg17` | `5432:5432` | **PostgreSQL 17 Vector & Control-Plane Store** (`pgvector` + Flyway `oc_job`, `oc_connector`, `oc_setting`, `oc_lock` tables) |
 | `redis-stack-decoupled` | `redis/redis-stack:7.4.0-v8` | `6379:6379`<br/>`8001:8001` | **Redis Cache & RedisInsight Web UI** (`:8001`) |
 | `ollama-decoupled` | `ollama/ollama:0.40.5` | `11434:11434` | **Local Ollama Model Server** |
 | `ollama-model-puller-decoupled` | `ollama/ollama:0.40.5` | — | **One-shot initializer**: pulls `mxbai-embed-large` and `llama3.2` |
