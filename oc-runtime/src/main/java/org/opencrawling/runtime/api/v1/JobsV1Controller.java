@@ -158,12 +158,13 @@ public class JobsV1Controller {
     @PutMapping("/{id}")
     public ResponseEntity<JobResource> replace(@PathVariable String id, @Valid @RequestBody JobInput input,
                                                @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        // The check and the write happen under the same lock as every other save, so two changes made from the same
-        // version cannot both pass the check (RFC 9110 13.1.1, the lost update).
-        synchronized (jobs) {
+        // The check and the write happen under the store's lock, the one every other save takes, in this runtime and
+        // in any other that shares the store, so two changes made from the same version cannot both pass the check
+        // (RFC 9110 13.1.1, the lost update).
+        return jobs.locked(() -> {
             Etags.requireMatch(ifMatch, etag(resource(find(id))));
             return update(id, input);
-        }
+        });
     }
 
     @Operation(operationId = "patchJob", summary = "Change parts of a job's definition",
@@ -178,11 +179,11 @@ public class JobsV1Controller {
         if (patch == null || !patch.isObject()) {
             throw ApiProblem.badRequest("A merge patch is a JSON object.");
         }
-        synchronized (jobs) {
+        return jobs.locked(() -> {
             JobDTO current = find(id);
             Etags.requireMatch(ifMatch, etag(resource(current)));
             return patched(id, current, patch);
-        }
+        });
     }
 
     private ResponseEntity<JobResource> patched(String id, JobDTO current, JsonNode patch) {
@@ -204,11 +205,12 @@ public class JobsV1Controller {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable String id,
                                        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        synchronized (jobs) {
+        jobs.locked(() -> {
             JobDTO current = find(id);
             Etags.requireMatch(ifMatch, etag(resource(current)));
             requireOk(jobs.deleteJob(current.id()), "Job", id);
-        }
+            return null;
+        });
         return ResponseEntity.noContent().build();
     }
 
@@ -283,11 +285,7 @@ public class JobsV1Controller {
         return job;
     }
 
-    /**
-     * Called holding the jobs' lock. Lock order: it reads connectors without their lock (connectorsWithSecrets takes none).
-     * Never call a synchronized ConnectorController method under the jobs' lock; ConnectorsV1Controller holds the
-     * connectors' lock and reads jobs.
-     */
+    /** Called holding the store's lock ({@link JobController#locked}), which is reentrant and the only one. */
     private ResponseEntity<JobResource> update(String id, JobInput input) {
         checkConnectors(input);
         JobResource saved = resource(saved(jobs.save(input.toJob(id), true), id));

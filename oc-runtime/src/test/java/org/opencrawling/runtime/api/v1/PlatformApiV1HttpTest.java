@@ -754,12 +754,17 @@ class PlatformApiV1HttpTest {
         writers.put("save", () -> jobController.save(jobController.findJobById(id)));
         writers.put("delete", () -> jobController.deleteJob("none-" + tag));
         for (Map.Entry<String, Runnable> writer : writers.entrySet()) {
-            Thread thread;
-            synchronized (jobController) {
-                thread = Thread.ofVirtual().start(writer.getValue());
-                Thread.sleep(150);
-                assertThat(thread.isAlive()).as(writer.getKey() + " waits while the lock is held").isTrue();
-            }
+            // The store's lock (#315): the one conditional changes hold, in this runtime and in others sharing the store.
+            Thread thread = jobController.locked(() -> {
+                Thread started = Thread.ofVirtual().start(writer.getValue());
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                assertThat(started.isAlive()).as(writer.getKey() + " waits while the lock is held").isTrue();
+                return started;
+            });
             thread.join(5_000);
             assertThat(thread.isAlive()).as(writer.getKey() + " runs once the lock is free").isFalse();
         }

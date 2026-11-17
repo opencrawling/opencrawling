@@ -121,13 +121,15 @@ public class ConnectorsV1Controller {
                                                     @Parameter(description = "Makes retries of this request safe") @RequestHeader(value = ApiV1.IDEMPOTENCY_KEY, required = false) String idempotencyKey) {
         ConnectorDTO saved = new ConnectorDTO(input.name(), input.description(), input.type(), input.className(),
                 input.maxConnections(), ConnectorResource.unmask(input.configuration(), Map.of()));
-        // The existence check and the write under one lock: two creates of the same name cannot both succeed.
-        synchronized (connectors) {
+        // The existence check and the write under the store's lock: two creates of the same name, in this runtime or
+        // in another that shares the store, cannot both succeed.
+        connectors.locked(() -> {
             if (findOrNull(input.name()) != null) {
                 throw ApiProblem.conflict("connector-exists", "A connector named '" + input.name() + "' exists; replace it with PUT.");
             }
             JobsV1Controller.requireOk(connectors.save(saved), "Connector", input.name());
-        }
+            return null;
+        });
         return ResponseEntity.created(ApiV1.location("connectors", saved.name()))
                 .eTag(etag(saved)).body(ConnectorResource.of(saved));
     }
@@ -139,18 +141,18 @@ public class ConnectorsV1Controller {
     @PutMapping("/connectors/{name}")
     public ResponseEntity<ConnectorResource> replace(@PathVariable String name, @Valid @RequestBody ConnectorInput input,
                                                      @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        ConnectorDTO saved;
-        synchronized (connectors) {
+        ConnectorDTO saved = connectors.locked(() -> {
             ConnectorDTO current = find(name);
             Etags.requireMatch(ifMatch, etag(current));
             if (!current.name().equals(input.name())) {
                 throw ApiProblem.invalid("name", "must be '" + current.name() + "', the connector's name; renaming is not supported");
             }
-            saved = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
+            ConnectorDTO replacement = new ConnectorDTO(current.name(), input.description(), input.type(), input.className(),
                     input.maxConnections(), ConnectorResource.unmask(input.configuration(), current.configuration(),
                     !java.util.Objects.equals(input.className(), current.className())));
-            JobsV1Controller.requireOk(connectors.save(saved), "Connector", name);
-        }
+            JobsV1Controller.requireOk(connectors.save(replacement), "Connector", name);
+            return replacement;
+        });
         return ResponseEntity.ok().eTag(etag(saved)).body(ConnectorResource.of(saved));
     }
 
@@ -161,9 +163,9 @@ public class ConnectorsV1Controller {
     public ResponseEntity<Void> delete(@PathVariable String name,
                                        @Parameter(description = "Delete even if jobs use it") @RequestParam(defaultValue = "false") boolean force,
                                        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        // Lock order: this holds the connectors' lock and reads jobs without theirs (getAllJobs takes no lock). Never
-        // call a synchronized JobController method here; JobsV1Controller holds the jobs' lock and reads connectors.
-        synchronized (connectors) {
+        // One lock for jobs and connectors (the store's), so checking that no job uses the connector and deleting it
+        // cannot interleave with a job saved meanwhile, here or in another runtime.
+        connectors.locked(() -> {
             ConnectorDTO current = find(name);
             Etags.requireMatch(ifMatch, etag(current));
             List<String> usedBy = jobs.getAllJobs().stream()
@@ -175,7 +177,8 @@ public class ConnectorsV1Controller {
                         .with("jobs", usedBy);
             }
             JobsV1Controller.requireOk(connectors.deleteConnector(current.name()), "Connector", name);
-        }
+            return null;
+        });
         return ResponseEntity.noContent().build();
     }
 
@@ -217,7 +220,7 @@ public class ConnectorsV1Controller {
      */
     private String etag(ConnectorDTO stored) {
         return Etags.of(List.of(ConnectorResource.of(stored),
-                ConnectorResource.secretsDigest(stored.configuration(), EtagKey.get())), json);
+                ConnectorResource.secretsDigest(stored.configuration(), EtagKey.get(connectors.controlPlaneStore()))), json);
     }
 
     private static ConnectionCheckResult checked(ResponseEntity<ConnectionCheckResult> result) {

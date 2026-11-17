@@ -50,7 +50,13 @@ public class SystemController {
     private static final DateTimeFormatter logTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Pattern VALID_HEAP_PATTERN = Pattern.compile("^-Xmx[0-9]+[kmgKMG]$");
     
-    private SystemSettingsDTO settings;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SystemController.class);
+    static final String SETTINGS = "settings.json";
+
+    /** Saved on the first start, when the store has no settings yet. */
+    private final SystemSettingsDTO defaultSettings;
+    /** The settings this runtime applied (Tika, chunk size); the saved ones may be newer when another runtime saved them. */
+    private volatile SystemSettingsDTO applied;
     private final ControlPlaneStore controlPlaneStore;
     private final JdbcTemplate jdbcTemplate;
     private final TelemetryTraceStore traceStore;
@@ -124,7 +130,8 @@ public class SystemController {
             writeLimit,
             numClients
         );
-        this.settings = controlPlaneStore.loadObject("settings.json", SystemSettingsDTO.class, defaultSettings);
+        this.defaultSettings = defaultSettings;
+        this.applied = controlPlaneStore.loadObject(SETTINGS, SystemSettingsDTO.class, defaultSettings);
 
         // Register programmatic log capture appender
         try {
@@ -169,6 +176,7 @@ public class SystemController {
             status.put("tikaEngine", textExtractionService.getEngineName());
         } else {
             status.put("tika", "DISABLED");
+            SystemSettingsDTO settings = applied;
             status.put("tikaVersion", (settings != null && settings.tikaVersion() != null) ? settings.tikaVersion() : "N/A");
             status.put("tikaEngine", "Disabled");
         }
@@ -216,6 +224,7 @@ public class SystemController {
 
     private String checkOllama() {
         String envBaseUrl = System.getenv("SPRING_AI_OLLAMA_BASE_URL");
+        SystemSettingsDTO settings = applied;
         String settingsUrl = (settings != null && settings.ollamaBaseUrl() != null && !settings.ollamaBaseUrl().isBlank())
                 ? settings.ollamaBaseUrl() : null;
 
@@ -346,8 +355,8 @@ public class SystemController {
     @Autowired(required = false)
     public void setChunkingDefaults(org.opencrawling.runtime.orchestrator.ChunkingDefaults chunkingDefaults) {
         this.chunkingDefaults = chunkingDefaults;
-        if (chunkingDefaults != null && settings != null) {
-            chunkingDefaults.setChunkSize(settings.chunkSize());
+        if (chunkingDefaults != null && applied != null) {
+            chunkingDefaults.setChunkSize(applied.chunkSize());
         }
     }
 
@@ -355,19 +364,69 @@ public class SystemController {
     @ApiResponse(responseCode = "200", description = "System configuration settings")
     @GetMapping("/settings")
     public SystemSettingsDTO getSettings() {
-        return settings;
+        // Read on every call: another runtime that shares the store may have saved newer ones (#315).
+        return controlPlaneStore.loadObject(SETTINGS, SystemSettingsDTO.class, defaultSettings);
+    }
+
+    /**
+     * Runs {@code work} with no other change of settings, jobs or connectors in between, in this runtime or another
+     * that shares the store: what the Platform API holds around a conditional change (check If-Match, then write).
+     */
+    public <R> R locked(java.util.function.Supplier<R> work) {
+        return controlPlaneStore.locked(work);
+    }
+
+    /**
+     * Applies settings that another runtime saved since this one applied its own, so every runtime that shares the
+     * store crawls with the same chunk size and Tika settings within {@code opencrawling.control-plane.refresh-interval}.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${opencrawling.control-plane.refresh-interval:10s}",
+            initialDelayString = "${opencrawling.control-plane.refresh-interval:10s}")
+    public void applySavedSettings() {
+        try {
+            SystemSettingsDTO saved = getSettings();
+            if (saved != null && !saved.equals(applied)) {
+                locked(() -> {
+                    SystemSettingsDTO current = getSettings();
+                    if (!current.equals(applied)) {
+                        apply(current);
+                        log.info("Applied system settings saved by another runtime (chunk size {}).", current.chunkSize());
+                    }
+                    return null;
+                });
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not check the saved system settings: {}", e.getMessage());
+        }
     }
 
     @Operation(summary = "Update global system settings", description = "Updates and persists global configuration settings for embedding, chunking, Claim-Check storage, and text extraction.")
     @ApiResponse(responseCode = "200", description = "Settings updated successfully")
     @PostMapping("/settings")
-    public synchronized ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
+    public ResponseEntity<Void> updateSettings(@RequestBody SystemSettingsDTO newSettings) {
         // Everything is checked before anything is applied: a refused request changes nothing.
         String invalid = invalidSetting(newSettings);
         if (invalid != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid);
         }
-        this.settings = newSettings;
+        locked(() -> {
+            controlPlaneStore.save(SETTINGS, newSettings);
+            apply(newSettings);
+            return null;
+        });
+        InMemoryLogAppender.getLogs().add(formatLog("SUCCESS", "System settings updated: Model set to '" 
+            + newSettings.ollamaModel() + "' (" + newSettings.vectorDimensions() + "d) via " 
+            + newSettings.embeddingProvider() + ". Chunker: " + newSettings.chunkerType() 
+            + " [Size: " + newSettings.chunkSize() + " tokens, for jobs that set none]"
+            + ". Tika Fork: " + newSettings.tikaForkEnabled() + " (Timeout: " + newSettings.tikaTimeoutMs() + "ms, Heap: " + newSettings.tikaJvmHeap() + ", Clients: " + newSettings.tikaNumClients() + ")"));
+        InMemoryLogAppender.getLogs().add(formatLog("WARN", "Tika parser settings updated. Note: Reconfiguration of active child processes requires an application restart to take full effect."));
+        return ResponseEntity.ok().header("X-Requires-Restart", "true").build();
+    }
+
+
+    /** Puts settings into effect in this runtime: Tika's properties and the chunk size for jobs that set none. */
+    private void apply(SystemSettingsDTO newSettings) {
         if (textExtractionProperties != null) {
             if (newSettings.tikaForkEnabled() != null) {
                 textExtractionProperties.setForkEnabled(newSettings.tikaForkEnabled());
@@ -391,17 +450,10 @@ public class SystemController {
                 textExtractionProperties.setNumClients(newSettings.tikaNumClients());
             }
         }
-        controlPlaneStore.save("settings.json", newSettings);
         if (chunkingDefaults != null) {
             chunkingDefaults.setChunkSize(newSettings.chunkSize());
         }
-        InMemoryLogAppender.getLogs().add(formatLog("SUCCESS", "System settings updated: Model set to '" 
-            + newSettings.ollamaModel() + "' (" + newSettings.vectorDimensions() + "d) via " 
-            + newSettings.embeddingProvider() + ". Chunker: " + newSettings.chunkerType() 
-            + " [Size: " + newSettings.chunkSize() + " tokens, for jobs that set none]"
-            + ". Tika Fork: " + newSettings.tikaForkEnabled() + " (Timeout: " + newSettings.tikaTimeoutMs() + "ms, Heap: " + newSettings.tikaJvmHeap() + ", Clients: " + newSettings.tikaNumClients() + ")"));
-        InMemoryLogAppender.getLogs().add(formatLog("WARN", "Tika parser settings updated. Note: Reconfiguration of active child processes requires an application restart to take full effect."));
-        return ResponseEntity.ok().header("X-Requires-Restart", "true").build();
+        this.applied = newSettings;
     }
 
     /**

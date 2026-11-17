@@ -149,10 +149,14 @@ Where the runtime keeps its definitions: jobs, connectors, system settings and t
     *   *Default*: `file`
     *   **`file`:** JSON files in `data/` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`), relative to the working directory. A container without a volume on `data/` loses them when it is recreated.
     *   **`jdbc`:** tables in the runtime's datasource (`spring.datasource.*`): `oc_job`, `oc_connector` and `oc_setting`, one row per definition, with a `version` that grows whenever the definition changes. The `docker-compose-decoupled` stacks use it with their PostgreSQL.
-    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`, `V1__control_plane.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Several runtimes on one database (`jdbc`):** every runtime reads the definitions another one saved, at once. Every change, and every `If-Match` check of the Platform API, runs under one lock in the database (the `oc_lock` row), so two runtimes cannot overwrite each other's changes: an edit made from an older version gets `412`. The connectors' ETags are the same in every runtime, because the key behind them (`api-v1-etag-key.json`) is kept in the store too. Each runtime caches what it read while the store's revision is unchanged, so a read costs one small query.
+    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
     *   **Moving from `file`:** on its first start with `jdbc`, the runtime imports the existing files in `data/` into the tables and leaves the files unchanged. After that the tables are the source; later edits of the files are ignored.
     *   **Errors:** a definition that cannot be saved fails the request instead of being logged and lost. An unknown value stops the runtime at startup.
-    *   **Not yet:** several runtime instances on one database still each keep their own copy in memory, so they can overwrite each other's changes. Shared, versioned writes come with the durable runs of #315's next part.
+    *   **Not yet:** runs are still kept by the runtime that started them, so the limit of one run per job, the caps on runs at the same time, stop and pause apply per runtime. Durable, shared runs come in a later part of #315.
+*   **`OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL`** (`opencrawling.control-plane.refresh-interval`): how often a runtime checks for system or transport settings that another runtime saved, and applies them (Tika settings and the default chunk size; the gRPC server is restarted with new transport settings). The runtime that saves them applies them at once.
+    *   *Type*: `duration`
+    *   *Default*: `10s`
 
 ## 🧭 Platform API Idempotency Keys
 

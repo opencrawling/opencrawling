@@ -17,28 +17,76 @@ package org.opencrawling.runtime.controlplane;
 
 import org.opencrawling.runtime.api.PersistenceHelper;
 
+import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
-/** JSON files in {@code data/}, one per name: the runtime's behaviour before #315, and still the default. */
+/**
+ * JSON files in {@code data/}, one per name: the runtime's behaviour before #315, and still the default. One runtime
+ * owns the directory, so {@link #locked} is a lock of this runtime only. Reads are cached while the file is unchanged.
+ */
 final class FileControlPlaneStore implements ControlPlaneStore {
 
     static final FileControlPlaneStore INSTANCE = new FileControlPlaneStore();
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Map<String, Cached> cache = new ConcurrentHashMap<>();
+
+    /** A file's content as read, with the file's state when it was read. */
+    private record Cached(long modified, long length, Object value) {
+    }
 
     private FileControlPlaneStore() {
     }
 
     @Override
     public <T> List<T> loadList(String name, Class<T> type, List<T> defaults) {
-        return PersistenceHelper.loadList(name, type, defaults);
+        @SuppressWarnings("unchecked")
+        List<T> list = (List<T>) cached(name, type, () -> PersistenceHelper.loadList(name, type, defaults));
+        return new ArrayList<>(list);
     }
 
     @Override
     public <T> T loadObject(String name, Class<T> type, T defaultValue) {
-        return PersistenceHelper.loadObject(name, type, defaultValue);
+        return type.cast(cached(name, type, () -> PersistenceHelper.loadObject(name, type, defaultValue)));
+    }
+
+    private Object cached(String name, Class<?> type, Supplier<Object> read) {
+        String key = name + "|" + type.getName();
+        File file = new File(PersistenceHelper.DATA_DIR, name);
+        Cached cached = cache.get(key);
+        if (cached != null && file.isFile() && file.lastModified() == cached.modified() && file.length() == cached.length()) {
+            return cached.value();
+        }
+        Object value = read.get();
+        if (file.isFile()) {
+            cache.put(key, new Cached(file.lastModified(), file.length(), value));
+        }
+        return value;
     }
 
     @Override
     public void save(String name, Object data) {
-        PersistenceHelper.save(name, data);
+        lock.lock();
+        try {
+            cache.keySet().removeIf(key -> key.startsWith(name + "|"));
+            PersistenceHelper.save(name, data);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public <R> R locked(Supplier<R> work) {
+        lock.lock();
+        try {
+            return work.get();
+        } finally {
+            lock.unlock();
+        }
     }
 }

@@ -15,42 +15,56 @@
  */
 package org.opencrawling.runtime.api.v1;
 
-import org.opencrawling.runtime.api.PersistenceHelper;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * The key of the keyed digests that go into ETags of resources with secrets (connectors). Made once, at random, and
- * kept in the runtime's data directory next to the connectors it protects, so tags stay the same across restarts.
+ * kept in the control-plane store next to the connectors it protects (#315), so tags stay the same across restarts
+ * and are the same in every runtime that shares the store. A file-based runtime's key file is imported with the rest.
  */
 final class EtagKey {
 
-    private static final String FILE = "api-v1-etag-key.json";
+    static final String NAME = "api-v1-etag-key.json";
+
+    private static final Map<ControlPlaneStore, byte[]> KEYS = Collections.synchronizedMap(new WeakHashMap<>());
 
     private EtagKey() {}
 
-    private static final class Holder {
-        static final byte[] KEY = load();
+    static byte[] get(ControlPlaneStore store) {
+        byte[] key = KEYS.get(store);
+        if (key == null) {
+            // Loaded outside the map's lock: loading takes the store's lock, which a caller of get may already hold.
+            key = load(store);
+            byte[] earlier = KEYS.putIfAbsent(store, key);
+            if (earlier != null) {
+                key = earlier;
+            }
+        }
+        return key.clone();
+    }
 
-        private static byte[] load() {
+    /** The stored key, or a new one saved under the store's lock, so two runtimes starting together keep the same. */
+    private static byte[] load(ControlPlaneStore store) {
+        return store.locked(() -> {
             byte[] fresh = new byte[32];
             new SecureRandom().nextBytes(fresh);
-            String stored = PersistenceHelper.loadObject(FILE, String.class, Base64.getEncoder().encodeToString(fresh));
+            String stored = store.loadObject(NAME, String.class, Base64.getEncoder().encodeToString(fresh));
             try {
                 byte[] key = Base64.getDecoder().decode(stored);
                 if (key.length >= 32) {
                     return key;
                 }
             } catch (IllegalArgumentException | NullPointerException e) {
-                // an unreadable key file: use a fresh key, and keep it
+                // an unreadable key: use a fresh key, and keep it
             }
-            PersistenceHelper.save(FILE, Base64.getEncoder().encodeToString(fresh));
+            store.save(NAME, Base64.getEncoder().encodeToString(fresh));
             return fresh;
-        }
-    }
-
-    static byte[] get() {
-        return Holder.KEY.clone();
+        });
     }
 }

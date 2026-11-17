@@ -31,7 +31,7 @@ class JdbcControlPlaneStoreTest extends JdbcControlPlaneStoreContract {
 
     @Override
     JdbcTemplate freshDatabase() {
-        dataSource = new DriverManagerDataSource("jdbc:h2:mem:cp-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
+        dataSource = new DriverManagerDataSource("jdbc:h2:mem:cp-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=30000", "sa", "");
         Flyway.configure().dataSource(dataSource).load().migrate();
         return new JdbcTemplate(dataSource);
     }
