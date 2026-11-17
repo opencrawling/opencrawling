@@ -130,6 +130,104 @@ abstract class JdbcControlPlaneStoreContract {
                 .extracting(c -> c.configuration().get("basePath")).containsExactly("/a");
     }
 
+    // --- Several runtimes on one database (#315, part 2). Two stores over one database stand for two runtimes.
+
+    @Test
+    void aChangeSavedByAnotherRuntimeIsReadAtOnce() {
+        JdbcTemplate jdbc = freshDatabase();
+        JdbcControlPlaneStore first = store(jdbc, dataDir);
+        JdbcControlPlaneStore second = store(jdbc, dataDir);
+        first.save("jobs.json", List.of(job("1", "one", "/a")));
+        first.save("settings.json", Map.of("theme", "dark"));
+        assertThat(first.loadList("jobs.json", JobDTO.class, List.of())).hasSize(1); // cached by the first runtime
+        assertThat(first.loadObject("settings.json", Map.class, Map.of())).containsEntry("theme", "dark");
+
+        second.save("jobs.json", List.of(job("1", "one", "/a"), job("2", "two", "/b")));
+        second.save("settings.json", Map.of("theme", "light"));
+
+        assertThat(first.loadList("jobs.json", JobDTO.class, List.of())).extracting(JobDTO::id).containsExactly("1", "2");
+        assertThat(first.loadObject("settings.json", Map.class, Map.of())).containsEntry("theme", "light");
+    }
+
+    @Test
+    void changesMadeAtTheSameTimeByTwoRuntimesAreAllKept() throws Exception {
+        JdbcTemplate jdbc = freshDatabase();
+        List<JdbcControlPlaneStore> runtimes = List.of(store(jdbc, dataDir), store(jdbc, dataDir));
+        runtimes.getFirst().save("jobs.json", List.of());
+        int perThread = 10;
+        List<Thread> threads = new java.util.ArrayList<>();
+        java.util.Queue<Throwable> failures = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        for (int t = 0; t < 4; t++) {
+            JdbcControlPlaneStore store = runtimes.get(t % 2);
+            String prefix = "t" + t + "-";
+            threads.add(Thread.ofVirtual().start(() -> {
+                try {
+                    for (int i = 0; i < perThread; i++) {
+                        String id = prefix + i;
+                        // What every controller does: read the saved list, change it, save it, under the lock.
+                        store.locked(() -> {
+                            List<JobDTO> jobs = store.loadList("jobs.json", JobDTO.class, List.of());
+                            jobs.add(job(id, id, "/" + id));
+                            store.save("jobs.json", jobs);
+                            return null;
+                        });
+                    }
+                } catch (Throwable e) {
+                    failures.add(e);
+                }
+            }));
+        }
+        for (Thread thread : threads) {
+            thread.join();
+        }
+
+        assertThat(failures).isEmpty();
+        assertThat(runtimes.get(1).loadList("jobs.json", JobDTO.class, List.of())).as("no change lost").hasSize(4 * perThread);
+        assertThat(runtimes.get(0).loadList("jobs.json", JobDTO.class, List.of())).hasSize(4 * perThread);
+    }
+
+    @Test
+    void aChangeThatFailsKeepsNothingItSaved() {
+        JdbcTemplate jdbc = freshDatabase();
+        JdbcControlPlaneStore store = store(jdbc, dataDir);
+        store.save("jobs.json", List.of(job("1", "one", "/a")));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.locked(() -> {
+            store.save("jobs.json", List.of(job("1", "one", "/a"), job("2", "two", "/b")));
+            assertThat(store.loadList("jobs.json", JobDTO.class, List.of())).as("seen inside the change").hasSize(2);
+            throw new IllegalStateException("refused");
+        })).hasMessage("refused");
+
+        assertThat(store.loadList("jobs.json", JobDTO.class, List.of())).extracting(JobDTO::id).containsExactly("1");
+        assertThat(store(jdbc, dataDir).loadList("jobs.json", JobDTO.class, List.of())).extracting(JobDTO::id).containsExactly("1");
+    }
+
+    @Test
+    void twoRuntimesStartingTogetherKeepTheSameFirstValue() throws Exception {
+        JdbcTemplate jdbc = freshDatabase();
+        JdbcControlPlaneStore first = store(jdbc, dataDir);
+        JdbcControlPlaneStore second = store(jdbc, dataDir);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> fromFirst = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> fromSecond = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread a = Thread.ofVirtual().start(() -> { await(go); fromFirst.set(first.loadObject("key.json", String.class, "made-by-first")); });
+        Thread b = Thread.ofVirtual().start(() -> { await(go); fromSecond.set(second.loadObject("key.json", String.class, "made-by-second")); });
+        go.countDown();
+        a.join();
+        b.join();
+
+        assertThat(fromFirst.get()).isNotNull().isEqualTo(fromSecond.get());
+        assertThat(store(jdbc, dataDir).loadObject("key.json", String.class, "later")).isEqualTo(fromFirst.get());
+    }
+
+    private static void await(java.util.concurrent.CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private static long version(JdbcTemplate jdbc, String table, String keyColumn, String key) {
         return jdbc.queryForObject("SELECT version FROM " + table + " WHERE " + keyColumn + " = ?", Long.class, key);
     }

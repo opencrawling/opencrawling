@@ -82,12 +82,13 @@ public class SettingsV1Controller {
         if (!errors.isEmpty()) {
             throw ApiProblem.invalid(errors);
         }
-        synchronized (system) {
+        // Check and write under the store's lock, shared with every runtime that uses the same store.
+        return system.locked(() -> {
             Etags.requireMatch(ifMatch, Etags.of(system.getSettings(), json));
             JobsV1Controller.requireOk(system.updateSettings(settings), "Settings", "system");
             SystemController.SystemSettingsDTO now = system.getSettings();
             return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
-        }
+        });
     }
 
     @Operation(operationId = "getTransportSettings", summary = "Get the internal transport settings",
@@ -110,13 +111,14 @@ public class SettingsV1Controller {
     @PutMapping("/transport")
     public ResponseEntity<TransportSettingsDTO> replaceTransport(@RequestBody TransportSettingsDTO settings,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
-        synchronized (transport) {
+        // The store's lock (the one SystemController and the transport manager share), around check and write.
+        return system.locked(() -> {
             Etags.requireMatch(ifMatch, Etags.of(currentTransport(), json));
             ResponseEntity<TransportSettingsDTO> result = transport.updateTransportSettingsPut(settings);
             JobsV1Controller.requireOk(result, "Settings", "transport");
             TransportSettingsDTO now = currentTransport();
             return ResponseEntity.ok().eTag(Etags.of(now, json)).body(now);
-        }
+        });
     }
 
     /** The settings document inside the legacy answer, which also carries a status summary. */

@@ -20,8 +20,8 @@ import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.HashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.opencrawling.runtime.service.ConnectorCheckerService;
 import org.opencrawling.runtime.service.ConnectorCheckerService.ConnectionCheckResult;
@@ -44,7 +44,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RequestMapping("/api/connectors")
 public class ConnectorController {
 
-    private final List<ConnectorDTO> storage;
+    /** The built-in connectors, saved on the first start and always offered. */
+    private final List<ConnectorDTO> defaultConnectors;
+    /** Connectors found through ServiceLoader (plugins), offered while their class is on the class path. */
+    private final List<ConnectorDTO> discoveredConnectors = new ArrayList<>();
     private final ControlPlaneStore controlPlaneStore;
     private final ConnectorCheckerService checkerService;
 
@@ -498,39 +501,52 @@ public class ConnectorController {
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
-        // Load persisted list
-        this.storage = new CopyOnWriteArrayList<>(controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaults));
-        
-        // Ensure standard built-in defaults exist in storage even if an existing connectors.json file was loaded from disk
-        for (ConnectorDTO def : defaults) {
+        this.defaultConnectors = List.copyOf(defaults);
+        controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaultConnectors); // saves or imports them on the first start
+
+        // Dynamically discover SPI connectors loaded via plugin classloaders
+        try {
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>())));
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>())));
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>())));
+        } catch (Throwable t) {
+            System.err.println("Notice: Dynamic SPI Connector discovery skipped: " + t.getMessage());
+        }
+    }
+
+    /**
+     * The saved connectors, read on every call because another runtime that shares the store may have changed them
+     * (#315), followed by the built-in and discovered ones that are not saved under their name.
+     */
+    private List<ConnectorDTO> storage() {
+        List<ConnectorDTO> storage = controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaultConnectors);
+        for (ConnectorDTO def : defaultConnectors) {
             if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(def.name()))) {
                 storage.add(def);
             }
         }
-        
-        // Dynamically discover SPI connectors loaded via plugin classloaders
-        try {
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn -> {
-                String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
-                    storage.add(new ConnectorDTO(name, name + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>()));
-                }
-            });
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn -> {
-                String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
-                    storage.add(new ConnectorDTO(name, name + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>()));
-                }
-            });
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn -> {
-                String name = conn.getName();
-                if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(name) || c.className().equals(conn.getClass().getName()))) {
-                    storage.add(new ConnectorDTO(name, name + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>()));
-                }
-            });
-        } catch (Throwable t) {
-            System.err.println("Notice: Dynamic SPI Connector discovery skipped: " + t.getMessage());
+        for (ConnectorDTO found : discoveredConnectors) {
+            if (storage.stream().noneMatch(c -> c.name().equalsIgnoreCase(found.name()) || c.className().equals(found.className()))) {
+                storage.add(found);
+            }
         }
+        return storage;
+    }
+
+    /**
+     * Runs {@code work} with no other change of connectors, jobs or settings in between, in this runtime or another
+     * that shares the store: what the Platform API holds around a conditional change (check If-Match, then write).
+     */
+    public <R> R locked(Supplier<R> work) {
+        return controlPlaneStore.locked(work);
+    }
+
+    /** The store that keeps the connectors (and the Platform API's ETag key next to them). */
+    public ControlPlaneStore controlPlaneStore() {
+        return controlPlaneStore;
     }
 
     @Operation(summary = "List all connectors", description = "Retrieves all configured connectors across all categories. "
@@ -538,7 +554,7 @@ public class ConnectorController {
     @ApiResponse(responseCode = "200", description = "List of all configured connectors successfully retrieved")
     @GetMapping
     public List<ConnectorDTO> getAllConnectors() {
-        return masked(visible(storage));
+        return masked(visible(storage()));
     }
 
     /**
@@ -546,7 +562,7 @@ public class ConnectorController {
      * which mask what they return), never for an HTTP answer.
      */
     public List<ConnectorDTO> connectorsWithSecrets() {
-        return visible(storage);
+        return visible(storage());
     }
 
     @Operation(summary = "List connectors by type", description = "Retrieves all configured connectors filtered by category ('repository', 'output', or 'transformation').")
@@ -554,7 +570,7 @@ public class ConnectorController {
     @GetMapping("/{type}")
     public List<ConnectorDTO> getConnectors(
             @Parameter(description = "Connector category type ('repository', 'output', or 'transformation')", example = "repository") @PathVariable String type) {
-        return masked(visible(storage.stream()
+        return masked(visible(storage().stream()
                 .filter(c -> c.type().equalsIgnoreCase(type))
                 .toList()));
     }
@@ -581,7 +597,7 @@ public class ConnectorController {
         if (connector.configuration() == null || connector.name() == null) {
             return new Unmasked(connector, null);
         }
-        ConnectorDTO stored = storage.stream().filter(c -> c.name().equalsIgnoreCase(connector.name())).findFirst().orElse(null);
+        ConnectorDTO stored = storage().stream().filter(c -> c.name().equalsIgnoreCase(connector.name())).findFirst().orElse(null);
         try {
             Map<String, String> configuration = ConnectorResource.unmask(connector.configuration(),
                     stored == null ? Map.of() : stored.configuration(),
@@ -615,17 +631,25 @@ public class ConnectorController {
     @Operation(summary = "Create or update connector", description = "Saves or updates a connector configuration definition.")
     @ApiResponse(responseCode = "201", description = "Connector definition saved successfully")
     @PostMapping
-    public synchronized ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
-        Unmasked unmasked = unmasked(connector);
-        if (unmasked.refusal() != null) {
-            return ResponseEntity.badRequest().header("X-OpenCrawling-Error", unmasked.refusal()).build();
-        }
-        return save(unmasked.connector());
+    public ResponseEntity<Void> createConnector(@RequestBody ConnectorDTO connector) {
+        // The stored secrets are read and the connector saved under one lock, so the secrets kept are the current ones.
+        return controlPlaneStore.locked(() -> {
+            Unmasked unmasked = unmasked(connector);
+            if (unmasked.refusal() != null) {
+                return ResponseEntity.badRequest().header("X-OpenCrawling-Error", unmasked.refusal()).<Void>build();
+            }
+            return save(unmasked.connector());
+        });
     }
 
     /** Saves a connector whose configuration holds its real secrets (no mask): for the Platform API's controllers. */
-    public synchronized ResponseEntity<Void> save(ConnectorDTO connector) {
+    public ResponseEntity<Void> save(ConnectorDTO connector) {
+        return controlPlaneStore.locked(() -> saveLocked(connector));
+    }
+
+    private ResponseEntity<Void> saveLocked(ConnectorDTO connector) {
         System.out.println("Saving connector: " + connector.name());
+        List<ConnectorDTO> storage = storage();
         // Replaced in place, so a concurrent read never finds the connector missing while it is being saved.
         int index = -1;
         for (int i = 0; i < storage.size(); i++) {
@@ -664,7 +688,7 @@ public class ConnectorController {
         System.out.println("Checking connection for connector: " + connector.name() + " (" + connector.className() + ")");
         ConnectorDTO target = connector;
         if (target.className() == null && target.name() != null) {
-            ConnectorDTO stored = storage.stream()
+            ConnectorDTO stored = storage().stream()
                     .filter(c -> c.name().equalsIgnoreCase(connector.name()))
                     .findFirst()
                     .orElse(null);
@@ -690,11 +714,14 @@ public class ConnectorController {
     @Operation(summary = "Delete connector", description = "Removes a configured connector definition by its name/id.")
     @ApiResponse(responseCode = "200", description = "Connector deleted successfully")
     @DeleteMapping("/{id}")
-    public synchronized ResponseEntity<Void> deleteConnector(
+    public ResponseEntity<Void> deleteConnector(
             @Parameter(description = "Connector unique identifier or name", example = "FileSystem_Local") @PathVariable String id) {
-        storage.removeIf(c -> c.name().equals(id));
-        controlPlaneStore.save("connectors.json", storage);
-        return ResponseEntity.ok().build();
+        return controlPlaneStore.locked(() -> {
+            List<ConnectorDTO> storage = storage();
+            storage.removeIf(c -> c.name().equals(id));
+            controlPlaneStore.save("connectors.json", storage);
+            return ResponseEntity.ok().<Void>build();
+        });
     }
 
     @Schema(description = "Connector configuration and metadata definition")

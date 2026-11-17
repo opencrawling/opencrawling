@@ -20,13 +20,13 @@ import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -66,7 +66,7 @@ public class JobController {
 
     private static final Logger log = LoggerFactory.getLogger(JobController.class);
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-    private final List<JobDTO> jobs;
+    private final List<JobDTO> defaultJobs;
     private final ControlPlaneStore controlPlaneStore;
     private final JobOrchestrator jobOrchestrator;
     private final ConnectorFactory connectorFactory;
@@ -118,14 +118,28 @@ public class JobController {
         List<JobDTO> defaults = new ArrayList<>();
         defaults.add(new JobDTO("1", "Default_Job", "FileSystem_Local", "PGVector_Output", "", "/data", "Ready", "Idle", 0, "N/A", "Ollama_Embedding_Default", null));
         
-        // Load persisted list
-        this.jobs = new CopyOnWriteArrayList<>(controlPlaneStore.loadList("jobs.json", JobDTO.class, defaults));
+        this.defaultJobs = List.copyOf(defaults);
+        controlPlaneStore.loadList("jobs.json", JobDTO.class, defaultJobs); // saves or imports them on the first start
+    }
+
+    /** The saved jobs, read on every call: another runtime that shares the store may have changed them (#315). */
+    private List<JobDTO> jobs() {
+        return controlPlaneStore.loadList("jobs.json", JobDTO.class, defaultJobs);
+    }
+
+    /**
+     * Runs {@code work} with no other change of jobs, connectors or settings in between, in this runtime or another
+     * that shares the store: what the Platform API holds around a conditional change (check If-Match, then write).
+     */
+    public <R> R locked(Supplier<R> work) {
+        return controlPlaneStore.locked(work);
     }
 
     @Operation(summary = "List all pipeline jobs", description = "Returns a list of all configured crawling pipeline jobs and their latest execution state.")
     @ApiResponse(responseCode = "200", description = "List of configured jobs successfully retrieved")
     @GetMapping
     public List<JobDTO> getAllJobs() {
+        List<JobDTO> jobs = jobs();
         if (!authorizationOn()) {
             return jobs;
         }
@@ -137,7 +151,7 @@ public class JobController {
     @GetMapping("/permissions")
     public Map<String, List<JobAction>> getJobPermissions() {
         Map<String, List<JobAction>> permissions = new LinkedHashMap<>();
-        for (JobDTO job : jobs) {
+        for (JobDTO job : jobs()) {
             List<JobAction> allowedActions = Arrays.stream(JobAction.values()).filter(action -> allowed(job, action)).toList();
             if (allowedActions.contains(JobAction.READ)) {
                 permissions.put(job.id(), allowedActions);
@@ -166,7 +180,7 @@ public class JobController {
      * ingest token, gRPC push). Request handlers use {@link #getJob}, which applies the caller's access.
      */
     public JobDTO findJobById(String id) {
-        return jobs.stream().filter(j -> j.id().equals(id)).findFirst().orElse(null);
+        return jobs().stream().filter(j -> j.id().equals(id)).findFirst().orElse(null);
     }
 
     /** Whether the current caller may see this job, its runs, reports and traces. */
@@ -207,7 +221,7 @@ public class JobController {
      * Creates the job (no id, or id {@code new}) or updates the one with this id, checking the pipeline mode, the
      * repository connector's validation and the caller's access.
      */
-    public synchronized SaveOutcome save(JobDTO job) {
+    public SaveOutcome save(JobDTO job) {
         return save(job, false);
     }
 
@@ -216,8 +230,13 @@ public class JobController {
      *                narrativization) as sent, so a null clears them; otherwise a null keeps the stored value, as the
      *                admin UI expects
      */
-    public synchronized SaveOutcome save(JobDTO job, boolean replace) {
+    public SaveOutcome save(JobDTO job, boolean replace) {
+        return controlPlaneStore.locked(() -> saveLocked(job, replace));
+    }
+
+    private SaveOutcome saveLocked(JobDTO job, boolean replace) {
         log.info("Saving job: {}", job.name());
+        List<JobDTO> jobs = jobs();
         try {
             PipelineMode requestedMode = PipelineMode.parseStrict(job.pipelineMode());
             job = job.withPipelineMode(requestedMode != null ? requestedMode.externalName() : null);
@@ -302,8 +321,12 @@ public class JobController {
     @Operation(summary = "Delete a pipeline job", description = "Removes a pipeline job definition by its identifier.")
     @ApiResponse(responseCode = "200", description = "Job successfully deleted")
     @DeleteMapping("/{id}")
-    public synchronized ResponseEntity<Void> deleteJob(
+    public ResponseEntity<Void> deleteJob(
             @Parameter(description = "Job unique identifier", example = "1") @PathVariable String id) {
+        return controlPlaneStore.locked(() -> deleteLocked(id));
+    }
+
+    private ResponseEntity<Void> deleteLocked(String id) {
         log.info("Deleting job: {}", id);
         if (authorizationOn()) {
             JobDTO job = findJobById(id);
@@ -315,6 +338,7 @@ public class JobController {
                 return ResponseEntity.status(403).build();
             }
         }
+        List<JobDTO> jobs = jobs();
         jobs.removeIf(j -> j.id().equals(id));
         controlPlaneStore.save("jobs.json", jobs);
         return ResponseEntity.ok().build();
@@ -366,6 +390,7 @@ public class JobController {
         final String cleanId = id != null ? id.trim() : "";
 
         // Find the job to get parameters
+        List<JobDTO> jobs = jobs();
         JobDTO activeJob = jobs.stream()
             .filter(j -> j.id() != null && j.id().trim().equalsIgnoreCase(cleanId))
             .findFirst()
@@ -616,7 +641,7 @@ public class JobController {
 
     private JobDTO findJob(String id) {
         String cleanId = id != null ? id.trim() : "";
-        return jobs.stream()
+        return jobs().stream()
             .filter(j -> j.id() != null && j.id().trim().equalsIgnoreCase(cleanId))
             .findFirst()
             .orElse(null);
@@ -662,9 +687,18 @@ public class JobController {
         return globalProperties != null ? globalProperties.getMode() : PipelineMode.RAG;
     }
 
-    // Every change of the job list holds this controller's lock, the one the Platform API takes around a conditional
-    // change (If-Match), so no writer can revert a saved definition or overwrite another job.
-    private synchronized void updateJobStatus(String id, String status) {
+    // Every change of the job list holds the store's lock (locked), the one the Platform API takes around a conditional
+    // change (If-Match), and starts from the saved list, so no writer, here or in another runtime, can revert a saved
+    // definition or overwrite another job.
+    private void updateJobStatus(String id, String status) {
+        controlPlaneStore.locked(() -> {
+            updateJobStatusLocked(id, status);
+            return null;
+        });
+    }
+
+    private void updateJobStatusLocked(String id, String status) {
+        List<JobDTO> jobs = jobs();
         String cleanId = id != null ? id.trim() : "";
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
@@ -708,7 +742,15 @@ public class JobController {
         controlPlaneStore.save("jobs.json", jobs);
     }
 
-    private synchronized void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
+    private void updateJobStatusAndStage(String id, String status, String stage, long docCount) {
+        controlPlaneStore.locked(() -> {
+            updateJobStatusAndStageLocked(id, status, stage, docCount);
+            return null;
+        });
+    }
+
+    private void updateJobStatusAndStageLocked(String id, String status, String stage, long docCount) {
+        List<JobDTO> jobs = jobs();
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
             if (job.id().equals(id)) {
@@ -735,8 +777,16 @@ public class JobController {
         controlPlaneStore.save("jobs.json", jobs);
     }
 
-    public synchronized void recordPushExecution(String id, long pushedDocs, boolean success) {
+    public void recordPushExecution(String id, long pushedDocs, boolean success) {
         if (id == null || id.isBlank()) return;
+        controlPlaneStore.locked(() -> {
+            recordPushExecutionLocked(id, pushedDocs, success);
+            return null;
+        });
+    }
+
+    private void recordPushExecutionLocked(String id, long pushedDocs, boolean success) {
+        List<JobDTO> jobs = jobs();
         for (int i = 0; i < jobs.size(); i++) {
             JobDTO job = jobs.get(i);
             if (job.id().equals(id)) {

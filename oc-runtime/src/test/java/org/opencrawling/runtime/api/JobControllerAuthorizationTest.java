@@ -183,14 +183,15 @@ class JobControllerAuthorizationTest {
 
     /** Puts a job back in the state it had before authorization existed: no access block. */
     private void replaceAccess(String id, JobAccess access) {
-        @SuppressWarnings("unchecked")
-        List<JobController.JobDTO> jobs = (List<JobController.JobDTO>) ReflectionTestUtils
-                .getField(controller, "jobs");
+        org.opencrawling.runtime.controlplane.ControlPlaneStore store = (org.opencrawling.runtime.controlplane.ControlPlaneStore)
+                ReflectionTestUtils.getField(controller, "controlPlaneStore");
+        List<JobController.JobDTO> jobs = store.loadList("jobs.json", JobController.JobDTO.class, List.of());
         for (int i = 0; i < jobs.size(); i++) {
             if (jobs.get(i).id().equals(id)) {
                 jobs.set(i, jobs.get(i).withAccess(access));
             }
         }
+        store.save("jobs.json", jobs);
     }
 
     @Test

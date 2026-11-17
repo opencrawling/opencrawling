@@ -143,6 +143,8 @@ opencrawling:
   # with Flyway migrations; imports data/*.json on its first start).
   control-plane:
     store: ${OPENCRAWLING_CONTROL_PLANE_STORE:file}
+    # How often a runtime applies system and transport settings that another runtime saved (jdbc, several runtimes).
+    refresh-interval: ${OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL:10s}
   transport:
     mode: AUTO # Options: AUTO, GRPC, REST
     grpc:

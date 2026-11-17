@@ -46,7 +46,14 @@ public class InternalTransportManager {
 
     private static final Logger log = LoggerFactory.getLogger(InternalTransportManager.class);
 
-    private TransportSettingsDTO settings;
+    static final String SETTINGS = "transport-settings.json";
+
+    /** The settings this runtime runs with; the saved ones may be newer when another runtime saved them (#315). */
+    private volatile TransportSettingsDTO settings;
+    /** Saved on the first start, when the store has none yet. */
+    private TransportSettingsDTO defaultConfig;
+    /** Held while the gRPC server is (re)started, so two restarts cannot overlap. */
+    private final Object serverLock = new Object();
     private Server grpcServer;
 
     @Value("${opencrawling.transport.mode:AUTO}")
@@ -74,8 +81,8 @@ public class InternalTransportManager {
     }
 
     @PostConstruct
-    public synchronized void init() {
-        TransportSettingsDTO defaultConfig = new TransportSettingsDTO(
+    public void init() {
+        this.defaultConfig = new TransportSettingsDTO(
             springModeProperty != null ? springModeProperty : "AUTO",
             springGrpcEnabledProperty,
             springGrpcPortProperty > 0 ? springGrpcPortProperty : 9095,
@@ -87,25 +94,77 @@ public class InternalTransportManager {
             "",
             ""
         );
-        this.settings = controlPlaneStore().loadObject("transport-settings.json", TransportSettingsDTO.class, defaultConfig);
-        startOrRestartGrpcServer();
+        TransportSettingsDTO saved = controlPlaneStore().loadObject(SETTINGS, TransportSettingsDTO.class, defaultConfig);
+        synchronized (serverLock) {
+            this.settings = saved;
+            startOrRestartGrpcServer();
+        }
     }
 
     @PreDestroy
-    public synchronized void shutdown() {
-        stopGrpcServer();
+    public void shutdown() {
+        synchronized (serverLock) {
+            stopGrpcServer();
+        }
     }
 
-    public synchronized TransportSettingsDTO getSettings() {
-        return settings;
+    /** The saved settings, read on every call: another runtime that shares the store may have saved newer ones. */
+    public TransportSettingsDTO getSettings() {
+        return controlPlaneStore().loadObject(SETTINGS, TransportSettingsDTO.class,
+                defaultConfig != null ? defaultConfig : TransportSettingsDTO.defaultSettings());
     }
 
-    public synchronized void updateSettings(TransportSettingsDTO newSettings) {
+    /**
+     * Runs {@code work} with no other change of settings, jobs or connectors in between, in this runtime or another
+     * that shares the store.
+     */
+    public <R> R locked(java.util.function.Supplier<R> work) {
+        return controlPlaneStore().locked(work);
+    }
+
+    public void updateSettings(TransportSettingsDTO newSettings) {
         log.info("Updating internal transport settings to mode: {}, grpcEnabled: {}, port: {}", 
                 newSettings.mode(), newSettings.grpcEnabled(), newSettings.grpcPort());
-        this.settings = newSettings;
-        controlPlaneStore().save("transport-settings.json", newSettings);
-        startOrRestartGrpcServer();
+        locked(() -> {
+            controlPlaneStore().save(SETTINGS, newSettings);
+            apply(newSettings);
+            return null;
+        });
+    }
+
+    private void apply(TransportSettingsDTO newSettings) {
+        synchronized (serverLock) {
+            this.settings = newSettings;
+            startOrRestartGrpcServer();
+        }
+    }
+
+    /**
+     * Runs with transport settings that another runtime saved since this one applied its own, within
+     * {@code opencrawling.control-plane.refresh-interval}: the gRPC server is restarted with them.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${opencrawling.control-plane.refresh-interval:10s}",
+            initialDelayString = "${opencrawling.control-plane.refresh-interval:10s}")
+    public void applySavedSettings() {
+        if (defaultConfig == null) {
+            return; // not initialized
+        }
+        try {
+            TransportSettingsDTO saved = getSettings();
+            if (saved != null && !saved.equals(settings)) {
+                locked(() -> {
+                    TransportSettingsDTO current = getSettings();
+                    if (!current.equals(settings)) {
+                        log.info("Applying transport settings saved by another runtime (mode {}).", current.mode());
+                        apply(current);
+                    }
+                    return null;
+                });
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not check the saved transport settings: {}", e.getMessage());
+        }
     }
 
     private void startOrRestartGrpcServer() {
