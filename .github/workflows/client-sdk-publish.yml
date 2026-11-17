@@ -18,10 +18,11 @@ name: Publish Java SDK to Maven Central
 
 on:
   release:
-    types: [ published, prereleased, released ]
+    types: [ published, released ]
   push:
     tags:
       - 'v*'
+      - '!v*-rc.*'
   workflow_dispatch:
     inputs:
       release_version:
@@ -35,6 +36,7 @@ permissions: read-all
 jobs:
   publish-sdk:
     name: Build & Publish Java Client SDK
+    if: github.event_name != 'release' || (github.event.release.prerelease != true && !contains(github.event.release.tag_name, '-rc.'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -89,7 +91,8 @@ jobs:
         run: |
           mvn clean install -DskipTests -pl oc-core -am
 
-      - name: Deploy Java Client SDK via Sonatype Central Publishing Plugin
+      - name: Deploy Java Client SDK via Sonatype Central Publishing Plugin (GA only)
+        if: github.event.release.prerelease != true && !contains(steps.version.outputs.version, '-')
         run: |
           cd oc-java-client-sdk
           mvn clean deploy -DskipTests \
@@ -99,6 +102,12 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: Package Java Client SDK JAR (Pre-Release / Non-GA)
+        if: github.event.release.prerelease == true || contains(steps.version.outputs.version, '-')
+        run: |
+          cd oc-java-client-sdk
+          mvn clean package -DskipTests
 
       - name: Prepare Release SDK JAR
         run: |

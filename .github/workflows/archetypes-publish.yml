@@ -52,6 +52,15 @@ jobs:
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
 
+      - name: Reject Pre-Release / Snapshot Versions for Maven Central
+        env:
+          VER: ${{ inputs.release_version }}
+        run: |
+          if [ -z "$VER" ] || [[ "$VER" == *-* ]]; then
+            echo "[ERROR] Refusing to deploy non-GA version '${VER}' to Maven Central Releases." >&2
+            exit 1
+          fi
+
       - name: Set Release Version (if specified)
         run: |
           RELEASE_VER="${{ inputs.release_version }}"

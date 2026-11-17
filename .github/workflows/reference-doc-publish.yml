@@ -18,10 +18,11 @@ name: Publish Wiki Reference Documentation PDF
 
 on:
   release:
-    types: [ published, prereleased, released ]
+    types: [ published, released ]
   push:
     tags:
       - 'v*'
+      - '!v*-rc.*'
   workflow_dispatch:
     inputs:
       release_version:
@@ -35,6 +36,7 @@ permissions: read-all
 jobs:
   build-reference-doc-pdf:
     name: Generate Reference Documentation PDF from Wiki
+    if: github.event_name != 'release' || (github.event.release.prerelease != true && !contains(github.event.release.tag_name, '-rc.'))
     runs-on: ubuntu-24.04
     permissions:
       contents: read
