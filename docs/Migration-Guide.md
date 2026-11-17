@@ -17,7 +17,7 @@ silently dropped.
 | Command | What it does | Writes to OpenCrawling? |
 | :--- | :--- | :--- |
 | **`audit`** | Extract + map + report | Never |
-| **`import`** | Extract + map + write the supported half directly | Always |
+| **`import`** | Extract + map + write the supported half directly (re-runs replace existing connectors and jobs in-place over `/api/v1` with `If-Match`, `#337`) | Always |
 | **`convert`** | Extract + map + write each supported job as an [OIS](https://github.com/opencrawling/open-ingestion-standard)-format (`ois/v1alpha1`) YAML/JSON file | Never (pure file-to-file) |
 
 All three share the same extract → map engine, so a connection or job is skipped for the exact same
