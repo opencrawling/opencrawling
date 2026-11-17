@@ -142,7 +142,7 @@ Runs are kept in memory: they are not shared between runtime instances and do no
 
 ## 🗄️ Control-Plane Store
 
-Where the runtime keeps its definitions: jobs, connectors, system settings and transport settings ([#315](https://github.com/opencrawling/opencrawling/issues/315)).
+Where the runtime keeps its definitions (jobs, connectors, system settings and transport settings) and its job runs ([#315](https://github.com/opencrawling/opencrawling/issues/315)).
 
 *   **`OPENCRAWLING_CONTROL_PLANE_STORE`** (`opencrawling.control-plane.store`): `file` or `jdbc`.
     *   *Type*: `string`
@@ -150,13 +150,28 @@ Where the runtime keeps its definitions: jobs, connectors, system settings and t
     *   **`file`:** JSON files in `data/` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`), relative to the working directory. A container without a volume on `data/` loses them when it is recreated.
     *   **`jdbc`:** tables in the runtime's datasource (`spring.datasource.*`): `oc_job`, `oc_connector` and `oc_setting`, one row per definition, with a `version` that grows whenever the definition changes. The `docker-compose-decoupled` stacks use it with their PostgreSQL.
     *   **Several runtimes on one database (`jdbc`):** every runtime reads the definitions another one saved, at once. Every change, and every `If-Match` check of the Platform API, runs under one lock in the database (the `oc_lock` row), so two runtimes cannot overwrite each other's changes: an edit made from an older version gets `412`. The connectors' ETags are the same in every runtime, because the key behind them (`api-v1-etag-key.json`) is kept in the store too. Each runtime caches what it read while the store's revision is unchanged, so a read costs one small query.
-    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Runs (`jdbc`):** every job run is a row of `oc_run`, with the runtime that runs it and its state, and every change of its state a row of `oc_run_step` (its history, served at `GET /api/v1/job-runs/{executionId}/history`). The limit of one run per job and the caps on runs at the same time (`opencrawling.jobs.max-concurrent-runs`, `max-concurrent-runs-per-caller`) count the runs of every runtime. A run is listed, stopped, paused and resumed from any runtime; its own runtime applies a stop, pause or resume asked elsewhere at its next heartbeat. A run whose runtime stops renewing its heartbeat (it crashed, or was shut down mid-run) is marked `INTERRUPTED`, its job's status becomes `Error` with stage `Interrupted`, and the job can be started again. With `file`, runs are kept in the runtime's memory.
+    *   **Pause:** a paused run holds before its next document, in its runtime, until it is resumed or stopped. A pause does not survive the runtime: if it restarts, the paused run is interrupted, and the job starts again from the beginning. A connector that holds a session or cursor open may lose it during a long pause.
+    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`, `V3__control_plane_runs.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
     *   **Moving from `file`:** on its first start with `jdbc`, the runtime imports the existing files in `data/` into the tables and leaves the files unchanged. After that the tables are the source; later edits of the files are ignored.
     *   **Errors:** a definition that cannot be saved fails the request instead of being logged and lost. An unknown value stops the runtime at startup.
-    *   **Not yet:** runs are still kept by the runtime that started them, so the limit of one run per job, the caps on runs at the same time, stop and pause apply per runtime. Durable, shared runs come in a later part of #315.
 *   **`OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL`** (`opencrawling.control-plane.refresh-interval`): how often a runtime checks for system or transport settings that another runtime saved, and applies them (Tika settings and the default chunk size; the gRPC server is restarted with new transport settings). The runtime that saves them applies them at once.
     *   *Type*: `duration`
     *   *Default*: `10s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_INTERVAL`** (`opencrawling.control-plane.run-heartbeat-interval`): how often a runtime renews the heartbeat of its runs and picks up a stop, pause or resume asked in another runtime.
+    *   *Type*: `duration`
+    *   *Default*: `5s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_TIMEOUT`** (`opencrawling.control-plane.run-heartbeat-timeout`): `jdbc` only. A run whose heartbeat is older than this is marked `INTERRUPTED` by any runtime. Keep it well above the interval: a runtime that is only slow stops its own run when it finds it interrupted.
+    *   *Type*: `duration`
+    *   *Default*: `60s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUNTIME_ID`** (`opencrawling.control-plane.runtime-id`): the name this runtime's runs carry. By default the host name and a random suffix, new at every start. Set to a stable name, a restarted runtime interrupts the runs it left at once instead of after the heartbeat timeout; it must then be unique: two runtimes with one name would interrupt each other's runs when they start.
+    *   *Type*: `string`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION`** (`opencrawling.control-plane.run-retention`): how long what a finished run leaves is kept: its row and history, its report files in the local report directory (`spring.opencrawling.reporting.storage.local-dir`: summaries, manifests, Parquet and Avro ledgers, by when they were written), and the completed execution the runtime keeps in memory. `0` keeps everything. Reports in S3 storage are left to the bucket's lifecycle rules. It replaces `spring.opencrawling.reporting.retention.retention-days`, which was never applied.
+    *   *Type*: `duration`
+    *   *Default*: `90d`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION_INTERVAL`** (`opencrawling.control-plane.run-retention-interval`): how often the retention runs (first one minute after startup).
+    *   *Type*: `duration`
+    *   *Default*: `6h`
 
 ## 🧭 Platform API Idempotency Keys
 

@@ -76,6 +76,7 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | `startJob` | `POST /api/v1/jobs/{id}:start` | Per job access (READ, EXECUTE, MANAGE) | `Authorization.jobsFollowTheirAccess`<br>`Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.startingAJobAnswersWithItsRunAndAnIdempotencyKeyPreventsASecondRun` |
 | `stopJob` | `POST /api/v1/jobs/{id}:stop` | Per job access (READ, EXECUTE, MANAGE) | `Core.startingAJobAnswersWithItsRunAndAnIdempotencyKeyPreventsASecondRun` |
 | `pauseJob` | `POST /api/v1/jobs/{id}:pause` | Per job access (READ, EXECUTE, MANAGE) | `Core.pausingMarksTheJobAndRunsInProgressAreListed` |
+| `resumeJob` | `POST /api/v1/jobs/{id}:resume` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `listJobExecutions` | `GET /api/v1/jobs/{jobId}/executions` | Per job access (READ, EXECUTE, MANAGE) | `Core.aJobsExecutionsAreListedForAJobTheCallerMaySee` |
 | `diagnoseJob` | `GET /api/v1/jobs/{jobId}/diagnosis` | Per job access (READ, EXECUTE, MANAGE) | `Operations.aJobsDiagnosisTracesAndErrorsComeFromObservability` |
 | `getJobTraces` | `GET /api/v1/jobs/{jobId}/traces` | Per job access (READ, EXECUTE, MANAGE) | `Operations.aJobsDiagnosisTracesAndErrorsComeFromObservability` |
@@ -83,6 +84,9 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | `listJobRuns` | `GET /api/v1/job-runs` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.pausingMarksTheJobAndRunsInProgressAreListed` |
 | `getJobRun` | `GET /api/v1/job-runs/{executionId}` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.pausingMarksTheJobAndRunsInProgressAreListed` |
 | `stopJobRun` | `POST /api/v1/job-runs/{executionId}:stop` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource` |
+| `pauseJobRun` | `POST /api/v1/job-runs/{executionId}:pause` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
+| `resumeJobRun` | `POST /api/v1/job-runs/{executionId}:resume` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
+| `getJobRunHistory` | `GET /api/v1/job-runs/{executionId}/history` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `listExecutions` | `GET /api/v1/executions` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `getExecution` | `GET /api/v1/executions/{executionId}` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `listExecutionDocuments` | `GET /api/v1/executions/{executionId}/documents` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |

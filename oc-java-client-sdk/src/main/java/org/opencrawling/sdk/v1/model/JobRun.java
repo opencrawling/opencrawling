@@ -23,6 +23,9 @@ import java.time.Instant;
  * A job run in progress. After the run, its report is the execution with the same id.
  *
  * @param stopRequested whether a stop was requested
+ * @param state         {@code RUNNING}, or {@code PAUSED}: the run holds before its next document
+ * @param runtimeId     the runtime that runs it
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record JobRun(String executionId, String jobId, Instant startedAt, boolean stopRequested) {}
+public record JobRun(String executionId, String jobId, Instant startedAt, boolean stopRequested, String state,
+                     String runtimeId) {}

@@ -50,6 +50,7 @@ import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
+import org.opencrawling.sdk.v1.model.JobRunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
 
 import java.io.ByteArrayOutputStream;
@@ -273,6 +274,11 @@ public class DefaultPlatformClient implements PlatformClient {
         }
 
         @Override
+        public Job resume(String id) {
+            return post(action(path("jobs", id), "resume"), null, Job.class);
+        }
+
+        @Override
         public DiagnosticReport diagnose(String id) {
             return getJson(path("jobs", id, "diagnosis"), DiagnosticReport.class);
         }
@@ -302,6 +308,21 @@ public class DefaultPlatformClient implements PlatformClient {
         @Override
         public JobRun stop(String executionId) {
             return post(action(path("job-runs", executionId), "stop"), null, JobRun.class);
+        }
+
+        @Override
+        public JobRun pause(String executionId) {
+            return post(action(path("job-runs", executionId), "pause"), null, JobRun.class);
+        }
+
+        @Override
+        public JobRun resume(String executionId) {
+            return post(action(path("job-runs", executionId), "resume"), null, JobRun.class);
+        }
+
+        @Override
+        public JobRunHistory history(String executionId) {
+            return getJson(path("job-runs", executionId, "history"), JobRunHistory.class);
         }
     };
 

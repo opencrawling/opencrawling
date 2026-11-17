@@ -50,7 +50,7 @@ class PlatformApiV1UiParityTest {
      * still call each of them.
      */
     static final Set<String> UI_OPERATIONS = Set.of(
-            "listJobs", "createJob", "getJob", "patchJob", "deleteJob", "startJob", "stopJob", "pauseJob",
+            "listJobs", "createJob", "getJob", "patchJob", "deleteJob", "startJob", "stopJob", "pauseJob", "resumeJob",
             "listConnectors", "createConnector", "replaceConnector", "deleteConnector", "checkConnectorDefinition",
             "getSystemStatus", "getSystemThroughput", "getSystemLogs", "getSystemSettings", "replaceSystemSettings",
             "getTransportSettings", "replaceTransportSettings", "testGrpcTransport",

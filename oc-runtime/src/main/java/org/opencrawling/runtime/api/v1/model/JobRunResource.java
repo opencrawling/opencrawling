@@ -20,15 +20,23 @@ import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 
 import java.time.Instant;
 
-/** A job run in progress in this runtime. Finished runs are executions, with their reports. */
+/** A job run in progress, in any runtime that shares the control plane. Finished runs are executions, with their reports. */
 @Schema(description = "A job run in progress")
 public record JobRunResource(
         @Schema(description = "Execution id; after the run, its report is at /api/v1/executions/{executionId}", example = "exec-1a2b3c4d") String executionId,
         @Schema(description = "The job that runs", example = "1763038591234") String jobId,
         @Schema(description = "When the run started") Instant startedAt,
-        @Schema(description = "Whether a stop was requested") boolean stopRequested) {
+        @Schema(description = "Whether a stop was requested") boolean stopRequested,
+        @Schema(description = "RUNNING, or PAUSED: the run holds before its next document until :resume or :stop", example = "RUNNING") String state,
+        @Schema(description = "The runtime that runs it", example = "oc-mcp-server-1a2b3c4d") String runtimeId) {
 
     public static JobRunResource of(JobRunRegistry.RunInfo run) {
-        return new JobRunResource(run.executionId(), run.jobId(), run.startedAt(), run.stopRequested());
+        return new JobRunResource(run.executionId(), run.jobId(), run.startedAt(), run.stopRequested(),
+                run.state() == null ? null : run.state().name(), run.runtimeId());
+    }
+
+    /** The same run, with a stop requested. */
+    public JobRunResource stopping() {
+        return new JobRunResource(executionId, jobId, startedAt, true, state, runtimeId);
     }
 }

@@ -16,6 +16,8 @@
 package org.opencrawling.runtime.controlplane;
 
 import org.opencrawling.runtime.api.PersistenceHelper;
+import org.opencrawling.runtime.orchestrator.InMemoryRunStore;
+import org.opencrawling.runtime.orchestrator.RunStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -48,5 +50,16 @@ public class ControlPlaneConfiguration {
             }
             default -> throw new IllegalArgumentException(STORE_PROPERTY + " must be file or jdbc, not '" + store + "'");
         };
+    }
+
+    /**
+     * Where job runs are kept: in memory with the {@code file} store (one runtime owns the state), in the control-plane
+     * database with {@code jdbc}, shared by the runtimes on it.
+     */
+    @Bean
+    public RunStore runStore(ControlPlaneStore controlPlaneStore, ObjectProvider<JdbcTemplate> jdbc) {
+        return controlPlaneStore instanceof JdbcControlPlaneStore
+                ? new JdbcRunStore(jdbc.getObject(), controlPlaneStore)
+                : new InMemoryRunStore();
     }
 }

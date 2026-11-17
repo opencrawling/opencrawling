@@ -49,7 +49,7 @@ public class ApiProblem extends RuntimeException {
             "unauthorized", "forbidden",
             "not-found", "no-such-endpoint", "export-not-available",
             "method-not-allowed", "not-acceptable", "unsupported-media-type",
-            "job-already-running", "job-not-startable", "connector-exists", "connector-in-use", "idempotency-in-progress",
+            "job-already-running", "job-not-running", "job-not-startable", "connector-exists", "connector-in-use", "idempotency-in-progress",
             "idempotency-answer-unavailable", "conflict", "precondition-failed", "precondition-required", "body-too-large", "idempotency-key-reused",
             "too-many-runs", "too-many-requests", "upstream-error", "unavailable", "idempotency-unavailable",
             "internal-error", "error");

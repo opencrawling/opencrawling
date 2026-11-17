@@ -238,6 +238,12 @@ public class JobReportProperties {
             this.maxLocalReports = maxLocalReports;
         }
 
+        /**
+         * Never applied; {@code opencrawling.control-plane.run-retention} deletes old reports (#315).
+         *
+         * @deprecated use {@code opencrawling.control-plane.run-retention}
+         */
+        @Deprecated
         public int getRetentionDays() {
             return retentionDays;
         }

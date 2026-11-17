@@ -15,46 +15,75 @@
  */
 package org.opencrawling.runtime.orchestrator;
 
+import org.opencrawling.runtime.orchestrator.RunStore.RunRecord;
+import org.opencrawling.runtime.orchestrator.RunStore.RunState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.boot.convert.DurationStyle;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.net.InetAddress;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
- * The job runs of this runtime: at most one run per job, an optional cap on runs at the same time, and a real stop.
+ * The job runs: at most one run per job, an optional cap on runs at the same time, a real stop and a real pause.
  *
  * <p>Starting is two steps so that a rejected start changes nothing: {@link #reserve} takes the job's slot (or
  * says why it cannot), then the caller prepares the run and either {@link Reservation#start starts} it or
- * {@link Reservation#release releases} the slot. A run leaves the registry when its body returns.
+ * {@link Reservation#release releases} the slot. A run ends when its body returns.
  *
- * <p>{@link #stop} sets the run's stop flag and interrupts its thread. The body receives the flag and must end
- * soon after it becomes true; {@link JobOrchestrator} checks it before every document.
+ * <p>Runs are kept in a {@link RunStore} (#315): in this runtime's memory with the {@code file} control-plane store,
+ * in the control-plane database with {@code jdbc}, where the rules hold across every runtime that shares it and a
+ * run and its history (its {@link RunStore.RunStep steps}) outlive a restart. A run's thread is always in the runtime
+ * that started it; the others act on it through the store:
+ * <ul>
+ *   <li>{@link #stop} sets the run's stop flag and interrupts its thread. The body receives the flag and must end soon
+ *   after it becomes true; {@link JobOrchestrator} checks it before every document.</li>
+ *   <li>{@link #pause} holds the run before its next document, where it checks the flag, until {@link #resume} or a
+ *   stop.</li>
+ *   <li>Asked in another runtime, both reach the run at its runtime's next heartbeat
+ *   ({@code opencrawling.control-plane.run-heartbeat-interval}).</li>
+ * </ul>
+ *
+ * <p>Each runtime renews the heartbeat of its runs. In a shared store, a run whose heartbeat is older than
+ * {@code opencrawling.control-plane.run-heartbeat-timeout} is marked {@link RunState#INTERRUPTED} by any runtime, so
+ * the job can run again; should its runtime still be running it, that runtime stops it at its next heartbeat.
  *
  * <p>A run may name the verified caller that started it. With a per-caller cap, one caller can hold at most that
  * many runs at the same time; runs without a known caller count only towards the overall cap.
- *
- * <p>Runs live in memory, in the process that started them. A job whose saved status says "Running" after a
- * restart has no run here and can be started again.
  */
 @Component
 public class JobRunRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(JobRunRegistry.class);
 
-    /** What a running job looks like from outside. */
-    public record RunInfo(String jobId, String executionId, Instant startedAt, boolean stopRequested, String caller) {}
+    /** What a run looks like from outside. {@code endedAt} is {@code null} while it is active. */
+    public record RunInfo(String jobId, String executionId, Instant startedAt, boolean stopRequested, String caller,
+                          RunState state, String runtimeId, Instant endedAt) {
+
+        static RunInfo of(RunRecord run) {
+            return new RunInfo(run.jobId(), run.executionId(), run.startedAt(), run.stopRequested(), run.caller(),
+                    run.state(), run.runtimeId(), run.endedAt());
+        }
+    }
 
     /** The outcome of {@link #reserve}. */
     public sealed interface ReserveResult permits Reserved, AlreadyRunning, LimitReached, CallerLimitReached {}
@@ -70,12 +99,28 @@ public class JobRunRegistry {
 
     private final int maxConcurrentRuns;
     private final int maxConcurrentRunsPerCaller;
+    private final RunStore store;
+    private final String runtimeId;
+    private final Duration heartbeatTimeout;
     private final Clock clock;
-    private final Map<String, Run> runs = new LinkedHashMap<>();
+    /** The runs whose thread is in this runtime, by execution id. */
+    private final Map<String, Run> local = new ConcurrentHashMap<>();
+    private final List<Consumer<RunInfo>> interruptionListeners = new CopyOnWriteArrayList<>();
 
     @Autowired
     public JobRunRegistry(@Value("${opencrawling.jobs.max-concurrent-runs:0}") int maxConcurrentRuns,
-                          @Value("${opencrawling.jobs.max-concurrent-runs-per-caller:0}") int maxConcurrentRunsPerCaller) {
+                          @Value("${opencrawling.jobs.max-concurrent-runs-per-caller:0}") int maxConcurrentRunsPerCaller,
+                          ObjectProvider<RunStore> store,
+                          @Value("${opencrawling.control-plane.runtime-id:}") String runtimeId,
+                          @Value("${opencrawling.control-plane.run-heartbeat-timeout:60s}") String heartbeatTimeout) {
+        this(maxConcurrentRuns, maxConcurrentRunsPerCaller, store.getIfAvailable(InMemoryRunStore::new),
+                runtimeId == null || runtimeId.isBlank() ? defaultRuntimeId() : runtimeId.strip(),
+                DurationStyle.detectAndParse(heartbeatTimeout),
+                Clock.systemUTC());
+    }
+
+    /** A registry that keeps its runs in memory. */
+    public JobRunRegistry(int maxConcurrentRuns, int maxConcurrentRunsPerCaller) {
         this(maxConcurrentRuns, maxConcurrentRunsPerCaller, Clock.systemUTC());
     }
 
@@ -89,8 +134,17 @@ public class JobRunRegistry {
     }
 
     JobRunRegistry(int maxConcurrentRuns, int maxConcurrentRunsPerCaller, Clock clock) {
+        this(maxConcurrentRuns, maxConcurrentRunsPerCaller, new InMemoryRunStore(), defaultRuntimeId(),
+                Duration.ofSeconds(60), clock);
+    }
+
+    public JobRunRegistry(int maxConcurrentRuns, int maxConcurrentRunsPerCaller, RunStore store, String runtimeId,
+                          Duration heartbeatTimeout, Clock clock) {
         this.maxConcurrentRuns = Math.max(0, maxConcurrentRuns);
         this.maxConcurrentRunsPerCaller = Math.max(0, maxConcurrentRunsPerCaller);
+        this.store = store;
+        this.runtimeId = runtimeId;
+        this.heartbeatTimeout = heartbeatTimeout;
         this.clock = clock;
     }
 
@@ -102,6 +156,19 @@ public class JobRunRegistry {
     /** The configured cap on runs one caller may hold at the same time; 0 means no cap. */
     public int maxConcurrentRunsPerCaller() {
         return maxConcurrentRunsPerCaller;
+    }
+
+    /** The name this runtime's runs carry in the store. */
+    public String runtimeId() {
+        return runtimeId;
+    }
+
+    /**
+     * Calls {@code listener} with each run this runtime marks {@link RunState#INTERRUPTED} because its runtime stopped
+     * renewing its heartbeat.
+     */
+    public void onInterrupted(Consumer<RunInfo> listener) {
+        interruptionListeners.add(listener);
     }
 
     /** Takes the job's slot for a run with no known caller. */
@@ -116,71 +183,203 @@ public class JobRunRegistry {
      * @param caller the verified caller starting the run, or {@code null} when unknown (then only the overall cap
      *               applies)
      */
-    public synchronized ReserveResult reserve(String jobId, String executionId, String caller) {
-        Run existing = runs.get(jobId);
-        if (existing != null) {
-            return new AlreadyRunning(existing.info());
-        }
-        if (maxConcurrentRuns > 0 && runs.size() >= maxConcurrentRuns) {
-            return new LimitReached(maxConcurrentRuns);
-        }
-        if (caller != null && maxConcurrentRunsPerCaller > 0
-                && runs.values().stream().filter(run -> caller.equals(run.caller)).count() >= maxConcurrentRunsPerCaller) {
-            return new CallerLimitReached(caller, maxConcurrentRunsPerCaller);
-        }
-        Run run = new Run(jobId, executionId, caller, clock.instant());
-        runs.put(jobId, run);
-        return new Reserved(new Reservation(run));
+    public ReserveResult reserve(String jobId, String executionId, String caller) {
+        interruptStale();
+        return switch (store.claim(jobId, executionId, caller, runtimeId, clock.instant(),
+                maxConcurrentRuns, maxConcurrentRunsPerCaller)) {
+            case RunStore.Busy busy -> new AlreadyRunning(RunInfo.of(busy.run()));
+            case RunStore.Full full -> new LimitReached(full.limit());
+            case RunStore.CallerFull full -> new CallerLimitReached(full.caller(), full.limit());
+            case RunStore.Claimed claimed -> {
+                Run run = new Run(jobId, executionId);
+                local.put(executionId, run);
+                yield new Reserved(new Reservation(run));
+            }
+        };
     }
 
     /**
-     * Asks a running job to stop: sets its stop flag and interrupts its thread.
+     * Asks a job's run to stop: sets its stop flag and interrupts its thread.
      *
-     * @return {@code false} when the job has no run here
+     * @return {@code false} when the job has no run
      */
     public boolean stop(String jobId) {
-        Run run;
-        synchronized (this) {
-            run = runs.get(jobId);
-        }
-        if (run == null) {
-            return false;
-        }
-        run.requestStop();
-        log.info("Stop requested for job {} [Exec ID: {}].", jobId, run.executionId);
-        return true;
+        return store.active(jobId).map(run -> stopExecution(jobId, run.executionId())).orElse(false);
     }
 
     /**
-     * Asks one run to stop: only if it is still the job's run here. A run that ended, or a newer run of the same job,
-     * is left alone.
+     * Asks one run to stop: only if it is still the job's run. A run that ended, or a newer run of the same job, is
+     * left alone.
      *
-     * @return {@code false} when that run is not running here
+     * @return {@code false} when that run is not running
      */
     public boolean stopExecution(String jobId, String executionId) {
-        Run run;
-        synchronized (this) {
-            run = runs.get(jobId);
-        }
-        if (run == null || !run.executionId.equals(executionId)) {
+        if (!isActiveRunOf(jobId, executionId) || !store.requestStop(executionId, runtimeId, clock.instant())) {
             return false;
         }
-        run.requestStop();
+        Run run = local.get(executionId);
+        if (run != null) {
+            run.requestStop();
+        }
         log.info("Stop requested for job {} [Exec ID: {}].", jobId, executionId);
         return true;
     }
 
-    public synchronized Optional<RunInfo> run(String jobId) {
-        Run run = runs.get(jobId);
-        return run == null ? Optional.empty() : Optional.of(run.info());
+    /**
+     * Pauses one run of a job: it holds before its next document until it is resumed or stopped.
+     *
+     * @return {@code false} when that run is not running
+     */
+    public boolean pause(String jobId, String executionId) {
+        if (!isActiveRunOf(jobId, executionId) || !store.pause(executionId, runtimeId, clock.instant())) {
+            return false;
+        }
+        Run run = local.get(executionId);
+        if (run != null) {
+            run.paused(true);
+        }
+        log.info("Pause requested for job {} [Exec ID: {}].", jobId, executionId);
+        return true;
     }
 
-    public synchronized List<RunInfo> runs() {
-        return runs.values().stream().map(Run::info).sorted(Comparator.comparing(RunInfo::startedAt)).toList();
+    /**
+     * Resumes a paused run of a job; a running run keeps running.
+     *
+     * @return {@code false} when that run is not running
+     */
+    public boolean resume(String jobId, String executionId) {
+        if (!isActiveRunOf(jobId, executionId) || !store.resume(executionId, runtimeId, clock.instant())) {
+            return false;
+        }
+        Run run = local.get(executionId);
+        if (run != null) {
+            run.paused(false);
+        }
+        log.info("Resume requested for job {} [Exec ID: {}].", jobId, executionId);
+        return true;
     }
 
-    private synchronized void remove(Run run) {
-        runs.remove(run.jobId, run);
+    /** The job's active run. */
+    public Optional<RunInfo> run(String jobId) {
+        return store.active(jobId).map(RunInfo::of);
+    }
+
+    /** The active runs, oldest first. */
+    public List<RunInfo> runs() {
+        return store.active().stream().map(RunInfo::of).toList();
+    }
+
+    /** A run, active or ended, while it is kept. */
+    public Optional<RunInfo> execution(String executionId) {
+        return store.get(executionId).map(RunInfo::of);
+    }
+
+    /** A run's history, in order. */
+    public List<RunStore.RunStep> steps(String executionId) {
+        return store.steps(executionId);
+    }
+
+    /**
+     * Renews the heartbeat of this runtime's runs and applies to them what was decided elsewhere: a stop, a pause or a
+     * resume asked in another runtime, or an interruption. Then interrupts the runs whose runtime stopped renewing
+     * theirs.
+     */
+    @Scheduled(fixedDelayString = "${opencrawling.control-plane.run-heartbeat-interval:5s}")
+    public void heartbeat() {
+        if (!local.isEmpty()) {
+            for (RunRecord stored : store.heartbeat(runtimeId, List.copyOf(local.keySet()), clock.instant())) {
+                Run run = local.get(stored.executionId());
+                if (run == null) {
+                    continue;
+                }
+                if (!stored.state().active()) {
+                    log.warn("Job {} run [Exec ID: {}] was marked {} elsewhere; stopping it here.",
+                            stored.jobId(), stored.executionId(), stored.state());
+                    run.requestStop();
+                } else {
+                    if (stored.stopRequested()) {
+                        run.requestStop();
+                    }
+                    run.paused(stored.state() == RunState.PAUSED);
+                }
+            }
+        }
+        interruptStale();
+    }
+
+    /**
+     * Marks this runtime's runs that have no thread here as {@link RunState#INTERRUPTED}: left by an earlier start of
+     * a runtime with the same {@code opencrawling.control-plane.runtime-id}, they would otherwise block their jobs until
+     * their heartbeat is too old. Called once the application is ready; the default runtime id is new at every start,
+     * so it finds nothing.
+     *
+     * @return how many it interrupted
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public int interruptLeftoverRuns() {
+        Instant now = clock.instant();
+        int interrupted = 0;
+        for (RunRecord run : store.active()) {
+            if (!run.runtimeId().equals(runtimeId) || local.containsKey(run.executionId())) {
+                continue;
+            }
+            store.finish(run.executionId(), RunState.INTERRUPTED, runtimeId, now, "Runtime " + runtimeId + " restarted");
+            Optional<RunRecord> ended = store.get(run.executionId()).filter(r -> r.state() == RunState.INTERRUPTED);
+            if (ended.isPresent()) {
+                interrupted++;
+                log.warn("Job {} run [Exec ID: {}] interrupted: runtime {} restarted.", run.jobId(), run.executionId(), runtimeId);
+                notifyInterrupted(ended.get());
+            }
+        }
+        return interrupted;
+    }
+
+    private void notifyInterrupted(RunRecord run) {
+        RunInfo info = RunInfo.of(run);
+        for (Consumer<RunInfo> listener : interruptionListeners) {
+            try {
+                listener.accept(info);
+            } catch (RuntimeException e) {
+                log.warn("Interruption listener failed for job {}: {}", run.jobId(), e.getMessage(), e);
+            }
+        }
+    }
+
+    private void interruptStale() {
+        if (!store.shared() || heartbeatTimeout.isZero() || heartbeatTimeout.isNegative()) {
+            return;
+        }
+        Instant now = clock.instant();
+        for (RunRecord run : store.interruptStale(now.minus(heartbeatTimeout), runtimeId, now)) {
+            log.warn("Job {} run [Exec ID: {}] interrupted: runtime {} stopped renewing its heartbeat.",
+                    run.jobId(), run.executionId(), run.runtimeId());
+            notifyInterrupted(run);
+        }
+    }
+
+    private boolean isActiveRunOf(String jobId, String executionId) {
+        return store.get(executionId).filter(run -> run.state().active() && run.jobId().equals(jobId)).isPresent();
+    }
+
+    private void end(Run run, RunState state, String detail) {
+        try {
+            store.finish(run.executionId, state, runtimeId, clock.instant(), detail);
+        } catch (RuntimeException e) {
+            log.error("Job {} run [Exec ID: {}] ended {} but could not be recorded: {}",
+                    run.jobId, run.executionId, state, e.getMessage(), e);
+        } finally {
+            local.remove(run.executionId, run);
+        }
+    }
+
+    static String defaultRuntimeId() {
+        String host;
+        try {
+            host = InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            host = "runtime";
+        }
+        return host + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     /** A job's slot, taken but not started yet. */
@@ -197,20 +396,39 @@ public class JobRunRegistry {
         }
 
         /**
-         * Runs {@code body} on a new virtual thread. The body gets the run's stop flag; the slot is freed when it
-         * returns or throws.
+         * Runs {@code body} on a new virtual thread. The body gets the run's stop flag, which also holds the run while
+         * it is paused; the run ends when the body returns ({@link RunState#COMPLETED}, or {@link RunState#STOPPED}
+         * after a stop) or throws ({@link RunState#FAILED}).
          */
         public void start(Consumer<BooleanSupplier> body) {
+            startJob(stopRequested -> {
+                body.accept(stopRequested);
+                return true;
+            });
+        }
+
+        /**
+         * Runs {@code body} as {@link #start} does; {@code false} from the body ends the run as
+         * {@link RunState#FAILED}.
+         */
+        public void startJob(Predicate<BooleanSupplier> body) {
             if (!used.compareAndSet(false, true)) {
                 throw new IllegalStateException("Reservation for job " + run.jobId + " already used.");
             }
             Thread thread = Thread.ofVirtual().name("oc-job-" + run.jobId).unstarted(() -> {
+                RunState state = RunState.FAILED;
+                String detail = null;
                 try {
-                    body.accept(run.stopRequested::get);
+                    boolean succeeded = body.test(run::checkpoint);
+                    state = run.stopRequested.get() ? RunState.STOPPED : succeeded ? RunState.COMPLETED : RunState.FAILED;
                 } catch (RuntimeException e) {
                     log.error("Job {} run ended with an error: {}", run.jobId, e.getMessage(), e);
+                    state = run.stopRequested.get() ? RunState.STOPPED : RunState.FAILED;
+                    detail = e.getMessage();
                 } finally {
-                    remove(run);
+                    // A stop interrupts this thread; clear it so recording the end is not cut short.
+                    Thread.interrupted();
+                    end(run, state, detail);
                 }
             });
             run.attach(thread);
@@ -220,7 +438,11 @@ public class JobRunRegistry {
         /** Frees the slot without running anything. */
         public void release() {
             if (used.compareAndSet(false, true)) {
-                remove(run);
+                try {
+                    store.release(run.executionId);
+                } finally {
+                    local.remove(run.executionId, run);
+                }
             }
         }
     }
@@ -228,16 +450,13 @@ public class JobRunRegistry {
     private static final class Run {
         private final String jobId;
         private final String executionId;
-        private final String caller;
-        private final Instant startedAt;
         private final AtomicBoolean stopRequested = new AtomicBoolean();
+        private boolean paused;
         private Thread thread;
 
-        private Run(String jobId, String executionId, String caller, Instant startedAt) {
+        private Run(String jobId, String executionId) {
             this.jobId = jobId;
             this.executionId = executionId;
-            this.caller = caller;
-            this.startedAt = startedAt;
         }
 
         private synchronized void attach(Thread thread) {
@@ -249,13 +468,30 @@ public class JobRunRegistry {
 
         private synchronized void requestStop() {
             stopRequested.set(true);
+            notifyAll();
             if (thread != null) {
                 thread.interrupt();
             }
         }
 
-        private RunInfo info() {
-            return new RunInfo(jobId, executionId, startedAt, stopRequested.get(), caller);
+        private synchronized void paused(boolean paused) {
+            this.paused = paused;
+            notifyAll();
+        }
+
+        /** The stop flag the body checks before each document; holds there while the run is paused. */
+        private boolean checkpoint() {
+            synchronized (this) {
+                while (paused && !stopRequested.get()) {
+                    try {
+                        wait(1000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+            return stopRequested.get();
         }
     }
 }
