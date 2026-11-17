@@ -18,6 +18,7 @@ package org.opencrawling.luxir;
 import org.opencrawling.core.embedding.RequiredEmbeddings;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.text.TextExtractionService;
@@ -100,6 +101,12 @@ public class LuxirOutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "LuxirOutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

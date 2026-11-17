@@ -23,6 +23,7 @@ import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.EffectiveAcl;
@@ -95,6 +96,12 @@ public class ElasticsearchOutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "ElasticsearchOutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

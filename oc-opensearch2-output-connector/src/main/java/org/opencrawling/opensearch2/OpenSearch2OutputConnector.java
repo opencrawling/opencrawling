@@ -24,6 +24,7 @@ import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opensearch.client.json.jackson.JacksonJsonpMapper;
 import org.opensearch.client.opensearch.OpenSearchClient;
@@ -118,6 +119,12 @@ public class OpenSearch2OutputConnector implements OutputConnector {
     @Override
     public String getName() {
         return "OpenSearch2OutputConnector";
+    }
+
+    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    @Override
+    public boolean writtenByPipeline(PipelineMode mode) {
+        return mode == PipelineMode.RAG;
     }
 
     @Override

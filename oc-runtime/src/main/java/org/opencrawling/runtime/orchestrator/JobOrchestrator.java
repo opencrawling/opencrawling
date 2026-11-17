@@ -229,16 +229,25 @@ public class JobOrchestrator {
 
     /** Why a run that would bypass the governance gate is refused. */
     public static final String GOVERNANCE_BYPASS = "pre-embedding governance is on, and a RAG job that hands documents "
-            + "straight to an output connector would embed them without it. Run RAG jobs on the decoupled pipeline "
-            + "(no output connector on the crawler) or turn governance off.";
+            + "straight to an output connector would embed them without it. Use an output whose pipeline writer stores "
+            + "RAG documents (the vector stores), run the job without an output connector, or turn governance off.";
 
     /**
-     * Whether a run would embed documents without the governance gate: with the gate on, a RAG run given an output
-     * connector also sends each document to it directly, and those outputs extract and embed it themselves.
+     * Whether a run hands each document to {@code outputConnector} directly, besides publishing it to the documents
+     * topic. Not when the output's own pipeline writer stores the documents in that mode
+     * ({@link OutputConnector#writtenByPipeline}): writing them directly too would store them twice.
+     */
+    static boolean sendsDirectly(OutputConnector outputConnector, PipelineMode mode) {
+        return outputConnector != null && !outputConnector.writtenByPipeline(mode);
+    }
+
+    /**
+     * Whether a run would embed documents without the governance gate: with the gate on, a RAG run that sends its
+     * documents directly to an output that extracts and embeds them itself.
      */
     public boolean bypassesGovernance(OutputConnector outputConnector, PipelineMode mode) {
-        return governanceProperties != null && governanceProperties.isEnabled() && outputConnector != null
-                && mode != PipelineMode.MIGRATION;
+        return governanceProperties != null && governanceProperties.isEnabled() && mode != PipelineMode.MIGRATION
+                && sendsDirectly(outputConnector, mode);
     }
 
     /** The job's chunking with the global chunk size filled in where the job gives none. */
@@ -261,6 +270,11 @@ public class JobOrchestrator {
             String transformationConnector, String jobId, String jobName, MustacheTransformationConnector mustacheConnector, PipelineMode pipelineMode, String executionId,
             BooleanSupplier stopRequested, ExecutionProvenance provenance, ChunkingSpec chunking) {
         log.info("Starting job {} for path: {} with transformation connector: {} (pipeline mode: {})", jobId, path, transformationConnector, pipelineMode);
+        if (outputConnector != null) {
+            log.info("Job {} writes to {} {}.", jobId, outputConnector.getName(), sendsDirectly(outputConnector, pipelineMode)
+                    ? "directly, besides publishing to the documents topic"
+                    : "through the Kafka pipeline only (its pipeline writer stores the documents)");
+        }
         long startTime = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         String currentJobId = jobId != null ? jobId : "1";
@@ -373,8 +387,9 @@ public class JobOrchestrator {
                                 kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), msg).get();
                                 log.info("Published document reference to Kafka: {}", doc.id());
                             } catch (Exception kafkaEx) {
-                                if (outputConnector == null) {
-                                    // Standalone crawler: Kafka is the only delivery path, losing the message means losing the document.
+                                if (!sendsDirectly(outputConnector, pipelineMode)) {
+                                    // Kafka is the only delivery path (standalone crawler, or an output its pipeline
+                                    // writer stores): losing the message means losing the document.
                                     log.error("Kafka publish failed for doc {}: {}", doc.id(), kafkaEx.getMessage());
                                     traceStore.recordError(currentJobId, "ERROR", "Kafka", "Kafka publish failed for doc: " + doc.id(), kafkaEx.toString());
                                     if (ledgerAccumulator != null) {
@@ -391,8 +406,8 @@ public class JobOrchestrator {
                                 log.warn("Kafka publish skipped or unavailable for doc {}: {}", doc.id(), kafkaEx.getMessage());
                             }
                             
-                            // Direct ingestion to OutputConnector for synchronous application runtime
-                            if (outputConnector != null) {
+                            // Direct ingestion, for outputs that no pipeline writer stores in this mode
+                            if (sendsDirectly(outputConnector, pipelineMode)) {
                                 try {
                                     RepositoryDocument outputDoc = doc;
                                     if (doc.contentStream() != null && !finalUri.equals(doc.uri())) {
