@@ -85,7 +85,7 @@ The connector generates vector embeddings in Apache Parquet format adhering stri
 - `blobref` (nullable string): Claim-Check URI or binary blob reference.
 - `location` (nullable record): Nested provenance records (`text`, `position`, `timestamp`, `spreadsheet`).
 
-Batches of embeddings are written to Parquet and bridged into OpenArch's vector index when the chunk count reaches `parquetBatchThreshold`.
+Batches of embeddings are written to Parquet and bridged into OpenArch's vector index when the chunk count reaches `parquetBatchThreshold`. On the direct path (`OpenArchOutputConnector`), when a document has content, all chunks are extracted, split, and embedded (`RequiredEmbeddings`, `#333` / PR `#336`) before the binary or `SysFile` document (`SysHasEmbeddings`) is written to OpenArch, and a failed Parquet generation or upload fails the document (`OUTPUT_ERROR`). On the decoupled Kafka path (`OpenArchStoreWriterConsumer`), upserts without an embedding vector are rejected (`RequiredEmbeddings.ofMessage`), and a failed `flushBatch()` restores the buffered chunks (without duplicating the retried record's chunk) and rethrows so Kafka retries and dead-letters the record.
 
 ### Zero-Trust ACL Mapping
 Maps incoming OIS security configurations to OpenArch ACL records:
