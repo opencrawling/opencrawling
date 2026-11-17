@@ -91,10 +91,14 @@ public class SeaTunnelOutputConnector implements OutputConnector {
         return "SeaTunnelOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the SeaTunnel job reads the chunks the Kafka pipeline publishes, so a run must not also send them,
+     * but only when the job reads the pipeline's topic ({@value SeaTunnelConstants#DEFAULT_KAFKA_TOPIC}, where the
+     * embedding stage publishes). With another {@code kafka-topic} only {@link #send} publishes there.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && SeaTunnelConstants.DEFAULT_KAFKA_TOPIC.equals(properties.kafkaTopic());
     }
 
     @Override

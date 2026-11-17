@@ -439,8 +439,25 @@ public class ConnectorFactory {
 
         org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
         log.info("Resolving dynamic Qdrant output connector for collection '{}'", collectionName);
-        return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper,
-                available(embeddingModels), available(textExtractionServices));
+        org.opencrawling.qdrant.QdrantOutputConnector qdrant = new org.opencrawling.qdrant.QdrantOutputConnector(
+                qdrantClient, props, mapper, available(embeddingModels), available(textExtractionServices));
+        return pipelineWritesQdrant(props) ? qdrant : qdrant.outsidePipeline();
+    }
+
+    /**
+     * Whether the runtime's pipeline writer stores to this Qdrant destination: its active output is Qdrant, with the
+     * same host, port and collection. Only then may a RAG run leave the job's documents to the pipeline; otherwise
+     * they are sent to the job's Qdrant directly, or they would never reach it.
+     */
+    boolean pipelineWritesQdrant(org.opencrawling.qdrant.config.QdrantOutputProperties job) {
+        return activeOutputConnector instanceof org.opencrawling.qdrant.QdrantOutputConnector active
+                && sameQdrantDestination(active.getProperties(), job);
+    }
+
+    static boolean sameQdrantDestination(org.opencrawling.qdrant.config.QdrantOutputProperties a,
+                                         org.opencrawling.qdrant.config.QdrantOutputProperties b) {
+        return a != null && b != null && java.util.Objects.equals(a.host(), b.host()) && a.port() == b.port()
+                && java.util.Objects.equals(a.collectionName(), b.collectionName());
     }
 
     private OutputConnector buildVespa(Map<String, String> config, PipelineMode mode) {
@@ -478,8 +495,29 @@ public class ConnectorFactory {
 
         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
         log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
-        return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper,
-                available(embeddingModels), available(textExtractionServices));
+        org.opencrawling.vespa.VespaOutputConnector vespa = new org.opencrawling.vespa.VespaOutputConnector(
+                feedClient, vespaProps, vespaMapper, available(embeddingModels), available(textExtractionServices));
+        return pipelineWritesVespa(vespaProps) ? vespa : vespa.outsidePipeline();
+    }
+
+    /**
+     * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa, with the same
+     * endpoint, namespace and document type. Otherwise a RAG run sends the job's documents to it directly.
+     */
+    boolean pipelineWritesVespa(org.opencrawling.vespa.config.VespaOutputProperties job) {
+        return activeOutputConnector instanceof org.opencrawling.vespa.VespaOutputConnector active
+                && sameVespaDestination(active.getProperties(), job);
+    }
+
+    static boolean sameVespaDestination(org.opencrawling.vespa.config.VespaOutputProperties a,
+                                        org.opencrawling.vespa.config.VespaOutputProperties b) {
+        return a != null && b != null && java.util.Objects.equals(endpoint(a.endpoint()), endpoint(b.endpoint()))
+                && java.util.Objects.equals(a.namespace(), b.namespace())
+                && java.util.Objects.equals(a.documentType(), b.documentType());
+    }
+
+    private static String endpoint(String endpoint) {
+        return endpoint != null && endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
     }
 
     private OutputConnector buildSeaTunnel(Map<String, String> config, PipelineMode mode) {

@@ -57,6 +57,8 @@ public class VespaOutputConnector implements OutputConnector {
 
     private final FeedClient client;
     private final VespaOutputProperties properties;
+    /** Set on a per-job connector the pipeline's writer does not write to (see {@link #outsidePipeline()}). */
+    private boolean outsidePipeline;
     private final VespaDocumentMapper mapper;
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
@@ -90,10 +92,31 @@ public class VespaOutputConnector implements OutputConnector {
         return "VespaOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here,
+     * unless this connector was built for one job with a Vespa destination the writer does not write
+     * ({@link #outsidePipeline()}).
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
+    }
+
+    /**
+     * Marks a connector built for one job whose Vespa destination is not the one the runtime's pipeline writer stores to
+     * (another host, collection or document type, or a runtime whose output is another store). Its job's documents
+     * are then sent to it directly: the Kafka pipeline would never reach it.
+     *
+     * @return this connector
+     */
+    public VespaOutputConnector outsidePipeline() {
+        this.outsidePipeline = true;
+        return this;
+    }
+
+    /** The settings this connector writes with. */
+    public VespaOutputProperties getProperties() {
+        return properties;
     }
 
     @Override

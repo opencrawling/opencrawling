@@ -15,10 +15,14 @@
  */
 package org.opencrawling.runtime.orchestrator;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.seatunnel.SeaTunnelConstants;
+import org.opencrawling.seatunnel.SeaTunnelOutputConnector;
+import org.opencrawling.seatunnel.config.SeaTunnelOutputProperties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
@@ -42,8 +46,7 @@ class OutputWritePathContractTest {
             "org.opencrawling.opensearch2.OpenSearch2OutputConnector",
             "org.opencrawling.opensearch3.OpenSearch3OutputConnector",
             "org.opencrawling.elasticsearch.ElasticsearchOutputConnector",
-            "org.opencrawling.luxir.LuxirOutputConnector",
-            "org.opencrawling.seatunnel.SeaTunnelOutputConnector"
+            "org.opencrawling.luxir.LuxirOutputConnector"
     })
     void vectorStoresAreWrittenByTheirPipelineWriterInRagRunsOnly(String className) throws Exception {
         OutputConnector output = instance(className);
@@ -70,6 +73,36 @@ class OutputWritePathContractTest {
 
         assertThat(output.writtenByPipeline(PipelineMode.RAG)).as("%s in RAG", className).isFalse();
         assertThat(output.writtenByPipeline(PipelineMode.MIGRATION)).as("%s in MIGRATION", className).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "org.opencrawling.qdrant.QdrantOutputConnector",
+            "org.opencrawling.vespa.VespaOutputConnector"
+    })
+    void aPerJobVectorStoreThePipelineDoesNotWriteKeepsItsDirectWrite(String className) throws Exception {
+        // ConnectorFactory marks a per-job Qdrant or Vespa whose destination is not the runtime's pipeline writer's.
+        OutputConnector output = instance(className);
+        Class.forName(className).getMethod("outsidePipeline").invoke(output);
+
+        assertThat(output.writtenByPipeline(PipelineMode.RAG)).as("%s outside the pipeline", className).isFalse();
+    }
+
+    @Test
+    void seaTunnelIsWrittenByThePipelineOnlyWhenItsJobReadsThePipelinesTopic() {
+        // The embedding stage publishes to opencrawling-embedded; a job reading another topic gets only direct sends.
+        SeaTunnelOutputConnector pipelineTopic = seaTunnel(SeaTunnelConstants.DEFAULT_KAFKA_TOPIC);
+        SeaTunnelOutputConnector customTopic = seaTunnel("analytics-chunks");
+
+        assertThat(pipelineTopic.writtenByPipeline(PipelineMode.RAG)).isTrue();
+        assertThat(pipelineTopic.writtenByPipeline(PipelineMode.MIGRATION)).isFalse();
+        assertThat(customTopic.writtenByPipeline(PipelineMode.RAG)).isFalse();
+    }
+
+    private static SeaTunnelOutputConnector seaTunnel(String kafkaTopic) {
+        return new SeaTunnelOutputConnector(null, new SeaTunnelOutputProperties("http://seatunnel.test:8080",
+                "opencrawling_ingestion_pipeline", "STREAMING", 5000, 4, "kafka.test:9092", kafkaTopic,
+                "opencrawling-seatunnel-group", "console", 1024, false, 30), null, null);
     }
 
     /** An instance whose methods are the real ones, created without running a constructor (no clients, no I/O). */

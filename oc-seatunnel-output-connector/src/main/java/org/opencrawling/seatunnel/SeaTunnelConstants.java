@@ -27,6 +27,10 @@ public final class SeaTunnelConstants {
     public static final int DEFAULT_CHECKPOINT_INTERVAL_MS = 5000;
     public static final int DEFAULT_PARALLELISM = 4;
     public static final String DEFAULT_KAFKA_BOOTSTRAP_SERVERS = "localhost:9092";
+    /**
+     * The topic the pipeline's embedding stage publishes to ({@code KafkaConfig.EMBEDDED_TOPIC_NAME} in the runtime and
+     * the embedding service). A SeaTunnel job reading it gets RAG chunks without a direct send.
+     */
     public static final String DEFAULT_KAFKA_TOPIC = "opencrawling-embedded";
     public static final String DEFAULT_KAFKA_GROUP_ID = "seatunnel-ingestion-consumer";
     public static final String DEFAULT_TARGET_SINKS = "console";
