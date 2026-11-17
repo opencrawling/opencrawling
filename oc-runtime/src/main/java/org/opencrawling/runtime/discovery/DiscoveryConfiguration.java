@@ -15,8 +15,9 @@
  */
 package org.opencrawling.runtime.discovery;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
-import org.opencrawling.runtime.api.PersistenceHelper;
 import org.opencrawling.runtime.connector.ConnectorFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -35,9 +36,10 @@ import java.util.List;
 public class DiscoveryConfiguration {
 
     @Bean
-    public DiscoveryService discoveryService(ConnectorFactory connectorFactory, DiscoveryProperties properties) {
+    public DiscoveryService discoveryService(ConnectorFactory connectorFactory, DiscoveryProperties properties,
+                                             ObjectProvider<ControlPlaneStore> controlPlaneStore) {
         return new DiscoveryService(
-                () -> PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, List.of()),
+                () -> controlPlaneStore.getIfAvailable(ControlPlaneStore::files).loadList("connectors.json", ConnectorDTO.class, List.of()),
                 connectorFactory::repository, properties);
     }
 }

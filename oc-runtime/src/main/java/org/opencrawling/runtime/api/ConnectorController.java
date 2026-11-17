@@ -15,6 +15,8 @@
  */
 package org.opencrawling.runtime.api;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
@@ -43,15 +45,26 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 public class ConnectorController {
 
     private final List<ConnectorDTO> storage;
+    private final ControlPlaneStore controlPlaneStore;
     private final ConnectorCheckerService checkerService;
 
     /** Absent when a test builds the controller itself; then connectors are shown in full. */
     @Autowired(required = false)
     private ManagementAuthorization authorization;
 
-    @Autowired
     public ConnectorController(ConnectorCheckerService checkerService) {
+        this(checkerService, ControlPlaneStore.files());
+    }
+
+    @Autowired
+    public ConnectorController(ConnectorCheckerService checkerService, ObjectProvider<ControlPlaneStore> controlPlaneStore) {
+        this(checkerService, controlPlaneStore.getIfAvailable(ControlPlaneStore::files));
+    }
+
+    /** With the store that keeps the connectors (#315). */
+    public ConnectorController(ConnectorCheckerService checkerService, ControlPlaneStore controlPlaneStore) {
         this.checkerService = checkerService;
+        this.controlPlaneStore = controlPlaneStore;
 
         // Initial mock data defaults
         List<ConnectorDTO> defaults = new ArrayList<>();
@@ -486,7 +499,7 @@ public class ConnectorController {
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
         // Load persisted list
-        this.storage = new CopyOnWriteArrayList<>(PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, defaults));
+        this.storage = new CopyOnWriteArrayList<>(controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaults));
         
         // Ensure standard built-in defaults exist in storage even if an existing connectors.json file was loaded from disk
         for (ConnectorDTO def : defaults) {
@@ -631,7 +644,7 @@ public class ConnectorController {
         } else {
             storage.add(connector);
         }
-        PersistenceHelper.save("connectors.json", storage);
+        controlPlaneStore.save("connectors.json", storage);
         return ResponseEntity.status(201).build();
     }
 
@@ -680,7 +693,7 @@ public class ConnectorController {
     public synchronized ResponseEntity<Void> deleteConnector(
             @Parameter(description = "Connector unique identifier or name", example = "FileSystem_Local") @PathVariable String id) {
         storage.removeIf(c -> c.name().equals(id));
-        PersistenceHelper.save("connectors.json", storage);
+        controlPlaneStore.save("connectors.json", storage);
         return ResponseEntity.ok().build();
     }
 

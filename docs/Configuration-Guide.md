@@ -140,6 +140,20 @@ Runs are kept in memory: they are not shared between runtime instances and do no
 
 ---
 
+## 🗄️ Control-Plane Store
+
+Where the runtime keeps its definitions: jobs, connectors, system settings and transport settings ([#315](https://github.com/opencrawling/opencrawling/issues/315)).
+
+*   **`OPENCRAWLING_CONTROL_PLANE_STORE`** (`opencrawling.control-plane.store`): `file` or `jdbc`.
+    *   *Type*: `string`
+    *   *Default*: `file`
+    *   **`file`:** JSON files in `data/` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`), relative to the working directory. A container without a volume on `data/` loses them when it is recreated.
+    *   **`jdbc`:** tables in the runtime's datasource (`spring.datasource.*`): `oc_job`, `oc_connector` and `oc_setting`, one row per definition, with a `version` that grows whenever the definition changes. The `docker-compose-decoupled` stacks use it with their PostgreSQL.
+    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`, `V1__control_plane.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Moving from `file`:** on its first start with `jdbc`, the runtime imports the existing files in `data/` into the tables and leaves the files unchanged. After that the tables are the source; later edits of the files are ignored.
+    *   **Errors:** a definition that cannot be saved fails the request instead of being logged and lost. An unknown value stops the runtime at startup.
+    *   **Not yet:** several runtime instances on one database still each keep their own copy in memory, so they can overwrite each other's changes. Shared, versioned writes come with the durable runs of #315's next part.
+
 ## 🧭 Platform API Idempotency Keys
 
 `POST` requests to the Platform API (`/api/v1`) may carry an `Idempotency-Key`, so a retry does not repeat the operation (see [Platform API](Platform-API.md#idempotency-keys)). These settings decide where the keys are kept:

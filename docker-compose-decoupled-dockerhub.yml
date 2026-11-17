@@ -319,6 +319,8 @@ services:
       - SPRING_AI_VECTORSTORE_PGVECTOR_PASSWORD=opencrawling_password
       - SPRING_DATA_REDIS_HOST=redis
       - OPENCRAWLING_API_IDEMPOTENCY_STORE=redis
+      # Jobs, connectors and settings in PostgreSQL (#315), migrated by Flyway; imports data/*.json on the first start
+      - OPENCRAWLING_CONTROL_PLANE_STORE=jdbc
       - SPRING_DATA_REDIS_PASSWORD=redis_password
       - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
       - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434

@@ -15,6 +15,8 @@
  */
 package org.opencrawling.runtime.api;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
@@ -49,18 +51,34 @@ public class SystemController {
     private static final Pattern VALID_HEAP_PATTERN = Pattern.compile("^-Xmx[0-9]+[kmgKMG]$");
     
     private SystemSettingsDTO settings;
+    private final ControlPlaneStore controlPlaneStore;
     private final JdbcTemplate jdbcTemplate;
     private final TelemetryTraceStore traceStore;
     private final TextExtractionProperties textExtractionProperties;
     private final TextExtractionService textExtractionService;
     private org.opencrawling.runtime.orchestrator.ChunkingDefaults chunkingDefaults;
 
+    public SystemController(JdbcTemplate jdbcTemplate, TelemetryTraceStore traceStore,
+                            TextExtractionProperties textExtractionProperties, TextExtractionService textExtractionService) {
+        this(jdbcTemplate, traceStore, textExtractionProperties, textExtractionService, ControlPlaneStore.files());
+    }
+
     @Autowired
     public SystemController(
             @Autowired(required = false) JdbcTemplate jdbcTemplate,
             @Autowired(required = false) TelemetryTraceStore traceStore,
             @Autowired(required = false) TextExtractionProperties textExtractionProperties,
-            @Autowired(required = false) TextExtractionService textExtractionService) {
+            @Autowired(required = false) TextExtractionService textExtractionService,
+            ObjectProvider<ControlPlaneStore> controlPlaneStore) {
+        this(jdbcTemplate, traceStore, textExtractionProperties, textExtractionService,
+                controlPlaneStore.getIfAvailable(ControlPlaneStore::files));
+    }
+
+    /** With the store that keeps the system settings (#315). */
+    public SystemController(JdbcTemplate jdbcTemplate, TelemetryTraceStore traceStore,
+                            TextExtractionProperties textExtractionProperties, TextExtractionService textExtractionService,
+                            ControlPlaneStore controlPlaneStore) {
+        this.controlPlaneStore = controlPlaneStore;
         this.jdbcTemplate = jdbcTemplate;
         this.traceStore = traceStore;
         this.textExtractionProperties = textExtractionProperties;
@@ -106,7 +124,7 @@ public class SystemController {
             writeLimit,
             numClients
         );
-        this.settings = PersistenceHelper.loadObject("settings.json", SystemSettingsDTO.class, defaultSettings);
+        this.settings = controlPlaneStore.loadObject("settings.json", SystemSettingsDTO.class, defaultSettings);
 
         // Register programmatic log capture appender
         try {
@@ -373,7 +391,7 @@ public class SystemController {
                 textExtractionProperties.setNumClients(newSettings.tikaNumClients());
             }
         }
-        PersistenceHelper.save("settings.json", newSettings);
+        controlPlaneStore.save("settings.json", newSettings);
         if (chunkingDefaults != null) {
             chunkingDefaults.setChunkSize(newSettings.chunkSize());
         }

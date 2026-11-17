@@ -23,7 +23,8 @@ import java.util.ArrayList;
 public class PersistenceHelper {
 
     private static final ObjectMapper mapper = new ObjectMapper();
-    private static final String DATA_DIR = "data";
+    /** The directory the file store keeps its JSON files in, relative to the working directory. */
+    public static final String DATA_DIR = "data";
 
     static {
         try {

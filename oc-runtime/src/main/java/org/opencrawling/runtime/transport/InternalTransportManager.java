@@ -15,6 +15,7 @@
  */
 package org.opencrawling.runtime.transport;
 
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import java.io.File;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +35,6 @@ import org.opencrawling.internal.v1.InternalPayloadServiceGrpc;
 import org.opencrawling.internal.v1.PayloadIngestionResponse;
 import org.opencrawling.internal.v1.PingRequest;
 import org.opencrawling.internal.v1.PingResponse;
-import org.opencrawling.runtime.api.PersistenceHelper;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -61,6 +61,14 @@ public class InternalTransportManager {
     @Autowired(required = false)
     private org.springframework.grpc.server.lifecycle.GrpcServerLifecycle springGrpcLifecycle;
 
+    @Autowired(required = false)
+    private ControlPlaneStore controlPlaneStore;
+
+    /** The store that keeps definitions (#315); the JSON files when none is injected, as in unit tests. */
+    private ControlPlaneStore controlPlaneStore() {
+        return controlPlaneStore != null ? controlPlaneStore : ControlPlaneStore.files();
+    }
+
     public InternalTransportManager() {
         // Default constructor
     }
@@ -79,7 +87,7 @@ public class InternalTransportManager {
             "",
             ""
         );
-        this.settings = PersistenceHelper.loadObject("transport-settings.json", TransportSettingsDTO.class, defaultConfig);
+        this.settings = controlPlaneStore().loadObject("transport-settings.json", TransportSettingsDTO.class, defaultConfig);
         startOrRestartGrpcServer();
     }
 
@@ -96,7 +104,7 @@ public class InternalTransportManager {
         log.info("Updating internal transport settings to mode: {}, grpcEnabled: {}, port: {}", 
                 newSettings.mode(), newSettings.grpcEnabled(), newSettings.grpcPort());
         this.settings = newSettings;
-        PersistenceHelper.save("transport-settings.json", newSettings);
+        controlPlaneStore().save("transport-settings.json", newSettings);
         startOrRestartGrpcServer();
     }
 

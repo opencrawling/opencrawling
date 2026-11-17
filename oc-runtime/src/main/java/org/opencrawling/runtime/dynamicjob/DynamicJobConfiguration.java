@@ -15,11 +15,11 @@
  */
 package org.opencrawling.runtime.dynamicjob;
 
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.opencrawling.core.event.JobExecutionCompletedEvent;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.opencrawling.runtime.api.JobController.NarrativizationConfig;
-import org.opencrawling.runtime.api.PersistenceHelper;
 import org.opencrawling.runtime.connector.ConnectorFactory;
 import org.opencrawling.runtime.orchestrator.JobOrchestrator;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
@@ -47,10 +47,11 @@ public class DynamicJobConfiguration {
     public DynamicJobService dynamicJobService(ConnectorFactory connectorFactory, JobRunRegistry runRegistry,
                                                JobOrchestrator orchestrator,
                                                ObjectProvider<JobLedgerAccumulator> ledger,
-                                               DynamicJobProperties properties) {
+                                               DynamicJobProperties properties,
+                                               ObjectProvider<ControlPlaneStore> controlPlaneStore) {
         DynamicJobService.CrawlRunner runner = crawlRunner(orchestrator, properties);
         return new DynamicJobService(
-                () -> PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, List.of()),
+                () -> controlPlaneStore.getIfAvailable(ControlPlaneStore::files).loadList("connectors.json", ConnectorDTO.class, List.of()),
                 connectorFactory::repository, runRegistry, runner,
                 executionId -> {
                     JobLedgerAccumulator accumulator = ledger.getIfAvailable();

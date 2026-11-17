@@ -214,7 +214,7 @@ With `opencrawling.governance.enabled=true` (off by default), `IngestionConsumer
 
 ### Configuration and persistence
 
-- **Saved state:** job, connector, settings and transport configs are JSON files in `data/`, relative to the working directory. They are read and written through `PersistenceHelper` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`).
+- **Saved state:** job, connector, settings and transport configs are read and written through the `ControlPlaneStore` bean (#315), never `PersistenceHelper` directly. `opencrawling.control-plane.store=file` (default) keeps them as JSON files in `data/` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`); `jdbc` keeps them in the datasource's `oc_job`, `oc_connector` and `oc_setting` tables, created by Flyway (`db/migration`), and imports the files on its first start. Add schema changes as a new `V<n>__*.sql` that runs on both PostgreSQL and H2; never edit an applied one. The v1 ETag key (`api-v1-etag-key.json`) is still a file.
 - **Datasource:** the default in `application.yml` is in-memory H2. Spring profiles: `dev` and `prod`.
 - **API docs:** the REST API is documented with OpenAPI 3.1 and served through Swagger UI (`OpenApiConfig`).
 

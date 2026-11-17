@@ -15,8 +15,8 @@
  */
 package org.opencrawling.runtime.sidecar;
 
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
-import org.opencrawling.runtime.api.PersistenceHelper;
 import org.opencrawling.runtime.authorization.DocumentAccessGate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -37,9 +37,10 @@ import java.util.List;
 public class SidecarConfiguration {
 
     @Bean
-    public SidecarService sidecarService(SidecarProperties properties, ObjectProvider<DocumentAccessGate> gate) {
+    public SidecarService sidecarService(SidecarProperties properties, ObjectProvider<DocumentAccessGate> gate,
+                                         ObjectProvider<ControlPlaneStore> controlPlaneStore) {
         return new SidecarService(properties,
-                () -> PersistenceHelper.loadList("connectors.json", ConnectorDTO.class, List.of()),
+                () -> controlPlaneStore.getIfAvailable(ControlPlaneStore::files).loadList("connectors.json", ConnectorDTO.class, List.of()),
                 SidecarStores::open, gate.getIfAvailable(DocumentAccessGate::metadataDefault), Clock.systemUTC());
     }
 }
