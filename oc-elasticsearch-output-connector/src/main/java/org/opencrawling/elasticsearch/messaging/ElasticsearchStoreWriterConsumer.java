@@ -16,6 +16,7 @@
 package org.opencrawling.elasticsearch.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.Conflicts;
 import co.elastic.clients.elasticsearch._types.FieldValue;
@@ -61,7 +62,7 @@ public class ElasticsearchStoreWriterConsumer {
         log.info("ElasticsearchStoreWriterConsumer initialized for index '{}'.", properties.indexName());
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         try {
             if (message.action() != DocumentAction.DELETE) {

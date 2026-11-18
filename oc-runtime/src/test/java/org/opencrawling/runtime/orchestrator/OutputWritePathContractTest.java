@@ -20,9 +20,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
-import org.opencrawling.seatunnel.SeaTunnelConstants;
 import org.opencrawling.seatunnel.SeaTunnelOutputConnector;
 import org.opencrawling.seatunnel.config.SeaTunnelOutputProperties;
+import ai.vespa.feed.client.FeedClient;
+import io.qdrant.client.QdrantClient;
+import org.opencrawling.core.messaging.PipelineTopics;
+import org.opencrawling.qdrant.QdrantOutputConnector;
+import org.opencrawling.qdrant.QdrantPointMapper;
+import org.opencrawling.qdrant.config.QdrantOutputProperties;
+import org.opencrawling.vespa.VespaDocumentMapper;
+import org.opencrawling.vespa.VespaOutputConnector;
+import org.opencrawling.vespa.config.VespaOutputProperties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
@@ -75,23 +83,29 @@ class OutputWritePathContractTest {
         assertThat(output.writtenByPipeline(PipelineMode.MIGRATION)).as("%s in MIGRATION", className).isFalse();
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "org.opencrawling.qdrant.QdrantOutputConnector",
-            "org.opencrawling.vespa.VespaOutputConnector"
-    })
-    void aPerJobVectorStoreThePipelineDoesNotWriteKeepsItsDirectWrite(String className) throws Exception {
-        // ConnectorFactory marks a per-job Qdrant or Vespa whose destination is not the runtime's pipeline writer's.
-        OutputConnector output = instance(className);
-        Class.forName(className).getMethod("outsidePipeline").invoke(output);
+    @Test
+    void aPerJobVectorStoreThePipelineDoesNotWriteKeepsItsDirectWrite() {
+        // ConnectorFactory builds a per-job Qdrant or Vespa outside the pipeline when its destination is not the
+        // runtime's pipeline writer's; the flag is fixed at construction. The runtime's own beans are inside it.
+        QdrantOutputProperties qdrant = new QdrantOutputProperties("qdrant.test", 6334, "", "job_kb", 1024,
+                QdrantOutputProperties.Distance.COSINE, QdrantOutputProperties.Quantization.NONE, false, 500);
+        VespaOutputProperties vespa = new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
+                "opencrawling_chunk", 1024, 30, false, null, null, null);
 
-        assertThat(output.writtenByPipeline(PipelineMode.RAG)).as("%s outside the pipeline", className).isFalse();
+        assertThat(new QdrantOutputConnector(mock(QdrantClient.class), qdrant, new QdrantPointMapper(), null, null, true)
+                .writtenByPipeline(PipelineMode.RAG)).isFalse();
+        assertThat(new VespaOutputConnector(mock(FeedClient.class), vespa, new VespaDocumentMapper(), null, null, true)
+                .writtenByPipeline(PipelineMode.RAG)).isFalse();
+        assertThat(new QdrantOutputConnector(mock(QdrantClient.class), qdrant, new QdrantPointMapper(), null, null)
+                .writtenByPipeline(PipelineMode.RAG)).isTrue();
+        assertThat(new VespaOutputConnector(mock(FeedClient.class), vespa, new VespaDocumentMapper(), null, null)
+                .writtenByPipeline(PipelineMode.RAG)).isTrue();
     }
 
     @Test
     void seaTunnelIsWrittenByThePipelineOnlyWhenItsJobReadsThePipelinesTopic() {
         // The embedding stage publishes to opencrawling-embedded; a job reading another topic gets only direct sends.
-        SeaTunnelOutputConnector pipelineTopic = seaTunnel(SeaTunnelConstants.DEFAULT_KAFKA_TOPIC);
+        SeaTunnelOutputConnector pipelineTopic = seaTunnel(PipelineTopics.EMBEDDED);
         SeaTunnelOutputConnector customTopic = seaTunnel("analytics-chunks");
 
         assertThat(pipelineTopic.writtenByPipeline(PipelineMode.RAG)).isTrue();

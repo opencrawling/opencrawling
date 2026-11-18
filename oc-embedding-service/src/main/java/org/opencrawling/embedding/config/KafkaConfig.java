@@ -16,6 +16,7 @@
 package org.opencrawling.embedding.config;
 
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.opencrawling.core.messaging.PipelineTopics;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -51,8 +52,8 @@ import java.util.Map;
 @EnableKafka
 public class KafkaConfig {
 
-    public static final String CHUNKS_TOPIC_NAME = "opencrawling-chunks";
-    public static final String EMBEDDED_TOPIC_NAME = "opencrawling-embedded";
+    public static final String CHUNKS_TOPIC_NAME = PipelineTopics.CHUNKS;
+    public static final String EMBEDDED_TOPIC_NAME = PipelineTopics.EMBEDDED;
 
     /** Suffix of the dead-letter topic a record goes to once its retries are exhausted (Spring Kafka's default). */
     public static final String DLT_SUFFIX = ".DLT";

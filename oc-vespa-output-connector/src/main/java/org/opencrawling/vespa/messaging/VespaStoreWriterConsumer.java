@@ -16,6 +16,7 @@
 package org.opencrawling.vespa.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import ai.vespa.feed.client.DocumentId;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
@@ -56,7 +57,7 @@ public class VespaStoreWriterConsumer {
         log.info("VespaStoreWriterConsumer initialized successfully!");
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for Vespa storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);

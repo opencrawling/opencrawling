@@ -16,6 +16,7 @@
 package org.opencrawling.authorization.openfga;
 
 import org.opencrawling.core.document.DocumentAction;
+import org.opencrawling.core.messaging.PipelineTopics;
 import org.opencrawling.core.messaging.IngestionMessage;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.slf4j.Logger;
@@ -46,7 +47,7 @@ public class AuthorizationSyncConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(AuthorizationSyncConsumer.class);
 
-    public static final String TOPIC = "opencrawling-documents";
+    public static final String TOPIC = PipelineTopics.DOCUMENTS;
     /**
      * Where a message goes after its retries are exhausted. Do not replay these records as they are: a later
      * update of the same document may already have been applied, and replaying the older one would roll its

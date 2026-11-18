@@ -16,6 +16,7 @@
 package org.opencrawling.solr.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import jakarta.annotation.PostConstruct;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.common.SolrInputDocument;
@@ -62,7 +63,7 @@ public class SolrStoreWriterConsumer {
         log.info("SolrStoreWriterConsumer initialized successfully for collection '{}'!", collectionName);
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for Solr storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);

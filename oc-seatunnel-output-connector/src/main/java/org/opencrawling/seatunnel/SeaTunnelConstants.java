@@ -15,6 +15,8 @@
  */
 package org.opencrawling.seatunnel;
 
+import org.opencrawling.core.messaging.PipelineTopics;
+
 public final class SeaTunnelConstants {
 
     private SeaTunnelConstants() {
@@ -28,10 +30,10 @@ public final class SeaTunnelConstants {
     public static final int DEFAULT_PARALLELISM = 4;
     public static final String DEFAULT_KAFKA_BOOTSTRAP_SERVERS = "localhost:9092";
     /**
-     * The topic the pipeline's embedding stage publishes to ({@code KafkaConfig.EMBEDDED_TOPIC_NAME} in the runtime and
-     * the embedding service). A SeaTunnel job reading it gets RAG chunks without a direct send.
+     * The topic a SeaTunnel job reads by default: the one the pipeline's embedding stage publishes to
+     * ({@link PipelineTopics#EMBEDDED}), so it gets RAG chunks without a direct send.
      */
-    public static final String DEFAULT_KAFKA_TOPIC = "opencrawling-embedded";
+    public static final String DEFAULT_KAFKA_TOPIC = PipelineTopics.EMBEDDED;
     public static final String DEFAULT_KAFKA_GROUP_ID = "seatunnel-ingestion-consumer";
     public static final String DEFAULT_TARGET_SINKS = "console";
     public static final int DEFAULT_DIMENSIONS = 1024;

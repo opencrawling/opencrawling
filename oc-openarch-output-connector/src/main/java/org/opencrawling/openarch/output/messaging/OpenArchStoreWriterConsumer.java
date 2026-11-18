@@ -16,6 +16,7 @@
 package org.opencrawling.openarch.output.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -55,7 +56,7 @@ public class OpenArchStoreWriterConsumer {
         this.parquetWriter = new OpenArchParquetEmbeddingsWriter();
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for OpenArch storage: {} (Dimensions: {})",
                 message.chunkId(), message.embedding() != null ? message.embedding().length : 0);

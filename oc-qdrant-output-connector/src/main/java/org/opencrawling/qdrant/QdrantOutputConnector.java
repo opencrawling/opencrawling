@@ -61,8 +61,11 @@ public class QdrantOutputConnector implements OutputConnector {
 
     private final QdrantClient client;
     private final QdrantOutputProperties properties;
-    /** Set on a per-job connector the pipeline's writer does not write to (see {@link #outsidePipeline()}). */
-    private boolean outsidePipeline;
+    /**
+     * Whether this connector was built for one job whose Qdrant destination (host, port and collection) is not the one the runtime's
+     * pipeline writer stores to: its documents are then sent to it directly. Fixed at construction.
+     */
+    private final boolean outsidePipeline;
     private final QdrantPointMapper mapper;
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
@@ -75,12 +78,29 @@ public class QdrantOutputConnector implements OutputConnector {
             QdrantPointMapper mapper,
             @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
             @Autowired(required = false) TextExtractionService textExtractionService) {
+        this(client, properties, mapper, embeddingModel, textExtractionService, false);
+    }
+
+    /**
+     * A connector built for one job ({@code ConnectorFactory}).
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this connector's destination
+     *                        (host, port and collection), so a RAG run sends its documents here directly
+     */
+    public QdrantOutputConnector(
+            QdrantClient client,
+            QdrantOutputProperties properties,
+            QdrantPointMapper mapper,
+            EmbeddingModel embeddingModel,
+            TextExtractionService textExtractionService,
+            boolean outsidePipeline) {
         this.client = client;
         this.properties = properties;
         this.mapper = mapper;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+        this.outsidePipeline = outsidePipeline;
     }
 
     public QdrantOutputConnector(
@@ -98,24 +118,11 @@ public class QdrantOutputConnector implements OutputConnector {
 
     /**
      * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here,
-     * unless this connector was built for one job with a Qdrant destination the writer does not write
-     * ({@link #outsidePipeline()}).
+     * unless this connector was built for one job whose Qdrant destination (host, port and collection) the writer does not write.
      */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
         return mode == PipelineMode.RAG && !outsidePipeline;
-    }
-
-    /**
-     * Marks a connector built for one job whose Qdrant destination is not the one the runtime's pipeline writer stores to
-     * (another host, collection or document type, or a runtime whose output is another store). Its job's documents
-     * are then sent to it directly: the Kafka pipeline would never reach it.
-     *
-     * @return this connector
-     */
-    public QdrantOutputConnector outsidePipeline() {
-        this.outsidePipeline = true;
-        return this;
     }
 
     /** The settings this connector writes with. */

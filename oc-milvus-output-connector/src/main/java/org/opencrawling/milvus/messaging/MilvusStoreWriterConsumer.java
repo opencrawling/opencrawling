@@ -16,6 +16,7 @@
 package org.opencrawling.milvus.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.milvus.v2.client.MilvusClientV2;
@@ -64,7 +65,7 @@ public class MilvusStoreWriterConsumer {
         log.info("MilvusStoreWriterConsumer initialized successfully!");
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for Milvus storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);

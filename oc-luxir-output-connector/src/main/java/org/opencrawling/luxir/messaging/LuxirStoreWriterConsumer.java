@@ -16,6 +16,7 @@
 package org.opencrawling.luxir.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import jakarta.annotation.PostConstruct;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
@@ -89,7 +90,7 @@ public class LuxirStoreWriterConsumer {
         log.info("LuxirStoreWriterConsumer initialized successfully for collection '{}'!", collectionName);
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for Luxir storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);

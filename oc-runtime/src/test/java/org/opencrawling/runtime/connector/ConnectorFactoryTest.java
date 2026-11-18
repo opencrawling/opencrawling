@@ -264,7 +264,7 @@ class ConnectorFactoryTest {
     // --- per-job vector outputs: the pipeline only writes the runtime's own destination ---
 
     // Building a per-job Qdrant or Vespa output connects to it, so these tests ask the factory's decision directly:
-    // its builders mark the output outsidePipeline() when the decision is no (see OutputWritePathContractTest).
+    // its builders build the output outside the pipeline when the decision is no (see OutputWritePathContractTest).
 
     @Test
     void aPerJobQdrantOnARuntimeWritingAnotherStoreIsNotLeftToThePipeline() {

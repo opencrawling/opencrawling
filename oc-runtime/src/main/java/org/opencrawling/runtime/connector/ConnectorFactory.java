@@ -439,9 +439,9 @@ public class ConnectorFactory {
 
         org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
         log.info("Resolving dynamic Qdrant output connector for collection '{}'", collectionName);
-        org.opencrawling.qdrant.QdrantOutputConnector qdrant = new org.opencrawling.qdrant.QdrantOutputConnector(
-                qdrantClient, props, mapper, available(embeddingModels), available(textExtractionServices));
-        return pipelineWritesQdrant(props) ? qdrant : qdrant.outsidePipeline();
+        // Unless the pipeline's writer stores to this destination, the job's documents go to it directly.
+        return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper,
+                available(embeddingModels), available(textExtractionServices), !pipelineWritesQdrant(props));
     }
 
     /**
@@ -495,9 +495,9 @@ public class ConnectorFactory {
 
         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
         log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
-        org.opencrawling.vespa.VespaOutputConnector vespa = new org.opencrawling.vespa.VespaOutputConnector(
-                feedClient, vespaProps, vespaMapper, available(embeddingModels), available(textExtractionServices));
-        return pipelineWritesVespa(vespaProps) ? vespa : vespa.outsidePipeline();
+        // Unless the pipeline's writer feeds this destination, the job's documents go to it directly.
+        return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper,
+                available(embeddingModels), available(textExtractionServices), !pipelineWritesVespa(vespaProps));
     }
 
     /**
@@ -527,7 +527,7 @@ public class ConnectorFactory {
         String targetSinks = config.getOrDefault("seatunnelTargetSinks", "console");
         org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
                 restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
-                "opencrawling-embedded", "opencrawling-seatunnel-group",
+                org.opencrawling.core.messaging.PipelineTopics.EMBEDDED, "opencrawling-seatunnel-group",
                 targetSinks, 1024, true, 30
         );
         org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
