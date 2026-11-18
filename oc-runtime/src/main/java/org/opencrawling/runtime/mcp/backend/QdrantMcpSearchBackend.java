@@ -145,31 +145,47 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
         log.info("Qdrant backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
         try {
-            Common.Filter filter = Common.Filter.newBuilder()
+            // A scroll is not ordered by payload without an index, so the document's first positions are asked for
+            // first; chunks stored without a position are found by the plain lookup.
+            Common.Filter plain = Common.Filter.newBuilder()
                     .addMust(matchKeyword(QdrantFields.FIELD_URI, documentUri))
                     .build();
-
-            Points.ScrollPoints scrollPoints = Points.ScrollPoints.newBuilder()
-                    .setCollectionName(properties.collectionName())
-                    .setFilter(filter)
-                    .setLimit(20)
-                    .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
+            // Points written before the mapper kept numbers hold the position as text, which a range does not match.
+            List<String> positionsAsText = new ArrayList<>();
+            for (int i = 0; i < documentMaxChunks(); i++) {
+                positionsAsText.add(Integer.toString(i));
+            }
+            Common.Filter bounded = plain.toBuilder()
+                    .addMust(Common.Condition.newBuilder().setFilter(Common.Filter.newBuilder()
+                            .addShould(Common.Condition.newBuilder().setField(Common.FieldCondition.newBuilder()
+                                    .setKey(DocumentChunks.CHUNK_INDEX)
+                                    .setRange(Common.Range.newBuilder().setLt(documentMaxChunks()).build())))
+                            .addShould(io.qdrant.client.ConditionFactory.matchKeywords(
+                                    DocumentChunks.CHUNK_INDEX, positionsAsText))))
                     .build();
 
-            Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(scrollPoints).get();
+            Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(documentScroll(bounded)).get();
+            if (scrollResp.getResultList().isEmpty()) {
+                scrollResp = qdrantClient.scrollAsync(documentScroll(plain)).get();
+            }
 
             List<Map<String, Object>> candidates = scrollResp.getResultList().stream()
                     .map(point -> convertPayload(point.getPayloadMap()))
                     .toList();
-            return readable(userPrincipal, userRoles, candidates, QdrantMcpSearchBackend::toResourceRef).stream()
-                    .findFirst()
-                    .map(payload -> new McpVectorServer.DocumentDetailsResult(
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, "")),
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_URI, "")),
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_TEXT, "")),
-                            payload,
-                            String.valueOf(payload.getOrDefault(QdrantFields.FIELD_ACL, "public"))
-                    ))
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    QdrantMcpSearchBackend::toResourceRef).stream()
+                    .map(payload -> {
+                        Object documentId = payload.get(QdrantFields.FIELD_DOCUMENT_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_CHUNK_ID, "")),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_URI, "")),
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_TEXT, "")),
+                                payload,
+                                String.valueOf(payload.getOrDefault(QdrantFields.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
@@ -246,5 +262,14 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             }
             default -> null;
         };
+    }
+
+    private Points.ScrollPoints documentScroll(Common.Filter filter) {
+        return Points.ScrollPoints.newBuilder()
+                .setCollectionName(properties.collectionName())
+                .setFilter(filter)
+                .setLimit(documentFetchSize())
+                .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
+                .build();
     }
 }

@@ -196,4 +196,26 @@ class LuxirStoreWriterConsumerTest {
         }
         org.mockito.Mockito.verifyNoInteractions(client);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theChunksPositionAndTheDocumentsChunkCountAreStoredAsIntFields() throws Exception {
+        // getDocumentContent orders a document's chunks by them and tells whether it is complete.
+        LuxirClient luxirClient = mock(LuxirClient.class);
+        LuxirStoreWriterConsumer consumer = new LuxirStoreWriterConsumer(luxirClient);
+        ReflectionTestUtils.setField(consumer, "collectionName", "opencrawling");
+        ReflectionTestUtils.setField(consumer, "vectorFieldName", "embedding_v");
+        ReflectionTestUtils.setField(consumer, "autoCommit", true);
+
+        consumer.consume(new DocumentEmbeddedMessage("doc-luxir-3", "chunk-luxir-3", "text",
+                Map.of("uri", "file:///tmp/doc3.txt", "chunk_index", 2, "total_chunks", 5),
+                new float[]{0.1f, 0.2f}, DocumentAction.UPSERT));
+
+        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(luxirClient).updateDocuments(eq("opencrawling"), captor.capture(), eq(true));
+        Map<String, Object> doc = captor.getValue().getFirst();
+        assertEquals(2, doc.get("chunk_index_i"));
+        assertEquals(5, doc.get("total_chunks_i"));
+        assertTrue(doc.keySet().stream().noneMatch(key -> key.startsWith("chunk_index_s") || key.startsWith("total_chunks_s")));
+    }
 }

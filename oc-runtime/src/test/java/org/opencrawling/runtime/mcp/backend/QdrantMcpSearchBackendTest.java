@@ -28,11 +28,15 @@ import org.opencrawling.runtime.mcp.McpVectorServer;
 import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.util.*;
+import org.mockito.ArgumentCaptor;
+import org.opencrawling.qdrant.QdrantPointMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 class QdrantMcpSearchBackendTest {
 
@@ -144,5 +148,91 @@ class QdrantMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() {
+        Points.ScrollResponse scrollResponse = Points.ScrollResponse.newBuilder()
+                .addResult(qdrantChunk(1, "second"))
+                .addResult(qdrantChunk(0, "first"))
+                .build();
+        when(qdrantClient.scrollAsync(any(Points.ScrollPoints.class)))
+                .thenReturn(Futures.immediateFuture(scrollResponse));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<Points.ScrollPoints> request = ArgumentCaptor.forClass(Points.ScrollPoints.class);
+        verify(qdrantClient).scrollAsync(request.capture());
+        assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        // Bounded by position, so a long document returns its first chunks.
+        // A numeric position below the limit, or the same as text (points written before the mapper kept numbers).
+        assertThat(request.getValue().getFilter().getMustList()).anySatisfy(condition -> {
+            List<io.qdrant.client.grpc.Common.Condition> either = condition.getFilter().getShouldList();
+            assertThat(either).hasSize(2);
+            assertThat(either.get(0).getField().getKey()).isEqualTo(DocumentChunks.CHUNK_INDEX);
+            assertThat(either.get(0).getField().getRange().getLt())
+                    .isEqualTo((double) GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS);
+            assertThat(either.get(1).getField().getKey()).isEqualTo(DocumentChunks.CHUNK_INDEX);
+            assertThat(either.get(1).getField().getMatch().getKeywords().getStringsList())
+                    .hasSize(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS)
+                    .startsWith("0", "1")
+                    .endsWith(String.valueOf(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS - 1));
+        });
+    }
+
+    private static Points.RetrievedPoint qdrantChunk(int index, String text) {
+        return Points.RetrievedPoint.newBuilder()
+                .setId(PointIdFactory.id(UUID.randomUUID()))
+                .putPayload(QdrantFields.FIELD_CHUNK_ID, ValueFactory.value("chunk-" + index))
+                .putPayload(QdrantFields.FIELD_DOCUMENT_ID, ValueFactory.value("file:///doc.txt"))
+                .putPayload(QdrantFields.FIELD_URI, ValueFactory.value("file:///doc.txt"))
+                .putPayload(QdrantFields.FIELD_TEXT, ValueFactory.value(text))
+                .putPayload(QdrantFields.FIELD_ACL, ValueFactory.value("public"))
+                .putPayload(DocumentChunks.CHUNK_INDEX, ValueFactory.value(index))
+                .putPayload(DocumentChunks.TOTAL_CHUNKS, ValueFactory.value(2))
+                .build();
+    }
+
+    @Test
+    void chunksStoredWithoutAPositionAreFoundByThePlainLookup() {
+        Points.ScrollResponse none = Points.ScrollResponse.newBuilder().build();
+        Points.ScrollResponse legacy = Points.ScrollResponse.newBuilder().addResult(qdrantChunk(0, "first")).build();
+        when(qdrantClient.scrollAsync(any(Points.ScrollPoints.class)))
+                .thenReturn(Futures.immediateFuture(none), Futures.immediateFuture(legacy));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first");
+        ArgumentCaptor<Points.ScrollPoints> requests = ArgumentCaptor.forClass(Points.ScrollPoints.class);
+        verify(qdrantClient, times(2)).scrollAsync(requests.capture());
+        assertThat(requests.getAllValues().get(1).getFilter().getMustList()).hasSize(1);
+    }
+
+    @Test
+    void pointsWrittenByTheMapperArePutBackInOrder() {
+        // The payloads exactly as the writer stores them.
+        QdrantPointMapper mapper = new QdrantPointMapper();
+        Points.ScrollResponse scrollResponse = Points.ScrollResponse.newBuilder()
+                .addResult(retrieved(mapper.toPoint(DocumentChunksTest.pipelineId("file:///doc.txt", 1), "second",
+                        "file:///doc.txt", "public", null, null, new float[]{0.1f},
+                        Map.of("documentId", "file:///doc.txt", "chunk_index", 1, "total_chunks", 2))))
+                .addResult(retrieved(mapper.toPoint(DocumentChunksTest.pipelineId("file:///doc.txt", 0), "first",
+                        "file:///doc.txt", "public", null, null, new float[]{0.1f},
+                        Map.of("documentId", "file:///doc.txt", "chunk_index", 0, "total_chunks", 2))))
+                .build();
+        when(qdrantClient.scrollAsync(any(Points.ScrollPoints.class))).thenReturn(Futures.immediateFuture(scrollResponse));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.totalChunks()).isEqualTo(2);
+        assertThat(result.complete()).isTrue();
+    }
+
+    private static Points.RetrievedPoint retrieved(Points.PointStruct point) {
+        return Points.RetrievedPoint.newBuilder().setId(point.getId()).putAllPayload(point.getPayloadMap()).build();
     }
 }

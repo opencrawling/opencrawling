@@ -30,12 +30,16 @@ import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.io.IOException;
 import java.util.*;
+import org.mockito.ArgumentCaptor;
+import org.apache.solr.common.SolrException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 class SolrMcpSearchBackendTest {
 
@@ -143,5 +147,90 @@ class SolrMcpSearchBackendTest {
         List<Map<String, Object>> sources = backend.listAccessibleSources("user", List.of(), null);
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).get("id")).isEqualTo("chunk-1");
+    }
+
+    @Test
+    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws SolrServerException, IOException {
+        SolrDocumentList docs = new SolrDocumentList();
+        docs.add(solrChunk(1, "second"));
+        docs.add(solrChunk(0, "first"));
+        QueryResponse response = mock(QueryResponse.class);
+        when(response.getResults()).thenReturn(docs);
+        when(solrClient.query(eq("enterprise_kb"), any(SolrParams.class))).thenReturn(response);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.complete()).isTrue();
+        // The stored vector stays out of the answer.
+        assertThat(result.metadata()).doesNotContainKey(SolrConstants.FIELD_EMBEDDINGS);
+        ArgumentCaptor<SolrParams> params = ArgumentCaptor.forClass(SolrParams.class);
+        verify(solrClient).query(eq("enterprise_kb"), params.capture());
+        assertThat(params.getValue().get("rows")).isEqualTo(String.valueOf(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1));
+        // Bounded by position, so a long document returns its first chunks.
+        assertThat(params.getValue().getParams("fq"))
+                .containsExactly("chunk_index:[0 TO " + (GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS - 1) + "]");
+    }
+
+    private static SolrDocument solrChunk(int index, String text) {
+        SolrDocument doc = new SolrDocument();
+        doc.addField(SolrConstants.FIELD_ID, "chunk-" + index);
+        doc.addField("documentId", "file:///doc.txt");
+        doc.addField(SolrConstants.FIELD_URI, "file:///doc.txt");
+        doc.addField(SolrConstants.FIELD_TEXT, text);
+        doc.addField(SolrConstants.FIELD_ACL, "public");
+        // Solr returns the dynamic metadata fields multi-valued.
+        doc.addField(DocumentChunks.CHUNK_INDEX, List.of((long) index));
+        doc.addField(DocumentChunks.TOTAL_CHUNKS, List.of(2L));
+        doc.addField(SolrConstants.FIELD_EMBEDDINGS, List.of(0.1f, 0.2f));
+        return doc;
+    }
+
+    @Test
+    void aCollectionWithoutChunkPositionsAnswersThePlainLookup() throws SolrServerException, IOException {
+        // A collection that never stored chunk_index has no such field, so the bounded lookup fails.
+        SolrDocumentList docs = new SolrDocumentList();
+        docs.add(solrChunk(0, "first"));
+        QueryResponse response = mock(QueryResponse.class);
+        when(response.getResults()).thenReturn(docs);
+        when(solrClient.query(eq("enterprise_kb"), any(SolrParams.class)))
+                .thenThrow(new SolrException(SolrException.ErrorCode.BAD_REQUEST, "undefined field chunk_index"))
+                .thenReturn(response);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first");
+        ArgumentCaptor<SolrParams> params = ArgumentCaptor.forClass(SolrParams.class);
+        verify(solrClient, times(2)).query(eq("enterprise_kb"), params.capture());
+        assertThat(params.getAllValues().get(1).getParams("fq")).isNull();
+    }
+
+    @Test
+    void aCrawledDocumentReadableThroughItsAllowListIsReturned() throws SolrServerException, IOException {
+        // The fields as Solr returns a crawled chunk: multi-valued metadata, a duplicated documentId, and readers in
+        // security_allowed_read. SolrDocument's own field map cannot be iterated, and the access gate denied it.
+        SolrDocument doc = new SolrDocument();
+        doc.addField(SolrConstants.FIELD_ID, "a6b7");
+        doc.addField("documentId", List.of("/data/handbook.txt", "/data/handbook.txt"));
+        doc.addField(SolrConstants.FIELD_URI, "file:///data/handbook.txt");
+        doc.addField(SolrConstants.FIELD_ACL, "user:root,group:root,public");
+        doc.addField(SolrConstants.FIELD_SECURITY_ALLOWED_READ, List.of("user:root", "group:root", "public"));
+        doc.addField("security_inheritance", List.of(false));
+        doc.addField(DocumentChunks.CHUNK_INDEX, List.of(0L));
+        doc.addField(DocumentChunks.TOTAL_CHUNKS, List.of(1L));
+        doc.addField(SolrConstants.FIELD_TEXT, List.of("the handbook"));
+        SolrDocumentList docs = new SolrDocumentList();
+        docs.add(doc);
+        QueryResponse response = mock(QueryResponse.class);
+        when(response.getResults()).thenReturn(docs);
+        when(solrClient.query(eq("enterprise_kb"), any(SolrParams.class))).thenReturn(response);
+
+        McpVectorServer.DocumentDetailsResult result =
+                backend.getDocumentContent("file:///data/handbook.txt", "alice", List.of("public"), null);
+
+        assertThat(result.content()).isEqualTo("the handbook");
+        assertThat(result.id()).isEqualTo("/data/handbook.txt");
+        assertThat(result.complete()).isTrue();
     }
 }

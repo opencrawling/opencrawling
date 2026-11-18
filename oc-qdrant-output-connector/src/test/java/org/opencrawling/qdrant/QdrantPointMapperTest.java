@@ -137,4 +137,19 @@ class QdrantPointMapperTest {
     private static List<String> valuesOf(Value listValue) {
         return listValue.getListValue().getValuesList().stream().map(Value::getStringValue).toList();
     }
+
+    @Test
+    void numericMetadataStaysNumericSoNumericConditionsMatchIt() {
+        // getDocumentContent asks for chunk_index below its limit: a position stored as text matched none.
+        PointStruct point = mapper.toPoint("doc-3_chunk-2", "text", "file:///doc-3.txt", "acl-3",
+                "2026-01-01T00:00:00Z", null, new float[]{0.1f},
+                Map.of("chunk_index", 2, "total_chunks", 8, "file_size", 30746L, "score", 0.5, "title", "Doc 3"));
+
+        Map<String, Value> payload = point.getPayloadMap();
+        assertThat(payload.get("chunk_index").getIntegerValue()).isEqualTo(2);
+        assertThat(payload.get("total_chunks").getIntegerValue()).isEqualTo(8);
+        assertThat(payload.get("file_size").getIntegerValue()).isEqualTo(30746L);
+        assertThat(payload.get("score").getDoubleValue()).isEqualTo(0.5);
+        assertThat(payload.get("title").getStringValue()).isEqualTo("Doc 3");
+    }
 }

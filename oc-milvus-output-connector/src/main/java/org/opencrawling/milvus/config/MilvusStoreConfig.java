@@ -82,12 +82,16 @@ public class MilvusStoreConfig {
             
             if (exists) {
                 log.info("Milvus collection '{}' already exists.", collectionName);
+                warnIfItKeepsNoChunkPositions(client, collectionName);
                 return;
             }
 
             log.info("Creating Milvus collection '{}' with dimensions: {}", collectionName, dimensions);
 
             CreateCollectionReq.CollectionSchema schema = client.createSchema();
+            // Dynamic fields keep the chunk metadata that has no column of its own, among it documentId,
+            // chunk_index and total_chunks, which getDocumentContent needs to put a document back together.
+            schema.setEnableDynamicField(true);
 
             // Primary key ID
             schema.addField(AddFieldReq.builder()
@@ -185,6 +189,25 @@ public class MilvusStoreConfig {
         } catch (Exception e) {
             log.error("Failed to initialize Milvus collection '{}'", collectionName, e);
             throw new RuntimeException("Milvus initialization error", e);
+        }
+    }
+
+    /**
+     * A collection created before dynamic fields were enabled drops every chunk's document id and position, so
+     * {@code getDocumentContent} can only order its chunks when the document id is the URI. Recreating the
+     * collection (and re-crawling) fixes that.
+     */
+    private static void warnIfItKeepsNoChunkPositions(MilvusClientV2 client, String collectionName) {
+        try {
+            Boolean dynamic = client.describeCollection(io.milvus.v2.service.collection.request.DescribeCollectionReq
+                    .builder().collectionName(collectionName).build()).getEnableDynamicField();
+            if (!Boolean.TRUE.equals(dynamic)) {
+                log.warn("Milvus collection '{}' has no dynamic fields, so it keeps no document id or chunk position: "
+                        + "getDocumentContent can only order a document's chunks when its id is its URI. Recreate the "
+                        + "collection and re-crawl to keep them.", collectionName);
+            }
+        } catch (RuntimeException e) {
+            log.debug("Could not describe Milvus collection '{}': {}", collectionName, e.getMessage());
         }
     }
 }

@@ -157,30 +157,41 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
         log.info("Milvus backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
         try {
-            QueryReq queryReq = QueryReq.builder()
-                    .collectionName(collectionName)
-                    .filter("uri == \"" + escapeFilter(documentUri) + "\"")
-                    .outputFields(OUTPUT_FIELDS)
-                    .limit(20)
-                    .build();
-
-            QueryResp queryResp = milvusClient.query(queryReq);
-
-            if (queryResp != null && queryResp.getQueryResults() != null) {
-                List<QueryResp.QueryResult> candidates = queryResp.getQueryResults().stream()
-                        .filter(qr -> qr.getEntity() != null)
-                        .toList();
-                for (QueryResp.QueryResult qr : readable(userPrincipal, userRoles, candidates,
-                        qr -> ResourceRef.fromMetadata(qr.getEntity()))) {
-                    Map<String, Object> entity = qr.getEntity();
-                    String id = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, ""));
-                    String uri = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, ""));
-                    String text = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, ""));
-                    String acl = String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public"));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, entity, acl);
-                }
+            String byUri = "uri == \"" + escapeFilter(documentUri) + "\"";
+            boolean positions = keepsChunkPositions();
+            List<QueryResp.QueryResult> candidates = List.of();
+            if (positions) {
+                // Milvus queries cannot be ordered, so the document's first positions are asked for first; chunks
+                // stored without a position are found by the plain lookup.
+                candidates = documentChunks(byUri + " and " + DocumentChunks.CHUNK_INDEX + " < " + documentMaxChunks(),
+                        true);
+            } else {
+                // A collection without dynamic fields keeps no position: its first chunks are asked for by the ids
+                // the pipeline gives them, with the URI as the document id (true for most sources).
+                candidates = documentChunks(byUri + " and " + MilvusConstants.FIELD_ID + " in "
+                        + idList(DocumentChunks.pipelineChunkIds(documentUri, documentMaxChunks())), false);
             }
-            throw new NoSuchElementException("Document not found or access denied.");
+            if (candidates.isEmpty()) {
+                candidates = documentChunks(byUri, positions);
+            }
+            // Without dynamic fields the collection keeps no document id or position: DocumentChunks places each
+            // chunk by its id then.
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    qr -> ResourceRef.fromMetadata(qr.getEntity())).stream()
+                    .map(qr -> {
+                        Map<String, Object> entity = qr.getEntity();
+                        Object documentId = entity.get(MilvusConstants.FIELD_DOCUMENT_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ID, "")),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_URI, "")),
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_TEXT, "")),
+                                entity,
+                                String.valueOf(entity.getOrDefault(MilvusConstants.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri)
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {
@@ -239,5 +250,58 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
     private static Map<String, Object> entityOf(SearchResp.SearchResult hit) {
         Map<String, Object> entity = hit.getEntity();
         return entity != null ? entity : Collections.emptyMap();
+    }
+
+    /** The fields a document lookup asks for: with dynamic fields also the chunk's document id and position. */
+    private static final List<String> DOCUMENT_FIELDS = concat(OUTPUT_FIELDS, List.of(
+            MilvusConstants.FIELD_DOCUMENT_ID, DocumentChunks.CHUNK_INDEX, DocumentChunks.TOTAL_CHUNKS));
+
+    /** Whether the collection has dynamic fields, which keep each chunk's document id and position; asked once. */
+    private volatile Boolean keepsChunkPositions;
+
+    private List<QueryResp.QueryResult> documentChunks(String filter, boolean withPositions) {
+        QueryResp queryResp = milvusClient.query(QueryReq.builder()
+                .collectionName(collectionName)
+                .filter(filter)
+                .outputFields(withPositions ? DOCUMENT_FIELDS : OUTPUT_FIELDS)
+                .limit(documentFetchSize())
+                .build());
+        return queryResp != null && queryResp.getQueryResults() != null
+                ? queryResp.getQueryResults().stream().filter(qr -> qr.getEntity() != null).toList()
+                : List.of();
+    }
+
+    /**
+     * Whether the collection keeps chunk metadata in dynamic fields. Collections created before they were enabled
+     * do not, and asking them for those fields fails, so they get the plain lookup.
+     */
+    boolean keepsChunkPositions() {
+        Boolean known = keepsChunkPositions;
+        if (known == null) {
+            try {
+                known = Boolean.TRUE.equals(milvusClient.describeCollection(
+                        io.milvus.v2.service.collection.request.DescribeCollectionReq.builder()
+                                .collectionName(collectionName).build()).getEnableDynamicField());
+            } catch (RuntimeException e) {
+                log.debug("Could not describe Milvus collection '{}': {}", collectionName, e.getMessage());
+                return false;
+            }
+            keepsChunkPositions = known;
+        }
+        return known;
+    }
+
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> all = new ArrayList<>(first);
+        all.addAll(second);
+        return List.copyOf(all);
+    }
+
+    private static String idList(List<String> ids) {
+        StringBuilder list = new StringBuilder("[");
+        for (int i = 0; i < ids.size(); i++) {
+            list.append(i == 0 ? "" : ", ").append('"').append(escapeFilter(ids.get(i))).append('"');
+        }
+        return list.append(']').toString();
     }
 }

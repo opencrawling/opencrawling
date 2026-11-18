@@ -79,14 +79,28 @@ public class McpVectorServer {
 
     /**
      * Data Transfer Object for full document details.
+     *
+     * <p>A chunked store returns the document's readable chunks joined in {@code chunk_index} order:
+     * {@code chunkCount} is how many were joined, {@code totalChunks} how many the document has ({@code null} when
+     * the store does not say), and {@code complete} whether {@code content} is the whole document. It is not when
+     * chunks are missing (still being written, or not readable by the caller) or the document has more chunks than
+     * the server returns ({@code opencrawling.mcp.document-content.max-chunks}).
      */
     public record DocumentDetailsResult(
             String id,
             String uri,
             String content,
             Map<String, Object> metadata,
-            String acl
-    ) {}
+            String acl,
+            int chunkCount,
+            Integer totalChunks,
+            boolean complete
+    ) {
+        /** A document a store keeps whole, in one record. */
+        public DocumentDetailsResult(String id, String uri, String content, Map<String, Object> metadata, String acl) {
+            this(id, uri, content, metadata, acl, 1, 1, true);
+        }
+    }
 
     public McpVectorSearchBackend getBackend() {
         return backend;
@@ -120,7 +134,7 @@ public class McpVectorServer {
         return backend.secureVectorSearch(query, caller.principal(), caller.groups(), limit, threshold, dimensions);
     }
 
-    @McpTool(description = "Retrieve the full text content and metadata of a specific document by its URI or ID, enforcing security checks to ensure the caller has access permissions.")
+    @McpTool(description = "Retrieve the full text content and metadata of a specific document by its URI or ID: the document's chunks the caller may read, joined in order, enforcing security checks to ensure the caller has access permissions. 'complete' is false when part of the document is missing (not readable, still being indexed) or past the server's limit.")
     public DocumentDetailsResult getDocumentContent(
             @McpToolParam(description = "The URI of the document to retrieve (e.g. file:///path/to/doc.txt)", required = true) String documentUri,
             @McpToolParam(description = "The user principal identity of the caller." + IDENTITY_NOTE, required = false) String userPrincipal,

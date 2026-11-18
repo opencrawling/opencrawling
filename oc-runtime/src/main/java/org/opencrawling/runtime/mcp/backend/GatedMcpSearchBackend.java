@@ -19,9 +19,12 @@ import org.opencrawling.core.security.Caller;
 import org.opencrawling.core.security.ResourceRef;
 import org.opencrawling.runtime.authorization.DocumentAccessGate;
 import org.opencrawling.runtime.mcp.McpVectorSearchBackend;
+import org.opencrawling.runtime.mcp.McpVectorServer.DocumentDetailsResult;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
 /**
@@ -33,13 +36,46 @@ import java.util.function.Function;
  */
 public abstract class GatedMcpSearchBackend implements McpVectorSearchBackend {
 
+    /**
+     * The most chunks {@code getDocumentContent} joins into one document. It bounds the tool's answer; each store's
+     * query fetches one more. Vespa's default query profile allows 400 hits, so stay below that on Vespa.
+     */
+    public static final int DEFAULT_DOCUMENT_MAX_CHUNKS = 200;
+
     private DocumentAccessGate accessGate = DocumentAccessGate.metadataDefault();
+    private int documentMaxChunks = DEFAULT_DOCUMENT_MAX_CHUNKS;
 
     @Autowired(required = false)
     public void setAccessGate(DocumentAccessGate accessGate) {
         if (accessGate != null) {
             this.accessGate = accessGate;
         }
+    }
+
+    @Autowired(required = false)
+    public void setDocumentMaxChunks(
+            @Value("${opencrawling.mcp.document-content.max-chunks:" + DEFAULT_DOCUMENT_MAX_CHUNKS + "}") int maxChunks) {
+        this.documentMaxChunks = Math.max(1, maxChunks);
+    }
+
+    /** The most chunks a document's content is made of: lookups bounded by position ask for positions below it. */
+    protected int documentMaxChunks() {
+        return documentMaxChunks;
+    }
+
+    /** How many chunks a document lookup asks its store for. */
+    protected int documentFetchSize() {
+        return DocumentChunks.fetchSize(documentMaxChunks);
+    }
+
+    /**
+     * The document made of the chunks the caller may read, joined in order.
+     *
+     * @param readableChunks the lookup's chunks that passed {@link #readable}
+     * @param requested      the URI or id the caller asked for
+     */
+    protected Optional<DocumentDetailsResult> assembleDocument(List<DocumentChunks.Chunk> readableChunks, String requested) {
+        return DocumentChunks.assemble(readableChunks, requested, documentMaxChunks);
     }
 
     protected DocumentAccessGate accessGate() {

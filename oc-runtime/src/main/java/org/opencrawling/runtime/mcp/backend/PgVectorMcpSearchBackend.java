@@ -215,7 +215,23 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         }
     }
 
-    private List<McpVectorServer.DocumentDetailsResult> queryDocumentDetails(String tableName, String documentUri) {
+    private List<Document> documentChunks(Integer dimensions, String documentUri,
+                                          org.springframework.ai.vectorstore.filter.Filter.Expression filter) {
+        return getVectorStore(dimensions).similaritySearch(SearchRequest.builder()
+                .query(documentUri)
+                .filterExpression(filter)
+                .topK(documentFetchSize())
+                .build());
+    }
+
+    /**
+     * Orders a document's rows by chunk position before the limit, so a document with more chunks than the limit
+     * returns its first ones. Rows without a position (written before positions were recorded) come last.
+     */
+    static final String BY_CHUNK_POSITION = " ORDER BY CASE WHEN metadata->>'chunk_index' ~ '^[0-9]+$'"
+            + " THEN (metadata->>'chunk_index')::int END NULLS LAST, id LIMIT ";
+
+    private List<DocumentChunks.Chunk> queryDocumentChunks(String tableName, String documentUri) {
         boolean hasScope = hasScopeColumns(tableName);
         String sql;
         Object[] args;
@@ -224,13 +240,13 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                     " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
                     " OR scope_id_ = ?" +
                     " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?)" + BY_CHUNK_POSITION + documentFetchSize();
             args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri, documentUri};
         } else {
             sql = "SELECT id, content, metadata FROM " + tableName +
                     " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
                     " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT 10";
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?)" + BY_CHUNK_POSITION + documentFetchSize();
             args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri};
         }
 
@@ -253,7 +269,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                     String docId = (String) meta.getOrDefault("documentId", meta.getOrDefault("parent_document_id", ""));
                     String uri = (docId != null && !docId.isBlank()) ? docId : (String) meta.getOrDefault("uri", id);
                     String acl = formatAcl(meta.getOrDefault("acl", ""));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, content, meta, acl);
+                    return new DocumentChunks.Chunk(id, docId, uri, content, meta, acl);
                 },
                 args
         );
@@ -272,9 +288,9 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
             try {
                 for (Integer tableDimensions : tablesFor(dimensions)) {
                     String tableName = getTableName(tableDimensions);
-                    List<McpVectorServer.DocumentDetailsResult> found;
+                    List<DocumentChunks.Chunk> found;
                     try {
-                        found = queryDocumentDetails(tableName, documentUri);
+                        found = queryDocumentChunks(tableName, documentUri);
                     } catch (org.springframework.jdbc.BadSqlGrammarException e) {
                         if (dimensions != null) {
                             throw e;
@@ -283,8 +299,12 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                         log.debug("pgvector table {} not available: {}", tableName, e.getMessage());
                         continue;
                     }
-                    Optional<McpVectorServer.DocumentDetailsResult> readableDoc = readable(userPrincipal, userRoles,
-                            found, doc -> ResourceRef.fromMetadata(doc.metadata())).stream().findFirst();
+                    // A document's chunks are in the table of their embedding's length, so the first table that has
+                    // readable chunks holds the document.
+                    List<DocumentChunks.Chunk> readableChunks = readable(userPrincipal, userRoles, found,
+                            chunk -> ResourceRef.fromMetadata(chunk.metadata()));
+                    Optional<McpVectorServer.DocumentDetailsResult> readableDoc =
+                            assembleDocument(readableChunks, documentUri);
                     if (readableDoc.isPresent()) {
                         return readableDoc.get();
                     }
@@ -316,30 +336,26 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                 )
         );
 
-        var finalExpression = storePrefilterAllowed()
-                ? b.and(matchDocExpression, securityExpression).build()
-                : matchDocExpression.build();
-        SearchRequest searchRequest = SearchRequest.builder()
-                .query(documentUri)
-                .filterExpression(finalExpression)
-                .topK(20)
-                .build();
+        var lookup = storePrefilterAllowed() ? b.and(matchDocExpression, securityExpression) : matchDocExpression;
 
         try {
-            List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
-            return readable(userPrincipal, userRoles, docs, PgVectorMcpSearchBackend::toResourceRef).stream()
-                    .findFirst()
+            // A similarity search cannot be ordered, so the document's first positions are asked for first; rows
+            // written without a position are found by the plain lookup.
+            List<Document> docs = documentChunks(dimensions, documentUri,
+                    b.and(lookup, b.lt(DocumentChunks.CHUNK_INDEX, documentMaxChunks())).build());
+            if (docs.isEmpty()) {
+                docs = documentChunks(dimensions, documentUri, lookup.build());
+            }
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, docs,
+                    PgVectorMcpSearchBackend::toResourceRef).stream()
                     .map(doc -> {
                         String docId = (String) doc.getMetadata().getOrDefault("documentId", doc.getMetadata().getOrDefault("parent_document_id", ""));
                         String uri = (docId != null && !docId.isBlank()) ? docId : (String) doc.getMetadata().getOrDefault("uri", doc.getId());
-                        return new McpVectorServer.DocumentDetailsResult(
-                                doc.getId(),
-                                uri,
-                                doc.getText(),
-                                doc.getMetadata(),
-                                formatAcl(doc.getMetadata().getOrDefault("acl", ""))
-                        );
+                        return new DocumentChunks.Chunk(doc.getId(), docId, uri, doc.getText(), doc.getMetadata(),
+                                formatAcl(doc.getMetadata().getOrDefault("acl", "")));
                     })
+                    .toList();
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
