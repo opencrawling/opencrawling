@@ -87,6 +87,8 @@ class ConnectorFactoryTest {
                 "org.opencrawling.push.grpc.GrpcPushRepositoryConnector", Map.of()));
         RepositoryConnector cic = factory.repository(connector("cic",
                 "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", Map.of("baseUrl", "https://hxp.test")));
+        RepositoryConnector zammad = factory.repository(connector("zammad",
+                "org.opencrawling.zammad.ZammadRepositoryConnector", Map.of("baseUrl", "https://support.acme.com", "accessToken", "t")));
 
         assertThat(alfresco).isInstanceOf(org.opencrawling.alfresco.AlfrescoRepositoryConnector.class);
         assertThat(cmis).isInstanceOf(CmisRepositoryConnector.class);
@@ -94,6 +96,7 @@ class ConnectorFactoryTest {
         assertThat(jdbc).isInstanceOf(JdbcRepositoryConnector.class);
         assertThat(push).isInstanceOf(GrpcPushRepositoryConnector.class);
         assertThat(cic).isInstanceOf(org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector.class);
+        assertThat(zammad).isInstanceOf(org.opencrawling.zammad.ZammadRepositoryConnector.class);
     }
 
     // --- repository: no more silent fallback to the file system ---

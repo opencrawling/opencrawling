@@ -626,4 +626,35 @@ class ConnectorCheckerServiceTest {
         server.start();
         return server;
     }
+
+    @Test
+    void testCheckZammadConnectorSuccessAndMissingCredentials() throws Exception {
+        ConnectorDTO missingToken = new ConnectorDTO("Zammad_Missing", "Zammad", "repository",
+                "org.opencrawling.zammad.ZammadRepositoryConnector", 10, Map.of("baseUrl", "https://support.acme.com"));
+        ConnectionCheckResult invalidResult = checker.check(missingToken);
+        assertFalse(invalidResult.success());
+        assertTrue(invalidResult.message().contains("access-token must be configured"), invalidResult.message());
+
+        HttpServer zammad = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        zammad.createContext("/api/v1/users/me", exchange -> {
+            byte[] bytes = "{\"id\":2,\"email\":\"crawler@acme.com\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        zammad.start();
+        try {
+            ConnectorDTO valid = new ConnectorDTO("Zammad_Test", "Zammad", "repository",
+                    "org.opencrawling.zammad.ZammadRepositoryConnector", 10, Map.of(
+                            "baseUrl", "http://127.0.0.1:" + zammad.getAddress().getPort(),
+                            "authType", "token",
+                            "accessToken", "zammad-secret"));
+            ConnectionCheckResult ok = checker.check(valid);
+            assertTrue(ok.success(), ok.message());
+            assertTrue(ok.message().contains("crawler@acme.com"), ok.message());
+        } finally {
+            zammad.stop(0);
+        }
+    }
 }

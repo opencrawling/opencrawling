@@ -299,6 +299,7 @@ export default function ConnectorForm() {
   const filenetCrawlMode = watch('configuration.crawlMode') || 'query'
   const documentumAuthType = watch('configuration.authType') || 'basic'
   const documentumCrawlMode = watch('configuration.crawlMode') || 'dql'
+  const zammadAuthType = watch('configuration.authType') || 'token'
   const openarchCrawlMode = watch('configuration.crawlMode') || 'QUERY'
   const camundaAuthType = watch('configuration.authType') || 'basic'
 
@@ -446,6 +447,7 @@ export default function ConnectorForm() {
       { label: 'M-Files Repository (Knowledge Work Automation)', value: 'org.opencrawling.mfiles.MFilesRepositoryConnector' },
       { label: 'IBM FileNet P8 (Content Platform Engine)', value: 'org.opencrawling.filenet.FileNetRepositoryConnector' },
       { label: 'OpenText Documentum (REST Services)', value: 'org.opencrawling.documentum.DocumentumRepositoryConnector' },
+      { label: 'Zammad Helpdesk & Knowledge Base (REST API v1)', value: 'org.opencrawling.zammad.ZammadRepositoryConnector' },
       { label: 'Relational Database (JDBC)', value: 'org.opencrawling.jdbc.JdbcRepositoryConnector' },
       { label: 'gRPC Push Ingestion Connector', value: 'org.opencrawling.push.grpc.GrpcPushRepositoryConnector' },
       { label: 'Hyland OpenArch Federated Repository', value: 'org.opencrawling.openarch.repository.OpenArchRepositoryConnector' },
@@ -3277,6 +3279,160 @@ export default function ConnectorForm() {
                           defaultValue="data/documentum-state"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Zammad Helpdesk & Knowledge Base Repository */}
+                  {selectedClass === 'org.opencrawling.zammad.ZammadRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Zammad Base URL</label>
+                        <input
+                          {...register('configuration.baseUrl', { required: true })}
+                          placeholder="https://support.acme.com"
+                          defaultValue="http://localhost:8080"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="token">HTTP Access Token (Authorization: Token token=…)</option>
+                          <option value="oauth2">OAuth2 Bearer Token</option>
+                          <option value="basic">Basic Auth (Username / Password)</option>
+                        </select>
+                      </div>
+                      {zammadAuthType !== 'basic' && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Access Token</label>
+                        <input
+                          type="password"
+                          {...register('configuration.accessToken')}
+                          placeholder="zammad-api-token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      )}
+                      {zammadAuthType === 'basic' && (
+                        <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Username</label>
+                        <input
+                          {...register('configuration.username')}
+                          placeholder="agent@acme.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Password</label>
+                        <input
+                          type="password"
+                          {...register('configuration.password')}
+                          placeholder=""
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">On-Behalf-Of User (Optional)</label>
+                        <input
+                          {...register('configuration.onBehalfOf')}
+                          placeholder="X-On-Behalf-Of user login/email"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Article Granularity & Security Split</label>
+                        <select
+                          {...register('configuration.articleGranularity')}
+                          defaultValue="SPLIT_PUBLIC_AND_INTERNAL"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="SPLIT_PUBLIC_AND_INTERNAL">Split Public Thread & Internal Agent Notes</option>
+                          <option value="PER_ARTICLE">One Document per Article</option>
+                          <option value="PUBLIC_ONLY">Public Customer Articles Only</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="search_delta"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="search_delta">Incremental Search Delta (updated_at:&gt;=…)</option>
+                          <option value="full">Full Scan & Tombstone Reconciliation</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Group Filter (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.groupNames')}
+                          placeholder="Tier-2-Identity-Security, Support (empty = all)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ticket States Filter (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.ticketStates')}
+                          placeholder="open, closed (empty = all)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeInternalArticlesZammad"
+                          {...register('configuration.includeInternalArticles')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeInternalArticlesZammad" className="text-sm font-medium cursor-pointer">
+                          Include Internal Agent Notes (Agent-Only ACL)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeAttachmentsZammad"
+                          {...register('configuration.includeAttachments')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAttachmentsZammad" className="text-sm font-medium cursor-pointer">
+                          Include Binary Article Attachments
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeKnowledgeBaseZammad"
+                          {...register('configuration.includeKnowledgeBase')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeKnowledgeBaseZammad" className="text-sm font-medium cursor-pointer">
+                          Include Knowledge Base Answers
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeAclsZammad"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsZammad" className="text-sm font-medium cursor-pointer">
+                          Include Group, Customer & Shared Organization ACLs
+                        </label>
                       </div>
                     </div>
                   )}

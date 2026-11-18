@@ -288,6 +288,34 @@ public class ConnectorController {
             Map.entry("timeoutSeconds", "30"),
             Map.entry("stateDirectory", "data/documentum-state")
         )));
+        defaults.add(new ConnectorDTO("Zammad_Repository", "Zammad Helpdesk & Knowledge Base (REST API v1)", "repository", "org.opencrawling.zammad.ZammadRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("baseUrl", "http://localhost:8080"),
+            Map.entry("authType", "token"),
+            Map.entry("accessToken", ""),
+            Map.entry("username", ""),
+            Map.entry("password", ""),
+            Map.entry("onBehalfOf", ""),
+            Map.entry("groupNames", ""),
+            Map.entry("ticketStates", ""),
+            Map.entry("includeTickets", "true"),
+            Map.entry("includeInternalArticles", "true"),
+            Map.entry("articleGranularity", "SPLIT_PUBLIC_AND_INTERNAL"),
+            Map.entry("includeAttachments", "true"),
+            Map.entry("includeKnowledgeBase", "true"),
+            Map.entry("includeTags", "true"),
+            Map.entry("crawlMode", "search_delta"),
+            Map.entry("stateFile", "data/zammad-state"),
+            Map.entry("maxAttachmentSizeBytes", "52428800"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("includeCustomerInPublicAcl", "true"),
+            Map.entry("includeSharedOrganizationInPublicAcl", "true"),
+            Map.entry("allowPublicKb", "false"),
+            Map.entry("pageSize", "50"),
+            Map.entry("parallelism", "4"),
+            Map.entry("maxRetries", "5"),
+            Map.entry("initialBackoffMs", "1000"),
+            Map.entry("timeoutSeconds", "30")
+        )));
         defaults.add(new ConnectorDTO("Hyland_CIC_Repository", "Hyland Content Innovation Cloud (HXP) Repository", "repository", "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", 10, Map.ofEntries(
             Map.entry("baseUrl", "https://api.content.hylandcloud.com"),
             Map.entry("idpTokenUrl", "https://identity.hylandcloud.com/connect/token"),

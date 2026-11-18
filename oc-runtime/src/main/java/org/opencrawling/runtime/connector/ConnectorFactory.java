@@ -124,6 +124,7 @@ public class ConnectorFactory {
                 case MFILES -> buildMFiles(name, config);
                 case FILENET -> buildFileNet(name, config);
                 case DOCUMENTUM -> buildDocumentum(name, config);
+                case ZAMMAD -> buildZammad(name, config);
                 case HYLAND_CIC -> buildHylandCic(name, config);
                 case JDBC -> buildJdbc(name, config);
                 case GRPC_PUSH -> buildGrpcPush(name, config);
@@ -330,6 +331,14 @@ public class ConnectorFactory {
         log.info("Resolving dynamic Documentum repository connector for '{}' (repository '{}', {} mode)",
                 documentumSettings.url(), documentumSettings.repository(), documentumSettings.crawlMode());
         return new org.opencrawling.documentum.DocumentumRepositoryConnector(documentumSettings);
+    }
+
+    private RepositoryConnector buildZammad(String name, Map<String, String> config) {
+        org.opencrawling.zammad.ZammadProperties zammadSettings =
+                org.opencrawling.zammad.ZammadProperties.fromConfiguration(config);
+        log.info("Resolving dynamic Zammad repository connector for '{}' ({} mode, granularity {})",
+                zammadSettings.baseUrl(), zammadSettings.crawlMode(), zammadSettings.articleGranularity());
+        return new org.opencrawling.zammad.ZammadRepositoryConnector(zammadSettings);
     }
 
     private RepositoryConnector buildHylandCic(String name, Map<String, String> config) {
