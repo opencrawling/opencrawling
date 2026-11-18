@@ -99,7 +99,7 @@ final class PlatformApiTestSupport {
             ApiV1Configuration.class, ApiV1OpenApiConfiguration.class,
             org.opencrawling.runtime.controlplane.ControlPlaneConfiguration.class,
             org.opencrawling.runtime.scheduler.JobSchedulerEngine.class,
-            PlatformV1Controller.class, JobsV1Controller.class, SchedulesV1Controller.class, JobRunsV1Controller.class, ExecutionsV1Controller.class,
+            PlatformV1Controller.class, JobsV1Controller.class, SchedulesV1Controller.class, JobRunsV1Controller.class, RunsV1Controller.class, ExecutionsV1Controller.class,
             ConnectorsV1Controller.class, SettingsV1Controller.class, OperationsV1Controller.class, ToolsV1Controller.class})
     static class PlatformApi {
 
@@ -243,6 +243,12 @@ final class PlatformApiTestSupport {
             java.util.Map.entry("pauseJobRun", "POST /api/v1/job-runs/{executionId}:pause"),
             java.util.Map.entry("resumeJobRun", "POST /api/v1/job-runs/{executionId}:resume"),
             java.util.Map.entry("getJobRunHistory", "GET /api/v1/job-runs/{executionId}/history"),
+            java.util.Map.entry("listRuns", "GET /api/v1/runs"),
+            java.util.Map.entry("getRun", "GET /api/v1/runs/{runId}"),
+            java.util.Map.entry("getRunHistory", "GET /api/v1/runs/{runId}/history"),
+            java.util.Map.entry("stopRun", "POST /api/v1/runs/{runId}:stop"),
+            java.util.Map.entry("pauseRun", "POST /api/v1/runs/{runId}:pause"),
+            java.util.Map.entry("resumeRun", "POST /api/v1/runs/{runId}:resume"),
             java.util.Map.entry("listExecutions", "GET /api/v1/executions"),
             java.util.Map.entry("getExecution", "GET /api/v1/executions/{executionId}"),
             java.util.Map.entry("listExecutionDocuments", "GET /api/v1/executions/{executionId}/documents"),

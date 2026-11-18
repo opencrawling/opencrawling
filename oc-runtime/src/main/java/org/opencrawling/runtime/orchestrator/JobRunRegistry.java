@@ -279,6 +279,11 @@ public class JobRunRegistry {
     }
 
     /** A run, active or ended, while it is kept. */
+    /** The runs kept, active and ended, of {@code jobId} or of every job when it is {@code null}, newest first. */
+    public List<RunInfo> list(String jobId) {
+        return store.list(jobId).stream().map(RunInfo::of).toList();
+    }
+
     public Optional<RunInfo> execution(String executionId) {
         return store.get(executionId).map(RunInfo::of);
     }

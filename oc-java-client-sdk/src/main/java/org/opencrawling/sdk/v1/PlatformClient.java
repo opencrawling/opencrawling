@@ -54,6 +54,8 @@ import org.opencrawling.sdk.v1.model.SidecarStoreInfo;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
 import org.opencrawling.sdk.v1.model.JobRunHistory;
+import org.opencrawling.sdk.v1.model.Run;
+import org.opencrawling.sdk.v1.model.RunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
 
 import java.nio.file.Path;
@@ -101,6 +103,9 @@ public interface PlatformClient {
     Schedules schedules();
 
     JobRuns jobRuns();
+
+    /** Every run, whatever started it: job runs and dynamic jobs (#316). */
+    Runs runs();
 
     Executions executions();
 
@@ -255,6 +260,30 @@ public interface PlatformClient {
         default JobRunHistory waitForCompletion(String executionId) {
             return waitForCompletion(executionId, Duration.ofSeconds(2), Duration.ofMinutes(10));
         }
+    }
+
+    /** Runs of every kind: job runs and dynamic jobs, active and ended while they are kept. */
+    interface Runs {
+        /**
+         * @param kind  {@code JOB}, {@code DYNAMIC_FOLDER} or {@code DYNAMIC_DOCUMENT}; null for all
+         * @param state such as {@code RUNNING} or {@code PENDING_APPROVAL}; null for all
+         * @param jobId only runs of this job or dynamic job; null for all
+         */
+        Page<Run> list(String kind, String state, String jobId, PageRequest page);
+
+        /** @param runId the run's id, its execution id */
+        Run get(String runId);
+
+        /** The run with the history of its states. */
+        RunHistory history(String runId);
+
+        /** Asks the run to stop; a dynamic job waiting for approval is cancelled. */
+        Run stop(String runId);
+
+        /** The run holds before its next document until {@link #resume} or {@link #stop}. */
+        Run pause(String runId);
+
+        Run resume(String runId);
     }
 
     interface Executions {

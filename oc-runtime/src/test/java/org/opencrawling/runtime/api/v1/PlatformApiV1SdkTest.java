@@ -304,6 +304,14 @@ class PlatformApiV1SdkTest {
             assertThat(api.jobs().resume(jobId).state().status()).isEqualTo("Running");
             assertThat(api.jobRuns().history(executionId).steps()).extracting(JobRunHistory.Step::event)
                     .containsExactly("STARTED", "PAUSED", "RESUMED", "PAUSED", "RESUMED");
+            // The same run through the API of every kind of run (#316).
+            assertThat(api.runs().list("JOB", "RUNNING", jobId, PageRequest.first()).items())
+                    .extracting(org.opencrawling.sdk.v1.model.Run::runId).containsExactly(executionId);
+            assertThat(api.runs().get(executionId).kind()).isEqualTo("JOB");
+            assertThat(api.runs().pause(executionId).state()).isEqualTo("PAUSED");
+            assertThat(api.runs().resume(executionId).state()).isEqualTo("RUNNING");
+            assertThat(api.runs().history(executionId).steps()).extracting(JobRunHistory.Step::event)
+                    .containsExactly("STARTED", "PAUSED", "RESUMED", "PAUSED", "RESUMED", "PAUSED", "RESUMED");
             assertThat(api.jobRuns().stop(executionId).stopRequested()).isTrue();
             for (int i = 0; i < 100 && api.jobRuns().list(jobId, PageRequest.first()).page().totalItems() > 0; i++) {
                 Thread.sleep(50);
@@ -312,7 +320,8 @@ class PlatformApiV1SdkTest {
             ApiProblemException notRunning = (ApiProblemException) org.assertj.core.api.Assertions.catchThrowable(() ->
                     api.jobs().resume(jobId));
             assertThat(notRunning.code()).isEqualTo("job-not-running");
-            api.jobs().start(jobId, RequestOptions.none());
+            String again = api.jobs().start(jobId, RequestOptions.none()).value().executionId();
+            assertThat(api.runs().stop(again).stopRequested()).isTrue();
             assertThat(api.jobs().stop(jobId).id()).isEqualTo(jobId);
             assertThat(api.jobs().pause(jobId).state().status()).isEqualTo("Paused");
         } finally {

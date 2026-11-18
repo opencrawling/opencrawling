@@ -217,6 +217,25 @@ A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `tran
 
 A run has a `state`: `RUNNING` or `PAUSED` while in progress. With the `jdbc` control-plane store the runs are shared by every runtime on the database: a run of another runtime is listed, paused, resumed and stopped like a local one (its runtime notices within `opencrawling.control-plane.run-heartbeat-interval`), and `runtimeId` names the runtime that runs it. A run's history (`STARTED`, `PAUSED`, `RESUMED`, `STOP_REQUESTED`, then `COMPLETED`, `STOPPED`, `FAILED` or `INTERRUPTED`) outlives a restart.
 
+### Runs (every kind)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/runs` | Job runs and dynamic jobs the caller may see, active and ended while they are kept, newest first (`kind`, `state`, `jobId`) |
+| GET | `/api/v1/runs/{runId}` | One run of any kind, by its run id (its execution id) |
+| GET | `/api/v1/runs/{runId}/history` | The run with every change of its state; empty while a dynamic job waits for approval |
+| POST | `/api/v1/runs/{runId}:stop` | Stop the run; a dynamic job waiting for approval is cancelled |
+| POST | `/api/v1/runs/{runId}:pause` | Pause the run: it holds before its next document until `:resume` or `:stop` |
+| POST | `/api/v1/runs/{runId}:resume` | Resume the paused run |
+
+One API for every run, whatever started it ([#316](https://github.com/opencrawling/opencrawling/issues/316)):
+- **Kinds:** `JOB` (a run of a pipeline job), `DYNAMIC_FOLDER` and `DYNAMIC_DOCUMENT` (a dynamic job, when dynamic jobs are on).
+- **States:** `RUNNING`, `PAUSED`, `COMPLETED`, `STOPPED`, `FAILED` and `INTERRUPTED`, the states of `/job-runs`; a dynamic job may also be `PENDING_APPROVAL`, `REJECTED` or `EXPIRED`.
+- **Visibility:** each run as its own API shows it. A job run is visible to those who may read its job; a dynamic job to its owner and the dynamic jobs' `admin-groups`, and only to a caller signed in with the dynamic jobs' scopes.
+- **Links:** `links` points at the run's job (`job`) or dynamic job (`dynamicJob`), its history and, once it ran, its execution.
+- **Starting and approving** stay with each kind's own API: `/jobs/{id}:start`, `/dynamic-jobs`, `/dynamic-jobs/{jobId}:approve`.
+- **Errors:** `:stop`, `:pause` and `:resume` on a run that has ended answer `409 job-not-running`.
+
 ### Executions (finished runs)
 
 | Method | Path | Purpose |
@@ -281,7 +300,7 @@ Only present when the feature is enabled; `GET /api/v1` says which are.
 | Feature | Endpoints |
 |---|---|
 | Discovery (`opencrawling.discovery.enabled`) | `GET /api/v1/discovery/connectors`, `GET .../{connector}/tree`, `POST .../{connector}:dry-run` |
-| Dynamic jobs (`opencrawling.jobs.dynamic.enabled`) | `POST /api/v1/dynamic-jobs`, `POST /api/v1/dynamic-jobs:ingest-document`, `GET /api/v1/dynamic-jobs`, `GET .../{jobId}`, `POST .../{jobId}:stop`, `:approve`, `:reject` |
+| Dynamic jobs (`opencrawling.jobs.dynamic.enabled`) | `POST /api/v1/dynamic-jobs`, `POST /api/v1/dynamic-jobs:ingest-document`, `GET /api/v1/dynamic-jobs`, `GET .../{jobId}`, `POST .../{jobId}:stop`, `:approve`, `:reject`; pause and resume through `/api/v1/runs` |
 | Sidecars (`opencrawling.sidecars.enabled`) | `GET /api/v1/sidecar-stores`, `GET /api/v1/sidecar-stores/{connector}/sidecars` |
 
 ---

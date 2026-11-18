@@ -60,6 +60,8 @@ import org.opencrawling.sdk.v1.model.SidecarStoreInfo;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
 import org.opencrawling.sdk.v1.model.JobRunHistory;
+import org.opencrawling.sdk.v1.model.Run;
+import org.opencrawling.sdk.v1.model.RunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
 import org.opencrawling.sdk.exceptions.OpenCrawlingException;
 
@@ -175,6 +177,11 @@ public class DefaultPlatformClient implements PlatformClient {
     @Override
     public JobRuns jobRuns() {
         return jobRuns;
+    }
+
+    @Override
+    public Runs runs() {
+        return runs;
     }
 
     @Override
@@ -437,6 +444,40 @@ public class DefaultPlatformClient implements PlatformClient {
                 }
                 DefaultPlatformClient.pause(interval);
             }
+        }
+    };
+
+    // ---------------------------------------------------------------- runs
+
+    private final Runs runs = new Runs() {
+        @Override
+        public Page<Run> list(String kind, String state, String jobId, PageRequest page) {
+            return getPage(path("runs"), params("kind", kind, "state", state, "jobId", jobId), page, Run.class);
+        }
+
+        @Override
+        public Run get(String runId) {
+            return getJson(path("runs", runId), Run.class);
+        }
+
+        @Override
+        public RunHistory history(String runId) {
+            return getJson(path("runs", runId, "history"), RunHistory.class);
+        }
+
+        @Override
+        public Run stop(String runId) {
+            return post(action(path("runs", runId), "stop"), null, Run.class);
+        }
+
+        @Override
+        public Run pause(String runId) {
+            return post(action(path("runs", runId), "pause"), null, Run.class);
+        }
+
+        @Override
+        public Run resume(String runId) {
+            return post(action(path("runs", runId), "resume"), null, Run.class);
         }
     };
 

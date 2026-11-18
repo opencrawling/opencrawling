@@ -160,7 +160,8 @@ The same operations are available over REST: `POST /api/jobs/dynamic` (body `{"c
   - `keepSeparator`: whether line breaks stay in the chunk text (default `true`).
 
   There is no overlap setting (the splitter does not overlap chunks) and no limit on the number of chunks (past it, the splitter puts the rest of the document into one oversized chunk). A removal takes no chunking (`400`). The chunking travels with each document on the documents topic and shows in the job's status. A later crawl of the same document chunks it its own way and replaces its chunks, since chunk ids come from the document id and the position.
-- **Status is kept in memory** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs, and is lost on restart. The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
+- **Status is kept** for `retention` (default `24h`) after a job ends, up to `max-retained` jobs. With the `file` control-plane store it is in memory and lost on restart. With `jdbc` it is in the control-plane database, shared by every runtime and kept across restarts ([Configuration Guide](Configuration-Guide.md)). The run's ledger entry (with `trigger_source` `mcp` or `dynamic-api`, who started it and on whose behalf) is the lasting record.
+- **Every kind of run in one place:** dynamic jobs are also listed and followed through `GET /api/v1/runs`, with job runs, and can be paused and resumed there.
 
 ---
 

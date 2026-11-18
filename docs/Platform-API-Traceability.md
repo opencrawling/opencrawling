@@ -16,6 +16,8 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | Sdk | `PlatformApiV1SdkTest` | The Java SDK's `platform()` client against the runtime: it reaches every operation in the API description and reads each answer |
 | Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | The idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
 | IdempotencyJdbc | `JdbcIdempotencyStoreTest` (H2), `JdbcIdempotencyStorePostgresIT` | The JDBC idempotency store keeps the same contract with the real migrations: answers replayed by another runtime and after a restart, expiry, a held key, renewals that never cut a finished request's retention, 5 rounds of 16 racing runtimes of which exactly one runs, no caller, path or key in the table, and the database down (`503`, never a failed request) |
+| Runs | `RunsV1HttpTest` | `/api/v1/runs` over HTTP with dynamic jobs on and signed-in callers: a dynamic job listed, read, paused, resumed and stopped by its owner only, its history, `409 job-not-running` once it ended, unknown filters refused |
+| DynamicJobsDurable | `DynamicJobServiceJdbcTest` (H2), `DynamicJobServicePostgresIT`, `DynamicJobDurabilityTest` | Every dynamic-job service case on the control-plane database; a restart keeps jobs, keys and pending approvals; two runtimes see, approve, pause, stop and interrupt each other's jobs |
 | Unit | `PlatformApiV1UnitTest` | Cursors, ETags, merge patch, idempotency store, secret masking, request scoping, error mapping |
 | Console | `oc-admin-ui/src/lib/apiConsole.test.ts` | The API console's logic: reading the description, building and describing requests, history |
 | UiClient | `oc-admin-ui/src/lib/api.test.ts` | The admin UI's API client: v1 URLs and methods, cursor following, ETags and `If-Match`, problem messages |
@@ -88,6 +90,12 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | `pauseJobRun` | `POST /api/v1/job-runs/{executionId}:pause` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `resumeJobRun` | `POST /api/v1/job-runs/{executionId}:resume` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `getJobRunHistory` | `GET /api/v1/job-runs/{executionId}/history` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
+| `listRuns` | `GET /api/v1/runs` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Runs.anUnknownKindOrStateIsRefused`<br>`Sdk` |
+| `getRun` | `GET /api/v1/runs/{runId}` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Sdk` |
+| `getRunHistory` | `GET /api/v1/runs/{runId}/history` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Sdk` |
+| `stopRun` | `POST /api/v1/runs/{runId}:stop` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Sdk` |
+| `pauseRun` | `POST /api/v1/runs/{runId}:pause` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Sdk` |
+| `resumeRun` | `POST /api/v1/runs/{runId}:resume` | Per job access for job runs; owner or admin groups for dynamic jobs | `Runs.aDynamicJobIsFollowedPausedAndStoppedThroughTheRunsApiByItsOwnerOnly`<br>`Sdk` |
 | `listExecutions` | `GET /api/v1/executions` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `getExecution` | `GET /api/v1/executions/{executionId}` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `listExecutionDocuments` | `GET /api/v1/executions/{executionId}/documents` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |

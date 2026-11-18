@@ -177,4 +177,11 @@ public class InMemoryRunStore implements RunStore {
         List<RunStep> history = steps.computeIfAbsent(executionId, id -> new ArrayList<>());
         history.add(new RunStep(executionId, history.size() + 1, event, at, Objects.requireNonNull(runtimeId), detail));
     }
+
+    @Override
+    public synchronized List<RunRecord> list(String jobId) {
+        return runs.values().stream().filter(run -> jobId == null || run.jobId().equals(jobId))
+                .sorted(java.util.Comparator.comparing(RunRecord::startedAt).reversed().thenComparing(RunRecord::executionId))
+                .toList();
+    }
 }

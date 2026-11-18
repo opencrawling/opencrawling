@@ -187,6 +187,13 @@ public class JdbcRunStore implements RunStore {
     }
 
     @Override
+    public List<RunRecord> list(String jobId) {
+        return jobId == null
+                ? jdbc.query("SELECT " + COLUMNS + " FROM oc_run ORDER BY started_at DESC, execution_id", RUN)
+                : jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE job_id = ? ORDER BY started_at DESC, execution_id", RUN, jobId);
+    }
+
+    @Override
     public List<RunStep> steps(String executionId) {
         return jdbc.query("SELECT execution_id, seq, event, occurred_at, runtime_id, detail FROM oc_run_step"
                 + " WHERE execution_id = ? ORDER BY seq", STEP, executionId);

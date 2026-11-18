@@ -145,6 +145,12 @@ public interface RunStore {
     /** The active runs, oldest first. */
     List<RunRecord> active();
 
+    /**
+     * The runs kept, active and ended, of {@code jobId} or of every job when it is {@code null}: the newest first
+     * (by start time, then id). What a run leaves is kept for the run retention.
+     */
+    List<RunRecord> list(String jobId);
+
     /** The run's history, in order; empty when the run is unknown. */
     List<RunStep> steps(String executionId);
 

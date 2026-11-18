@@ -71,8 +71,11 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p>A job's status is visible to the user who started it (whichever agent acted for them) and to members of the
- * admin groups; to anyone else it does not exist. Status lives in memory: it is kept for the retention period after
- * the job ends, and lost on restart.
+ * admin groups; to anyone else it does not exist. A job's record is kept for the retention period after it ends, in
+ * a {@link DynamicJobStore}: in this runtime's memory with the {@code file} control-plane store (lost on restart), in
+ * the control-plane database with {@code jdbc} (#316), where every runtime on it sees the same jobs, approves them
+ * and stops them, after a restart too. Its run is kept by the run registry like every job run, so a running job can
+ * also be paused and resumed, and one whose runtime died is marked {@code INTERRUPTED}.
  */
 public class DynamicJobService {
 
@@ -97,9 +100,17 @@ public class DynamicJobService {
     /**
      * A job's state. With approvals on, an agent's job starts as {@code PENDING_APPROVAL}, and ends as
      * {@code REJECTED} or {@code EXPIRED} if it is never approved; a pending job its owner cancels ends
-     * {@code STOPPED}.
+     * {@code STOPPED}. A running job may be {@code PAUSED}; one whose runtime stopped while it ran ends
+     * {@code INTERRUPTED}.
      */
-    public enum State { PENDING_APPROVAL, RUNNING, COMPLETED, FAILED, STOPPED, REJECTED, EXPIRED }
+    public enum State {
+        PENDING_APPROVAL, RUNNING, COMPLETED, FAILED, STOPPED, REJECTED, EXPIRED, PAUSED, INTERRUPTED;
+
+        /** Running or paused: it holds a run. */
+        public boolean active() {
+            return this == RUNNING || this == PAUSED;
+        }
+    }
 
     /** What a job crawls: a folder tree, or one document. */
     public enum Kind { FOLDER, DOCUMENT }
@@ -170,10 +181,7 @@ public class DynamicJobService {
     private final DynamicJobProperties properties;
     private final Clock clock;
 
-    /** Guarded by {@code this}, in the order the jobs were created. */
-    private final Map<String, Entry> jobs = new LinkedHashMap<>();
-    /** Guarded by {@code this}: owner and idempotency key to the job it started. */
-    private final Map<String, Keyed> keys = new HashMap<>();
+    private final DynamicJobStore store;
 
     /**
      * @param connectors    the registered connectors
@@ -185,6 +193,14 @@ public class DynamicJobService {
     public DynamicJobService(Supplier<List<ConnectorDTO>> connectors, Function<ConnectorDTO, RepositoryConnector> builder,
                              JobRunRegistry registry, CrawlRunner runner, Function<String, Long> documentCount,
                              DynamicJobProperties properties, Clock clock) {
+        this(connectors, builder, registry, runner, documentCount, properties, clock, new InMemoryDynamicJobStore());
+    }
+
+    /** @param store where the jobs' records are kept: in memory, or in the control-plane database */
+    DynamicJobService(Supplier<List<ConnectorDTO>> connectors, Function<ConnectorDTO, RepositoryConnector> builder,
+                      JobRunRegistry registry, CrawlRunner runner, Function<String, Long> documentCount,
+                      DynamicJobProperties properties, Clock clock, DynamicJobStore store) {
+        this.store = Objects.requireNonNull(store, "store");
         this.connectors = Objects.requireNonNull(connectors, "connectors");
         this.builder = Objects.requireNonNull(builder, "builder");
         this.registry = Objects.requireNonNull(registry, "registry");
@@ -192,6 +208,7 @@ public class DynamicJobService {
         this.documentCount = Objects.requireNonNull(documentCount, "documentCount");
         this.properties = Objects.requireNonNull(properties, "properties");
         this.clock = Objects.requireNonNull(clock, "clock");
+        registry.onInterrupted(this::interrupted);
     }
 
     /** Checks a request as {@link #start} would, without starting anything. */
@@ -312,7 +329,7 @@ public class DynamicJobService {
             if (!(fetched instanceof FetchedDocument.Found found)) {
                 throw documentNotAvailable(request, registration);
             }
-            String name = approved != null ? approved.name : "Document " + found.node().name() + " on " + registration.name();
+            String name = approved != null ? approved.name() : "Document " + found.node().name() + " on " + registration.name();
             if (gate != null) {
                 // Fetched only to check it; it is fetched again once the job is approved.
                 closeQuietly(found.document().contentStream());
@@ -361,24 +378,27 @@ public class DynamicJobService {
         }
         String jobId = newJobId();
         String executionId = newExecutionId();
-        Entry entry = new Entry(jobId, executionId, name, registration.name(), kind, StartView.of(target), owner,
-                requester.principal(), triggerSource, clock.instant(), chunkingOf(fingerprint));
+        Entry entry = Entry.of(jobId, executionId, name, registration.name(), kind, StartView.of(target), owner,
+                requester.principal(), triggerSource, clock.instant(), chunkingOf(fingerprint), State.RUNNING, null);
 
-        synchronized (this) {
+        Accepted earlier = store.locked(() -> {
             evict();
-            Accepted replay = replay(owner, key, fingerprint);
+            Accepted replay = replayLocked(owner, key, fingerprint);
             if (replay != null) {
                 return replay;
             }
-            if (runningLimit > 0 && jobs.values().stream()
-                    .filter(job -> job.owner.equals(owner) && job.state == State.RUNNING).count() >= runningLimit) {
+            if (runningLimit > 0 && store.count(owner, State.RUNNING, State.PAUSED) >= runningLimit) {
                 throw new DynamicJobException(HttpStatus.TOO_MANY_REQUESTS,
                         "You already have " + runningLimit + " dynamic jobs running.");
             }
-            jobs.put(jobId, entry);
+            store.save(entry);
             if (key != null) {
-                keys.put(keyOf(owner, key), new Keyed(jobId, fingerprint));
+                store.saveKey(owner, key, new DynamicJobStore.Keyed(jobId, fingerprint));
             }
+            return null;
+        });
+        if (earlier != null) {
+            return earlier;
         }
 
         JobRunRegistry.Reservation reservation = reserve(jobId, executionId, provenance, entry, key);
@@ -400,29 +420,31 @@ public class DynamicJobService {
     private Accepted fileForApproval(Requester requester, String key, Object fingerprint, ConnectorDTO registration,
                                      String name, Kind kind, DiscoveryNode target, Pending pending) {
         String owner = requester.owner();
-        Entry entry = new Entry(newJobId(), newExecutionId(), name, registration.name(), kind, StartView.of(target), owner,
-                requester.principal(), requester.provenance().triggerSource(), clock.instant(), chunkingOf(fingerprint));
-        entry.state = State.PENDING_APPROVAL;
-        entry.pending = pending;
-        synchronized (this) {
+        Entry entry = Entry.of(newJobId(), newExecutionId(), name, registration.name(), kind, StartView.of(target), owner,
+                requester.principal(), requester.provenance().triggerSource(), clock.instant(), chunkingOf(fingerprint),
+                State.PENDING_APPROVAL, pending);
+        Accepted earlier = store.locked(() -> {
             evict();
-            Accepted replay = replay(owner, key, fingerprint);
+            Accepted replay = replayLocked(owner, key, fingerprint);
             if (replay != null) {
                 return replay;
             }
             int limit = properties.getMaxPendingPerUser();
-            if (limit > 0 && jobs.values().stream()
-                    .filter(job -> job.owner.equals(owner) && job.state == State.PENDING_APPROVAL).count() >= limit) {
+            if (limit > 0 && store.count(owner, State.PENDING_APPROVAL) >= limit) {
                 throw new DynamicJobException(HttpStatus.TOO_MANY_REQUESTS,
                         "You already have " + limit + " dynamic jobs waiting for approval.");
             }
-            jobs.put(entry.jobId, entry);
+            store.save(entry);
             if (key != null) {
-                keys.put(keyOf(owner, key), new Keyed(entry.jobId, fingerprint));
+                store.saveKey(owner, key, new DynamicJobStore.Keyed(entry.jobId(), fingerprint));
             }
+            return null;
+        });
+        if (earlier != null) {
+            return earlier;
         }
-        log.info("Dynamic job {} by '{}' on '{}' is waiting for approval.", entry.jobId, requester.principal(), registration.name());
-        return new Accepted(entry.jobId, entry.executionId, STATUS_PATH + entry.jobId, State.PENDING_APPROVAL, false);
+        log.info("Dynamic job {} by '{}' on '{}' is waiting for approval.", entry.jobId(), requester.principal(), registration.name());
+        return new Accepted(entry.jobId(), entry.executionId(), STATUS_PATH + entry.jobId(), State.PENDING_APPROVAL, false);
     }
 
     /**
@@ -431,14 +453,14 @@ public class DynamicJobService {
      */
     private Accepted launchApproved(Entry entry, Requester requester, ConnectorDTO registration,
                                     Supplier<RepositoryConnector> crawler, String scanFrom, int runningLimit) {
-        synchronized (this) {
-            if (runningLimit > 0 && jobs.values().stream()
-                    .filter(job -> job.owner.equals(entry.owner) && job.state == State.RUNNING).count() >= runningLimit) {
+        store.locked(() -> {
+            if (runningLimit > 0 && store.count(entry.owner(), State.RUNNING, State.PAUSED) >= runningLimit) {
                 throw new DynamicJobException(HttpStatus.TOO_MANY_REQUESTS,
                         "Its owner already has " + runningLimit + " dynamic jobs running; approve it again later.");
             }
-        }
-        JobRunRegistry.Reservation reservation = switch (registry.reserve(entry.jobId, entry.executionId,
+            return null;
+        });
+        JobRunRegistry.Reservation reservation = switch (registry.reserve(entry.jobId(), entry.executionId(),
                 JobController.callerKey(requester.provenance()))) {
             case JobRunRegistry.Reserved reserved -> reserved.reservation();
             default -> throw new DynamicJobException(HttpStatus.TOO_MANY_REQUESTS,
@@ -452,13 +474,12 @@ public class DynamicJobService {
             log.warn("Dynamic job: connector '{}' could not be built: {}", registration.name(), e.getMessage());
             throw notConfigured(registration.name());
         }
-        entry.pending = null;
-        entry.state = State.RUNNING;
-        log.info("Dynamic job {} [Exec ID: {}] approved by '{}' and started for '{}' on '{}' from '{}'.", entry.jobId,
-                entry.executionId, entry.approvedBy, requester.principal(), registration.name(), scanFrom);
+        Entry started = update(entry.jobId(), job -> job.withPending(null).withState(State.RUNNING));
+        log.info("Dynamic job {} [Exec ID: {}] approved by '{}' and started for '{}' on '{}' from '{}'.", entry.jobId(),
+                entry.executionId(), entry.approvedBy(), requester.principal(), registration.name(), scanFrom);
         ExecutionProvenance provenance = requester.provenance();
-        reservation.start(stopRequested -> crawl(entry, connector, scanFrom, stopRequested, provenance));
-        return new Accepted(entry.jobId, entry.executionId, STATUS_PATH + entry.jobId, State.RUNNING, false);
+        reservation.start(stopRequested -> crawl(started != null ? started : entry, connector, scanFrom, stopRequested, provenance));
+        return new Accepted(entry.jobId(), entry.executionId(), STATUS_PATH + entry.jobId(), State.RUNNING, false);
     }
 
     /** What a job waiting for approval needs to be checked and started again. */
@@ -475,23 +496,25 @@ public class DynamicJobService {
      */
     public JobStatus approve(Caller approver, String jobId) {
         requireAdmin(approver);
-        Entry entry = pendingEntry(jobId);
-        synchronized (this) {
-            if (entry.owner.equals(owner(approver))) {
+        Entry entry = store.locked(() -> {
+            Entry found = existing(jobId);
+            if (found.owner().equals(owner(approver))) {
                 throw new DynamicJobException(HttpStatus.FORBIDDEN, "A job cannot be approved by the user who asked for it.");
             }
-            if (entry.state != State.PENDING_APPROVAL || entry.approvedBy != null) {
+            if (found.state() != State.PENDING_APPROVAL || found.approvedBy() != null) {
                 throw new DynamicJobException(HttpStatus.CONFLICT, "Dynamic job '" + jobId + "' is not waiting for approval.");
             }
-            entry.approvedBy = approver.principal();
-        }
-        Pending pending = entry.pending;
+            Entry approving = found.withApprovedBy(approver.principal());
+            store.save(approving);
+            return approving;
+        });
+        Pending pending = entry.pending();
         try {
             ConnectorDTO registration = registration(pending.connector(), true);
             int limit = properties.getMaxRunningPerUser();
             if (pending.request() instanceof JobRequest request) {
                 DiscoveryNode start = resolveStart(pending.caller(), registration, request.start());
-                launch(pending.requester(), null, null, registration, entry.name, Kind.FOLDER, start,
+                launch(pending.requester(), null, null, registration, entry.name(), Kind.FOLDER, start,
                         () -> builder.apply(registration), start.sourceId(), limit, entry);
             } else {
                 document(pending.requester(), registration, (DocumentRequest) pending.request(), null,
@@ -499,15 +522,14 @@ public class DynamicJobService {
             }
         } catch (DynamicJobException e) {
             if (e.status() == HttpStatus.TOO_MANY_REQUESTS) {
-                entry.approvedBy = null;
+                update(jobId, job -> job.withApprovedBy(null));
                 throw e;
             }
-            entry.pending = null;
-            entry.note = "Approved, but not started: " + e.getMessage();
-            entry.finish(State.FAILED, null, clock.instant());
+            update(jobId, job -> job.withPending(null).withNote("Approved, but not started: " + e.getMessage())
+                    .finished(State.FAILED, null, clock.instant()));
             log.info("Dynamic job {} approved by '{}' but not started: {}", jobId, approver.principal(), e.getMessage());
         }
-        return entry.view();
+        return store.get(jobId).orElse(entry).view();
     }
 
     /**
@@ -517,22 +539,24 @@ public class DynamicJobService {
      */
     public JobStatus reject(Caller approver, String jobId, String reason) {
         requireAdmin(approver);
-        Entry entry = pendingEntry(jobId);
+        existingNow(jobId);
         String why = reason == null || reason.isBlank() ? null : reason.strip();
         if (why != null && (why.length() > MAX_NOTE_LENGTH || why.chars().anyMatch(Character::isISOControl))) {
             throw new DynamicJobException(HttpStatus.BAD_REQUEST,
                     "A reason may be at most " + MAX_NOTE_LENGTH + " characters, with no control characters.");
         }
-        synchronized (this) {
-            if (entry.state != State.PENDING_APPROVAL || entry.approvedBy != null) {
+        Entry rejected = store.locked(() -> {
+            Entry found = existing(jobId);
+            if (found.state() != State.PENDING_APPROVAL || found.approvedBy() != null) {
                 throw new DynamicJobException(HttpStatus.CONFLICT, "Dynamic job '" + jobId + "' is not waiting for approval.");
             }
-            entry.pending = null;
-            entry.note = "Rejected by " + approver.principal() + (why != null ? ": " + why : ".");
-            entry.finish(State.REJECTED, null, clock.instant());
-        }
+            Entry ended = found.withPending(null).withNote("Rejected by " + approver.principal() + (why != null ? ": " + why : "."))
+                    .finished(State.REJECTED, null, clock.instant());
+            store.save(ended);
+            return ended;
+        });
         log.info("Dynamic job {} rejected by '{}'.", jobId, approver.principal());
-        return entry.view();
+        return rejected.view();
     }
 
     static final int MAX_NOTE_LENGTH = 500;
@@ -544,16 +568,27 @@ public class DynamicJobService {
         }
     }
 
-    private Entry pendingEntry(String jobId) {
-        Entry entry;
-        synchronized (this) {
-            evict();
-            entry = jobId == null ? null : jobs.get(jobId);
-        }
+    /** The job, after expiring and evicting what is due; {@code 404} for none. Holds the store's lock. */
+    private Entry existing(String jobId) {
+        evict();
+        Entry entry = jobId == null ? null : store.get(jobId).orElse(null);
         if (entry == null) {
             throw new DynamicJobException(HttpStatus.NOT_FOUND, "No dynamic job '" + jobId + "'.");
         }
         return entry;
+    }
+
+    private Entry existingNow(String jobId) {
+        return store.locked(() -> existing(jobId));
+    }
+
+    /** Changes a stored job under the store's lock; {@code null} when it is gone. */
+    private Entry update(String jobId, java.util.function.UnaryOperator<Entry> change) {
+        return store.locked(() -> store.get(jobId).map(job -> {
+            Entry changed = change.apply(job);
+            store.save(changed);
+            return changed;
+        }).orElse(null));
     }
 
     private static void closeQuietly(java.io.InputStream stream) {
@@ -610,8 +645,15 @@ public class DynamicJobService {
                 + "' is available to you from connector '" + registration.name() + "'.");
     }
 
+    static final String JOB_ID_PREFIX = "dyn-";
+
+    /** Whether {@code jobId} names a dynamic job. */
+    public static boolean isDynamicJob(String jobId) {
+        return jobId != null && jobId.startsWith(JOB_ID_PREFIX);
+    }
+
     private static String newJobId() {
-        return "dyn-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        return JOB_ID_PREFIX + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
 
     private static String newExecutionId() {
@@ -632,12 +674,11 @@ public class DynamicJobService {
         if (caller == null || jobId == null) {
             return false;
         }
-        Entry entry;
-        synchronized (this) {
+        Entry entry = store.locked(() -> {
             evict();
-            entry = jobs.get(jobId);
-        }
-        return entry != null && entry.owner.equals(owner(caller));
+            return store.get(jobId).orElse(null);
+        });
+        return entry != null && entry.owner().equals(owner(caller));
     }
 
     /** The jobs the caller may see, newest first. */
@@ -645,35 +686,110 @@ public class DynamicJobService {
         requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
         boolean admin = isAdmin(caller);
         String owner = owner(caller);
-        List<Entry> visible;
-        synchronized (this) {
+        List<Entry> visible = store.locked(() -> {
             evict();
-            visible = jobs.values().stream().filter(job -> admin || job.owner.equals(owner)).toList();
-        }
-        return visible.stream().sorted(Comparator.comparing((Entry job) -> job.createdAt).reversed())
-                .map(Entry::view).toList();
+            return store.list(admin ? null : owner);
+        });
+        return visible.stream().map(Entry::view).toList();
+    }
+
+    /** The job one of whose runs is {@code executionId}, if the caller may see it (#316). */
+    public java.util.Optional<JobStatus> byExecution(Caller caller, String executionId) {
+        requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
+        boolean admin = isAdmin(caller);
+        String owner = owner(caller);
+        List<Entry> visible = store.locked(() -> {
+            evict();
+            return store.list(admin ? null : owner);
+        });
+        return visible.stream().filter(job -> job.executionId().equals(executionId)).findFirst().map(Entry::view);
+    }
+
+    /**
+     * The history of the job's run, from the run registry (#316): empty while it waits for approval, and once its run
+     * is past the run retention.
+     */
+    public List<org.opencrawling.runtime.orchestrator.RunStore.RunStep> history(Caller caller, String jobId) {
+        requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
+        return registry.steps(visible(caller, jobId).executionId());
+    }
+
+    /** The runtime that runs or ran the job, while its run is kept; {@code null} before it started. */
+    public String runtimeOf(String executionId) {
+        return registry.execution(executionId).map(JobRunRegistry.RunInfo::runtimeId).orElse(null);
     }
 
     /** Asks a running job to stop; it ends at the latest before its next document. */
     public JobStatus stop(Caller caller, String jobId) {
         requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
-        Entry entry = visible(caller, jobId);
-        synchronized (this) {
-            if (entry.state == State.PENDING_APPROVAL && entry.approvedBy == null) {
-                entry.pending = null;
-                entry.note = "Cancelled by " + caller.principal() + " before approval.";
-                entry.finish(State.STOPPED, null, clock.instant());
-                log.info("Dynamic job {} cancelled by '{}' before approval.", jobId, caller.principal());
-                return entry.view();
+        visible(caller, jobId);
+        Entry cancelled = store.locked(() -> {
+            Entry entry = existing(jobId);
+            if (entry.state() == State.PENDING_APPROVAL && entry.approvedBy() == null) {
+                Entry ended = entry.withPending(null).withNote("Cancelled by " + caller.principal() + " before approval.")
+                        .finished(State.STOPPED, null, clock.instant());
+                store.save(ended);
+                return ended;
             }
+            return null;
+        });
+        if (cancelled != null) {
+            log.info("Dynamic job {} cancelled by '{}' before approval.", jobId, caller.principal());
+            return cancelled.view();
         }
-        if (entry.state != State.RUNNING) {
-            throw new DynamicJobException(HttpStatus.CONFLICT, "Dynamic job '" + jobId + "' is not running.");
-        }
-        entry.stopRequested = true;
+        Entry stopping = store.locked(() -> {
+            Entry entry = existing(jobId);
+            if (!entry.state().active()) {
+                throw new DynamicJobException(HttpStatus.CONFLICT, "Dynamic job '" + jobId + "' is not running.");
+            }
+            Entry flagged = entry.withStopRequested(true);
+            store.save(flagged);
+            return flagged;
+        });
         registry.stop(jobId);
         log.info("Dynamic job {} stop requested by '{}'.", jobId, caller.principal());
-        return entry.view();
+        return stopping.view();
+    }
+
+    /**
+     * Pauses a running job: it holds before its next document, in whichever runtime runs it, until it is resumed or
+     * stopped. Visible to its owner and the admin groups, like its status.
+     *
+     * @throws DynamicJobException {@code 404} for no such job (or one the caller may not see); {@code 409} when it is
+     *                             not running
+     */
+    public JobStatus pause(Caller caller, String jobId) {
+        return changeRun(caller, jobId, true);
+    }
+
+    /** Resumes a paused job; {@code 409} when it is not paused or running. */
+    public JobStatus resume(Caller caller, String jobId) {
+        return changeRun(caller, jobId, false);
+    }
+
+    private JobStatus changeRun(Caller caller, String jobId, boolean pause) {
+        requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
+        Entry entry = visible(caller, jobId);
+        if (!entry.state().active()
+                || !(pause ? registry.pause(jobId, entry.executionId()) : registry.resume(jobId, entry.executionId()))) {
+            throw new DynamicJobException(HttpStatus.CONFLICT, "Dynamic job '" + jobId + "' is not running.");
+        }
+        Entry changed = update(jobId, job -> job.state().active() ? job.withState(pause ? State.PAUSED : State.RUNNING) : job);
+        log.info("Dynamic job {} {} by '{}'.", jobId, pause ? "paused" : "resumed", caller.principal());
+        return (changed != null ? changed : entry).view();
+    }
+
+    /** A run of a dynamic job was interrupted (its runtime stopped renewing its heartbeat, or restarted). */
+    private void interrupted(JobRunRegistry.RunInfo run) {
+        if (run.jobId() == null || !run.jobId().startsWith(JOB_ID_PREFIX)) {
+            return;
+        }
+        Entry ended = update(run.jobId(), job -> job.state().active() && job.executionId().equals(run.executionId())
+                ? job.withNote("Interrupted: the runtime running it stopped.").finished(State.INTERRUPTED, null, clock.instant())
+                : job);
+        if (ended != null && ended.state() == State.INTERRUPTED) {
+            log.warn("Dynamic job {} [Exec ID: {}] interrupted: its runtime stopped.", run.jobId(), run.executionId());
+        }
     }
 
     // ---- Checks ----
@@ -849,12 +965,11 @@ public class DynamicJobService {
     }
 
     private Entry visible(Caller caller, String jobId) {
-        Entry entry;
-        synchronized (this) {
+        Entry entry = store.locked(() -> {
             evict();
-            entry = jobId == null ? null : jobs.get(jobId);
-        }
-        if (entry == null || !(entry.owner.equals(owner(caller)) || isAdmin(caller))) {
+            return jobId == null ? null : store.get(jobId).orElse(null);
+        });
+        if (entry == null || !(entry.owner().equals(owner(caller)) || isAdmin(caller))) {
             throw new DynamicJobException(HttpStatus.NOT_FOUND, "No dynamic job '" + jobId + "'.");
         }
         return entry;
@@ -862,60 +977,63 @@ public class DynamicJobService {
 
     // ---- Idempotency and retention ----
 
-    /** {@code request} is the checked request the key started: a {@link JobRequest} or a {@link DocumentRequest}. */
-    private record Keyed(String jobId, Object request) {}
-
-    private static String keyOf(String owner, String key) {
-        return owner + "\n" + key;
-    }
-
     /** The earlier answer for this owner's key, or {@code null} when the key is new (or absent). */
-    private synchronized Accepted replay(String owner, String key, Object request) {
+    private Accepted replay(String owner, String key, Object request) {
         if (key == null) {
             return null;
         }
-        evict();
-        Keyed keyed = keys.get(keyOf(owner, key));
+        return store.locked(() -> {
+            evict();
+            return replayLocked(owner, key, request);
+        });
+    }
+
+    /**
+     * {@link #replay}, holding the store's lock. {@code request} is the checked request: a {@link JobRequest} or a
+     * {@link DocumentRequest}.
+     */
+    private Accepted replayLocked(String owner, String key, Object request) {
+        if (key == null) {
+            return null;
+        }
+        DynamicJobStore.Keyed keyed = store.key(owner, key).orElse(null);
         if (keyed == null) {
             return null;
         }
         if (!keyed.request().equals(request)) {
             throw new DynamicJobException(HttpStatus.CONFLICT, "This idempotency key was already used for a different job.");
         }
-        Entry entry = jobs.get(keyed.jobId());
-        return new Accepted(entry.jobId, entry.executionId, STATUS_PATH + entry.jobId, entry.state, true);
+        Entry entry = store.get(keyed.jobId()).orElse(null);
+        if (entry == null) {
+            store.deleteKey(owner, key);
+            return null;
+        }
+        return new Accepted(entry.jobId(), entry.executionId(), STATUS_PATH + entry.jobId(), entry.state(), true);
     }
 
     /** Drops a job that could not be started, and returns {@code failure} to throw. */
-    private synchronized DynamicJobException forget(Entry entry, String key, DynamicJobException failure) {
-        jobs.remove(entry.jobId, entry);
-        if (key != null) {
-            keys.remove(keyOf(entry.owner, key));
-        }
+    private DynamicJobException forget(Entry entry, String key, DynamicJobException failure) {
+        store.locked(() -> {
+            store.delete(entry.jobId());
+            if (key != null) {
+                store.deleteKey(entry.owner(), key);
+            }
+            return null;
+        });
         return failure;
     }
 
-    /** Drops finished jobs past their retention, then the oldest finished ones beyond the cap. Holds the lock. */
+    /**
+     * Expires jobs left unapproved past the approval timeout, then drops finished jobs past their retention and the
+     * oldest finished ones beyond the cap. Holds the store's lock.
+     */
     private void evict() {
-        Instant unanswered = clock.instant().minus(properties.getApprovalTimeout());
-        for (Entry job : jobs.values()) {
-            if (job.state == State.PENDING_APPROVAL && job.approvedBy == null && job.createdAt.isBefore(unanswered)) {
-                job.pending = null;
-                job.note = "Not approved within " + properties.getApprovalTimeout() + ".";
-                job.finish(State.EXPIRED, null, clock.instant());
-            }
+        Instant now = clock.instant();
+        for (Entry job : store.unansweredBefore(now.minus(properties.getApprovalTimeout()))) {
+            store.save(job.withPending(null).withNote("Not approved within " + properties.getApprovalTimeout() + ".")
+                    .finished(State.EXPIRED, null, now));
         }
-        Instant expired = clock.instant().minus(properties.getRetention());
-        jobs.values().removeIf(job -> job.finishedAt != null && job.finishedAt.isBefore(expired));
-        long finished = jobs.values().stream().filter(job -> job.finishedAt != null).count();
-        Iterator<Entry> oldestFirst = jobs.values().iterator();
-        while (finished > Math.max(0, properties.getMaxRetained()) && oldestFirst.hasNext()) {
-            if (oldestFirst.next().finishedAt != null) {
-                oldestFirst.remove();
-                finished--;
-            }
-        }
-        keys.values().removeIf(keyed -> !jobs.containsKey(keyed.jobId()));
+        store.evict(now.minus(properties.getRetention()), Math.max(0, properties.getMaxRetained()));
     }
 
     // ---- The run ----
@@ -924,10 +1042,10 @@ public class DynamicJobService {
                        ExecutionProvenance provenance) {
         boolean succeeded = false;
         try {
-            succeeded = runner.run(connector, start, entry.jobId, entry.name, entry.executionId, stopRequested, provenance,
-                    entry.chunking);
+            succeeded = runner.run(connector, start, entry.jobId(), entry.name(), entry.executionId(), stopRequested, provenance,
+                    entry.chunking());
         } catch (RuntimeException e) {
-            log.error("Dynamic job {} failed: {}", entry.jobId, e.getMessage(), e);
+            log.error("Dynamic job {} failed: {}", entry.jobId(), e.getMessage(), e);
         } finally {
             // A stop interrupts this thread; clear it so the bookkeeping below is not cut short.
             Thread.interrupted();
@@ -935,12 +1053,15 @@ public class DynamicJobService {
             State end = stopRequested.getAsBoolean() ? State.STOPPED : succeeded ? State.COMPLETED : State.FAILED;
             Long documents = null;
             try {
-                documents = documentCount.apply(entry.executionId);
+                documents = documentCount.apply(entry.executionId());
             } catch (RuntimeException e) {
-                log.debug("Dynamic job {}: no document count: {}", entry.jobId, e.getMessage());
+                log.debug("Dynamic job {}: no document count: {}", entry.jobId(), e.getMessage());
             }
-            entry.finish(end, documents, clock.instant());
-            log.info("Dynamic job {} [Exec ID: {}] ended: {}.", entry.jobId, entry.executionId, end);
+            Long counted = documents;
+            // A job interrupted meanwhile (another runtime found this one silent) keeps its interruption.
+            Entry ended = update(entry.jobId(), job -> job.state().active() ? job.finished(end, counted, clock.instant()) : job);
+            log.info("Dynamic job {} [Exec ID: {}] ended: {}.", entry.jobId(), entry.executionId(),
+                    ended != null ? ended.state() : end);
         }
     }
 
@@ -952,56 +1073,56 @@ public class DynamicJobService {
         }
     }
 
-    static final class Entry {
-        private final String jobId;
-        private final String executionId;
-        private final String name;
-        private final String connector;
-        private final Kind kind;
-        private final StartView start;
-        private final String owner;
-        private final String principal;
-        private final String triggerSource;
-        private final Instant createdAt;
-        private final ChunkingSpec chunking;
-        private volatile State state = State.RUNNING;
-        private volatile boolean stopRequested;
-        private volatile Instant finishedAt;
-        private volatile Long documents;
-        /** While waiting for approval: what is needed to start it. Holds the requester's identity, never shown. */
-        private volatile Pending pending;
-        private volatile String approvedBy;
-        private volatile String note;
+    /** A dynamic job as stored. {@code pending} holds what is needed to start it once approved; it is never shown. */
+    record Entry(String jobId, String executionId, String name, String connector, Kind kind, StartView start, String owner,
+                 String principal, String triggerSource, Instant createdAt, ChunkingSpec chunking, State state,
+                 boolean stopRequested, Instant finishedAt, Long documents, Pending pending, String approvedBy, String note) {
 
-        private Entry(String jobId, String executionId, String name, String connector, Kind kind, StartView start,
-                      String owner, String principal, String triggerSource, Instant createdAt, ChunkingSpec chunking) {
-            this.jobId = jobId;
-            this.executionId = executionId;
-            this.name = name;
-            this.connector = connector;
-            this.kind = kind;
-            this.start = start;
-            this.owner = owner;
-            this.principal = principal;
-            this.triggerSource = triggerSource;
-            this.createdAt = createdAt;
-            this.chunking = chunking;
+        static Entry of(String jobId, String executionId, String name, String connector, Kind kind, StartView start,
+                        String owner, String principal, String triggerSource, Instant createdAt, ChunkingSpec chunking,
+                        State state, Pending pending) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, false, null, null, pending, null, null);
         }
 
-        private void finish(State end, Long documents, Instant at) {
-            this.documents = documents;
-            this.finishedAt = at;
-            this.state = end;
+        Entry withState(State state) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, stopRequested, finishedAt, documents, pending, approvedBy, note);
         }
 
-        private JobStatus view() {
+        Entry withPending(Pending pending) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, stopRequested, finishedAt, documents, pending, approvedBy, note);
+        }
+
+        Entry withApprovedBy(String approvedBy) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, stopRequested, finishedAt, documents, pending, approvedBy, note);
+        }
+
+        Entry withNote(String note) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, stopRequested, finishedAt, documents, pending, approvedBy, note);
+        }
+
+        Entry withStopRequested(boolean stopRequested) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, state, stopRequested, finishedAt, documents, pending, approvedBy, note);
+        }
+
+        Entry finished(State end, Long documents, Instant at) {
+            return new Entry(jobId, executionId, name, connector, kind, start, owner, principal, triggerSource, createdAt,
+                    chunking, end, stopRequested, at, documents, pending, approvedBy, note);
+        }
+
+        JobStatus view() {
             return new JobStatus(jobId, executionId, name, connector, kind, start, state, stopRequested, createdAt,
                     finishedAt, documents, principal, triggerSource, approvedBy, note, chunking);
         }
     }
 
     /** For tests: the ids of the jobs held, oldest first. */
-    synchronized List<String> heldJobIds() {
-        return new ArrayList<>(jobs.keySet());
+    List<String> heldJobIds() {
+        return store.ids();
     }
 }
