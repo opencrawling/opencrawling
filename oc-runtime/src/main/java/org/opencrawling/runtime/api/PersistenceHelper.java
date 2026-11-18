@@ -17,6 +17,10 @@ package org.opencrawling.runtime.api;
 
 import tools.jackson.databind.ObjectMapper;
 import java.io.File;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -62,10 +66,26 @@ public class PersistenceHelper {
         }
     }
 
+    /**
+     * Writes the file whole or not at all: the content goes to a temporary file in the same directory, which then
+     * replaces the file in one step. A reader, in this thread or another, sees the old content or the new one, never a
+     * file being written (which it would read as empty and replace with the defaults).
+     */
     public static synchronized void save(String filename, Object data) {
         try {
-            File file = new File(DATA_DIR + "/" + filename);
-            mapper.writeValue(file, data);
+            Path file = Path.of(DATA_DIR, filename).toAbsolutePath();
+            Files.createDirectories(file.getParent());
+            Path tmp = Files.createTempFile(file.getParent(), "." + file.getFileName(), ".tmp");
+            try {
+                mapper.writeValue(tmp.toFile(), data);
+                try {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
         } catch (Exception e) {
             System.err.println("Error saving persistence to " + filename + ": " + e.getMessage());
         }

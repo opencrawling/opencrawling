@@ -55,16 +55,22 @@ final class FileControlPlaneStore implements ControlPlaneStore {
         return type.cast(cached(name, type, () -> PersistenceHelper.loadObject(name, type, defaultValue)));
     }
 
-    private Object cached(String name, Class<?> type, Supplier<Object> read) {
+    // Package-private for FileControlPlaneStoreTest, which replaces the file during a read.
+    Object cached(String name, Class<?> type, Supplier<Object> read) {
         String key = name + "|" + type.getName();
         File file = new File(PersistenceHelper.DATA_DIR, name);
         Cached cached = cache.get(key);
         if (cached != null && file.isFile() && file.lastModified() == cached.modified() && file.length() == cached.length()) {
             return cached.value();
         }
+        // The file's state is taken before it is read: a file replaced during the read is then cached under its
+        // earlier state and read again next time, never kept as the content of the newer file.
+        boolean exists = file.isFile();
+        long modified = file.lastModified();
+        long length = file.length();
         Object value = read.get();
-        if (file.isFile()) {
-            cache.put(key, new Cached(file.lastModified(), file.length(), value));
+        if (exists) {
+            cache.put(key, new Cached(modified, length, value));
         }
         return value;
     }
