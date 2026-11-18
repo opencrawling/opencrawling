@@ -25,6 +25,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
@@ -50,9 +51,9 @@ public class ApiV1Configuration {
     }
 
     /**
-     * Where idempotency keys are kept: {@code memory} (the default; one runtime, lost on restart) or {@code redis}
+     * Where idempotency keys are kept: {@code memory} (the default; one runtime, lost on restart), {@code redis}
      * (shared by every runtime instance, kept across restarts; uses the runtime's {@code spring.data.redis}
-     * connection).
+     * connection) or {@code jdbc} (the same, in the runtime's datasource, the control-plane database; no Redis needed).
      */
     @Bean
     public IdempotencyStore apiV1IdempotencyStore(
@@ -61,7 +62,7 @@ public class ApiV1Configuration {
             @Value("${opencrawling.api.idempotency.in-progress-timeout:PT10M}") Duration inProgressTimeout,
             @Value("${opencrawling.api.idempotency.max-entries:10000}") int maxEntries,
             @Value("${opencrawling.api.idempotency.max-entries-per-caller:1000}") int maxEntriesPerCaller,
-            ObjectProvider<StringRedisTemplate> redis, JsonMapper json) {
+            ObjectProvider<StringRedisTemplate> redis, ObjectProvider<JdbcTemplate> jdbc, JsonMapper json) {
         return switch (store.strip().toLowerCase(Locale.ROOT)) {
             case "memory" -> new InMemoryIdempotencyStore(retention, maxEntries, maxEntriesPerCaller, null);
             case "redis" -> {
@@ -72,8 +73,16 @@ public class ApiV1Configuration {
                 }
                 yield new RedisIdempotencyStore(template, json, retention, inProgressTimeout);
             }
-            default -> throw new IllegalStateException("opencrawling.api.idempotency.store must be 'memory' or "
-                    + "'redis', not '" + store + "'");
+            case "jdbc" -> {
+                JdbcTemplate template = jdbc.getIfAvailable();
+                if (template == null) {
+                    throw new IllegalStateException("opencrawling.api.idempotency.store=jdbc needs the runtime's "
+                            + "datasource (spring.datasource.*), and none is configured");
+                }
+                yield new JdbcIdempotencyStore(template, json, retention, inProgressTimeout);
+            }
+            default -> throw new IllegalStateException("opencrawling.api.idempotency.store must be 'memory', "
+                    + "'redis' or 'jdbc', not '" + store + "'");
         };
     }
 
