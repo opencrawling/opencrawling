@@ -23,6 +23,7 @@ import ai.vespa.feed.client.OperationParameters;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.vespa.VespaDocumentMapper;
+import org.opencrawling.vespa.VespaFeeds;
 import org.opencrawling.vespa.VespaFields;
 import org.opencrawling.vespa.config.VespaOutputProperties;
 import org.slf4j.Logger;
@@ -95,7 +96,7 @@ public class VespaStoreWriterConsumer {
                     message.embedding(),
                     message.metadata());
 
-            client.put(vespaDocument.id(), vespaDocument.json(), OperationParameters.empty()).get();
+            VespaFeeds.put(client, vespaDocument).get();
             log.info("Successfully fed chunk {} to Vespa document type '{}'.", message.chunkId(), documentType);
         } catch (Exception e) {
             if (e instanceof InterruptedException) {

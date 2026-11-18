@@ -82,8 +82,9 @@ class VespaChunkRemoverTest {
 
     @Test
     void aFullPageOfAnotherOutputsChunksDoesNotEndTheLookup() throws Exception {
+        // "aaa" sorts before "opencrawling": the stand-in returns the other output's chunks first, filling page one.
         for (int i = 0; i < VespaChunkRemover.PAGE; i++) {
-            store("id:other:opencrawling_chunk_1024::other-" + i, "doc-3", "u");
+            store("id:aaa:opencrawling_chunk_1024::other-" + i, "doc-3", "u");
         }
         store("id:opencrawling:opencrawling_chunk_1024::mine", "doc-3", "u");
         VespaChunkRemover remover = new VespaChunkRemover(removingFeedClient(), properties(startVespa(this::answer)));
@@ -108,7 +109,8 @@ class VespaChunkRemoverTest {
     void anApplicationDeployedBeforeDocumentIdExistedIsAskedByUri() throws Exception {
         store("id:opencrawling:opencrawling_chunk_1024::old", null, "file:///data/doc-5.txt");
         VespaChunkRemover remover = new VespaChunkRemover(removingFeedClient(), properties(startVespa(query ->
-                query.contains("document_id") ? "{\"root\":{\"errors\":[{\"code\":4,\"message\":\"field 'document_id' not found\"}]}}"
+                query.contains("document_id") ? "{\"root\":{\"errors\":[{\"code\":4,\"summary\":\"Invalid query parameter\","
+                        + "\"message\":\"Could not create query from YQL: Field 'document_id' does not exist.\"}]}}"
                         : answer(query))));
 
         assertThat(remover.removeDocument("/data/doc-5.txt", "file:///data/doc-5.txt")).isEqualTo(1);
@@ -122,6 +124,42 @@ class VespaChunkRemoverTest {
                 "opencrawling", "opencrawling_chunk", 1024, 2, false, null, null, null));
 
         assertThatThrownBy(() -> remover.removeDocument("doc-6", "u")).isNotInstanceOf(VespaChunkRemover.QueryRejected.class);
+    }
+
+    @Test
+    void aVespaErrorOtherThanTheMissingFieldFailsTheDeletionInsteadOfFallingBack() throws Exception {
+        // A timeout must not read as "no document_id field": the URI fallback could then find nothing and the
+        // document be reported deleted while its chunks stay.
+        store("id:opencrawling:opencrawling_chunk_1024::a", "doc-7", "https://claims.test/x");
+        VespaChunkRemover remover = new VespaChunkRemover(removingFeedClient(), properties(startVespa(query ->
+                "{\"root\":{\"errors\":[{\"code\":12,\"summary\":\"Timed out\",\"message\":\"Query timed out\"}]}}")));
+
+        assertThatThrownBy(() -> remover.removeDocument("doc-7", "https://repo.test/doc-7"))
+                .hasMessageContaining("Timed out")
+                .isNotInstanceOf(VespaChunkRemover.QueryRejected.class);
+        assertThat(stored).containsKey("id:opencrawling:opencrawling_chunk_1024::a");
+    }
+
+    @Test
+    void moreOtherOutputsChunksThanVespaLetsUsReadFailsTheDeletion() throws Exception {
+        // Pages start below MAX_OFFSET, so the last readable hit is MAX_OFFSET + PAGE - 1: this output's chunk lies past it.
+        for (int i = 0; i < VespaChunkRemover.MAX_OFFSET + VespaChunkRemover.PAGE; i++) {
+            store("id:aaa:opencrawling_chunk_1024::other-" + i, "doc-8", "u");
+        }
+        store("id:opencrawling:opencrawling_chunk_1024::mine", "doc-8", "u");
+        VespaChunkRemover remover = new VespaChunkRemover(removingFeedClient(), properties(startVespa(this::answer)));
+
+        assertThatThrownBy(() -> remover.removeDocument("doc-8", null)).hasMessageContaining("cannot be reached");
+        assertThat(stored).containsKey("id:opencrawling:opencrawling_chunk_1024::mine");
+    }
+
+    @Test
+    void unreadableTlsFilesFailTheDeletionNotTheConstruction() {
+        // The connector holding the remover is built at startup (the runtime's own output) or per job.
+        VespaChunkRemover remover = new VespaChunkRemover(feedClient, new VespaOutputProperties("https://vespa.test:8443",
+                "opencrawling", "opencrawling_chunk", 1024, 2, true, "/absent/client.pem", "/absent/client-key.pem", null));
+
+        assertThatThrownBy(() -> remover.removeDocument("doc-9", "u")).hasMessageContaining("https://vespa.test:8443");
     }
 
     private FeedClient removingFeedClient() {

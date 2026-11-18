@@ -55,20 +55,20 @@ public final class VespaChunkRemover {
     /** Vespa's default query profile answers at most this many hits per query, from offsets below 1000. */
     static final int PAGE = 400;
     static final int MAX_OFFSET = 1000;
-    /** Rounds of looking up and removing; each removes everything found, so a document needs one per ~1400 chunks. */
+    /** Rounds of looking up and removing; each removes what it finds (up to ~1000 chunks), then looks again. */
     static final int MAX_ROUNDS = 50;
 
     private final FeedClient feedClient;
     private final VespaOutputProperties properties;
     private final Set<String> documentTypes;
-    private final HttpClient http;
+    /** Built on first use: a connector is constructed even when its TLS files are unreadable (a send then fails). */
+    private volatile HttpClient http;
 
     public VespaChunkRemover(FeedClient feedClient, VespaOutputProperties properties) {
         this.feedClient = feedClient;
         this.properties = properties;
         this.documentTypes = new LinkedHashSet<>(List.of(properties.documentType(), VespaFields.DOCUMENT_TYPE_384,
                 VespaFields.DOCUMENT_TYPE_768, VespaFields.DOCUMENT_TYPE_1024));
-        this.http = VespaTls.httpClient(properties);
     }
 
     /**
@@ -95,11 +95,15 @@ public final class VespaChunkRemover {
 
     private int remove(String field, String value) throws Exception {
         Set<String> removed = new HashSet<>();
-        for (int round = 0; round < MAX_ROUNDS; round++) {
+        for (int round = 0; ; round++) {
             List<String> ids = ownedChunkIds(field, value);
             ids.removeAll(removed);
             if (ids.isEmpty()) {
-                break;
+                return removed.size();
+            }
+            if (round == MAX_ROUNDS) {
+                throw new IllegalStateException("Chunks of " + field + " " + value + " are still found after "
+                        + MAX_ROUNDS + " rounds of removal");
             }
             List<CompletableFuture<Result>> removals = new ArrayList<>(ids.size());
             for (String id : ids) {
@@ -110,7 +114,6 @@ public final class VespaChunkRemover {
             }
             removed.addAll(ids);
         }
-        return removed.size();
     }
 
     /**
@@ -127,10 +130,28 @@ public final class VespaChunkRemover {
                 }
             }
             if (page.size() < PAGE) {
-                break;
+                return owned;
             }
         }
+        if (owned.isEmpty()) {
+            // Every page Vespa lets us read is other outputs' chunks: this output's may lie beyond them.
+            throw new IllegalStateException("More than " + MAX_OFFSET + " chunks of other outputs share " + field + " "
+                    + value + ": this output's chunks cannot be reached");
+        }
         return owned;
+    }
+
+    private HttpClient http() {
+        HttpClient client = http;
+        if (client == null) {
+            synchronized (this) {
+                if (http == null) {
+                    http = VespaTls.httpClient(properties);
+                }
+                client = http;
+            }
+        }
+        return client;
     }
 
     /** Whether a Vespa document id ({@code id:<namespace>:<type>::<local>}) is in this output's namespace and types. */
@@ -151,10 +172,16 @@ public final class VespaChunkRemover {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
-        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
         JsonNode root = JSON.readTree(response.body()).path("root");
         if (root.path("errors").isArray() && !root.path("errors").isEmpty()) {
-            throw new QueryRejected(root.path("errors").toString());
+            String errors = root.path("errors").toString();
+            // Only an application deployed before the field existed falls back to URIs; a timeout or any other error
+            // must fail the deletion, or a document could be reported deleted while its chunks stay.
+            if (errors.contains("Field '" + field + "' does not exist")) {
+                throw new QueryRejected(errors);
+            }
+            throw new IllegalStateException("Vespa could not look up the chunks with " + field + " " + value + ": " + errors);
         }
         if (response.statusCode() >= 300) {
             throw new IllegalStateException("Vespa answered " + response.statusCode() + " to a chunk lookup: "

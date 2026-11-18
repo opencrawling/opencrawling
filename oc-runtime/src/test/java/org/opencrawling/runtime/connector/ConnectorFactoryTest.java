@@ -285,7 +285,7 @@ class ConnectorFactoryTest {
     }
 
     @Test
-    void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameDocumentType() {
+    void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameEndpointAndNamespace() {
         assertThat(factory.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isFalse();
 
         VespaOutputConnector active = mock(VespaOutputConnector.class);
@@ -294,7 +294,11 @@ class ConnectorFactoryTest {
 
         // The same endpoint, written without the trailing slash.
         assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isTrue();
-        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isFalse();
+        // Another configured type still writes where the pipeline writes: both paths route the usual embedding sizes
+        // to the dimension-specific types, so sending directly would store the documents twice.
+        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isTrue();
+        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "another_namespace",
+                "opencrawling_chunk", 1024, 30, false, null, null, null))).isFalse();
         assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.other:8080", "opencrawling_chunk"))).isFalse();
     }
 
