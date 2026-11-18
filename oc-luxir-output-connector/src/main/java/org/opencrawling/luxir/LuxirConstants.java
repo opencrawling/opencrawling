@@ -34,6 +34,9 @@ public final class LuxirConstants {
     // Standard Luxir Document Fields
     public static final String FIELD_ID = "id";
     public static final String FIELD_DOC_ID = "doc_id_s";
+    /** The chunk's position in its document and the document's chunk count (int fields), for getDocumentContent. */
+    public static final String FIELD_CHUNK_INDEX = "chunk_index_i";
+    public static final String FIELD_TOTAL_CHUNKS = "total_chunks_i";
     public static final String FIELD_TITLE = "title_t";
     public static final String FIELD_TEXT = "text_t";
     public static final String FIELD_EMBEDDING = "embedding_v";

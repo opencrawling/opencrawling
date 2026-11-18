@@ -21,6 +21,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import tools.jackson.databind.json.JsonMapper;
@@ -40,7 +41,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/** Both idempotency stores keep the same contract; the Redis one also survives crashes and outages safely. */
+/** The idempotency stores keep the same contract; the Redis one also survives crashes and outages safely (the JDBC one: {@link JdbcIdempotencyStoreContract}). */
 class IdempotencyStoreTest {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -241,23 +242,29 @@ class IdempotencyStoreTest {
         ApiV1Configuration configuration = new ApiV1Configuration();
         ObjectProvider<StringRedisTemplate> none = provider(null);
         ObjectProvider<StringRedisTemplate> some = provider(mock(StringRedisTemplate.class));
+        ObjectProvider<JdbcTemplate> noDatabase = provider(null);
+        ObjectProvider<JdbcTemplate> database = provider(mock(JdbcTemplate.class));
         Duration day = Duration.ofHours(24);
         Duration tenMinutes = Duration.ofMinutes(10);
 
-        assertThat(configuration.apiV1IdempotencyStore("memory", day, tenMinutes, 10, 10, none, JSON))
+        assertThat(configuration.apiV1IdempotencyStore("memory", day, tenMinutes, 10, 10, none, noDatabase, JSON))
                 .isInstanceOf(InMemoryIdempotencyStore.class);
-        assertThat(configuration.apiV1IdempotencyStore(" Redis ", day, tenMinutes, 10, 10, some, JSON))
+        assertThat(configuration.apiV1IdempotencyStore(" Redis ", day, tenMinutes, 10, 10, some, noDatabase, JSON))
                 .isInstanceOf(RedisIdempotencyStore.class);
-        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("redis", day, tenMinutes, 10, 10, none, JSON))
+        assertThat(configuration.apiV1IdempotencyStore("JDBC", day, tenMinutes, 10, 10, none, database, JSON))
+                .isInstanceOf(JdbcIdempotencyStore.class);
+        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("redis", day, tenMinutes, 10, 10, none, database, JSON))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("spring.data.redis");
-        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("mongo", day, tenMinutes, 10, 10, some, JSON))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("'memory' or 'redis'");
+        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("jdbc", day, tenMinutes, 10, 10, some, noDatabase, JSON))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("spring.datasource");
+        assertThatThrownBy(() -> configuration.apiV1IdempotencyStore("mongo", day, tenMinutes, 10, 10, some, database, JSON))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("'memory', 'redis' or 'jdbc'");
     }
 
     @SuppressWarnings("unchecked")
-    private static ObjectProvider<StringRedisTemplate> provider(StringRedisTemplate template) {
-        ObjectProvider<StringRedisTemplate> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(template);
+    private static <T> ObjectProvider<T> provider(T value) {
+        ObjectProvider<T> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(value);
         return provider;
     }
 

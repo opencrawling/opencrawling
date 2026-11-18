@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,11 @@ public class OpenCrawlingClientProperties {
      */
     private final OAuth2 oauth2 = new OAuth2();
 
+    /**
+     * Retry policy for repeatable Platform API requests ({@code opencrawling.client.retry.*}).
+     */
+    private final Retry retry = new Retry();
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -95,8 +100,13 @@ public class OpenCrawlingClientProperties {
     public void setReadTimeout(Duration readTimeout) {
         this.readTimeout = readTimeout;
     }
+
     public OAuth2 getOauth2() {
         return oauth2;
+    }
+
+    public Retry getRetry() {
+        return retry;
     }
 
     /** OAuth 2.0 client credentials ({@code opencrawling.client.oauth2.*}). */
@@ -114,12 +124,23 @@ public class OpenCrawlingClientProperties {
         /** Optional scopes to ask for. */
         private String scope;
 
+        /** Optional audience parameter for providers that use it. */
+        private String audience;
+
         public String getTokenUri() {
             return tokenUri;
         }
 
         public void setTokenUri(String tokenUri) {
             this.tokenUri = tokenUri;
+        }
+
+        public String getTokenEndpoint() {
+            return tokenUri;
+        }
+
+        public void setTokenEndpoint(String tokenEndpoint) {
+            this.tokenUri = tokenEndpoint;
         }
 
         public String getClientId() {
@@ -146,8 +167,68 @@ public class OpenCrawlingClientProperties {
             this.scope = scope;
         }
 
+        public String getAudience() {
+            return audience;
+        }
+
+        public void setAudience(String audience) {
+            this.audience = audience;
+        }
+
         public boolean isConfigured() {
             return clientId != null && !clientId.isBlank();
+        }
+    }
+
+    /** Retry policy settings ({@code opencrawling.client.retry.*}). */
+    public static class Retry {
+
+        private int maxAttempts = 3;
+        private Duration baseDelay = Duration.ofMillis(200);
+        private Duration maxDelay = Duration.ofSeconds(10);
+
+        public int getMaxAttempts() {
+            return maxAttempts;
+        }
+
+        public void setMaxAttempts(int maxAttempts) {
+            this.maxAttempts = maxAttempts;
+        }
+
+        public Duration getBaseDelay() {
+            return baseDelay;
+        }
+
+        public void setBaseDelay(Duration baseDelay) {
+            this.baseDelay = baseDelay;
+        }
+
+        public Duration getInitialBackoff() {
+            return baseDelay;
+        }
+
+        public void setInitialBackoff(Duration initialBackoff) {
+            this.baseDelay = initialBackoff;
+        }
+
+        public Duration getMaxDelay() {
+            return maxDelay;
+        }
+
+        public void setMaxDelay(Duration maxDelay) {
+            this.maxDelay = maxDelay;
+        }
+
+        public Duration getMaxBackoff() {
+            return maxDelay;
+        }
+
+        public void setMaxBackoff(Duration maxBackoff) {
+            this.maxDelay = maxBackoff;
+        }
+
+        public org.opencrawling.sdk.v1.RetryPolicy toRetryPolicy() {
+            return new org.opencrawling.sdk.v1.RetryPolicy(maxAttempts, baseDelay, maxDelay);
         }
     }
 }

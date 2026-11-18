@@ -113,8 +113,8 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(doc -> scoreOf(doc) >= minScore)
                         .toList();
                 for (SolrDocument doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
-                    Map<String, Object> fieldMap = doc.getFieldValueMap();
+                        doc -> ResourceRef.fromMetadata(fieldsOf(doc)))) {
+                    Map<String, Object> fieldMap = fieldsOf(doc);
                     double score = scoreOf(doc);
                     String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
                     String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
@@ -142,24 +142,40 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
         ModifiableSolrParams params = new ModifiableSolrParams();
         params.set("q", "uri:\"" + ClientUtils.escapeQueryChars(documentUri) + "\"");
-        params.set("rows", 20);
+        params.set("rows", documentFetchSize());
 
         try {
-            QueryResponse response = solrClient.query(properties.collection(), params);
-            SolrDocumentList docs = response.getResults();
-
-            if (docs != null) {
-                for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
-                    Map<String, Object> fieldMap = doc.getFieldValueMap();
-                    String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
-                    String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
-                    String text = doc.getFieldValue(SolrConstants.FIELD_TEXT) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_TEXT)) : "";
-                    String acl = doc.getFieldValue(SolrConstants.FIELD_ACL) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ACL)) : "public";
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, fieldMap, acl);
-                }
+            // The document's first positions before the limit. Solr cannot sort on the multi-valued fields it creates
+            // for metadata, so the lookup is bounded by position instead; a collection whose chunks hold no position
+            // (or that has no chunk_index field yet) answers the plain lookup.
+            ModifiableSolrParams bounded = new ModifiableSolrParams(params);
+            bounded.add("fq", DocumentChunks.CHUNK_INDEX + ":[0 TO " + (documentMaxChunks() - 1) + "]");
+            SolrDocumentList docs = null;
+            try {
+                docs = solrClient.query(properties.collection(), bounded).getResults();
+            } catch (Exception e) {
+                log.debug("Solr position-bounded lookup of '{}' failed, using the plain lookup: {}", documentUri, e.getMessage());
             }
-            throw new NoSuchElementException("Document not found or access denied.");
+            if (docs == null || docs.isEmpty()) {
+                QueryResponse response = solrClient.query(properties.collection(), params);
+                docs = response.getResults();
+            }
+            List<SolrDocument> candidates = docs != null ? docs : List.of();
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    doc -> ResourceRef.fromMetadata(fieldsOf(doc))).stream()
+                    .map(doc -> {
+                        Map<String, Object> fieldMap = fieldsOf(doc);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID)),
+                                stringValue(doc.getFirstValue("documentId")),
+                                Objects.toString(stringValue(doc.getFirstValue(SolrConstants.FIELD_URI)), ""),
+                                Objects.toString(stringValue(doc.getFirstValue(SolrConstants.FIELD_TEXT)), ""),
+                                fieldMap,
+                                Objects.toString(stringValue(doc.getFieldValue(SolrConstants.FIELD_ACL)), "public"));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri)
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {
@@ -187,7 +203,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (docs != null) {
                 for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
+                        doc -> ResourceRef.fromMetadata(fieldsOf(doc)))) {
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", doc.getFieldValue(SolrConstants.FIELD_ID));
                     summary.put("uri", doc.getFieldValue(SolrConstants.FIELD_URI));
@@ -206,5 +222,21 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static double scoreOf(SolrDocument doc) {
         return doc.getFieldValue("score") instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private static String stringValue(Object value) {
+        return value != null ? String.valueOf(value) : null;
+    }
+
+
+    /**
+     * The document's fields as a plain map, without the stored vector. {@link SolrDocument#getFieldValueMap()} is a
+     * view that cannot be iterated, and the access gate, which reads every field, denies a document it cannot read.
+     */
+    static Map<String, Object> fieldsOf(SolrDocument doc) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        doc.getFieldNames().forEach(name -> fields.put(name, doc.getFieldValue(name)));
+        fields.remove(SolrConstants.FIELD_EMBEDDINGS);
+        return fields;
     }
 }

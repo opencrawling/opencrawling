@@ -123,6 +123,13 @@ public class LuxirStoreWriterConsumer {
             doc.put(LuxirConstants.FIELD_ID, message.chunkId());
             doc.put(LuxirConstants.FIELD_DOC_ID, message.documentId());
             doc.put(LuxirConstants.FIELD_TEXT, message.text());
+            // The position lets getDocumentContent put the document back together in order and tell it is complete.
+            if (message.metadata().get("chunk_index") instanceof Number index) {
+                doc.put(LuxirConstants.FIELD_CHUNK_INDEX, index.intValue());
+            }
+            if (message.metadata().get("total_chunks") instanceof Number total) {
+                doc.put(LuxirConstants.FIELD_TOTAL_CHUNKS, total.intValue());
+            }
 
             Object titleVal = message.metadata().get("title");
             if (titleVal != null) {

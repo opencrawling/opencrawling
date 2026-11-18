@@ -136,4 +136,28 @@ class VespaDocumentMapperTest {
 
         assertThat(json.readTree(document.json()).get("fields").has("document_id")).isFalse();
     }
+
+    @Test
+    void theChunksPositionAndTheDocumentsChunkCountGetFieldsOfTheirOwn() throws Exception {
+        // Declared in the schemas, so getDocumentContent can order a document's chunks; they stay in metadata_json too.
+        VespaDocumentMapper.VespaDocument document = mapper.toDocument("opencrawling", "opencrawling_chunk",
+                "doc-3_chunk-1", "text", "file:///doc-3.txt", "acl-3", "2026-01-01T00:00:00Z",
+                null, new float[]{0.3f}, Map.of("chunk_index", 1, "total_chunks", 4));
+
+        JsonNode fields = json.readTree(document.json()).get("fields");
+        assertThat(fields.get("chunk_index").asInt()).isEqualTo(1);
+        assertThat(fields.get("total_chunks").asInt()).isEqualTo(4);
+        assertThat(fields.get("metadata_json").asText()).contains("\"chunk_index\":1");
+    }
+
+    @Test
+    void aChunkWithoutAPositionGetsNoPositionField() throws Exception {
+        VespaDocumentMapper.VespaDocument document = mapper.toDocument("opencrawling", "opencrawling_chunk",
+                "doc-4_chunk-0", "text", "file:///doc-4.txt", "acl-4", "2026-01-01T00:00:00Z",
+                null, new float[]{0.3f}, Map.of("title", "Doc 4"));
+
+        JsonNode fields = json.readTree(document.json()).get("fields");
+        assertThat(fields.has("chunk_index")).isFalse();
+        assertThat(fields.has("total_chunks")).isFalse();
+    }
 }

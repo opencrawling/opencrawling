@@ -116,26 +116,28 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
             List<String> userRoles,
             Integer dimensions
     ) {
-        String documentType = resolveDocumentType(dimensions);
+        String documentType = lookupSources(dimensions);
         log.info("Vespa backend get document content. URI: '{}', Principal: '{}', DocumentType: '{}'",
                 documentUri, userPrincipal, documentType);
 
         try {
-            ObjectNode body = MAPPER.createObjectNode();
-            body.put("yql", "select * from " + documentType + " where (" + storeDenyExclusion(userPrincipal, userRoles) + ") and "
-                    + VespaFields.FIELD_URI + " contains \"" + escapeYql(documentUri) + "\"");
-            body.put("hits", 20);
-            List<RawHit> hits = parseHits(postSearch(body)).hits();
+            String yql = "select * from " + documentType + " where (" + storeDenyExclusion(userPrincipal, userRoles) + ") and "
+                    + VespaFields.FIELD_URI + " contains \"" + escapeYql(documentUri) + "\"";
+            List<RawHit> hits;
+            try {
+                // The document's first positions before the limit.
+                hits = parseHits(postSearch(documentQuery(yql + " order by " + VespaFields.FIELD_CHUNK_INDEX + " asc"))).hits();
+            } catch (IllegalStateException e) {
+                // An application deployed before the schemas had chunk_index rejects the ordering.
+                log.debug("Vespa ordered lookup of '{}' failed, using the plain lookup: {}", documentUri, e.getMessage());
+                hits = parseHits(postSearch(documentQuery(yql))).hits();
+            }
 
-            return readableHits(userPrincipal, userRoles, hits).stream()
-                    .findFirst()
-                    .map(hit -> new McpVectorServer.DocumentDetailsResult(
-                            hit.chunkId(),
-                            hit.uri(),
-                            hit.content(),
-                            hit.metadata(),
-                            hit.acl()
-                    ))
+            List<DocumentChunks.Chunk> chunks = readableHits(userPrincipal, userRoles, hits).stream()
+                    .map(hit -> new DocumentChunks.Chunk(hit.chunkId(), documentIdOf(hit), hit.uri(), hit.content(),
+                            withChunkPosition(hit), hit.acl()))
+                    .toList();
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
@@ -151,7 +153,7 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
             List<String> userRoles,
             Integer dimensions
     ) {
-        String documentType = resolveDocumentType(dimensions);
+        String documentType = lookupSources(dimensions);
         log.info("Vespa backend list accessible sources. Principal: '{}', DocumentType: '{}'",
                 userPrincipal, documentType);
 
@@ -283,6 +285,30 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
         return null;
     }
 
+    /**
+     * The hit's metadata with the chunk's position and the document's chunk count: from their fields, or from
+     * {@code metadata_json} for chunks fed before the fields existed (an unset int field reads as a negative value).
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> withChunkPosition(RawHit hit) {
+        Map<String, Object> metadata = new LinkedHashMap<>(hit.metadata() != null ? hit.metadata() : Map.of());
+        Map<String, Object> stored = Map.of();
+        if (metadata.get(VespaFields.FIELD_METADATA_JSON) instanceof String json && !json.isBlank()) {
+            try {
+                stored = MAPPER.readValue(json, Map.class);
+            } catch (Exception e) {
+                log.debug("Unreadable metadata_json on Vespa hit {}: {}", hit.chunkId(), e.getMessage());
+            }
+        }
+        for (String key : List.of(DocumentChunks.CHUNK_INDEX, DocumentChunks.TOTAL_CHUNKS)) {
+            Integer field = DocumentChunks.intValue(metadata.get(key));
+            if ((field == null || field < 0) && stored.get(key) != null) {
+                metadata.put(key, stored.get(key));
+            }
+        }
+        return metadata;
+    }
+
     public RawSearchResult parseHits(JsonNode response) {
         JsonNode root = response.path("root");
         int totalCount = root.path("fields").path("totalCount").asInt(0);
@@ -376,6 +402,15 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
         return values;
     }
 
+    /**
+     * Where a lookup that needs no query vector reads: every document type when the caller names no dimensions,
+     * since the writer feeds each chunk into the type matching its embedding's length (the default type only takes
+     * other lengths). A search, which needs a vector of one length, reads one type ({@link #resolveDocumentType}).
+     */
+    String lookupSources(Integer dimensions) {
+        return dimensions == null ? "sources *" : resolveDocumentType(dimensions);
+    }
+
     public String resolveDocumentType(Integer dimensions) {
         if (dimensions == null) return properties.documentType();
         return switch (dimensions) {
@@ -391,5 +426,12 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
         if (VespaFields.DOCUMENT_TYPE_768.equals(documentType)) return VespaFields.QUERY_INPUT_768;
         if (VespaFields.DOCUMENT_TYPE_1024.equals(documentType)) return VespaFields.QUERY_INPUT_1024;
         return VespaFields.QUERY_INPUT_DEFAULT;
+    }
+
+    private ObjectNode documentQuery(String yql) {
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("yql", yql);
+        body.put("hits", documentFetchSize());
+        return body;
     }
 }

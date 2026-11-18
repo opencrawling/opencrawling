@@ -41,12 +41,13 @@ import static org.mockito.Mockito.mock;
 /**
  * With opencrawling.control-plane.store=jdbc (#315), definitions saved through the API are rows in the runtime's
  * database (here H2, migrated by Flyway at startup), and a controller built on the same database reads them back,
- * as one would after a restart.
+ * as one would after a restart. Idempotency keys are rows of the same database (opencrawling.api.idempotency.store=jdbc).
  */
 @SpringBootTest(classes = {IdentityTestApplication.class, PlatformApiTestSupport.PlatformApi.class,
         PlatformApiV1JdbcStoreHttpTest.Database.class},
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"spring.ai.mcp.server.protocol=STREAMABLE", "opencrawling.control-plane.store=jdbc"})
+        properties = {"spring.ai.mcp.server.protocol=STREAMABLE", "opencrawling.control-plane.store=jdbc",
+                "opencrawling.api.idempotency.store=jdbc"})
 class PlatformApiV1JdbcStoreHttpTest {
 
     /** A real database for the store (the shared support mocks JdbcTemplate), migrated as the runtime's Flyway does. */
@@ -192,4 +193,35 @@ class PlatformApiV1JdbcStoreHttpTest {
 
     @Autowired
     org.opencrawling.runtime.api.SystemController system;
+
+    @Autowired
+    IdempotencyStore idempotency;
+
+    @Test
+    void aRetriedPostIsAnsweredFromTheDatabase() {
+        assertThat(idempotency).isInstanceOf(JdbcIdempotencyStore.class);
+        PlatformApiTestSupport.Http http = new PlatformApiTestSupport.Http(port);
+        String name = "Idem_" + UUID.randomUUID().toString().substring(0, 8);
+        String key = "create-" + name;
+        String body = "{\"name\":\"" + name + "\",\"type\":\"repository\",\"className\":\"org.example.Repo\",\"configuration\":{}}";
+        int before = jdbc.queryForObject("SELECT COUNT(*) FROM oc_idempotency_key", Integer.class);
+
+        HttpResponse<String> first = http.send("POST", "/api/v1/connectors", body, "Idempotency-Key", key);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(201);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM oc_idempotency_key", Integer.class)).isEqualTo(before + 1);
+
+        HttpResponse<String> retry = http.send("POST", "/api/v1/connectors", body, "Idempotency-Key", key);
+        assertThat(retry.statusCode()).as("not created twice: " + retry.body()).isEqualTo(201);
+        assertThat(retry.headers().firstValue("Idempotent-Replayed")).hasValue("true");
+        assertThat(retry.body()).isEqualTo(first.body());
+
+        HttpResponse<String> otherBody = http.send("POST", "/api/v1/connectors", body.replace("org.example.Repo", "org.example.Other"),
+                "Idempotency-Key", key);
+        assertThat(otherBody.statusCode()).isEqualTo(422);
+
+        assertThat(jdbc.queryForList("SELECT id FROM oc_idempotency_key", String.class)).as("keys are stored as digests")
+                .noneSatisfy(id -> assertThat(id).contains(key));
+
+        http.send("DELETE", "/api/v1/connectors/" + name, null);
+    }
 }

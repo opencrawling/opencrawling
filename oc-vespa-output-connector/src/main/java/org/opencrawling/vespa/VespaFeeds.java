@@ -43,7 +43,8 @@ public final class VespaFeeds {
     private static final AtomicBoolean WARNED = new AtomicBoolean();
 
     /** Fields the schemas gained after their first release: what a chunk can be fed without. */
-    static final List<String> LATER_FIELDS = List.of(VespaFields.FIELD_DOCUMENT_ID, "chunk_index", "total_chunks");
+    static final List<String> LATER_FIELDS = List.of(VespaFields.FIELD_DOCUMENT_ID, VespaFields.FIELD_CHUNK_INDEX,
+            VespaFields.FIELD_TOTAL_CHUNKS);
 
     private VespaFeeds() {}
 

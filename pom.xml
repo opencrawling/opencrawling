@@ -77,12 +77,31 @@
             </roles>
         </developer>
         <developer>
+            <id>rafaharo</id>
+            <name>Rafa Haro</name>
+            <email>rafael.haroramos@gmail.com</email>
+            <timezone>Europe/Madrid</timezone>
+            <roles>
+                <role>Lead Architect</role>
+                <role>Lead Developer</role>
+            </roles>
+        </developer>
+        <developer>
             <id>dpol1</id>
             <name>Davide Polato</name>
             <email>davide@polato.dev</email>
             <timezone>Europe/Rome</timezone>
             <roles>
                 <role>Lead Developer</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>mkjsix</id>
+            <name>Maurizio Turatti</name>
+            <email>maurizio@softinstigate.com</email>
+            <timezone>Europe/Rome</timezone>
+            <roles>
+                <role>Strategy &amp; Enterprise Architecture Advisor</role>
             </roles>
         </developer>
     </developers>

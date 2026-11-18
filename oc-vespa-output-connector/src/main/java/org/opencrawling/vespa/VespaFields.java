@@ -30,6 +30,8 @@ public final class VespaFields {
     public static final String FIELD_LAST_MODIFIED = "lastModified";
     public static final String FIELD_EMBEDDING = "embedding";
     public static final String FIELD_METADATA_JSON = "metadata_json";
+    public static final String FIELD_CHUNK_INDEX = "chunk_index";
+    public static final String FIELD_TOTAL_CHUNKS = "total_chunks";
     public static final String FIELD_SECURITY_INHERITANCE = "security_inheritance";
     public static final String FIELD_SECURITY_ALLOWED_READ = "security_allowed_read";
     public static final String FIELD_SECURITY_DENIED_READ = "security_denied_read";

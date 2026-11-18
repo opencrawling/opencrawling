@@ -230,4 +230,60 @@ class TokenProvidersTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThat(TokenProvider.of("  ").accessToken()).isNull();
     }
+
+    @Test
+    void tokenExchangeExchangesSubjectTokenCachesAndReexchangesWhenSubjectChanges() {
+        java.util.concurrent.atomic.AtomicReference<String> userToken =
+                new java.util.concurrent.atomic.AtomicReference<>("user-alice-jwt");
+        TokenExchangeProvider exchange = new TokenExchangeProvider(
+                oauth,
+                idp.base + "/token",
+                "research-agent",
+                "agent-secret",
+                userToken::get,
+                TokenExchangeProvider.ACCESS_TOKEN_TYPE,
+                () -> "actor-swarm-jwt",
+                TokenExchangeProvider.ACCESS_TOKEN_TYPE,
+                "openid profile",
+                "opencrawling-api",
+                clock);
+
+        idp.respondAccessToken("delegated-alice-1", 300);
+        idp.respondAccessToken("delegated-bob-1", 300);
+        idp.respondAccessToken("delegated-bob-2", 300);
+
+        assertThat(exchange.accessToken()).isEqualTo("delegated-alice-1");
+        assertThat(exchange.accessToken()).as("cached while subject token and expiry are valid").isEqualTo("delegated-alice-1");
+        assertThat(idp.requestsTo("/token")).hasSize(1);
+
+        FakeIdentityProvider.Request first = idp.requestsTo("/token").getFirst();
+        assertThat(first.form())
+                .containsEntry("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange")
+                .containsEntry("subject_token", "user-alice-jwt")
+                .containsEntry("subject_token_type", "urn:ietf:params:oauth:token-type:access_token")
+                .containsEntry("actor_token", "actor-swarm-jwt")
+                .containsEntry("actor_token_type", "urn:ietf:params:oauth:token-type:access_token")
+                .containsEntry("scope", "openid profile")
+                .containsEntry("audience", "opencrawling-api");
+        assertThat(exchange.toString()).doesNotContain("agent-secret").doesNotContain("user-alice-jwt");
+
+        // Switching the subject token immediately triggers a new exchange
+        userToken.set("user-bob-jwt");
+        assertThat(exchange.accessToken()).isEqualTo("delegated-bob-1");
+        assertThat(idp.requestsTo("/token")).hasSize(2);
+
+        // Advancing near expiry renews for the current subject
+        clock.advance(Duration.ofSeconds(280));
+        assertThat(exchange.accessToken()).isEqualTo("delegated-bob-2");
+        assertThat(idp.requestsTo("/token")).hasSize(3);
+
+        // Builder convenience method wires TokenExchangeProvider
+        idp.respondAccessToken("builder-delegated", 300);
+        idp.acceptedApiToken = "builder-delegated";
+        OpenCrawlingClient delegatedClient = OpenCrawlingClient.builder()
+                .baseUrl(idp.base)
+                .tokenExchange(idp.base + "/token", "research-agent", "agent-secret", "user-alice-jwt", "openid")
+                .build();
+        assertThat(delegatedClient.jobs().list()).isEmpty();
+    }
 }

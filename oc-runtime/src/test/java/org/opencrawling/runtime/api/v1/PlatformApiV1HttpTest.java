@@ -510,6 +510,62 @@ class PlatformApiV1HttpTest {
     }
 
     @Test
+    void aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger documents = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.BooleanSupplier stop = invocation.getArgument(9);
+            // One "document" per check of the flag, as JobOrchestrator checks it before each document.
+            for (int i = 0; i < 400 && !stop.getAsBoolean(); i++) {
+                documents.incrementAndGet();
+                Thread.sleep(10);
+            }
+            return true;
+        }).when(orchestrator).runJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        try {
+            String id = createJob(tag).get("id").asString();
+            String executionId = body(http.send("POST", "/api/v1/jobs/" + id + ":start", null)).get("executionId").asString();
+
+            HttpResponse<String> paused = http.send("POST", "/api/v1/job-runs/" + executionId + ":pause", null);
+            assertThat(paused.statusCode()).as(paused.body()).isEqualTo(202);
+            assertThat(body(paused).get("state").asString()).isEqualTo("PAUSED");
+            assertThat(body(http.send("GET", "/api/v1/jobs/" + id, null)).get("state").get("status").asString()).isEqualTo("Paused");
+            Thread.sleep(100); // a document in progress when the pause came
+            int held = documents.get();
+            Thread.sleep(300);
+            assertThat(documents.get()).as("no document while paused").isEqualTo(held);
+
+            HttpResponse<String> resumed = http.send("POST", "/api/v1/jobs/" + id + ":resume", null);
+            assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+            assertThat(body(resumed).get("state").get("status").asString()).isEqualTo("Running");
+            for (int i = 0; i < 100 && documents.get() == held; i++) {
+                Thread.sleep(20);
+            }
+            assertThat(documents.get()).as("documents again after the resume").isGreaterThan(held);
+
+            assertThat(http.send("POST", "/api/v1/job-runs/" + executionId + ":stop", null).statusCode()).isEqualTo(202);
+            for (int i = 0; i < 100 && http.send("GET", "/api/v1/job-runs/" + executionId, null).statusCode() == 200; i++) {
+                Thread.sleep(50);
+            }
+            HttpResponse<String> history = http.send("GET", "/api/v1/job-runs/" + executionId + "/history", null);
+            assertThat(history.statusCode()).as(history.body()).isEqualTo(200);
+            assertThat(body(history).get("state").asString()).isEqualTo("STOPPED");
+            assertThat(body(history).get("endedAt").isNull()).isFalse();
+            List<String> events = new java.util.ArrayList<>();
+            body(history).get("steps").forEach(step -> events.add(step.get("event").asString()));
+            assertThat(events).containsExactly("STARTED", "PAUSED", "RESUMED", "STOP_REQUESTED", "STOPPED");
+
+            assertProblem(http.send("POST", "/api/v1/jobs/" + id + ":resume", null), 409, "job-not-running");
+            assertProblem(http.send("POST", "/api/v1/job-runs/" + executionId + ":pause", null), 404, "not-found");
+            assertProblem(http.send("GET", "/api/v1/job-runs/exec-nothing/history", null), 404, "not-found");
+        } finally {
+            org.mockito.Mockito.reset(orchestrator);
+        }
+    }
+
+    @Test
     void aJobsExecutionsAreListedForAJobTheCallerMaySee() {
         String id = createJob(tag).get("id").asString();
         HttpResponse<String> executions = http.send("GET", "/api/v1/jobs/" + id + "/executions", null);

@@ -74,31 +74,9 @@ jobs:
           RELEASE_VER="${{ inputs.release_version }}"
           RELEASE_VER="${RELEASE_VER#v}"
           TAG_NAME="v${RELEASE_VER}"
-          CURRENT_VER=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
 
-          echo "Transitioning project version from ${CURRENT_VER} -> ${RELEASE_VER} (Tag: ${TAG_NAME})"
-
-          # 1. Update parent reactor and standalone modules
-          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false
-          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DprocessParents=true -DgenerateBackupPoms=false -f oc-connector-archetypes/pom.xml
-          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false -f oc-java-client-sdk/pom.xml
-          mvn versions:set -B -DnewVersion="${RELEASE_VER}" -DgenerateBackupPoms=false -f oc-mcf-migrator/pom.xml
-
-          # 2. Update cross-module version properties & archetype resource POMs
-          sed -i "s/<oc-java-client-sdk.version>[^<]*<\/oc-java-client-sdk.version>/<oc-java-client-sdk.version>${RELEASE_VER}<\/oc-java-client-sdk.version>/g" pom.xml
-          sed -i "s/<opencrawling-sdk.version>[^<]*<\/opencrawling-sdk.version>/<opencrawling-sdk.version>${RELEASE_VER}<\/opencrawling-sdk.version>/g" oc-mcf-migrator/pom.xml
-          sed -i "s/<version>${CURRENT_VER}<\/version>/<version>${RELEASE_VER}<\/version>/g" \
-            oc-cli/pom.xml \
-            oc-runtime/pom.xml \
-            oc-connector-archetypes/opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml \
-            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
-          sed -i "s/<opencrawling.version>[^<]*<\/opencrawling.version>/<opencrawling.version>${RELEASE_VER}<\/opencrawling.version>/g" \
-            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
-          sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${RELEASE_VER}/g" \
-            oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
-
-          # 3. Validate all Maven POMs
-          mvn validate -B
+          chmod +x scripts/stamp-version.sh
+          ./scripts/stamp-version.sh "${RELEASE_VER}"
 
           echo "release_version=${RELEASE_VER}" >> $GITHUB_OUTPUT
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
@@ -147,29 +125,10 @@ jobs:
       - name: Advance Branch to Next Development Snapshot
         if: inputs.next_snapshot_version != ''
         run: |
-          RELEASE_VER="${{ steps.set-release.outputs.release_version }}"
           NEXT_VER="${{ inputs.next_snapshot_version }}"
 
           echo "Advancing branch ${GITHUB_REF_NAME} to next development version: ${NEXT_VER}"
-
-          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false
-          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DprocessParents=true -DgenerateBackupPoms=false -f oc-connector-archetypes/pom.xml
-          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false -f oc-java-client-sdk/pom.xml
-          mvn versions:set -B -DnewVersion="${NEXT_VER}" -DgenerateBackupPoms=false -f oc-mcf-migrator/pom.xml
-
-          sed -i "s/<oc-java-client-sdk.version>[^<]*<\/oc-java-client-sdk.version>/<oc-java-client-sdk.version>${NEXT_VER}<\/oc-java-client-sdk.version>/g" pom.xml
-          sed -i "s/<opencrawling-sdk.version>[^<]*<\/opencrawling-sdk.version>/<opencrawling-sdk.version>${NEXT_VER}<\/opencrawling-sdk.version>/g" oc-mcf-migrator/pom.xml
-          sed -i "s/<version>${RELEASE_VER}<\/version>/<version>${NEXT_VER}<\/version>/g" \
-            oc-cli/pom.xml \
-            oc-runtime/pom.xml \
-            oc-connector-archetypes/opencrawling-archetype-*/src/main/resources/archetype-resources/pom.xml \
-            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
-          sed -i "s/<opencrawling.version>[^<]*<\/opencrawling.version>/<opencrawling.version>${NEXT_VER}<\/opencrawling.version>/g" \
-            oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
-          sed -i "s/OpenCrawling CLI v[^ ]*/OpenCrawling CLI v${NEXT_VER}/g" \
-            oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
-
-          mvn validate -B
+          ./scripts/stamp-version.sh "${NEXT_VER}"
 
           git add -A
           if ! git diff --cached --quiet; then

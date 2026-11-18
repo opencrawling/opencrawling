@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,14 @@
 package org.opencrawling.sdk;
 
 import org.opencrawling.sdk.auth.ClientCredentialsTokenProvider;
+import org.opencrawling.sdk.auth.TokenExchangeProvider;
 import org.opencrawling.sdk.auth.TokenProvider;
+import org.opencrawling.sdk.ingest.OisIngestClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.function.Supplier;
 
 /**
  * Main entrance client for interacting programmatically with OpenCrawling Runtime REST APIs.
@@ -79,6 +82,12 @@ public interface OpenCrawlingClient extends AutoCloseable {
      */
     org.opencrawling.sdk.v1.PlatformClient platform();
 
+    /**
+     * Client for pushing Open Ingestion Standard (OIS) documents and deletion tombstones directly into an active
+     * RAG job via {@code POST /api/v1/ingest/ois/{jobId}}.
+     */
+    OisIngestClient ingest();
+
     @Override
     default void close() {
         // No-op default close for resources
@@ -133,6 +142,27 @@ public interface OpenCrawlingClient extends AutoCloseable {
          */
         public Builder clientCredentials(String tokenEndpoint, String clientId, String clientSecret, String scope) {
             this.tokenProvider = new ClientCredentialsTokenProvider(tokenEndpoint, clientId, clientSecret, scope);
+            return this;
+        }
+
+        /**
+         * Exchanges a user's subject token for a delegated access token with the OAuth 2.0 Token Exchange grant
+         * (RFC 8693, {@code urn:ietf:params:oauth:grant-type:token-exchange}), for AI agents and services acting on
+         * behalf of users ({@code act.sub}).
+         */
+        public Builder tokenExchange(String tokenEndpoint, String clientId, String clientSecret,
+                                     Supplier<String> subjectTokenSupplier, String scope) {
+            this.tokenProvider = new TokenExchangeProvider(tokenEndpoint, clientId, clientSecret, subjectTokenSupplier, scope);
+            return this;
+        }
+
+        /**
+         * Exchanges a fixed user subject token for a delegated access token with the OAuth 2.0 Token Exchange grant
+         * (RFC 8693).
+         */
+        public Builder tokenExchange(String tokenEndpoint, String clientId, String clientSecret,
+                                     String subjectToken, String scope) {
+            this.tokenProvider = new TokenExchangeProvider(tokenEndpoint, clientId, clientSecret, subjectToken, scope);
             return this;
         }
 

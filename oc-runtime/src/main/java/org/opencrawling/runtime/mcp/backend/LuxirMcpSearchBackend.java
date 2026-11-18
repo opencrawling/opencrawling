@@ -133,25 +133,62 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
     ) {
         log.info("Luxir backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
-        Map<String, Object> queryPayload = Map.of("query", "uri_s:\"" + escape(documentUri) + "\"");
+        String byUri = "uri_s:\"" + escape(documentUri) + "\"";
 
         try {
-            LuxirClient.LuxirSearchResult result = luxirClient.search(properties.collection(), queryPayload);
-
-            if (result != null && result.docs() != null) {
-                List<Map<String, Object>> candidates = result.docs().stream()
-                        .filter(Objects::nonNull)
-                        .toList();
-                for (Map<String, Object> doc : readable(userPrincipal, userRoles, candidates,
-                        LuxirMcpSearchBackend::toResourceRef)) {
-                    String id = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", "")));
-                    String uri = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", "")));
-                    String text = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", "")));
-                    String acl = String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public"));
-                    return new McpVectorServer.DocumentDetailsResult(id, uri, text, doc, acl);
+            // The document's first positions before the limit; chunks stored without a position (before the writer
+            // kept it) are found by the plain lookup.
+            LuxirClient.LuxirSearchResult result = null;
+            try {
+                result = luxirClient.search(properties.collection(), Map.of("query", byUri + " AND "
+                        + LuxirConstants.FIELD_CHUNK_INDEX + ":[0 TO " + (documentMaxChunks() - 1) + "]",
+                        "limit", documentFetchSize()));
+            } catch (Exception e) {
+                log.debug("Luxir position-bounded lookup of '{}' failed, using the plain lookup: {}", documentUri, e.getMessage());
+            }
+            if (result == null || result.docs() == null || result.docs().isEmpty()) {
+                result = luxirClient.search(properties.collection(), Map.of("query", byUri, "limit", documentFetchSize()));
+                // Chunks stored without a position come back unordered: when the document has more than one fetch
+                // holds, its first chunks are asked for by the ids the pipeline gives them.
+                String documentId = result != null && result.docs() != null && result.docs().size() >= documentFetchSize()
+                        ? result.docs().stream().filter(Objects::nonNull)
+                                .map(doc -> doc.get(LuxirConstants.FIELD_DOC_ID)).filter(Objects::nonNull)
+                                .map(String::valueOf).findFirst().orElse(null)
+                        : null;
+                if (documentId != null) {
+                    LuxirClient.LuxirSearchResult first = luxirClient.search(properties.collection(), Map.of(
+                            "query", byUri + " AND (" + idQuery(DocumentChunks.pipelineChunkIds(documentId, documentMaxChunks())) + ")",
+                            "limit", documentFetchSize()));
+                    if (first != null && first.docs() != null && !first.docs().isEmpty()) {
+                        result = first;
+                    }
                 }
             }
-            throw new NoSuchElementException("Document not found or access denied.");
+
+            List<Map<String, Object>> candidates = result != null && result.docs() != null
+                    ? result.docs().stream().filter(Objects::nonNull).toList()
+                    : List.of();
+            // Chunks stored before the writer kept their position are placed by their id (DocumentChunks).
+            List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
+                    LuxirMcpSearchBackend::toResourceRef).stream()
+                    .map(doc -> {
+                        Map<String, Object> fields = new LinkedHashMap<>(doc);
+                        fields.remove(properties.vectorField());
+                        // Luxir's int fields carry the chunk's position and the document's chunk count.
+                        putIfPresent(fields, DocumentChunks.CHUNK_INDEX, doc.get(LuxirConstants.FIELD_CHUNK_INDEX));
+                        putIfPresent(fields, DocumentChunks.TOTAL_CHUNKS, doc.get(LuxirConstants.FIELD_TOTAL_CHUNKS));
+                        Object documentId = doc.get(LuxirConstants.FIELD_DOC_ID);
+                        return new DocumentChunks.Chunk(
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", ""))),
+                                documentId != null ? String.valueOf(documentId) : null,
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_URI, doc.getOrDefault("uri", ""))),
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_TEXT, doc.getOrDefault("text", ""))),
+                                fields,
+                                String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public")));
+                    })
+                    .toList();
+            return assembleDocument(chunks, documentUri)
+                    .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
         } catch (Exception e) {
@@ -208,5 +245,19 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
     /** Luxir keeps the source document id in {@link LuxirConstants#FIELD_DOC_ID}. */
     static ResourceRef toResourceRef(Map<String, Object> doc) {
         return new ResourceRef(ResourceRef.idValue(doc.get(LuxirConstants.FIELD_DOC_ID)), doc);
+    }
+
+    private static void putIfPresent(Map<String, Object> fields, String key, Object value) {
+        if (value != null) {
+            fields.put(key, value);
+        }
+    }
+
+    private static String idQuery(List<String> ids) {
+        StringBuilder query = new StringBuilder();
+        for (String id : ids) {
+            query.append(query.isEmpty() ? "" : " OR ").append(LuxirConstants.FIELD_ID).append(":\"").append(escape(id)).append('"');
+        }
+        return query.toString();
     }
 }

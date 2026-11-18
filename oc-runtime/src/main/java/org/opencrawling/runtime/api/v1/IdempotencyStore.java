@@ -23,9 +23,9 @@ import java.util.Map;
  * Remembers the answers to {@code POST} requests sent with an {@code Idempotency-Key}, per caller, for a limited
  * time. Only successful answers are kept, so a failed request can be retried with the same key.
  *
- * <p>Two implementations: {@link InMemoryIdempotencyStore} (the default, one runtime) and
- * {@link RedisIdempotencyStore} (shared by every runtime instance and kept across restarts), chosen with
- * {@code opencrawling.api.idempotency.store}.
+ * <p>Three implementations, chosen with {@code opencrawling.api.idempotency.store}: {@link InMemoryIdempotencyStore}
+ * (the default, one runtime), and {@link RedisIdempotencyStore} and {@link JdbcIdempotencyStore} (shared by every
+ * runtime instance and kept across restarts).
  */
 public interface IdempotencyStore {
 

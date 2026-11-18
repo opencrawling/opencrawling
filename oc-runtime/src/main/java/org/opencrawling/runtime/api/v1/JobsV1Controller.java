@@ -65,8 +65,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Pipeline jobs: create, read, replace, patch, delete, and the custom methods {@code :start}, {@code :stop} and
- * {@code :pause}. Validation, authorization and audit are those of {@link JobController}, which these endpoints call.
+ * Pipeline jobs: create, read, replace, patch, delete, and the custom methods {@code :start}, {@code :stop},
+ * {@code :pause} and {@code :resume}. Validation, authorization and audit are those of {@link JobController}, which these endpoints call.
  */
 @RestController
 @RequestMapping(ApiV1.BASE + "/jobs")
@@ -234,7 +234,7 @@ public class JobsV1Controller {
                 JobRunRegistry.RunInfo info = jobs.getRun(started.jobId()).getBody();
                 JobRunResource run = info != null && started.executionId().equals(info.executionId())
                         ? JobRunResource.of(info)
-                        : new JobRunResource(started.executionId(), started.jobId(), Instant.now(), false);
+                        : new JobRunResource(started.executionId(), started.jobId(), Instant.now(), false, null, null);
                 yield ResponseEntity.accepted()
                         .location(ApiV1.location("job-runs", started.executionId()))
                         .body(run);
@@ -264,13 +264,28 @@ public class JobsV1Controller {
         return ResponseEntity.status(result.getStatusCode()).body(resource(find(id)));
     }
 
-    @Operation(operationId = "pauseJob", summary = "Mark the job as paused",
-            description = "Sets the job's status to Paused, as the admin UI does. It does not suspend a run in progress; use :stop for that.")
-    @ApiResponse(responseCode = "200", description = "Marked as paused")
+    @Operation(operationId = "pauseJob", summary = "Pause the job's run",
+            description = "Pauses the job's run, in whichever runtime it runs: it holds before its next document until :resume or :stop. "
+                    + "The job's status becomes Paused; a job with no run is only marked Paused.")
+    @ApiResponse(responseCode = "200", description = "Paused, or marked as paused")
     @PostMapping("/{id}:pause")
     public ResponseEntity<JobResource> pause(@PathVariable String id) {
         JobDTO job = find(id);
         requireOk(jobs.pauseJob(job.id()), "Job", id);
+        return ResponseEntity.ok(resource(find(id)));
+    }
+
+    @Operation(operationId = "resumeJob", summary = "Resume the job's paused run",
+            description = "The paused run goes on from the document where it held. 409 job-not-running when the job has no run to resume; start it instead.")
+    @ApiResponse(responseCode = "200", description = "The run goes on; the job's status is Running")
+    @PostMapping("/{id}:resume")
+    public ResponseEntity<JobResource> resume(@PathVariable String id) {
+        JobDTO job = find(id);
+        ResponseEntity<Void> result = jobs.resumeJob(job.id());
+        if (result.getStatusCode().value() == 409) {
+            throw ApiProblem.conflict("job-not-running", "The job has no run to resume; start it instead.");
+        }
+        requireOk(result, "Job", id);
         return ResponseEntity.ok(resource(find(id)));
     }
 

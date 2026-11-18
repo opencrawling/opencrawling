@@ -14,7 +14,8 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | DocumentationContract | `PlatformApiV1DocumentationContractTest` | Every operation is fully documented (description, parameters, examples, schemas, problem details, code sample) |
 | UiParity | `PlatformApiV1UiParityTest` | Every call the admin UI makes is a documented v1 operation, read from the UI's sources, and everything it did before still uses one |
 | Sdk | `PlatformApiV1SdkTest` | The Java SDK's `platform()` client against the runtime: it reaches every operation in the API description and reads each answer |
-| Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | Both idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
+| Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | The idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
+| IdempotencyJdbc | `JdbcIdempotencyStoreTest` (H2), `JdbcIdempotencyStorePostgresIT` | The JDBC idempotency store keeps the same contract with the real migrations: answers replayed by another runtime and after a restart, expiry, a held key, renewals that never cut a finished request's retention, 5 rounds of 16 racing runtimes of which exactly one runs, no caller, path or key in the table, and the database down (`503`, never a failed request) |
 | Unit | `PlatformApiV1UnitTest` | Cursors, ETags, merge patch, idempotency store, secret masking, request scoping, error mapping |
 | Console | `oc-admin-ui/src/lib/apiConsole.test.ts` | The API console's logic: reading the description, building and describing requests, history |
 | UiClient | `oc-admin-ui/src/lib/api.test.ts` | The admin UI's API client: v1 URLs and methods, cursor following, ETags and `If-Match`, problem messages |
@@ -76,6 +77,7 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | `startJob` | `POST /api/v1/jobs/{id}:start` | Per job access (READ, EXECUTE, MANAGE) | `Authorization.jobsFollowTheirAccess`<br>`Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.startingAJobAnswersWithItsRunAndAnIdempotencyKeyPreventsASecondRun` |
 | `stopJob` | `POST /api/v1/jobs/{id}:stop` | Per job access (READ, EXECUTE, MANAGE) | `Core.startingAJobAnswersWithItsRunAndAnIdempotencyKeyPreventsASecondRun` |
 | `pauseJob` | `POST /api/v1/jobs/{id}:pause` | Per job access (READ, EXECUTE, MANAGE) | `Core.pausingMarksTheJobAndRunsInProgressAreListed` |
+| `resumeJob` | `POST /api/v1/jobs/{id}:resume` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `listJobExecutions` | `GET /api/v1/jobs/{jobId}/executions` | Per job access (READ, EXECUTE, MANAGE) | `Core.aJobsExecutionsAreListedForAJobTheCallerMaySee` |
 | `diagnoseJob` | `GET /api/v1/jobs/{jobId}/diagnosis` | Per job access (READ, EXECUTE, MANAGE) | `Operations.aJobsDiagnosisTracesAndErrorsComeFromObservability` |
 | `getJobTraces` | `GET /api/v1/jobs/{jobId}/traces` | Per job access (READ, EXECUTE, MANAGE) | `Operations.aJobsDiagnosisTracesAndErrorsComeFromObservability` |
@@ -83,6 +85,9 @@ All 61 operations (49 core, 12 in optional features). Every operation is also co
 | `listJobRuns` | `GET /api/v1/job-runs` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.pausingMarksTheJobAndRunsInProgressAreListed` |
 | `getJobRun` | `GET /api/v1/job-runs/{executionId}` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource`<br>`Core.pausingMarksTheJobAndRunsInProgressAreListed` |
 | `stopJobRun` | `POST /api/v1/job-runs/{executionId}:stop` | Per job access (READ, EXECUTE, MANAGE) | `Core.aRunInProgressIsReadAndStoppedThroughItsOwnResource` |
+| `pauseJobRun` | `POST /api/v1/job-runs/{executionId}:pause` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
+| `resumeJobRun` | `POST /api/v1/job-runs/{executionId}:resume` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
+| `getJobRunHistory` | `GET /api/v1/job-runs/{executionId}/history` | Per job access (READ, EXECUTE, MANAGE) | `Core.aPausedRunHoldsUntilItIsResumedAndItsHistoryIsKept` |
 | `listExecutions` | `GET /api/v1/executions` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `getExecution` | `GET /api/v1/executions/{executionId}` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |
 | `listExecutionDocuments` | `GET /api/v1/executions/{executionId}/documents` | Per job access (READ, EXECUTE, MANAGE) | `Core.executionsAreListedNewestFirstAndTheirLedgerIsPaged` |

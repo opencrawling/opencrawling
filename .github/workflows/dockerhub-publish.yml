@@ -2,8 +2,16 @@ name: Publish Docker Hub Images
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'
+      - '!v*-rc.*'
   workflow_dispatch:
+    inputs:
+      push_latest:
+        description: 'Tag pushed images as :latest (only enable for GA releases)'
+        type: boolean
+        required: false
+        default: false
 
 permissions: read-all
 
@@ -48,7 +56,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) || (github.event_name == 'workflow_dispatch' && inputs.push_latest == true) }}
 
       # Build and push Backend image (oc-runtime)
       - name: Build and push Backend image
@@ -74,7 +82,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) || (github.event_name == 'workflow_dispatch' && inputs.push_latest == true) }}
 
       # Build and push Frontend image (oc-admin-ui)
       - name: Build and push Frontend image

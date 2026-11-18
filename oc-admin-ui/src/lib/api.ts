@@ -121,6 +121,9 @@ export function problemMessage(err: unknown, fallback: string): string {
 /** Whether a save was refused because the resource changed since it was read (`412`, If-Match). */
 export const isPreconditionFailed = (err: unknown) => axios.isAxiosError(err) && err.response?.status === 412
 
+/** 409 job-not-running: the job has no run to resume. */
+export const isNotRunning = (err: unknown) => axios.isAxiosError(err) && err.response?.status === 409
+
 /** A resource with the ETag it was read with, to send back as If-Match when saving it. */
 export interface Versioned<T> {
   data: T
@@ -268,6 +271,8 @@ export const jobApi = {
   start: (id: string) => api.post(`/jobs/${seg(id)}:start`),
   stop: (id: string) => api.post(`/jobs/${seg(id)}:stop`),
   pause: (id: string) => api.post(`/jobs/${seg(id)}:pause`),
+  /** Resumes the job's paused run; 409 `job-not-running` when it has none (then it can be started). */
+  resume: (id: string) => api.post(`/jobs/${seg(id)}:resume`),
   /**
    * Creates a job (no id, or `new`) or saves the form's fields of an existing one; with the ETag it was read with, a
    * change made in between (by someone else, or by its run) answers 412 instead of being overwritten.

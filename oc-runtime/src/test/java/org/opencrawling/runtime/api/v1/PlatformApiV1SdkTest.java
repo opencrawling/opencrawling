@@ -53,6 +53,7 @@ import org.opencrawling.sdk.v1.model.DynamicJobRequest;
 import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
+import org.opencrawling.sdk.v1.model.JobRunHistory;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -258,10 +259,21 @@ class PlatformApiV1SdkTest {
             ApiProblemException running = (ApiProblemException) org.assertj.core.api.Assertions.catchThrowable(() ->
                     api.jobs().start(jobId, RequestOptions.none()));
             assertThat(running.code()).isEqualTo("job-already-running");
+            assertThat(api.jobRuns().pause(executionId).state()).isEqualTo("PAUSED");
+            assertThat(api.jobRuns().resume(executionId).state()).isEqualTo("RUNNING");
+            assertThat(api.jobs().pause(jobId).state().status()).isEqualTo("Paused");
+            assertThat(api.jobRuns().get(executionId).state()).isEqualTo("PAUSED");
+            assertThat(api.jobs().resume(jobId).state().status()).isEqualTo("Running");
+            assertThat(api.jobRuns().history(executionId).steps()).extracting(JobRunHistory.Step::event)
+                    .containsExactly("STARTED", "PAUSED", "RESUMED", "PAUSED", "RESUMED");
             assertThat(api.jobRuns().stop(executionId).stopRequested()).isTrue();
             for (int i = 0; i < 100 && api.jobRuns().list(jobId, PageRequest.first()).page().totalItems() > 0; i++) {
                 Thread.sleep(50);
             }
+            assertThat(api.jobRuns().history(executionId).state()).isEqualTo("STOPPED");
+            ApiProblemException notRunning = (ApiProblemException) org.assertj.core.api.Assertions.catchThrowable(() ->
+                    api.jobs().resume(jobId));
+            assertThat(notRunning.code()).isEqualTo("job-not-running");
             api.jobs().start(jobId, RequestOptions.none());
             assertThat(api.jobs().stop(jobId).id()).isEqualTo(jobId);
             assertThat(api.jobs().pause(jobId).state().status()).isEqualTo("Paused");

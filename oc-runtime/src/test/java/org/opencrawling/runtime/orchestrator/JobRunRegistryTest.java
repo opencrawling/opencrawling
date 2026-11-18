@@ -176,4 +176,57 @@ class JobRunRegistryTest {
         });
         run.release.countDown();
     }
+
+    @Test
+    void aPausedRunHoldsBeforeItsNextDocumentUntilItIsResumedOrStopped() throws Exception {
+        JobRunRegistry registry = new JobRunRegistry(0);
+        java.util.concurrent.atomic.AtomicInteger documents = new java.util.concurrent.atomic.AtomicInteger();
+        JobRunRegistry.Reservation reservation = reserved(registry.reserve("job-1", "exec-a"));
+        reservation.start(stopRequested -> {
+            while (!stopRequested.getAsBoolean()) {
+                documents.incrementAndGet();
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        await().atMost(5, TimeUnit.SECONDS).until(() -> documents.get() > 0);
+
+        assertThat(registry.pause("job-1", "exec-a")).isTrue();
+        assertThat(registry.run("job-1")).get().extracting(JobRunRegistry.RunInfo::state).isEqualTo(RunStore.RunState.PAUSED);
+        Thread.sleep(50);
+        int held = documents.get();
+        Thread.sleep(200);
+        assertThat(documents.get()).isEqualTo(held);
+
+        assertThat(registry.resume("job-1", "exec-a")).isTrue();
+        await().atMost(5, TimeUnit.SECONDS).until(() -> documents.get() > held);
+
+        registry.pause("job-1", "exec-a");
+        assertThat(registry.stop("job-1")).as("a paused run can be stopped").isTrue();
+        await().atMost(5, TimeUnit.SECONDS).until(() -> registry.run("job-1").isEmpty());
+        assertThat(registry.execution("exec-a")).get().extracting(JobRunRegistry.RunInfo::state).isEqualTo(RunStore.RunState.STOPPED);
+        assertThat(registry.pause("job-1", "exec-a")).as("an ended run").isFalse();
+        assertThat(registry.pause("job-2", "exec-a")).as("another job's run").isFalse();
+    }
+
+    @Test
+    void aRunEndsAsItsBodySays() {
+        JobRunRegistry registry = new JobRunRegistry(0);
+        reserved(registry.reserve("job-1", "exec-ok")).startJob(stop -> true);
+        reserved(registry.reserve("job-2", "exec-false")).startJob(stop -> false);
+        reserved(registry.reserve("job-3", "exec-throws")).start(stop -> {
+            throw new IllegalStateException("boom");
+        });
+        await().atMost(5, TimeUnit.SECONDS).until(() -> registry.runs().isEmpty());
+
+        assertThat(registry.execution("exec-ok")).get().extracting(JobRunRegistry.RunInfo::state).isEqualTo(RunStore.RunState.COMPLETED);
+        assertThat(registry.execution("exec-false")).get().extracting(JobRunRegistry.RunInfo::state).isEqualTo(RunStore.RunState.FAILED);
+        assertThat(registry.steps("exec-throws")).last().satisfies(step -> {
+            assertThat(step.event()).isEqualTo(RunStore.RunEvent.FAILED);
+            assertThat(step.detail()).isEqualTo("boom");
+        });
+    }
 }

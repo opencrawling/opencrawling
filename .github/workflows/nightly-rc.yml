@@ -1,0 +1,614 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Nightly Release Candidate (Midnight CET)
+
+on:
+  schedule:
+    # Dual UTC schedule for 00:05 Europe/Rome across DST transitions:
+    #   22:05 UTC = 00:05 CEST (UTC+2)
+    #   23:05 UTC = 00:05 CET  (UTC+1)
+    # An explicit Europe/Rome hour guard in `prepare` ensures only one run fires per day.
+    - cron: '5 22 * * *'
+    - cron: '5 23 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build RC even if main HEAD has not changed since the latest RC'
+        type: boolean
+        required: false
+        default: true
+      rc_version_override:
+        description: 'Optional RC version override (e.g. 1.0.5-rc.20261117)'
+        type: string
+        required: false
+        default: ''
+      skip_docker:
+        description: 'Skip multi-arch Docker builds (for quick archive-only runs)'
+        type: boolean
+        required: false
+        default: false
+
+permissions: read-all
+
+concurrency:
+  group: nightly-rc
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Evaluate Schedule, Trunk Diff & CI Gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      should_run: ${{ steps.eval.outputs.should_run || 'false' }}
+      rc_version: ${{ steps.eval.outputs.rc_version }}
+      base_version: ${{ steps.eval.outputs.base_version }}
+      tag_name: ${{ steps.eval.outputs.tag_name }}
+      head_sha: ${{ steps.eval.outputs.head_sha }}
+      latest_ga_tag: ${{ steps.eval.outputs.latest_ga_tag }}
+      build_time_cet: ${{ steps.eval.outputs.build_time_cet }}
+
+    steps:
+      - name: Check Midnight CET/CEST Window (Scheduled Runs)
+        id: window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          ROME_HOUR=$(TZ=Europe/Rome date +%H)
+          ROME_NOW=$(TZ=Europe/Rome date '+%Y-%m-%d %H:%M %Z')
+          echo "Current Europe/Rome time: ${ROME_NOW}"
+          if [ "$EVENT_NAME" = "schedule" ] && [ "$ROME_HOUR" != "00" ]; then
+            echo "Skipping non-midnight UTC slot (${ROME_NOW})."
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout main (History & Tags)
+        if: steps.window.outputs.in_window == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Evaluate Trunk Version, Changes & CI Status
+        id: eval
+        if: steps.window.outputs.in_window == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_RUN: ${{ inputs.force }}
+          RC_VERSION_OVERRIDE: ${{ inputs.rc_version_override }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          POM_VER=$(python3 -c '
+          import xml.etree.ElementTree as ET
+          root = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          ver = root.find("m:version", ns)
+          print(ver.text.strip() if ver is not None else "")
+          ')
+
+          if [ -z "$POM_VER" ]; then
+            echo "[ERROR] Unable to parse project version from pom.xml" >&2
+            exit 1
+          fi
+
+          BASE_VER="${POM_VER%-SNAPSHOT}"
+          RC_DATE=$(TZ=Europe/Rome date +%Y%m%d)
+          BUILD_TIME_CET=$(TZ=Europe/Rome date '+%Y-%m-%d %H:%M:%S %Z')
+
+          OVERRIDE="${RC_VERSION_OVERRIDE#v}"
+          if [ -n "$OVERRIDE" ]; then
+            RC_VER="$OVERRIDE"
+          else
+            RC_VER="${BASE_VER}-rc.${RC_DATE}"
+          fi
+          TAG_NAME="v${RC_VER}"
+
+          LATEST_GA_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+          LATEST_RC_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == true and (.tagName | test("-rc\\.")))][0].tagName // ""')
+
+          echo "main HEAD: ${HEAD_SHA}"
+          echo "POM version: ${POM_VER} -> RC version: ${RC_VER} (${TAG_NAME})"
+          echo "Latest GA tag: ${LATEST_GA_TAG:-none}"
+          echo "Latest RC tag: ${LATEST_RC_TAG:-none}"
+
+          if [ "$FORCE_RUN" != "true" ] && [ -z "$OVERRIDE" ] && [ -n "$LATEST_RC_TAG" ]; then
+            LATEST_RC_SHA=$(git rev-list -n 1 "refs/tags/${LATEST_RC_TAG}" 2>/dev/null || true)
+            if [ "$LATEST_RC_SHA" = "$HEAD_SHA" ]; then
+              echo "main HEAD (${HEAD_SHA}) matches latest RC (${LATEST_RC_TAG}); skipping duplicate RC build."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [ "$FORCE_RUN" != "true" ]; then
+            CI_INFO=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$HEAD_SHA" --limit 1 --json status,conclusion --jq '.[0] | "\(.status // "")|\(.conclusion // "")"' 2>/dev/null || true)
+            CI_STATUS="${CI_INFO%%|*}"
+            CI_CONCLUSION="${CI_INFO#*|}"
+            if [ -n "$CI_STATUS" ] && [ "$CI_STATUS" != "completed" ]; then
+              echo "CI workflow for ${HEAD_SHA} is still '${CI_STATUS}'; skipping tonight's RC run instead of racing tests."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$CI_STATUS" = "completed" ] && [ "$CI_CONCLUSION" != "success" ]; then
+              echo "::error::Latest ci.yml run for ${HEAD_SHA} concluded with '${CI_CONCLUSION}'. Refusing to publish a broken RC."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "should_run=true"
+            echo "rc_version=${RC_VER}"
+            echo "base_version=${BASE_VER}"
+            echo "tag_name=${TAG_NAME}"
+            echo "head_sha=${HEAD_SHA}"
+            echo "latest_ga_tag=${LATEST_GA_TAG}"
+            echo "build_time_cet=${BUILD_TIME_CET}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-rc-artifacts:
+    name: Build VM ZIPs, CLI/SDK JARs, PDFs & Compose Manifests
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      hashes: ${{ steps.checksums.outputs.hashes }}
+
+    steps:
+      - name: Checkout main at Evaluated Commit
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Ephemerally Stamp RC Version in Runner Workspace
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          chmod +x scripts/stamp-version.sh
+          ./scripts/stamp-version.sh "$VER"
+
+      - name: Build & Package VM Distribution ZIPs
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          chmod +x scripts/package-dist.sh
+          ./scripts/package-dist.sh "$VER"
+
+      - name: Smoke-Test Packaged RC Distribution Archive
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          VERIFY_DIR=$(mktemp -d)
+          unzip -q "dist/opencrawling-platform-dist-${VER}.zip" -d "$VERIFY_DIR"
+          BUNDLE_DIR="${VERIFY_DIR}/opencrawling-platform-dist-${VER}"
+          test -f "${BUNDLE_DIR}/runtime/app.jar"
+          test -d "${BUNDLE_DIR}/runtime/lib"
+          test -f "${BUNDLE_DIR}/embedding-service/oc-embedding-service.jar"
+          test -f "${BUNDLE_DIR}/admin-ui/dist/index.html"
+          test -f "${BUNDLE_DIR}/cli/oc-cli.jar"
+          "${BUNDLE_DIR}/bin/oc" --version | grep -F "$VER"
+          rm -rf "$VERIFY_DIR"
+
+      - name: Stage Standalone CLI & Java Client SDK JARs
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          CLI_JAR=$(ls oc-cli/target/oc-cli-*.jar 2>/dev/null | grep -v 'original' | head -n 1)
+          cp "$CLI_JAR" "dist/oc-cli-${VER}.jar"
+
+          SDK_JAR=$(ls oc-java-client-sdk/target/oc-java-client-sdk-*.jar 2>/dev/null | grep -v 'sources' | grep -v 'javadoc' | grep -v 'original' | head -n 1 || true)
+          if [ -z "$SDK_JAR" ] || [ ! -f "$SDK_JAR" ]; then
+            mvn -f oc-java-client-sdk/pom.xml package -DskipTests -B
+            SDK_JAR=$(ls oc-java-client-sdk/target/oc-java-client-sdk-*.jar 2>/dev/null | grep -v 'sources' | grep -v 'javadoc' | grep -v 'original' | head -n 1)
+          fi
+          cp "$SDK_JAR" "dist/oc-java-client-sdk-${VER}.jar"
+
+      - name: Checkout Wiki Documentation
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: opencrawling.wiki
+        continue-on-error: true
+
+      - name: Set up Python for Documentation PDF Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PDF Generation Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install weasyprint markdown
+
+      - name: Generate User & Reference Documentation PDFs
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          chmod +x scripts/generate-pdf-guide.sh scripts/generate-reference-pdf.sh
+          if [ -f "opencrawling.wiki/User-and-Installation-Guide.md" ]; then
+            ./scripts/generate-pdf-guide.sh "$VER" "opencrawling.wiki/User-and-Installation-Guide.md"
+          elif [ -f "docs/User-and-Installation-Guide.md" ]; then
+            ./scripts/generate-pdf-guide.sh "$VER" "docs/User-and-Installation-Guide.md"
+          fi
+          if [ -d "opencrawling.wiki" ]; then
+            ./scripts/generate-reference-pdf.sh "$VER" opencrawling.wiki
+          fi
+
+      - name: Generate RC Docker Compose Manifests
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          chmod +x scripts/generate-rc-compose.sh
+          ./scripts/generate-rc-compose.sh "$VER" dist
+
+      - name: Compute Unified Checksums & SLSA Subject Hashes
+        id: checksums
+        run: |
+          cd dist
+          rm -f *.sha256 SHA256SUMS.txt
+          for f in *.zip *.jar *.pdf; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "${f}.sha256"
+          done
+          cat *.sha256 > SHA256SUMS.txt
+          echo "hashes=$(sha256sum *.zip *.jar *.pdf 2>/dev/null | base64 -w0)" >> "$GITHUB_OUTPUT"
+          ls -lh
+
+      - name: Upload RC Distribution Artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: opencrawling-rc-artifacts
+          path: |
+            dist/*.zip
+            dist/*.jar
+            dist/*.pdf
+            dist/*.sha256
+            dist/SHA256SUMS.txt
+            dist/docker-compose-apps-rc.yml
+            dist/docker-compose-decoupled-rc.yml
+
+  publish-rc-docker:
+    name: Build & Push RC Docker Images (${{ matrix.image }})
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true' && inputs.skip_docker != true
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: oc-mcp-server
+            context: .
+            dockerfile: docker/Dockerfile.mcp-server
+            needs_stamp: true
+          - image: oc-crawler
+            context: .
+            dockerfile: docker/Dockerfile.crawler
+            needs_stamp: true
+          - image: oc-ingestion-consumer
+            context: .
+            dockerfile: docker/Dockerfile.ingestion-consumer
+            needs_stamp: true
+          - image: oc-embedding-consumer
+            context: .
+            dockerfile: docker/Dockerfile.embedding-consumer
+            needs_stamp: true
+          - image: oc-writer-consumer
+            context: .
+            dockerfile: docker/Dockerfile.writer-consumer
+            needs_stamp: true
+          - image: oc-cli
+            context: .
+            dockerfile: docker/Dockerfile.cli
+            needs_stamp: true
+          - image: oc-admin-ui
+            context: ./oc-admin-ui
+            dockerfile: oc-admin-ui/Dockerfile
+            needs_stamp: false
+
+    steps:
+      - name: Checkout main at Evaluated Commit
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Free Runner Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Set up JDK 25 (For Version Stamping)
+        if: matrix.needs_stamp == true
+        uses: actions/setup-java@v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Ephemerally Stamp RC Version in Workspace
+        if: matrix.needs_stamp == true
+        env:
+          VER: ${{ needs.prepare.outputs.rc_version }}
+        run: |
+          chmod +x scripts/stamp-version.sh
+          ./scripts/stamp-version.sh "$VER" --skip-validate
+
+      - name: Downcase Repository Owner
+        id: repo-owner
+        run: |
+          echo "owner=${OWNER,,}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Docker Hub Credentials Availability
+        id: dockerhub-creds
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub (When Configured)
+        id: dockerhub-auth
+        if: steps.dockerhub-creds.outputs.enabled == 'true'
+        uses: docker/login-action@v4.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute RC Container Tags (Isolated from :latest)
+        id: tags
+        env:
+          OWNER: ${{ steps.repo-owner.outputs.owner }}
+          IMG: ${{ matrix.image }}
+          RC_VER: ${{ needs.prepare.outputs.rc_version }}
+          BASE_VER: ${{ needs.prepare.outputs.base_version }}
+          DOCKERHUB_OK: ${{ steps.dockerhub-auth.outcome }}
+        run: |
+          {
+            echo "list<<EOF"
+            echo "ghcr.io/${OWNER}/${IMG}:${RC_VER}"
+            echo "ghcr.io/${OWNER}/${IMG}:${BASE_VER}-rc"
+            echo "ghcr.io/${OWNER}/${IMG}:rc"
+            if [ "$DOCKERHUB_OK" = "success" ]; then
+              echo "opencrawling/${IMG}:${RC_VER}"
+              echo "opencrawling/${IMG}:${BASE_VER}-rc"
+              echo "opencrawling/${IMG}:rc"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build & Push Multi-Arch RC Image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.rc_version }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.head_sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=rc-${{ matrix.image }}
+          cache-to: type=gha,mode=min,scope=rc-${{ matrix.image }}
+
+  publish-rc-release:
+    name: Tag, Sign & Publish GitHub Pre-Release
+    needs: [prepare, build-rc-artifacts, publish-rc-docker]
+    if: |
+      always() &&
+      needs.prepare.outputs.should_run == 'true' &&
+      needs.build-rc-artifacts.result == 'success' &&
+      (needs.publish-rc-docker.result == 'success' || needs.publish-rc-docker.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout main at Evaluated Commit
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Create & Push Annotated RC Tag (Pointing Directly to main HEAD)
+        env:
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          RC_VER: ${{ needs.prepare.outputs.rc_version }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$TAG_NAME" "$HEAD_SHA" -m "OpenCrawling Release Candidate ${RC_VER}"
+          git push origin "$TAG_NAME" --force
+
+      - name: Download Built RC Artifacts
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: opencrawling-rc-artifacts
+          path: rc-dist/
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign Checksums & CLI JAR with Cosign (Keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob --yes \
+            --bundle rc-dist/SHA256SUMS.txt.sigstore.json \
+            rc-dist/SHA256SUMS.txt
+          for jar in rc-dist/oc-cli-*.jar; do
+            [ -f "$jar" ] || continue
+            cosign sign-blob --yes --bundle "${jar}.sigstore.json" "$jar"
+          done
+
+      - name: Compose RC Release Notes
+        env:
+          RC_VER: ${{ needs.prepare.outputs.rc_version }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          LATEST_GA: ${{ needs.prepare.outputs.latest_ga_tag }}
+          BUILD_TIME: ${{ needs.prepare.outputs.build_time_cet }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          rc_ver = os.environ["RC_VER"]
+          head_sha = os.environ["HEAD_SHA"]
+          short_sha = head_sha[:8]
+          latest_ga = os.environ.get("LATEST_GA", "")
+          build_time = os.environ["BUILD_TIME"]
+
+          ga_note = f" (`{latest_ga}`)" if latest_ga else ""
+          lines = [
+              f"> **Daily Nightly Release Candidate (Pre-Release)** — Built automatically from `main` for evaluation and early testing. For production deployments, use the latest stable GA release{ga_note}.",
+              "",
+              "### Build Metadata",
+              f"- **Version**: `{rc_ver}`",
+              f"- **Source Commit**: [`{short_sha}`](https://github.com/{repo}/commit/{head_sha}) on `main`",
+              f"- **Built At**: {build_time}",
+          ]
+          if latest_ga:
+              lines.append(f"- **Changes since {latest_ga}**: [{latest_ga}...{short_sha}](https://github.com/{repo}/compare/{latest_ga}...{head_sha})")
+          lines.extend([
+              "",
+              "### Docker Images (Isolated from `:latest`)",
+              "```bash",
+              f"# Pull latest daily RC (or pin :{rc_ver})",
+              f"OPENCRAWLING_IMAGE_TAG={rc_ver} docker compose -f docker-compose-decoupled-rc.yml up -d",
+              "```",
+              "",
+          ])
+          pathlib.Path("rc-notes.md").write_text("\n".join(lines), encoding="utf-8")
+          PY
+          cat rc-notes.md
+
+      - name: Create GitHub Pre-Release & Upload Assets
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: OpenCrawling ${{ needs.prepare.outputs.rc_version }} (Nightly RC)
+          prerelease: true
+          body_path: rc-notes.md
+          generate_release_notes: true
+          files: |
+            rc-dist/*.zip
+            rc-dist/*.jar
+            rc-dist/*.pdf
+            rc-dist/*.sha256
+            rc-dist/SHA256SUMS.txt
+            rc-dist/*.sigstore.json
+            rc-dist/docker-compose-apps-rc.yml
+            rc-dist/docker-compose-decoupled-rc.yml
+
+  provenance:
+    name: Generate SLSA Build Provenance
+    needs: [prepare, build-rc-artifacts, publish-rc-release]
+    if: needs.prepare.outputs.should_run == 'true' && needs.publish-rc-release.result == 'success'
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.build-rc-artifacts.outputs.hashes }}"
+      upload-tag-name: "${{ needs.prepare.outputs.tag_name }}"
+      upload-assets: true
+
+  cleanup-and-notify:
+    name: Prune Old Nightly RCs & Notify Website
+    needs: [prepare, publish-rc-release, provenance]
+    if: always() && needs.publish-rc-release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Prune Older Daily RC Pre-Releases & Tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETENTION: ${{ vars.RC_RETENTION_COUNT || '14' }}
+          CURRENT_TAG: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          KEEP="${RETENTION:-14}"
+          echo "Retaining latest ${KEEP} nightly RC pre-releases (protecting ${CURRENT_TAG})..."
+          TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease,publishedAt,createdAt \
+            --jq '[.[] | select(.isPrerelease == true and (.tagName | test("^v.*-rc\\.")))] | sort_by(.publishedAt // .createdAt) | reverse | .[].tagName')
+          IDX=0
+          for tag in $TAGS; do
+            IDX=$((IDX + 1))
+            if [ "$tag" = "$CURRENT_TAG" ]; then
+              continue
+            fi
+            if [ "$IDX" -gt "$KEEP" ]; then
+              echo "Pruning expired RC release and tag: ${tag}"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+            fi
+          done
+
+      - name: Trigger Website Download Manifest Sync (Optional)
+        env:
+          DISPATCH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          if [ -z "${DISPATCH_TOKEN:-}" ]; then
+            echo "WEBSITE_DISPATCH_TOKEN secret not configured; skipping immediate dispatch (daily cron will sync)."
+            exit 0
+          fi
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${DISPATCH_TOKEN}" \
+            "https://api.github.com/repos/${OWNER}/opencrawling.github.io/dispatches" \
+            -d "{\"event_type\":\"release-published\",\"client_payload\":{\"tag\":\"${TAG_NAME}\",\"prerelease\":true}}" || true

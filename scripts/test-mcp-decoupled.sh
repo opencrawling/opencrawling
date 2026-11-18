@@ -826,6 +826,51 @@ if echo "$OUTSIDER_CONTENT_RESP" | grep -q "${MARKER_NOBODY}"; then
   exit 1
 fi
 log_info "Assertion 9.3 PASS: Outsider denied access to empty-permissions document content."
+
+# 9.4 A document of several chunks comes back whole and in order, not as one of its chunks
+log_info "9.4: Ingesting a multi-chunk document and retrieving it whole..."
+DOC_LONG="http://mcp-test.opencrawling.org/docs/long-handbook.html"
+MARKER_LONG_START="mcp-marker-long-start-$(date +%s)"
+MARKER_LONG_END="mcp-marker-long-end-$(date +%s)"
+LONG_BODY=$(for i in $(seq 1 400); do printf 'Section %d of the handbook covers retention, indexing and search practices. ' "$i"; done)
+ingest_ois_doc "$(jq -n --arg id "${DOC_LONG}" --arg text "${MARKER_LONG_START} ${LONG_BODY}${MARKER_LONG_END}" '{
+  id: $id,
+  action: "UPSERT",
+  content: {mimeType: "text/plain", text: $text},
+  metadata: {title: "Long Handbook", department: "public"},
+  security: {inheritanceEnabled: false, permissions: [{identity: "public", identityType: "role", access: "read"}]}
+}')"
+
+# The tool's answer, from the structured content or the text content of the JSON-RPC result.
+long_document() {
+  invoke_get_content "${DOC_LONG}" "alice@company.com" "public" \
+    | jq -c '.result.structuredContent // (.result.content[0].text | fromjson?)' 2>/dev/null || true
+}
+# Chunks are stored one by one, so the document is complete once the writer has stored them all.
+LONG_DOC_JSON=""
+LONG_WAITED=0
+until [ "$(echo "$LONG_DOC_JSON" | jq -r 'select(.chunkCount > 1) | .complete' 2>/dev/null)" = "true" ]; do
+  if [ "$LONG_WAITED" -ge 300 ]; then
+    log_fail "The multi-chunk document did not come back complete within 300s. Last answer: $(echo "$LONG_DOC_JSON" \
+      | jq -c '{id, chunkCount, totalChunks, complete}' 2>/dev/null || echo "${LONG_DOC_JSON:0:500}")"
+    print_diagnostics
+    exit 1
+  fi
+  sleep 2
+  LONG_WAITED=$((LONG_WAITED + 2))
+  # Until the first chunk is stored the tool answers "not found", which is no JSON document: try again.
+  LONG_DOC_JSON=$(long_document || true)
+done
+log_info "Multi-chunk document: $(echo "$LONG_DOC_JSON" | jq -c '{id, chunkCount, totalChunks, complete, length: (.content | length)}')"
+echo "$LONG_DOC_JSON" | jq -e --arg start "${MARKER_LONG_START}" --arg end "${MARKER_LONG_END}" '
+  .content as $c
+  | [($c | index($start)), ($c | index("Section 100 ")), ($c | index("Section 200 ")), ($c | index("Section 300 ")),
+     ($c | index($end))] as $positions
+  | ($positions | all(. != null)) and $positions == ($positions | sort)' >/dev/null || {
+  log_fail "getDocumentContent did not return the multi-chunk document whole and in order."
+  exit 1
+}
+log_info "Assertion 9.4 PASS: Multi-chunk document returned whole, its chunks in order."
 log_pass "MCP getDocumentContent accurately enforced content security boundaries"
 
 # ------------------------------------------------------------------------------

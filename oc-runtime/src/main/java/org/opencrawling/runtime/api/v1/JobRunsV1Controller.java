@@ -21,6 +21,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import org.opencrawling.runtime.api.JobController;
+import org.opencrawling.runtime.api.v1.model.JobRunHistoryResource;
 import org.opencrawling.runtime.api.v1.model.JobRunResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -35,7 +36,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
-/** Job runs in progress in this runtime. When a run ends, it becomes an execution with a report. */
+/**
+ * Job runs in progress, in this runtime or another that shares the control plane (#315). When a run ends, it becomes an
+ * execution with a report; its history stays at {@code /job-runs/{executionId}/history} for the run retention.
+ */
 @RestController
 @RequestMapping(ApiV1.BASE + "/job-runs")
 @Tag(name = "Job runs", description = "Runs in progress; finished runs are executions")
@@ -81,8 +85,39 @@ public class JobRunsV1Controller {
         JobRunResource run = find(executionId);
         // Stops exactly this run: if it ended and a new run of the job started meanwhile, the new run keeps going.
         JobsV1Controller.requireOk(jobs.stopRun(run.jobId(), run.executionId()), "Run", executionId);
-        return ResponseEntity.status(HttpStatus.ACCEPTED)
-                .body(new JobRunResource(run.executionId(), run.jobId(), run.startedAt(), true));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(run.stopping());
+    }
+
+    @Operation(operationId = "pauseJobRun", summary = "Pause a run in progress",
+            description = "The run holds before its next document until :resume or :stop, in whichever runtime it runs (another runtime "
+                    + "notices within its heartbeat interval). Only this run: if it has ended, the answer is 404.")
+    @ApiResponse(responseCode = "202", description = "Pause requested")
+    @PostMapping("/{executionId}:pause")
+    public ResponseEntity<JobRunResource> pause(@PathVariable String executionId) {
+        JobRunResource run = find(executionId);
+        JobsV1Controller.requireOk(jobs.pauseRun(run.jobId(), run.executionId()), "Run", executionId);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(find(executionId));
+    }
+
+    @Operation(operationId = "resumeJobRun", summary = "Resume a paused run",
+            description = "The run goes on from the document where it held; a running run keeps running. 404 if it has ended.")
+    @ApiResponse(responseCode = "202", description = "Resume requested")
+    @PostMapping("/{executionId}:resume")
+    public ResponseEntity<JobRunResource> resume(@PathVariable String executionId) {
+        JobRunResource run = find(executionId);
+        JobsV1Controller.requireOk(jobs.resumeRun(run.jobId(), run.executionId()), "Run", executionId);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(find(executionId));
+    }
+
+    @Operation(operationId = "getJobRunHistory", summary = "Get a run's history",
+            description = "A run in progress or ended, with every change of its state (started, paused, resumed, stop requested, "
+                    + "and how it ended), readable after a restart with the jdbc control-plane store. Kept for "
+                    + "opencrawling.control-plane.run-retention (90 days by default).")
+    @ApiResponse(responseCode = "200", description = "The run and its history")
+    @GetMapping("/{executionId}/history")
+    public JobRunHistoryResource history(@PathVariable String executionId) {
+        return jobs.runHistory(executionId).map(JobRunHistoryResource::of)
+                .orElseThrow(() -> ApiProblem.notFound("Run", executionId));
     }
 
     private JobRunResource find(String executionId) {

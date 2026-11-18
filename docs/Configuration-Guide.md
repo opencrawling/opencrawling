@@ -142,7 +142,7 @@ Runs are kept in memory: they are not shared between runtime instances and do no
 
 ## 🗄️ Control-Plane Store
 
-Where the runtime keeps its definitions: jobs, connectors, system settings and transport settings ([#315](https://github.com/opencrawling/opencrawling/issues/315)).
+Where the runtime keeps its definitions (jobs, connectors, system settings and transport settings) and its job runs ([#315](https://github.com/opencrawling/opencrawling/issues/315)).
 
 *   **`OPENCRAWLING_CONTROL_PLANE_STORE`** (`opencrawling.control-plane.store`): `file` or `jdbc`.
     *   *Type*: `string`
@@ -150,30 +150,47 @@ Where the runtime keeps its definitions: jobs, connectors, system settings and t
     *   **`file`:** JSON files in `data/` (`jobs.json`, `connectors.json`, `settings.json`, `transport-settings.json`), relative to the working directory. A container without a volume on `data/` loses them when it is recreated.
     *   **`jdbc`:** tables in the runtime's datasource (`spring.datasource.*`): `oc_job`, `oc_connector` and `oc_setting`, one row per definition, with a `version` that grows whenever the definition changes. The `docker-compose-decoupled` stacks use it with their PostgreSQL.
     *   **Several runtimes on one database (`jdbc`):** every runtime reads the definitions another one saved, at once. Every change, and every `If-Match` check of the Platform API, runs under one lock in the database (the `oc_lock` row), so two runtimes cannot overwrite each other's changes: an edit made from an older version gets `412`. The connectors' ETags are the same in every runtime, because the key behind them (`api-v1-etag-key.json`) is kept in the store too. Each runtime caches what it read while the store's revision is unchanged, so a read costs one small query.
-    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Runs (`jdbc`):** every job run is a row of `oc_run`, with the runtime that runs it and its state, and every change of its state a row of `oc_run_step` (its history, served at `GET /api/v1/job-runs/{executionId}/history`). The limit of one run per job and the caps on runs at the same time (`opencrawling.jobs.max-concurrent-runs`, `max-concurrent-runs-per-caller`) count the runs of every runtime. A run is listed, stopped, paused and resumed from any runtime; its own runtime applies a stop, pause or resume asked elsewhere at its next heartbeat. A run whose runtime stops renewing its heartbeat (it crashed, or was shut down mid-run) is marked `INTERRUPTED`, its job's status becomes `Error` with stage `Interrupted`, and the job can be started again. With `file`, runs are kept in the runtime's memory.
+    *   **Pause:** a paused run holds before its next document, in its runtime, until it is resumed or stopped. A pause does not survive the runtime: if it restarts, the paused run is interrupted, and the job starts again from the beginning. A connector that holds a session or cursor open may lose it during a long pause.
+    *   **Idempotency keys:** the Platform API's idempotency keys are kept apart, in the runtime's memory by default. With several runtimes on one database, set `opencrawling.api.idempotency.store=jdbc` to keep them in this database too, or `redis` (see [Platform API Idempotency Keys](#-platform-api-idempotency-keys)).
+    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`, `V3__control_plane_runs.sql`, `V4__control_plane_idempotency.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
     *   **Moving from `file`:** on its first start with `jdbc`, the runtime imports the existing files in `data/` into the tables and leaves the files unchanged. After that the tables are the source; later edits of the files are ignored.
     *   **Errors:** a definition that cannot be saved fails the request instead of being logged and lost. An unknown value stops the runtime at startup.
-    *   **Not yet:** runs are still kept by the runtime that started them, so the limit of one run per job, the caps on runs at the same time, stop and pause apply per runtime. Durable, shared runs come in a later part of #315.
 *   **`OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL`** (`opencrawling.control-plane.refresh-interval`): how often a runtime checks for system or transport settings that another runtime saved, and applies them (Tika settings and the default chunk size; the gRPC server is restarted with new transport settings). The runtime that saves them applies them at once.
     *   *Type*: `duration`
     *   *Default*: `10s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_INTERVAL`** (`opencrawling.control-plane.run-heartbeat-interval`): how often a runtime renews the heartbeat of its runs and picks up a stop, pause or resume asked in another runtime.
+    *   *Type*: `duration`
+    *   *Default*: `5s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_HEARTBEAT_TIMEOUT`** (`opencrawling.control-plane.run-heartbeat-timeout`): `jdbc` only. A run whose heartbeat is older than this is marked `INTERRUPTED` by any runtime. Keep it well above the interval: a runtime that is only slow stops its own run when it finds it interrupted.
+    *   *Type*: `duration`
+    *   *Default*: `60s`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUNTIME_ID`** (`opencrawling.control-plane.runtime-id`): the name this runtime's runs carry. By default the host name and a random suffix, new at every start. Set to a stable name, a restarted runtime interrupts the runs it left at once instead of after the heartbeat timeout; it must then be unique: two runtimes with one name would interrupt each other's runs when they start.
+    *   *Type*: `string`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION`** (`opencrawling.control-plane.run-retention`): how long what a finished run leaves is kept: its row and history, its report files in the local report directory (`spring.opencrawling.reporting.storage.local-dir`: summaries, manifests, Parquet and Avro ledgers, by when they were written), and the completed execution the runtime keeps in memory. `0` keeps everything. Reports in S3 storage are left to the bucket's lifecycle rules. It replaces `spring.opencrawling.reporting.retention.retention-days`, which was never applied.
+    *   *Type*: `duration`
+    *   *Default*: `90d`
+*   **`OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION_INTERVAL`** (`opencrawling.control-plane.run-retention-interval`): how often the retention runs (first one minute after startup).
+    *   *Type*: `duration`
+    *   *Default*: `6h`
 
 ## 🧭 Platform API Idempotency Keys
 
 `POST` requests to the Platform API (`/api/v1`) may carry an `Idempotency-Key`, so a retry does not repeat the operation (see [Platform API](Platform-API.md#idempotency-keys)). These settings decide where the keys are kept:
 
-*   **`OPENCRAWLING_API_IDEMPOTENCY_STORE`** (`opencrawling.api.idempotency.store`): `memory` or `redis`.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_STORE`** (`opencrawling.api.idempotency.store`): `memory`, `redis` or `jdbc`.
     *   *Type*: `string`
     *   *Default*: `memory`
     *   **`memory`:** keys live in the runtime that received the request. They are lost on a restart and not shared between runtime instances.
     *   **`redis`:** keys are shared by every runtime instance and survive a restart. This mode uses the runtime's Redis connection (`spring.data.redis.*`). The Docker Compose stacks use it.
     *   **Redis keys:** each key is stored under `oc:api:idempotency:<sha-256>`, so callers, paths and keys never appear in Redis.
-    *   **Redis outage:** while Redis cannot be reached, a `POST` with an `Idempotency-Key` is refused with `503` (`idempotency-unavailable`) and is not run. Requests without a key are not affected.
-    *   **Startup errors:** an unknown value, or `redis` with no Redis connection configured, stops the runtime at startup.
+    *   **`jdbc`:** keys are shared by every runtime on the same database and survive a restart, without Redis. They are rows of `oc_idempotency_key` in the runtime's datasource (`spring.datasource.*`), the database of the `jdbc` control-plane store, created by Flyway (`V4__control_plane_idempotency.sql`). Each row's id is the SHA-256 of the caller, path and key, so none of them is stored. Expired rows are ignored at once and deleted every few minutes by whichever runtime handles a request with a key.
+    *   **Store outage:** while Redis (`redis`) or the database (`jdbc`) cannot be reached, a `POST` with an `Idempotency-Key` is refused with `503` (`idempotency-unavailable`) and is not run. Requests without a key are not affected.
+    *   **Startup errors:** an unknown value, `redis` with no Redis connection configured, or `jdbc` with no datasource, stops the runtime at startup.
 *   **`OPENCRAWLING_API_IDEMPOTENCY_RETENTION`** (`opencrawling.api.idempotency.retention`): how long a successful answer is replayed.
     *   *Type*: `duration`
     *   *Default*: `PT24H`
-*   **`OPENCRAWLING_API_IDEMPOTENCY_IN_PROGRESS_TIMEOUT`** (`opencrawling.api.idempotency.in-progress-timeout`): `redis` only. How long the marker of a running request lives without renewal. The runtime renews it while the request runs, so a long request keeps its key; a retry in that time gets `409`. If a runtime dies mid-request, the key is free again after this time instead of after the whole retention.
+*   **`OPENCRAWLING_API_IDEMPOTENCY_IN_PROGRESS_TIMEOUT`** (`opencrawling.api.idempotency.in-progress-timeout`): `redis` and `jdbc`. How long the marker of a running request lives without renewal. The runtime renews it while the request runs, so a long request keeps its key; a retry in that time gets `409`. If a runtime dies mid-request, the key is free again after this time instead of after the whole retention.
     *   *Type*: `duration`
     *   *Default*: `PT10M`
 *   **`OPENCRAWLING_API_IDEMPOTENCY_MAX_ENTRIES`** (`opencrawling.api.idempotency.max-entries`): `memory` only. The most keys kept.
@@ -286,6 +303,16 @@ Who may read a retrieved document is decided by one provider for every store, se
 *   **`OPENCRAWLING_SECURITY_AUTHORIZATION_OPENFGA_API_URL`**, **`..._API_TOKEN`**, **`..._STORE_ID`**, **`..._MODEL_ID`**, **`..._AUTO_PROVISION`**: the OpenFGA connection, used only in the OpenFGA modes.
 
 See [Document Authorization](Document-Authorization) for the full property list, the rollout path, backfill and metrics.
+
+---
+
+## 📄 MCP Document Content
+
+`getDocumentContent` returns a document's chunks that the caller may read, joined in `chunk_index` order. Its answer also says how many chunks it joined (`chunkCount`), how many the document has (`totalChunks`), and whether the text is the whole document (`complete`, only when the store recorded the count). See [Model Context Protocol](Model-Context-Protocol) for how each store orders the lookup and the upgrade steps for Milvus and Vespa.
+
+*   **`OPENCRAWLING_MCP_DOCUMENT_CONTENT_MAX_CHUNKS`** (`opencrawling.mcp.document-content.max-chunks`): the most chunks one answer joins. It bounds the size of the answer: a longer document returns its first chunks with `complete` set to `false`. Each store's lookup fetches one chunk more than this. On Vespa, keep it below the query profile's hit limit (400 by default).
+    *   *Type*: `int`
+    *   *Default*: `200`
 
 ---
 
