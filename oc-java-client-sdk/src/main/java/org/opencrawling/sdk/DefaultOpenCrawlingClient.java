@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package org.opencrawling.sdk;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.opencrawling.sdk.auth.TokenProvider;
 import org.opencrawling.sdk.http.HttpTransport;
+import org.opencrawling.sdk.ingest.DefaultOisIngestClient;
+import org.opencrawling.sdk.ingest.OisIngestClient;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -38,6 +40,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     private final DiscoveryClient discoveryClient;
     private final AuthClient authClient;
     private final org.opencrawling.sdk.v1.PlatformClient platformClient;
+    private final OisIngestClient oisIngestClient;
 
     public DefaultOpenCrawlingClient(
             HttpClient httpClient,
@@ -79,6 +82,7 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
         this.discoveryClient = new DefaultDiscoveryClient(transport);
         this.authClient = new DefaultAuthClient(transport);
         this.platformClient = new org.opencrawling.sdk.v1.DefaultPlatformClient(transport, retryPolicy);
+        this.oisIngestClient = new DefaultOisIngestClient(transport, retryPolicy);
     }
 
     @Override
@@ -129,5 +133,10 @@ public class DefaultOpenCrawlingClient implements OpenCrawlingClient {
     @Override
     public org.opencrawling.sdk.v1.PlatformClient platform() {
         return platformClient;
+    }
+
+    @Override
+    public OisIngestClient ingest() {
+        return oisIngestClient;
     }
 }

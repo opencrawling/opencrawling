@@ -54,10 +54,31 @@ class ClientCredentialsAutoConfigurationTest {
             idp.acceptedApiToken = "static-token";
             contextRunner.withPropertyValues(
                     "opencrawling.client.base-url=" + idp.base,
-                    "opencrawling.client.bearer-token=static-token"
+                    "opencrawling.client.bearer-token=static-token",
+                    "opencrawling.client.retry.max-attempts=2",
+                    "opencrawling.client.retry.initial-backoff=50ms",
+                    "opencrawling.client.retry.max-backoff=500ms"
             ).run(context -> {
                 assertThat(context.getBean(OpenCrawlingClient.class).jobs().list()).isEmpty();
                 assertThat(idp.requestsTo("/token")).isEmpty();
+            });
+        }
+    }
+
+    @Test
+    void tokenEndpointAliasAndAudienceAreBound() throws Exception {
+        try (FakeIdentityProvider idp = new FakeIdentityProvider()) {
+            idp.respondAccessToken("aud-token", 300);
+            idp.acceptedApiToken = "aud-token";
+            contextRunner.withPropertyValues(
+                    "opencrawling.client.base-url=" + idp.base,
+                    "opencrawling.client.oauth2.token-endpoint=" + idp.base + "/token",
+                    "opencrawling.client.oauth2.client-id=agent-service",
+                    "opencrawling.client.oauth2.client-secret=secret",
+                    "opencrawling.client.oauth2.audience=opencrawling-api"
+            ).run(context -> {
+                assertThat(context.getBean(OpenCrawlingClient.class).jobs().list()).isEmpty();
+                assertThat(idp.requestsTo("/token").getFirst().form()).containsEntry("audience", "opencrawling-api");
             });
         }
     }

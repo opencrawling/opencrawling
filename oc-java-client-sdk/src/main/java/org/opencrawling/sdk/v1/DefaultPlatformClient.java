@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,10 +48,14 @@ import org.opencrawling.sdk.v1.model.DynamicJobRequest;
 import org.opencrawling.sdk.v1.model.Health;
 import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.SystemSettings;
+import org.opencrawling.sdk.v1.model.TransportSettings;
+import org.opencrawling.sdk.v1.model.SidecarPage;
+import org.opencrawling.sdk.v1.model.SidecarStoreInfo;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
 import org.opencrawling.sdk.v1.model.JobRunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
+import org.opencrawling.sdk.exceptions.OpenCrawlingException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -59,6 +63,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,6 +72,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.UUID;
@@ -324,6 +331,30 @@ public class DefaultPlatformClient implements PlatformClient {
         public JobRunHistory history(String executionId) {
             return getJson(path("job-runs", executionId, "history"), JobRunHistory.class);
         }
+
+        private static final Set<String> TERMINAL_RUN_STATES = Set.of("COMPLETED", "STOPPED", "FAILED", "INTERRUPTED");
+
+        @Override
+        public JobRunHistory waitForCompletion(String executionId, Duration pollInterval, Duration timeout) {
+            Duration interval = (pollInterval == null || pollInterval.isNegative() || pollInterval.isZero())
+                    ? Duration.ofSeconds(2)
+                    : pollInterval;
+            Duration maxWait = (timeout == null || timeout.isNegative()) ? Duration.ofMinutes(10) : timeout;
+            Instant deadline = Instant.now().plus(maxWait);
+            while (true) {
+                JobRunHistory current = history(executionId);
+                if (current != null && (current.endedAt() != null
+                        || (current.state() != null && TERMINAL_RUN_STATES.contains(current.state())))) {
+                    return current;
+                }
+                if (!Instant.now().isBefore(deadline)) {
+                    throw new OpenCrawlingException("Timed out after " + maxWait + " waiting for job run "
+                            + executionId + " to finish (last state: "
+                            + (current != null ? current.state() : "unknown") + ")");
+                }
+                DefaultPlatformClient.pause(interval);
+            }
+        }
     };
 
     // ---------------------------------------------------------------- executions
@@ -468,6 +499,18 @@ public class DefaultPlatformClient implements PlatformClient {
         @Override
         public Versioned<JsonNode> replaceTransport(Object value, RequestOptions options) {
             return versioned(send("PUT", path("settings", "transport"), value, JSON, options, Map.of()), JsonNode.class);
+        }
+
+        @Override
+        public Versioned<TransportSettings> transportSettings() {
+            return versioned(send("GET", path("settings", "transport"), null, null, RequestOptions.none(), Map.of()),
+                    TransportSettings.class);
+        }
+
+        @Override
+        public Versioned<TransportSettings> replaceTransportSettings(TransportSettings value, RequestOptions options) {
+            return versioned(send("PUT", path("settings", "transport"), value, JSON, options, Map.of()),
+                    TransportSettings.class);
         }
 
         @Override
@@ -630,9 +673,48 @@ public class DefaultPlatformClient implements PlatformClient {
         }
 
         @Override
+        public List<SidecarStoreInfo> listStores() {
+            return DefaultPlatformClient.this.read(
+                    ok(send("GET", path("sidecar-stores"), null, null, RequestOptions.none(), Map.of())),
+                    json.getTypeFactory().constructCollectionType(List.class, SidecarStoreInfo.class));
+        }
+
+        @Override
         public JsonNode read(String connector, String prefix, Integer limit, String cursor) {
             return getJson(path("sidecar-stores", connector, "sidecars")
                     + params("prefix", prefix, "limit", limit, "cursor", cursor), JsonNode.class);
+        }
+
+        @Override
+        public SidecarPage readPage(String connector, String prefix, Integer limit, String cursor) {
+            return getJson(path("sidecar-stores", connector, "sidecars")
+                    + params("prefix", prefix, "limit", limit, "cursor", cursor), SidecarPage.class);
+        }
+
+        @Override
+        public Stream<Map<String, Object>> stream(String connector, String prefix) {
+            Iterator<Map<String, Object>> items = new Iterator<>() {
+                private SidecarPage page = readPage(connector, prefix, null, null);
+                private Iterator<Map<String, Object>> current = page.items().iterator();
+
+                @Override
+                public boolean hasNext() {
+                    while (!current.hasNext() && page.hasNext()) {
+                        page = readPage(connector, prefix, null, page.nextCursor());
+                        current = page.items().iterator();
+                    }
+                    return current.hasNext();
+                }
+
+                @Override
+                public Map<String, Object> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return current.next();
+                }
+            };
+            return StreamSupport.stream(Spliterators.spliteratorUnknownSize(items, Spliterator.ORDERED), false);
         }
     };
 
