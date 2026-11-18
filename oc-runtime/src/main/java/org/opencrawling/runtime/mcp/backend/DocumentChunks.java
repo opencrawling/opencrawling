@@ -92,11 +92,9 @@ public final class DocumentChunks {
      * @param readable   the chunks the caller may read, in any order
      * @param requested  the URI or id the caller asked for, which picks the document if chunks of several matched
      * @param maxChunks  how many chunks at most go into the text
-     * @param storeHadMore whether the store returned the whole fetch size, so it may hold chunks that were not read
      * @return the document, or empty when no chunk is readable
      */
-    public static Optional<DocumentDetailsResult> assemble(List<Chunk> readable, String requested, int maxChunks,
-                                                           boolean storeHadMore) {
+    public static Optional<DocumentDetailsResult> assemble(List<Chunk> readable, String requested, int maxChunks) {
         if (readable == null || readable.isEmpty()) {
             return Optional.empty();
         }
@@ -153,7 +151,9 @@ public final class DocumentChunks {
         if (truncated) {
             ordered = ordered.subList(0, maxChunks);
         }
-        boolean complete = !truncated && !storeHadMore && isWhole(ordered, totalChunks);
+        // Whole means every position of the recorded count is here. Chunks the store holds beyond the fetch do not
+        // change that: they can only be other versions' (stale) or duplicates, which are left out anyway.
+        boolean complete = !truncated && isWhole(ordered, totalChunks);
 
         Chunk first = ordered.getFirst().chunk();
         Map<String, Object> metadata = new LinkedHashMap<>(first.metadata());

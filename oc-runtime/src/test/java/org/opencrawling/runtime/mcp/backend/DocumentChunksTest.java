@@ -82,7 +82,7 @@ class DocumentChunksTest {
                 chunk(pipelineId(DOC, 1), null, "part 1", Map.of()),
                 chunk(pipelineId(DOC, 0), null, "part 0", Map.of()));
 
-        DocumentDetailsResult doc = DocumentChunks.assemble(chunks, DOC, 200, false).orElseThrow();
+        DocumentDetailsResult doc = DocumentChunks.assemble(chunks, DOC, 200).orElseThrow();
 
         assertThat(doc.content()).isEqualTo("part 0\npart 1");
         assertThat(doc.id()).isEqualTo(DOC);
@@ -148,7 +148,7 @@ class DocumentChunksTest {
             chunks.add(chunk(i, 5));
         }
 
-        DocumentDetailsResult doc = DocumentChunks.assemble(chunks, DOC, 3, false).orElseThrow();
+        DocumentDetailsResult doc = DocumentChunks.assemble(chunks, DOC, 3).orElseThrow();
 
         assertThat(doc.content()).isEqualTo("part 0\npart 1\npart 2");
         assertThat(doc.chunkCount()).isEqualTo(3);
@@ -157,12 +157,18 @@ class DocumentChunksTest {
     }
 
     @Test
-    void aStoreThatReturnedTheWholeFetchMayHoldMore() {
-        // The store may hold other chunks of the document than the ones it returned.
-        List<DocumentChunks.Chunk> chunks = List.of(chunk(0, 2), chunk(1, 2));
+    void staleChunksFillingTheFetchDoNotHideACompleteDocument() {
+        // The store returned as many chunks as were asked for, most of them left over from a longer earlier version:
+        // every position of the current one is still here.
+        List<DocumentChunks.Chunk> chunks = new ArrayList<>(List.of(chunk(0, 2), chunk(1, 2)));
+        for (int i = 2; i < 4; i++) {
+            chunks.add(chunk(i, 4));
+        }
 
-        assertThat(DocumentChunks.assemble(chunks, DOC, 2, true).orElseThrow().complete()).isFalse();
-        assertThat(DocumentChunks.assemble(chunks, DOC, 2, false).orElseThrow().complete()).isTrue();
+        DocumentDetailsResult doc = DocumentChunks.assemble(chunks, DOC, 3).orElseThrow();
+
+        assertThat(doc.content()).isEqualTo("part 0\npart 1");
+        assertThat(doc.complete()).isTrue();
     }
 
     @Test
@@ -216,11 +222,11 @@ class DocumentChunksTest {
 
     @Test
     void noReadableChunkIsNoDocument() {
-        assertThat(DocumentChunks.assemble(List.of(), DOC, 200, false)).isEmpty();
+        assertThat(DocumentChunks.assemble(List.of(), DOC, 200)).isEmpty();
     }
 
     private static DocumentDetailsResult assemble(List<DocumentChunks.Chunk> chunks) {
-        return DocumentChunks.assemble(chunks, DOC, 200, false).orElseThrow();
+        return DocumentChunks.assemble(chunks, DOC, 200).orElseThrow();
     }
 
     private static DocumentChunks.Chunk chunk(int index, int total) {

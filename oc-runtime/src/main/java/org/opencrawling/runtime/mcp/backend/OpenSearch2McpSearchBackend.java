@@ -179,7 +179,7 @@ public class OpenSearch2McpSearchBackend extends GatedMcpSearchBackend {
                                 String.valueOf(source.getOrDefault(OpenSearch2Constants.FIELD_ACL, "public")));
                     })
                     .toList();
-            return assembleDocument(chunks, documentUri, candidates.size())
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;

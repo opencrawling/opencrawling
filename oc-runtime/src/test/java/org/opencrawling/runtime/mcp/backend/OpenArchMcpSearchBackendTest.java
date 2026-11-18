@@ -190,6 +190,8 @@ public class OpenArchMcpSearchBackendTest {
         assertEquals("doc-100", details.id());
         assertEquals("openarch://default/doc-100", details.uri());
         assertEquals("legal", details.acl());
+        // Title and description are what OpenArch returns, not the document's text.
+        assertEquals(false, details.complete());
         assertTrue(details.content().contains("Master Services Agreement 2026"));
         assertTrue(details.content().contains("Standard commercial enterprise contract terms."));
     }

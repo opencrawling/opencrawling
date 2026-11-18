@@ -187,7 +187,7 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
                                 String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ACL, "public")));
                     })
                     .toList();
-            return assembleDocument(chunks, documentUri, candidates.size())
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;

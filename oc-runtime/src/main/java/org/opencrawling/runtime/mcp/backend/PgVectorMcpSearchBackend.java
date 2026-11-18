@@ -304,7 +304,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                     List<DocumentChunks.Chunk> readableChunks = readable(userPrincipal, userRoles, found,
                             chunk -> ResourceRef.fromMetadata(chunk.metadata()));
                     Optional<McpVectorServer.DocumentDetailsResult> readableDoc =
-                            assembleDocument(readableChunks, documentUri, found.size());
+                            assembleDocument(readableChunks, documentUri);
                     if (readableDoc.isPresent()) {
                         return readableDoc.get();
                     }
@@ -355,7 +355,7 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                                 formatAcl(doc.getMetadata().getOrDefault("acl", "")));
                     })
                     .toList();
-            return assembleDocument(chunks, documentUri, docs.size())
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;

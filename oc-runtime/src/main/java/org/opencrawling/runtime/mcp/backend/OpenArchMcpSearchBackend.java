@@ -209,12 +209,16 @@ public class OpenArchMcpSearchBackend extends GatedMcpSearchBackend {
                 String description = docNode.hasNonNull("sys_description") ? docNode.get("sys_description").asText() : "";
                 String realAcl = resolveRealAcl(meta);
 
+                // OpenArch returns the document's title and description, not its text: never the whole document.
                 return new McpVectorServer.DocumentDetailsResult(
                         docId,
                         documentUri,
                         title + "\n\n" + description,
                         meta,
-                        realAcl
+                        realAcl,
+                        1,
+                        null,
+                        false
                 );
             }
         } catch (AuthorizationUnavailableException e) {

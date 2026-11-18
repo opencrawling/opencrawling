@@ -43,7 +43,7 @@ The MCP server exposes three standard tools regardless of which target vector da
 - **Chunks without a position** (written before the store kept one) are still found: the lookup falls back to the plain URI lookup and places them by their chunk id, which the pipeline derives from the document id and the position. Their answers are never `complete`.
 - **Upgrading.** Milvus keeps a chunk's document id and position in dynamic fields, which collections created before this release lack; recreate the collection and re-crawl to get them (until then the runtime logs a warning and orders chunks by id when the document id is the URI). Vespa deployments must redeploy the application package (`oc-vespa-output-connector/vespa-app`), which adds the `chunk_index` and `total_chunks` fields, before the new writer feeds them. Luxir stores the position in `chunk_index_i` and `total_chunks_i`; documents written before need a re-crawl to get it.
 
-The `id` is the document's id. Iceberg keeps whole documents and OpenArch reads the repository, so their answers are always one piece.
+The `id` is the document's id. Iceberg keeps whole documents, so its answers are one piece and complete. OpenArch reads the repository and returns the document's title and description, so its answers are never `complete`.
 
 `userPrincipal` and `userRoles` are the caller's identity only in the default `none` identity mode. In `jwt` mode they are ignored and the identity comes from the request's bearer token (see [Caller identity](#-caller-identity) below).
 

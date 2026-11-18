@@ -73,11 +73,9 @@ public abstract class GatedMcpSearchBackend implements McpVectorSearchBackend {
      *
      * @param readableChunks the lookup's chunks that passed {@link #readable}
      * @param requested      the URI or id the caller asked for
-     * @param fetched        how many chunks the store returned for the lookup, readable or not
      */
-    protected Optional<DocumentDetailsResult> assembleDocument(List<DocumentChunks.Chunk> readableChunks,
-                                                               String requested, int fetched) {
-        return DocumentChunks.assemble(readableChunks, requested, documentMaxChunks, fetched >= documentFetchSize());
+    protected Optional<DocumentDetailsResult> assembleDocument(List<DocumentChunks.Chunk> readableChunks, String requested) {
+        return DocumentChunks.assemble(readableChunks, requested, documentMaxChunks);
     }
 
     protected DocumentAccessGate accessGate() {

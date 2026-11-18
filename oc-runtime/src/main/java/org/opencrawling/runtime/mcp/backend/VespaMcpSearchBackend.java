@@ -137,7 +137,7 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
                     .map(hit -> new DocumentChunks.Chunk(hit.chunkId(), documentIdOf(hit), hit.uri(), hit.content(),
                             withChunkPosition(hit), hit.acl()))
                     .toList();
-            return assembleDocument(chunks, documentUri, hits.size())
+            return assembleDocument(chunks, documentUri)
                     .orElseThrow(() -> new NoSuchElementException("Document not found or access denied."));
         } catch (NoSuchElementException e) {
             throw e;
