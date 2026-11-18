@@ -217,10 +217,11 @@ class VespaOutputConnectorTest {
             local.send(RepositoryDocument.createTombstone("doc-777", "file://tmp/doc-777.txt")).block();
 
             assertThat(stored).isEmpty();
-            // Looked up by the document's id in the types this output writes, not by URI across every schema.
-            assertThat(queries).allMatch(query -> query.contains("where document_id contains \\\"doc-777\\\""))
-                    .allMatch(query -> query.contains("from sources opencrawling_chunk, opencrawling_chunk_384, "
-                            + "opencrawling_chunk_768, opencrawling_chunk_1024 where"));
+            // Looked up by the document's id in the types this output writes, not by URI across every schema; then by URI
+            // for chunks that predate document_id.
+            assertThat(queries).first().asString().contains("where document_id contains \\\"doc-777\\\"");
+            assertThat(queries).allMatch(query -> query.contains("from sources opencrawling_chunk, opencrawling_chunk_384, "
+                    + "opencrawling_chunk_768, opencrawling_chunk_1024 where"));
         } finally {
             vespa.stop(0);
         }
@@ -250,6 +251,18 @@ class VespaOutputConnectorTest {
 
         assertThatThrownBy(() -> local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt")).block())
                 .hasMessageContaining("doc-779");
+    }
+
+    @Test
+    void aDirectWriteDoesNotFallBackToAnOlderSchema() {
+        when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[]{0.1f, 0.2f});
+        when(feedClient.put(any(DocumentId.class), anyString(), any(OperationParameters.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException(
+                        "Field 'document_id' is not defined in document type 'opencrawling_chunk'")));
+
+        assertThatThrownBy(() -> connector.send(failFastDocument("doc-11", "Some text to feed.")).block())
+                .hasStackTraceContaining("deploy the updated schemas");
+        verify(feedClient, times(1)).put(any(DocumentId.class), anyString(), any(OperationParameters.class));
     }
 
     /** A stand-in for Vespa's search endpoint, answering a chunk lookup with the stored document ids. */

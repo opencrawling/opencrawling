@@ -71,6 +71,18 @@ class VespaFeedsTest {
         verify(client, times(1)).put(any(DocumentId.class), anyString(), any(OperationParameters.class));
     }
 
+    @Test
+    void aDirectWriteAgainstAnOlderSchemaFailsSayingWhatToDeploy() {
+        // Without document_id a tombstone could not find the chunks of a direct write (they carry the claim-check URI).
+        when(client.put(any(DocumentId.class), anyString(), any(OperationParameters.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException(
+                        "Field 'document_id' is not defined in document type 'opencrawling_chunk_1024'")));
+
+        assertThatThrownBy(() -> VespaFeeds.putWithAllFields(client, document).get())
+                .hasMessageContaining("deploy the updated schemas");
+        verify(client, times(1)).put(any(DocumentId.class), anyString(), any(OperationParameters.class));
+    }
+
     private static java.util.List<String> fieldNames(String json) throws Exception {
         java.util.List<String> names = new java.util.ArrayList<>();
         new com.fasterxml.jackson.databind.ObjectMapper().readTree(json).path("fields").fieldNames().forEachRemaining(names::add);

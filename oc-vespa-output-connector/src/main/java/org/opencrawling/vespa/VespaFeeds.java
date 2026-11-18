@@ -64,6 +64,21 @@ public final class VespaFeeds {
                 });
     }
 
+    /**
+     * Feeds a chunk that must keep every field: a direct write's chunks carry the claim-check URI, so without
+     * {@code document_id} a later tombstone (which carries the source URI) could not find them. Against an
+     * application deployed before the schemas gained a field this fails, saying so, instead of feeding without it.
+     */
+    public static CompletableFuture<Result> putWithAllFields(FeedClient client, VespaDocumentMapper.VespaDocument document) {
+        return client.put(document.id(), document.json(), OperationParameters.empty())
+                .exceptionallyCompose(failure -> {
+                    String field = undeclaredLaterField(failure);
+                    return CompletableFuture.failedFuture(field == null ? failure : new IllegalStateException(
+                            "The deployed Vespa application has no field '" + field + "': deploy the updated schemas "
+                                    + "(oc-vespa-output-connector/vespa-app) before writing to it directly", failure));
+                });
+    }
+
     /** The later field Vespa reports as undeclared, or {@code null} when the failure is anything else. */
     static String undeclaredLaterField(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {

@@ -299,6 +299,11 @@ class ConnectorFactoryTest {
         assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isTrue();
         assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "another_namespace",
                 "opencrawling_chunk", 1024, 30, false, null, null, null))).isFalse();
+        // Embeddings of other sizes go to each output's configured type: another type is another destination.
+        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
+                "other_chunk", 1536, 30, false, null, null, null))).isFalse();
+        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
+                "opencrawling_chunk", 1536, 30, false, null, null, null))).isTrue();
         assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.other:8080", "opencrawling_chunk"))).isFalse();
     }
 

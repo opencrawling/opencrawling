@@ -162,6 +162,21 @@ class VespaChunkRemoverTest {
         assertThatThrownBy(() -> remover.removeDocument("doc-9", "u")).hasMessageContaining("https://vespa.test:8443");
     }
 
+    @Test
+    void chunksOfAnOlderVersionWithoutDocumentIdAreRemovedWithTheNewerOnes() throws Exception {
+        // A re-crawl after the upgrade stored new chunks with document_id; the old ones, fed before, have none.
+        store("id:opencrawling:opencrawling_chunk_1024::new-0", "/data/doc-10.txt", "file:///data/doc-10.txt");
+        storeWithoutDocumentId("id:opencrawling:opencrawling_chunk_1024::old-0", "file:///data/doc-10.txt");
+        storeWithoutDocumentId("id:opencrawling:opencrawling_chunk_1024::old-1", "file:///data/doc-10.txt");
+        // Another document stored under the same URI keeps its chunk.
+        store("id:opencrawling:opencrawling_chunk_1024::other-doc", "/data/other.txt", "file:///data/doc-10.txt");
+        VespaChunkRemover remover = new VespaChunkRemover(removingFeedClient(), properties(startVespa(this::answer)));
+
+        assertThat(remover.removeDocument("/data/doc-10.txt", "file:///data/doc-10.txt")).isEqualTo(3);
+
+        assertThat(stored).containsOnlyKeys("id:opencrawling:opencrawling_chunk_1024::other-doc");
+    }
+
     private FeedClient removingFeedClient() {
         Result result = mock(Result.class);
         when(feedClient.remove(any(DocumentId.class), any(OperationParameters.class))).thenAnswer(call -> {
@@ -190,15 +205,21 @@ class VespaChunkRemoverTest {
             JsonNode query = JSON.readTree(body);
             queries.add(query);
             String yql = query.path("yql").asText();
-            String field = yql.contains("where document_id") ? "document_id" : "uri";
+            String field = yql.contains("where document_id contains") ? "document_id" : "uri";
             String value = yql.substring(yql.indexOf("contains \"") + 10, yql.length() - 1);
             List<String> ids = new ArrayList<>(stored.keySet().stream().sorted().toList());
             ids.removeIf(id -> !value.equals(stored.get(id).get(field)));
             int offset = query.path("offset").asInt(0);
             List<String> page = ids.subList(Math.min(offset, ids.size()), Math.min(offset + query.path("hits").asInt(), ids.size()));
             StringBuilder children = new StringBuilder();
+            boolean withDocumentId = yql.startsWith("select documentid, document_id ");
             for (String id : page) {
-                children.append(children.isEmpty() ? "" : ",").append("{\"id\":\"").append(id).append("\"}");
+                String documentId = stored.get(id).get("document_id");
+                children.append(children.isEmpty() ? "" : ",").append("{\"id\":\"").append(id).append("\"");
+                if (withDocumentId && documentId != null) {
+                    children.append(",\"fields\":{\"document_id\":\"").append(documentId).append("\"}");
+                }
+                children.append("}");
             }
             return "{\"root\":{\"children\":[" + children + "]}}";
         } catch (Exception e) {

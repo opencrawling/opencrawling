@@ -47,6 +47,9 @@ Every fed document carries these fields (see `VespaFields`), plus a `metadata_js
     "chunk_id": "doc-123_a1b2c3",
     "text": "...chunk text...",
     "uri": "file:///data/doc-123.pdf",
+    "document_id": "/data/doc-123.pdf",
+    "chunk_index": 0,
+    "total_chunks": 12,
     "acl": "acl-123",
     "lastModified": "2026-07-23T08:00:00Z",
     "security_inheritance": true,
@@ -57,6 +60,29 @@ Every fed document carries these fields (see `VespaFields`), plus a `metadata_js
   }
 }
 ```
+
+## Upgrading: Deploy the Schemas First
+
+Vespa rejects any field its deployed schema does not declare, and the schemas in `vespa-app/schemas/` have gained three:
+
+| Field | Type | Used for |
+|---|---|---|
+| `document_id` | `string`, `attribute: fast-search`, `rank: filter` | Finding every chunk of a document when it is deleted: a direct write may carry the claim-check URI and the tombstone the source's, so the URI is not a stable key. |
+| `chunk_index` | `int`, `attribute` | Ordering a document's chunks in `getDocumentContent`. |
+| `total_chunks` | `int`, `attribute` | Telling whether a document is complete. |
+
+Before upgrading the runtime, the writer or the crawler:
+
+1. Deploy the updated application package to every Vespa cluster OpenCrawling writes to: all four schemas (`opencrawling_chunk`, `opencrawling_chunk_384`, `opencrawling_chunk_768`, `opencrawling_chunk_1024`). Use the Admin UI's bundled deploy (`POST /api/vespa/deploy/bundled`), the `vespa-deploy` container of the Compose stacks, or your own deployment.
+2. If you deploy your own application package, add the three fields to every document type OpenCrawling writes, with the definitions above (see `vespa-app/schemas/opencrawling_chunk.sd`).
+3. Then upgrade OpenCrawling and re-crawl, so existing chunks get the new fields.
+
+Adding fields is a live schema change in Vespa: no restart and no data migration.
+
+If OpenCrawling is upgraded first:
+
+- **The pipeline writer** keeps ingesting. It feeds chunks without the three fields and logs a warning once. Documents are then not ordered or complete in `getDocumentContent`, and deletions find chunks by URI.
+- **Per-job outputs that are written directly** fail every write and say why. Their chunks carry the claim-check URI, so without `document_id` a later deletion could not find them.
 
 ## Admin UI: Model Insights & Secure MCP
 

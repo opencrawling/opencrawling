@@ -502,9 +502,11 @@ public class ConnectorFactory {
 
     /**
      * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa, with the same
-     * endpoint and namespace. The document type is not compared: both write paths route embeddings of the usual
-     * sizes (384, 768, 1024) to the dimension-specific types whatever type is configured, so a job naming another type
-     * still writes where the pipeline writes. Otherwise a RAG run sends the job's documents to it directly.
+     * endpoint and namespace, and both write the job's chunks to the same document type. That type follows the
+     * embedding's length ({@code VespaDocumentMapper.resolveDocumentType}): the usual sizes (384, 768, 1024) go to their
+     * dimension-specific types whatever type is configured, other sizes to each output's configured type. The job's
+     * configured dimensions stand for the embedding's length. Otherwise a RAG run sends the job's documents to it
+     * directly.
      *
      * <p>Like {@link #pipelineWritesQdrant}, this compares this process's configuration as written: it cannot tell
      * which writer consumes the embedded topic in a decoupled deployment (it assumes the crawler and the writer share
@@ -518,7 +520,10 @@ public class ConnectorFactory {
     static boolean sameVespaDestination(org.opencrawling.vespa.config.VespaOutputProperties a,
                                         org.opencrawling.vespa.config.VespaOutputProperties b) {
         return a != null && b != null && java.util.Objects.equals(endpoint(a.endpoint()), endpoint(b.endpoint()))
-                && java.util.Objects.equals(a.namespace(), b.namespace());
+                && java.util.Objects.equals(a.namespace(), b.namespace())
+                && java.util.Objects.equals(
+                        org.opencrawling.vespa.VespaDocumentMapper.resolveDocumentType(b.dimensions(), a.documentType()),
+                        org.opencrawling.vespa.VespaDocumentMapper.resolveDocumentType(b.dimensions(), b.documentType()));
     }
 
     private static String endpoint(String endpoint) {

@@ -193,10 +193,26 @@ public class VespaOutputConnector implements OutputConnector {
 
                 List<CompletableFuture<Result>> feeds = new ArrayList<>(vespaDocuments.size());
                 for (VespaDocumentMapper.VespaDocument vespaDocument : vespaDocuments) {
-                    feeds.add(VespaFeeds.put(client, vespaDocument));
+                    // Never without document_id: a tombstone finds the chunks of a direct write only by it.
+                    feeds.add(VespaFeeds.putWithAllFields(client, vespaDocument));
                 }
 
-                FeedClient.await(feeds);
+                // Each failure keeps its cause (FeedClient.await reports only the feed client's own exceptions).
+                List<Throwable> failures = new ArrayList<>();
+                for (CompletableFuture<Result> feed : feeds) {
+                    try {
+                        feed.get();
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        failures.add(e.getCause() != null ? e.getCause() : e);
+                    }
+                }
+                if (!failures.isEmpty()) {
+                    IllegalStateException failed = new IllegalStateException(failures.size() + " of " + feeds.size()
+                            + " chunks of document " + document.id() + " were not fed: " + failures.getFirst().getMessage(),
+                            failures.getFirst());
+                    failures.stream().skip(1).forEach(failed::addSuppressed);
+                    throw failed;
+                }
                 log.info("Successfully fed {} chunks for document {} to Vespa.", feeds.size(), document.id());
             } catch (Exception e) {
                 log.error("Error processing document {} for Vespa: {}", document.id(), e.getMessage());

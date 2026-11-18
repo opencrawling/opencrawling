@@ -81,22 +81,31 @@ public final class VespaChunkRemover {
      */
     public int removeDocument(String documentId, String uri) throws Exception {
         int removed = 0;
+        boolean schemaHasDocumentId = true;
         try {
-            removed = remove(VespaFields.FIELD_DOCUMENT_ID, documentId);
+            removed = remove(VespaFields.FIELD_DOCUMENT_ID, documentId, false);
         } catch (QueryRejected e) {
             // An application deployed before document_id existed rejects the field.
+            schemaHasDocumentId = false;
             log.debug("Vespa rejected the document_id lookup of {}, looking up by URI: {}", documentId, e.getMessage());
         }
-        if (removed == 0 && uri != null && !uri.isBlank()) {
-            removed = remove(VespaFields.FIELD_URI, uri);
+        if (uri != null && !uri.isBlank()) {
+            // Chunks fed before document_id existed (or by a writer still feeding without it) are found only by URI,
+            // also next to newer chunks of the same document. Where the schema has the field, a chunk carrying
+            // another document's id is left alone.
+            removed += remove(VespaFields.FIELD_URI, uri, schemaHasDocumentId);
         }
         return removed;
     }
 
-    private int remove(String field, String value) throws Exception {
+    /**
+     * @param withoutDocumentIdOnly remove only chunks that carry no {@code document_id} (those the id lookup cannot
+     *                              find)
+     */
+    private int remove(String field, String value, boolean withoutDocumentIdOnly) throws Exception {
         Set<String> removed = new HashSet<>();
         for (int round = 0; ; round++) {
-            List<String> ids = ownedChunkIds(field, value);
+            List<String> ids = ownedChunkIds(field, value, withoutDocumentIdOnly);
             ids.removeAll(removed);
             if (ids.isEmpty()) {
                 return removed.size();
@@ -120,13 +129,13 @@ public final class VespaChunkRemover {
      * The ids of the chunks with this field value that this output owns. Every full page is read, so hits of other
      * namespaces cannot end the lookup before this output's chunks are found.
      */
-    List<String> ownedChunkIds(String field, String value) throws Exception {
+    List<String> ownedChunkIds(String field, String value, boolean withoutDocumentIdOnly) throws Exception {
         List<String> owned = new ArrayList<>();
         for (int offset = 0; offset < MAX_OFFSET; offset += PAGE) {
-            List<String> page = chunkIds(field, value, offset);
-            for (String id : page) {
-                if (owns(id)) {
-                    owned.add(id);
+            List<Hit> page = chunkIds(field, value, offset, withoutDocumentIdOnly);
+            for (Hit hit : page) {
+                if (owns(hit.id()) && (!withoutDocumentIdOnly || hit.documentId() == null || hit.documentId().isBlank())) {
+                    owned.add(hit.id());
                 }
             }
             if (page.size() < PAGE) {
@@ -161,9 +170,10 @@ public final class VespaChunkRemover {
                 && documentTypes.contains(parts[2]);
     }
 
-    private List<String> chunkIds(String field, String value, int offset) throws Exception {
+    private List<Hit> chunkIds(String field, String value, int offset, boolean withDocumentId) throws Exception {
         ObjectNode body = JSON.createObjectNode();
-        body.put("yql", "select documentid from sources " + String.join(", ", documentTypes) + " where " + field
+        body.put("yql", "select " + (withDocumentId ? "documentid, " + VespaFields.FIELD_DOCUMENT_ID : "documentid")
+                + " from sources " + String.join(", ", documentTypes) + " where " + field
                 + " contains \"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
         body.put("hits", PAGE);
         body.put("offset", offset);
@@ -187,15 +197,19 @@ public final class VespaChunkRemover {
             throw new IllegalStateException("Vespa answered " + response.statusCode() + " to a chunk lookup: "
                     + response.body());
         }
-        List<String> ids = new ArrayList<>();
+        List<Hit> hits = new ArrayList<>();
         for (JsonNode hit : root.path("children")) {
             String id = hit.path("id").asText("");
             if (id.startsWith("id:")) {
-                ids.add(id);
+                JsonNode documentId = hit.path("fields").path(VespaFields.FIELD_DOCUMENT_ID);
+                hits.add(new Hit(id, documentId.isTextual() ? documentId.asText() : null));
             }
         }
-        return ids;
+        return hits;
     }
+
+    /** A chunk Vespa returned: its Vespa id, and its {@code document_id} when asked for and set. */
+    record Hit(String id, String documentId) {}
 
     /** Vespa answered the lookup with errors (an unknown field, for instance). */
     static final class QueryRejected extends IllegalStateException {
