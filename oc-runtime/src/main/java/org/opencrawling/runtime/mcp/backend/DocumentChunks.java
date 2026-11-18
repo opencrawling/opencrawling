@@ -177,17 +177,33 @@ public final class DocumentChunks {
                 .orElse(readable);
     }
 
-    /** The first chunk at each position, leaving out positions at or past {@code totalChunks} when it is known. */
+    /**
+     * The first chunk at each position of the document's current version. When {@code totalChunks} is known, a chunk
+     * at or past it, or one that records another length, belongs to another version (a re-crawl changed the
+     * document's length and not every chunk has been rewritten yet) and is left out, so the document reads as
+     * incomplete rather than as a mix of versions.
+     */
     private static List<Positioned> distinctWithin(List<Positioned> sorted, Integer totalChunks) {
         Set<Integer> seen = new HashSet<>();
         List<Positioned> kept = new ArrayList<>();
         for (Positioned p : sorted) {
-            if (p.index() != null && (!seen.add(p.index()) || (totalChunks != null && p.index() >= totalChunks))) {
-                continue;
+            if (p.index() != null) {
+                if (totalChunks != null && (p.index() >= totalChunks || recordsAnotherLength(p, totalChunks))) {
+                    continue;
+                }
+                if (!seen.add(p.index())) {
+                    continue;
+                }
             }
             kept.add(p);
         }
         return kept;
+    }
+
+    private static boolean recordsAnotherLength(Positioned p, int totalChunks) {
+        Integer recorded = intValue(p.chunk().metadata().get(TOTAL_CHUNKS));
+        // A count that is not positive is a store's "unset" value (Vespa's undefined int), not another length.
+        return recorded != null && recorded > 0 && recorded != totalChunks;
     }
 
     /**
@@ -216,19 +232,20 @@ public final class DocumentChunks {
     }
 
     /**
-     * Whether the chunks are the whole document: positions 0 to n-1 with nothing missing, and n the document's chunk
-     * count when the store records it. A single chunk with no position is a document stored in one piece.
+     * Whether the chunks are the whole document: positions 0 to n-1 with nothing missing, and n the chunk count the
+     * document records. Without a recorded count nothing tells that no chunk is missing after the last one read (still
+     * being written, or not readable by the caller), so the document is never reported complete.
      */
     private static boolean isWhole(List<Positioned> ordered, Integer totalChunks) {
-        if (ordered.size() == 1 && ordered.getFirst().index() == null) {
-            return totalChunks == null || totalChunks == 1;
+        if (totalChunks == null || ordered.size() != totalChunks) {
+            return false;
         }
         for (int i = 0; i < ordered.size(); i++) {
             if (!Objects.equals(ordered.get(i).index(), i)) {
                 return false;
             }
         }
-        return totalChunks == null || ordered.size() == totalChunks;
+        return true;
     }
 
     /** A number as stores return it: a number, its text, or a one-value list (Solr's multi-valued fields). */

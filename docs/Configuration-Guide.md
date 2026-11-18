@@ -291,7 +291,7 @@ See [Document Authorization](Document-Authorization) for the full property list,
 
 ## 📄 MCP Document Content
 
-`getDocumentContent` returns a document's chunks that the caller may read, joined in `chunk_index` order. Its answer also says how many chunks it joined (`chunkCount`), how many the document has (`totalChunks`), and whether the text is the whole document (`complete`).
+`getDocumentContent` returns a document's chunks that the caller may read, joined in `chunk_index` order. Its answer also says how many chunks it joined (`chunkCount`), how many the document has (`totalChunks`), and whether the text is the whole document (`complete`, only when the store recorded the count). See [Model Context Protocol](Model-Context-Protocol) for how each store orders the lookup and the upgrade steps for Milvus and Vespa.
 
 *   **`OPENCRAWLING_MCP_DOCUMENT_CONTENT_MAX_CHUNKS`** (`opencrawling.mcp.document-content.max-chunks`): the most chunks one answer joins. It bounds the size of the answer: a longer document returns its first chunks with `complete` set to `false`. Each store's lookup fetches one chunk more than this. On Vespa, keep it below the query profile's hit limit (400 by default).
     *   *Type*: `int`

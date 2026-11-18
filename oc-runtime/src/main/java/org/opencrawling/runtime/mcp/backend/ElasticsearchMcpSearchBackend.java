@@ -142,6 +142,11 @@ public class ElasticsearchMcpSearchBackend extends GatedMcpSearchBackend {
                     .index(properties.indexName())
                     .size(documentFetchSize())
                     .source(NO_VECTORS)
+                    // The document's first positions before the limit; chunks without one last.
+                    .sort(so -> so.field(f -> f.field(DocumentChunks.CHUNK_INDEX)
+                            .order(co.elastic.clients.elasticsearch._types.SortOrder.Asc)
+                            .missing(FieldValue.of("_last"))
+                            .unmappedType(co.elastic.clients.elasticsearch._types.mapping.FieldType.Long)))
                     .query(withAclFilter(byDocument, userPrincipal, userRoles)), Map.class);
             List<Hit<Map>> candidates = hits(response).stream().filter(hit -> hit.source() != null).toList();
             List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,

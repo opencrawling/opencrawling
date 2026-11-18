@@ -858,7 +858,8 @@ until [ "$(echo "$LONG_DOC_JSON" | jq -r 'select(.chunkCount > 1) | .complete' 2
   fi
   sleep 2
   LONG_WAITED=$((LONG_WAITED + 2))
-  LONG_DOC_JSON=$(long_document)
+  # Until the first chunk is stored the tool answers "not found", which is no JSON document: try again.
+  LONG_DOC_JSON=$(long_document) || LONG_DOC_JSON=""
 done
 log_info "Multi-chunk document: $(echo "$LONG_DOC_JSON" | jq -c '{id, chunkCount, totalChunks, complete, length: (.content | length)}')"
 echo "$LONG_DOC_JSON" | jq -e --arg start "${MARKER_LONG_START}" --arg end "${MARKER_LONG_END}" '

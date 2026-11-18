@@ -80,6 +80,13 @@ public class VespaDocumentMapper {
         if (!metadata.isEmpty()) {
             fields.put(VespaFields.FIELD_METADATA_JSON, writeJson(metadata));
         }
+        // The position also gets fields of its own (declared in the schemas), so a document's chunks can be ordered.
+        if (metadata.get(VespaFields.FIELD_CHUNK_INDEX) instanceof Number index) {
+            fields.put(VespaFields.FIELD_CHUNK_INDEX, index.intValue());
+        }
+        if (metadata.get(VespaFields.FIELD_TOTAL_CHUNKS) instanceof Number total) {
+            fields.put(VespaFields.FIELD_TOTAL_CHUNKS, total.intValue());
+        }
 
         ObjectNode root = MAPPER.createObjectNode();
         root.set("fields", fields);

@@ -133,21 +133,35 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
     ) {
         log.info("Luxir backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
-        Map<String, Object> queryPayload = Map.of("query", "uri_s:\"" + escape(documentUri) + "\"",
-                "limit", documentFetchSize());
+        String byUri = "uri_s:\"" + escape(documentUri) + "\"";
 
         try {
-            LuxirClient.LuxirSearchResult result = luxirClient.search(properties.collection(), queryPayload);
+            // The document's first positions before the limit; chunks stored without a position (before the writer
+            // kept it) are found by the plain lookup.
+            LuxirClient.LuxirSearchResult result = null;
+            try {
+                result = luxirClient.search(properties.collection(), Map.of("query", byUri + " AND "
+                        + LuxirConstants.FIELD_CHUNK_INDEX + ":[0 TO " + (documentMaxChunks() - 1) + "]",
+                        "limit", documentFetchSize()));
+            } catch (Exception e) {
+                log.debug("Luxir position-bounded lookup of '{}' failed, using the plain lookup: {}", documentUri, e.getMessage());
+            }
+            if (result == null || result.docs() == null || result.docs().isEmpty()) {
+                result = luxirClient.search(properties.collection(), Map.of("query", byUri, "limit", documentFetchSize()));
+            }
 
             List<Map<String, Object>> candidates = result != null && result.docs() != null
                     ? result.docs().stream().filter(Objects::nonNull).toList()
                     : List.of();
-            // The collection keeps no chunk position: DocumentChunks places each chunk by its id.
+            // Chunks stored before the writer kept their position are placed by their id (DocumentChunks).
             List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
                     LuxirMcpSearchBackend::toResourceRef).stream()
                     .map(doc -> {
                         Map<String, Object> fields = new LinkedHashMap<>(doc);
                         fields.remove(properties.vectorField());
+                        // Luxir's int fields carry the chunk's position and the document's chunk count.
+                        putIfPresent(fields, DocumentChunks.CHUNK_INDEX, doc.get(LuxirConstants.FIELD_CHUNK_INDEX));
+                        putIfPresent(fields, DocumentChunks.TOTAL_CHUNKS, doc.get(LuxirConstants.FIELD_TOTAL_CHUNKS));
                         Object documentId = doc.get(LuxirConstants.FIELD_DOC_ID);
                         return new DocumentChunks.Chunk(
                                 String.valueOf(doc.getOrDefault(LuxirConstants.FIELD_ID, doc.getOrDefault("id", ""))),
@@ -216,5 +230,11 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
     /** Luxir keeps the source document id in {@link LuxirConstants#FIELD_DOC_ID}. */
     static ResourceRef toResourceRef(Map<String, Object> doc) {
         return new ResourceRef(ResourceRef.idValue(doc.get(LuxirConstants.FIELD_DOC_ID)), doc);
+    }
+
+    private static void putIfPresent(Map<String, Object> fields, String key, Object value) {
+        if (value != null) {
+            fields.put(key, value);
+        }
     }
 }

@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 class QdrantMcpSearchBackendTest {
 
@@ -165,6 +166,13 @@ class QdrantMcpSearchBackendTest {
         ArgumentCaptor<Points.ScrollPoints> request = ArgumentCaptor.forClass(Points.ScrollPoints.class);
         verify(qdrantClient).scrollAsync(request.capture());
         assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        // Bounded by position, so a long document returns its first chunks.
+        assertThat(request.getValue().getFilter().getMustList())
+                .anySatisfy(condition -> {
+                    assertThat(condition.getField().getKey()).isEqualTo(DocumentChunks.CHUNK_INDEX);
+                    assertThat(condition.getField().getRange().getLt())
+                            .isEqualTo((double) GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS);
+                });
     }
 
     private static Points.RetrievedPoint qdrantChunk(int index, String text) {
@@ -178,5 +186,20 @@ class QdrantMcpSearchBackendTest {
                 .putPayload(DocumentChunks.CHUNK_INDEX, ValueFactory.value(index))
                 .putPayload(DocumentChunks.TOTAL_CHUNKS, ValueFactory.value(2))
                 .build();
+    }
+
+    @Test
+    void chunksStoredWithoutAPositionAreFoundByThePlainLookup() {
+        Points.ScrollResponse none = Points.ScrollResponse.newBuilder().build();
+        Points.ScrollResponse legacy = Points.ScrollResponse.newBuilder().addResult(qdrantChunk(0, "first")).build();
+        when(qdrantClient.scrollAsync(any(Points.ScrollPoints.class)))
+                .thenReturn(Futures.immediateFuture(none), Futures.immediateFuture(legacy));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first");
+        ArgumentCaptor<Points.ScrollPoints> requests = ArgumentCaptor.forClass(Points.ScrollPoints.class);
+        verify(qdrantClient, times(2)).scrollAsync(requests.capture());
+        assertThat(requests.getAllValues().get(1).getFilter().getMustList()).hasSize(1);
     }
 }

@@ -180,6 +180,12 @@ class OpenSearch2McpSearchBackendTest {
         assertThat(searchRequest.size()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
         // The chunks' vectors are not fetched.
         assertThat(searchRequest.source().filter().excludes()).containsExactly(OpenSearch2Constants.FIELD_EMBEDDINGS);
+        // Ordered by position before the limit, so a long document returns its first chunks.
+        assertThat(searchRequest.sort()).singleElement().satisfies(sort -> {
+            assertThat(sort.field().field()).isEqualTo(DocumentChunks.CHUNK_INDEX);
+            assertThat(sort.field().order()).isEqualTo(org.opensearch.client.opensearch._types.SortOrder.Asc);
+            assertThat(sort.field().missing().stringValue()).isEqualTo("_last");
+        });
     }
 
     @SuppressWarnings("unchecked")

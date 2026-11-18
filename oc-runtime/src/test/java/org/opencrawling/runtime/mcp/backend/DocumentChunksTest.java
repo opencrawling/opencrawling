@@ -71,7 +71,8 @@ class DocumentChunksTest {
 
         assertThat(doc.content()).isEqualTo("part 0\npart 1");
         assertThat(doc.totalChunks()).isNull();
-        assertThat(doc.complete()).isTrue();
+        // The ids give the order, not the length: a third chunk may still be missing.
+        assertThat(doc.complete()).isFalse();
     }
 
     @Test
@@ -85,7 +86,7 @@ class DocumentChunksTest {
 
         assertThat(doc.content()).isEqualTo("part 0\npart 1");
         assertThat(doc.id()).isEqualTo(DOC);
-        assertThat(doc.complete()).isTrue();
+        assertThat(doc.complete()).isFalse();
     }
 
     @Test
@@ -105,6 +106,27 @@ class DocumentChunksTest {
 
         assertThat(doc.content()).isEqualTo("part 0\npart 1");
         assertThat(doc.totalChunks()).isEqualTo(2);
+        assertThat(doc.complete()).isTrue();
+    }
+
+    @Test
+    void chunksOfAnotherVersionAreLeftOutSoAHalfRewrittenDocumentIsIncomplete() {
+        // A re-crawl shortened the document to 2 chunks: the new chunk 0 is stored, the old chunk 1 (of 3) is not
+        // rewritten yet. Joining them would mix two versions.
+        DocumentDetailsResult doc = assemble(List.of(chunk(0, 2), chunk(1, 3)));
+
+        assertThat(doc.content()).isEqualTo("part 0");
+        assertThat(doc.totalChunks()).isEqualTo(2);
+        assertThat(doc.complete()).isFalse();
+    }
+
+    @Test
+    void aCountThatIsNotPositiveIsAStoresUnsetValueNotAnotherLength() {
+        // Vespa reads an unset int field as a large negative value.
+        DocumentDetailsResult doc = assemble(List.of(chunk(0, 2), chunk("c1", DOC, "part 1",
+                Map.of(DocumentChunks.CHUNK_INDEX, 1, DocumentChunks.TOTAL_CHUNKS, Integer.MIN_VALUE))));
+
+        assertThat(doc.content()).isEqualTo("part 0\npart 1");
         assertThat(doc.complete()).isTrue();
     }
 
@@ -136,10 +158,8 @@ class DocumentChunksTest {
 
     @Test
     void aStoreThatReturnedTheWholeFetchMayHoldMore() {
-        // Without total_chunks nothing else would tell that more chunks exist.
-        List<DocumentChunks.Chunk> chunks = List.of(
-                chunk(pipelineId(DOC, 0), DOC, "part 0", Map.of()),
-                chunk(pipelineId(DOC, 1), DOC, "part 1", Map.of()));
+        // The store may hold other chunks of the document than the ones it returned.
+        List<DocumentChunks.Chunk> chunks = List.of(chunk(0, 2), chunk(1, 2));
 
         assertThat(DocumentChunks.assemble(chunks, DOC, 2, true).orElseThrow().complete()).isFalse();
         assertThat(DocumentChunks.assemble(chunks, DOC, 2, false).orElseThrow().complete()).isTrue();
@@ -160,12 +180,12 @@ class DocumentChunksTest {
     }
 
     @Test
-    void aDocumentStoredInOnePieceIsComplete() {
+    void aChunkWithNeitherPositionNorCountIsReturnedButNotReportedComplete() {
         DocumentDetailsResult doc = assemble(List.of(chunk("only", DOC, "the whole text", Map.of())));
 
         assertThat(doc.content()).isEqualTo("the whole text");
         assertThat(doc.id()).isEqualTo(DOC);
-        assertThat(doc.complete()).isTrue();
+        assertThat(doc.complete()).isFalse();
     }
 
     @Test

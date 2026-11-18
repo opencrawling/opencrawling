@@ -148,6 +148,11 @@ public class OpenSearch2McpSearchBackend extends GatedMcpSearchBackend {
                     .size(documentFetchSize())
                     // The chunks' vectors are of no use to the caller, and a document can have many chunks.
                     .source(src -> src.filter(f -> f.excludes(OpenSearch2Constants.FIELD_EMBEDDINGS)))
+                    // The document's first positions before the limit; chunks without one last.
+                    .sort(so -> so.field(f -> f.field(DocumentChunks.CHUNK_INDEX)
+                            .order(org.opensearch.client.opensearch._types.SortOrder.Asc)
+                            .missing(org.opensearch.client.opensearch._types.FieldValue.of("_last"))
+                            .unmappedType(org.opensearch.client.opensearch._types.mapping.FieldType.Long)))
                     .query(q -> q
                             .term(t -> t
                                     .field(OpenSearch2Constants.FIELD_URI)

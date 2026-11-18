@@ -29,12 +29,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.*;
 import org.mockito.ArgumentCaptor;
+import io.milvus.v2.service.collection.request.DescribeCollectionReq;
+import io.milvus.v2.service.collection.response.DescribeCollectionResp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 class MilvusMcpSearchBackendTest {
 
@@ -146,8 +149,50 @@ class MilvusMcpSearchBackendTest {
     }
 
     @Test
-    void getDocumentContentJoinsTheDocumentsChunksInOrder() {
-        // The collection keeps no chunk position or document id: the chunks are placed by their pipeline ids.
+    void aCollectionWithDynamicFieldsIsAskedForTheDocumentsFirstPositions() {
+        // New collections keep each chunk's document id, position and the document's chunk count.
+        dynamicFields(true);
+        QueryResp queryResp = mock(QueryResp.class);
+        when(queryResp.getQueryResults()).thenReturn(List.of(positionedChunk(1, "second"), positionedChunk(0, "first")));
+        when(milvusClient.query(any(QueryReq.class))).thenReturn(queryResp);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///milvus.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.id()).isEqualTo("doc-7");
+        assertThat(result.totalChunks()).isEqualTo(2);
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<QueryReq> request = ArgumentCaptor.forClass(QueryReq.class);
+        verify(milvusClient).query(request.capture());
+        assertThat(request.getValue().getFilter())
+                .isEqualTo("uri == \"file:///milvus.txt\" and chunk_index < " + GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS);
+        assertThat(request.getValue().getOutputFields())
+                .contains(MilvusConstants.FIELD_DOCUMENT_ID, DocumentChunks.CHUNK_INDEX, DocumentChunks.TOTAL_CHUNKS);
+        assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+    }
+
+    @Test
+    void chunksStoredWithoutAPositionAreFoundByThePlainLookup() {
+        dynamicFields(true);
+        QueryResp none = mock(QueryResp.class);
+        when(none.getQueryResults()).thenReturn(List.of());
+        QueryResp legacy = mock(QueryResp.class);
+        when(legacy.getQueryResults()).thenReturn(List.of(milvusChunk(1, "second"), milvusChunk(0, "first")));
+        when(milvusClient.query(any(QueryReq.class))).thenReturn(none, legacy);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///milvus.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        ArgumentCaptor<QueryReq> requests = ArgumentCaptor.forClass(QueryReq.class);
+        verify(milvusClient, times(2)).query(requests.capture());
+        assertThat(requests.getAllValues().get(1).getFilter()).isEqualTo("uri == \"file:///milvus.txt\"");
+    }
+
+    @Test
+    void aCollectionWithoutDynamicFieldsIsOrderedByThePipelinesChunkIdsButNotReportedComplete() {
+        // Collections created before dynamic fields were enabled keep only the chunk id, URI and text, and asking
+        // them for other fields fails.
+        dynamicFields(false);
         QueryResp queryResp = mock(QueryResp.class);
         when(queryResp.getQueryResults()).thenReturn(List.of(milvusChunk(1, "second"), milvusChunk(0, "first")));
         when(milvusClient.query(any(QueryReq.class))).thenReturn(queryResp);
@@ -156,10 +201,31 @@ class MilvusMcpSearchBackendTest {
 
         assertThat(result.content()).isEqualTo("first\nsecond");
         assertThat(result.id()).isEqualTo("file:///milvus.txt");
-        assertThat(result.complete()).isTrue();
+        // Nothing records how many chunks the document has.
+        assertThat(result.complete()).isFalse();
         ArgumentCaptor<QueryReq> request = ArgumentCaptor.forClass(QueryReq.class);
         verify(milvusClient).query(request.capture());
-        assertThat(request.getValue().getLimit()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        assertThat(request.getValue().getFilter()).isEqualTo("uri == \"file:///milvus.txt\"");
+        assertThat(request.getValue().getOutputFields()).doesNotContain(DocumentChunks.CHUNK_INDEX);
+    }
+
+    private void dynamicFields(boolean enabled) {
+        DescribeCollectionResp description = mock(DescribeCollectionResp.class);
+        when(description.getEnableDynamicField()).thenReturn(enabled);
+        when(milvusClient.describeCollection(any(DescribeCollectionReq.class))).thenReturn(description);
+    }
+
+    private static QueryResp.QueryResult positionedChunk(int index, String text) {
+        return QueryResp.QueryResult.builder()
+                .entity(Map.of(
+                        MilvusConstants.FIELD_ID, "chunk-" + index,
+                        MilvusConstants.FIELD_DOCUMENT_ID, "doc-7",
+                        MilvusConstants.FIELD_URI, "file:///milvus.txt",
+                        MilvusConstants.FIELD_TEXT, text,
+                        MilvusConstants.FIELD_ACL, "public",
+                        DocumentChunks.CHUNK_INDEX, (long) index,
+                        DocumentChunks.TOTAL_CHUNKS, 2L))
+                .build();
     }
 
     private static QueryResp.QueryResult milvusChunk(int index, String text) {

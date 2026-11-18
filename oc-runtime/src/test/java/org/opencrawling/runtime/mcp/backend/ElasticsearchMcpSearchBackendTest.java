@@ -255,6 +255,14 @@ class ElasticsearchMcpSearchBackendTest {
         assertThat(result.content()).isEqualTo("text of doc_0\ntext of doc_1");
         assertThat(result.chunkCount()).isEqualTo(2);
         assertThat(result.complete()).isTrue();
-        assertThat(capturedFunctionSearchRequest().size()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        SearchRequest request = capturedFunctionSearchRequest();
+        assertThat(request.size()).isEqualTo(GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+        // Ordered by position before the limit, so a long document returns its first chunks.
+        assertThat(request.sort()).singleElement().satisfies(sort -> {
+            assertThat(sort.field().field()).isEqualTo(DocumentChunks.CHUNK_INDEX);
+            assertThat(sort.field().order()).isEqualTo(co.elastic.clients.elasticsearch._types.SortOrder.Asc);
+            assertThat(sort.field().missing().stringValue()).isEqualTo("_last");
+            assertThat(sort.field().unmappedType()).isEqualTo(co.elastic.clients.elasticsearch._types.mapping.FieldType.Long);
+        });
     }
 }

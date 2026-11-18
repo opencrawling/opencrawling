@@ -215,6 +215,22 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
         }
     }
 
+    private List<Document> documentChunks(Integer dimensions, String documentUri,
+                                          org.springframework.ai.vectorstore.filter.Filter.Expression filter) {
+        return getVectorStore(dimensions).similaritySearch(SearchRequest.builder()
+                .query(documentUri)
+                .filterExpression(filter)
+                .topK(documentFetchSize())
+                .build());
+    }
+
+    /**
+     * Orders a document's rows by chunk position before the limit, so a document with more chunks than the limit
+     * returns its first ones. Rows without a position (written before positions were recorded) come last.
+     */
+    static final String BY_CHUNK_POSITION = " ORDER BY CASE WHEN metadata->>'chunk_index' ~ '^[0-9]+$'"
+            + " THEN (metadata->>'chunk_index')::int END NULLS LAST, id LIMIT ";
+
     private List<DocumentChunks.Chunk> queryDocumentChunks(String tableName, String documentUri) {
         boolean hasScope = hasScopeColumns(tableName);
         String sql;
@@ -224,13 +240,13 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                     " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
                     " OR scope_id_ = ?" +
                     " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT " + documentFetchSize();
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?)" + BY_CHUNK_POSITION + documentFetchSize();
             args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri, documentUri};
         } else {
             sql = "SELECT id, content, metadata FROM " + tableName +
                     " WHERE metadata->>'uri' = ? OR metadata->>'documentId' = ? OR id::text = ?" +
                     " OR metadata->>'uri' = ('flowable://historic-process-instances/' || ?)" +
-                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?) LIMIT " + documentFetchSize();
+                    " OR metadata->>'uri' = ('flowable://runtime-process-instances/' || ?)" + BY_CHUNK_POSITION + documentFetchSize();
             args = new Object[]{documentUri, documentUri, documentUri, documentUri, documentUri};
         }
 
@@ -320,17 +336,16 @@ public class PgVectorMcpSearchBackend extends GatedMcpSearchBackend {
                 )
         );
 
-        var finalExpression = storePrefilterAllowed()
-                ? b.and(matchDocExpression, securityExpression).build()
-                : matchDocExpression.build();
-        SearchRequest searchRequest = SearchRequest.builder()
-                .query(documentUri)
-                .filterExpression(finalExpression)
-                .topK(documentFetchSize())
-                .build();
+        var lookup = storePrefilterAllowed() ? b.and(matchDocExpression, securityExpression) : matchDocExpression;
 
         try {
-            List<Document> docs = getVectorStore(dimensions).similaritySearch(searchRequest);
+            // A similarity search cannot be ordered, so the document's first positions are asked for first; rows
+            // written without a position are found by the plain lookup.
+            List<Document> docs = documentChunks(dimensions, documentUri,
+                    b.and(lookup, b.lt(DocumentChunks.CHUNK_INDEX, documentMaxChunks())).build());
+            if (docs.isEmpty()) {
+                docs = documentChunks(dimensions, documentUri, lookup.build());
+            }
             List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, docs,
                     PgVectorMcpSearchBackend::toResourceRef).stream()
                     .map(doc -> {

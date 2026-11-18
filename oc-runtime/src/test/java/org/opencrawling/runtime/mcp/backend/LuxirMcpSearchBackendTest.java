@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 class LuxirMcpSearchBackendTest {
 
@@ -133,20 +134,48 @@ class LuxirMcpSearchBackendTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void getDocumentContentJoinsTheDocumentsChunksInOrder() throws IOException, InterruptedException {
-        // The collection keeps no chunk position: the chunks are placed by their pipeline ids.
-        when(luxirClient.search(eq("opencrawling"), any()))
-                .thenReturn(new LuxirClient.LuxirSearchResult(2, List.of(luxirChunk(1, "second"), luxirChunk(0, "first"))));
+    void getDocumentContentAsksForTheDocumentsFirstPositions() throws IOException, InterruptedException {
+        // The writer keeps each chunk's position and the document's chunk count in int fields.
+        when(luxirClient.search(eq("opencrawling"), any())).thenReturn(new LuxirClient.LuxirSearchResult(2,
+                List.of(positioned(luxirChunk(1, "second"), 1), positioned(luxirChunk(0, "first"), 0))));
 
         McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
 
         assertThat(result.content()).isEqualTo("first\nsecond");
         assertThat(result.id()).isEqualTo("file:///doc.txt");
+        assertThat(result.totalChunks()).isEqualTo(2);
         assertThat(result.complete()).isTrue();
         assertThat(result.metadata()).doesNotContainKey(properties.vectorField());
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(luxirClient).search(eq("opencrawling"), payload.capture());
+        assertThat(payload.getValue()).containsEntry("query", "uri_s:\"file:///doc.txt\" AND chunk_index_i:[0 TO "
+                + (GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS - 1) + "]");
         assertThat(payload.getValue()).containsEntry("limit", GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chunksStoredWithoutAPositionAreFoundByThePlainLookupAndOrderedByTheirIds() throws IOException, InterruptedException {
+        // Written before the writer kept positions: the bounded lookup finds nothing.
+        when(luxirClient.search(eq("opencrawling"), any()))
+                .thenReturn(new LuxirClient.LuxirSearchResult(0, List.of()))
+                .thenReturn(new LuxirClient.LuxirSearchResult(2, List.of(luxirChunk(1, "second"), luxirChunk(0, "first"))));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        // Nothing records how many chunks the document has.
+        assertThat(result.complete()).isFalse();
+        ArgumentCaptor<Map<String, Object>> payloads = ArgumentCaptor.forClass(Map.class);
+        verify(luxirClient, times(2)).search(eq("opencrawling"), payloads.capture());
+        assertThat(payloads.getAllValues().get(1)).containsEntry("query", "uri_s:\"file:///doc.txt\"");
+    }
+
+    private static Map<String, Object> positioned(Map<String, Object> chunk, int index) {
+        Map<String, Object> withPosition = new java.util.HashMap<>(chunk);
+        withPosition.put(LuxirConstants.FIELD_CHUNK_INDEX, index);
+        withPosition.put(LuxirConstants.FIELD_TOTAL_CHUNKS, 2);
+        return withPosition;
     }
 
     private Map<String, Object> luxirChunk(int index, String text) {

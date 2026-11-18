@@ -58,6 +58,11 @@ public abstract class GatedMcpSearchBackend implements McpVectorSearchBackend {
         this.documentMaxChunks = Math.max(1, maxChunks);
     }
 
+    /** The most chunks a document's content is made of: lookups bounded by position ask for positions below it. */
+    protected int documentMaxChunks() {
+        return documentMaxChunks;
+    }
+
     /** How many chunks a document lookup asks its store for. */
     protected int documentFetchSize() {
         return DocumentChunks.fetchSize(documentMaxChunks);

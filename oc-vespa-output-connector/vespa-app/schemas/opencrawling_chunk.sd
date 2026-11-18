@@ -54,6 +54,16 @@ schema opencrawling_chunk {
             indexing: summary
         }
 
+        # The chunk's position in its document and the document's chunk count, so getDocumentContent can order a
+        # document's chunks and tell it is complete. Chunks fed before these fields existed leave them unset.
+        field chunk_index type int {
+            indexing: summary | attribute
+        }
+
+        field total_chunks type int {
+            indexing: summary | attribute
+        }
+
         field embedding type tensor<float>(x[1024]) {
             indexing: attribute | index
             attribute {

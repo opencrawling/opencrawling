@@ -113,8 +113,8 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
                         .filter(doc -> scoreOf(doc) >= minScore)
                         .toList();
                 for (SolrDocument doc : readable(userPrincipal, userRoles, candidates,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
-                    Map<String, Object> fieldMap = doc.getFieldValueMap();
+                        doc -> ResourceRef.fromMetadata(fieldsOf(doc)))) {
+                    Map<String, Object> fieldMap = fieldsOf(doc);
                     double score = scoreOf(doc);
                     String id = String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID));
                     String uri = doc.getFieldValue(SolrConstants.FIELD_URI) != null ? String.valueOf(doc.getFieldValue(SolrConstants.FIELD_URI)) : "";
@@ -145,16 +145,26 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
         params.set("rows", documentFetchSize());
 
         try {
-            QueryResponse response = solrClient.query(properties.collection(), params);
-            SolrDocumentList docs = response.getResults();
+            // The document's first positions before the limit. Solr cannot sort on the multi-valued fields it creates
+            // for metadata, so the lookup is bounded by position instead; a collection whose chunks hold no position
+            // (or that has no chunk_index field yet) answers the plain lookup.
+            ModifiableSolrParams bounded = new ModifiableSolrParams(params);
+            bounded.add("fq", DocumentChunks.CHUNK_INDEX + ":[0 TO " + (documentMaxChunks() - 1) + "]");
+            SolrDocumentList docs = null;
+            try {
+                docs = solrClient.query(properties.collection(), bounded).getResults();
+            } catch (Exception e) {
+                log.debug("Solr position-bounded lookup of '{}' failed, using the plain lookup: {}", documentUri, e.getMessage());
+            }
+            if (docs == null || docs.isEmpty()) {
+                QueryResponse response = solrClient.query(properties.collection(), params);
+                docs = response.getResults();
+            }
             List<SolrDocument> candidates = docs != null ? docs : List.of();
             List<DocumentChunks.Chunk> chunks = readable(userPrincipal, userRoles, candidates,
-                    doc -> ResourceRef.fromMetadata(doc.getFieldValueMap())).stream()
+                    doc -> ResourceRef.fromMetadata(fieldsOf(doc))).stream()
                     .map(doc -> {
-                        // Solr's field map is a read-only view; the copy leaves out the stored vector.
-                        Map<String, Object> fieldMap = new LinkedHashMap<>();
-                        doc.getFieldNames().forEach(name -> fieldMap.put(name, doc.getFieldValue(name)));
-                        fieldMap.remove(SolrConstants.FIELD_EMBEDDINGS);
+                        Map<String, Object> fieldMap = fieldsOf(doc);
                         return new DocumentChunks.Chunk(
                                 String.valueOf(doc.getFieldValue(SolrConstants.FIELD_ID)),
                                 stringValue(doc.getFirstValue("documentId")),
@@ -193,7 +203,7 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
             List<Map<String, Object>> summaries = new ArrayList<>();
             if (docs != null) {
                 for (SolrDocument doc : readable(userPrincipal, userRoles, docs,
-                        doc -> ResourceRef.fromMetadata(doc.getFieldValueMap()))) {
+                        doc -> ResourceRef.fromMetadata(fieldsOf(doc)))) {
                     Map<String, Object> summary = new HashMap<>();
                     summary.put("id", doc.getFieldValue(SolrConstants.FIELD_ID));
                     summary.put("uri", doc.getFieldValue(SolrConstants.FIELD_URI));
@@ -216,5 +226,17 @@ public class SolrMcpSearchBackend extends GatedMcpSearchBackend {
 
     private static String stringValue(Object value) {
         return value != null ? String.valueOf(value) : null;
+    }
+
+
+    /**
+     * The document's fields as a plain map, without the stored vector. {@link SolrDocument#getFieldValueMap()} is a
+     * view that cannot be iterated, and the access gate, which reads every field, denies a document it cannot read.
+     */
+    static Map<String, Object> fieldsOf(SolrDocument doc) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        doc.getFieldNames().forEach(name -> fields.put(name, doc.getFieldValue(name)));
+        fields.remove(SolrConstants.FIELD_EMBEDDINGS);
+        return fields;
     }
 }

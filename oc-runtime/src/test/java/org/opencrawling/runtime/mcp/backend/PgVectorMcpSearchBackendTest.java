@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.times;
 import org.mockito.ArgumentCaptor;
 
 class PgVectorMcpSearchBackendTest {
@@ -498,10 +499,27 @@ class PgVectorMcpSearchBackendTest {
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(jdbc, atLeastOnce()).query(sql.capture(), any(RowMapper.class), any(Object[].class));
         assertThat(sql.getAllValues()).allMatch(query -> query.endsWith("LIMIT " + (GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS + 1)));
+        // Ordered by position before the limit, so a long document returns its first chunks.
+        assertThat(sql.getAllValues()).allMatch(query -> query.contains("ORDER BY CASE WHEN metadata->>'chunk_index'"));
     }
 
     private static DocumentChunks.Chunk pgChunk(int index, String text) {
         return new DocumentChunks.Chunk("c" + index, "doc-9", "doc-9", text, Map.of("documentId", "doc-9",
                 "acl", "public", DocumentChunks.CHUNK_INDEX, index, DocumentChunks.TOTAL_CHUNKS, 3), "public");
+    }
+
+    @Test
+    void withoutJdbcTheDocumentsFirstPositionsAreAskedForFirst() {
+        // A similarity search cannot be ordered: positions below the limit first, then the plain lookup.
+        Document legacy = new Document("1", "Architecture Guide", Map.of("uri", "file:///arch.txt", "acl", "public"));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(), List.of(legacy));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///arch.txt", "john", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("Architecture Guide");
+        ArgumentCaptor<SearchRequest> requests = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore, times(2)).similaritySearch(requests.capture());
+        assertThat(requests.getAllValues().get(0).getFilterExpression().toString()).contains(DocumentChunks.CHUNK_INDEX);
+        assertThat(requests.getAllValues().get(1).getFilterExpression().toString()).doesNotContain(DocumentChunks.CHUNK_INDEX);
     }
 }

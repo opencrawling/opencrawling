@@ -145,18 +145,21 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
         log.info("Qdrant backend get document content. URI: '{}', Principal: '{}'", documentUri, userPrincipal);
 
         try {
-            Common.Filter filter = Common.Filter.newBuilder()
+            // A scroll is not ordered by payload without an index, so the document's first positions are asked for
+            // first; chunks stored without a position are found by the plain lookup.
+            Common.Filter plain = Common.Filter.newBuilder()
                     .addMust(matchKeyword(QdrantFields.FIELD_URI, documentUri))
                     .build();
-
-            Points.ScrollPoints scrollPoints = Points.ScrollPoints.newBuilder()
-                    .setCollectionName(properties.collectionName())
-                    .setFilter(filter)
-                    .setLimit(documentFetchSize())
-                    .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
+            Common.Filter bounded = plain.toBuilder()
+                    .addMust(Common.Condition.newBuilder().setField(Common.FieldCondition.newBuilder()
+                            .setKey(DocumentChunks.CHUNK_INDEX)
+                            .setRange(Common.Range.newBuilder().setLt(documentMaxChunks()).build())))
                     .build();
 
-            Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(scrollPoints).get();
+            Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(documentScroll(bounded)).get();
+            if (scrollResp.getResultList().isEmpty()) {
+                scrollResp = qdrantClient.scrollAsync(documentScroll(plain)).get();
+            }
 
             List<Map<String, Object>> candidates = scrollResp.getResultList().stream()
                     .map(point -> convertPayload(point.getPayloadMap()))
@@ -251,5 +254,14 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             }
             default -> null;
         };
+    }
+
+    private Points.ScrollPoints documentScroll(Common.Filter filter) {
+        return Points.ScrollPoints.newBuilder()
+                .setCollectionName(properties.collectionName())
+                .setFilter(filter)
+                .setLimit(documentFetchSize())
+                .setWithPayload(Points.WithPayloadSelector.newBuilder().setEnable(true).build())
+                .build();
     }
 }
