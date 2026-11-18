@@ -14,7 +14,8 @@ Test classes (all in `oc-runtime/src/test/java/org/opencrawling/runtime/api/v1/`
 | DocumentationContract | `PlatformApiV1DocumentationContractTest` | Every operation is fully documented (description, parameters, examples, schemas, problem details, code sample) |
 | UiParity | `PlatformApiV1UiParityTest` | Every call the admin UI makes is a documented v1 operation, read from the UI's sources, and everything it did before still uses one |
 | Sdk | `PlatformApiV1SdkTest` | The Java SDK's `platform()` client against the runtime: it reaches every operation in the API description and reads each answer |
-| Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | Both idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
+| Idempotency | `IdempotencyStoreTest`, `RedisIdempotencyStoreIT` | The idempotency stores keep the same contract; the Redis one on a real Redis, with expiry and 32 racing instances of which exactly one runs |
+| IdempotencyJdbc | `JdbcIdempotencyStoreTest` (H2), `JdbcIdempotencyStorePostgresIT` | The JDBC idempotency store keeps the same contract with the real migrations: answers replayed by another runtime and after a restart, expiry, a held key, renewals that never cut a finished request's retention, 5 rounds of 16 racing runtimes of which exactly one runs, no caller, path or key in the table, and the database down (`503`, never a failed request) |
 | Unit | `PlatformApiV1UnitTest` | Cursors, ETags, merge patch, idempotency store, secret masking, request scoping, error mapping |
 | Console | `oc-admin-ui/src/lib/apiConsole.test.ts` | The API console's logic: reading the description, building and describing requests, history |
 | UiClient | `oc-admin-ui/src/lib/api.test.ts` | The admin UI's API client: v1 URLs and methods, cursor following, ETags and `If-Match`, problem messages |

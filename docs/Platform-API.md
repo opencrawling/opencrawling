@@ -80,7 +80,7 @@ Every error is `application/problem+json`. The one exception is `GET /api/v1/hea
 | <a id="problem-internal-error"></a>`internal-error` | 500 | Unexpected; `requestId` finds it in the runtime's log. The detail never shows internals |
 | <a id="problem-upstream-error"></a>`upstream-error` | 502 | An external system (ManifoldCF) failed |
 | <a id="problem-unavailable"></a>`unavailable` | 503 | Something the request needs is not available (for example identity in `/me`) |
-| <a id="problem-idempotency-unavailable"></a>`idempotency-unavailable` | 503 | The idempotency store (Redis) cannot be reached; the request was not run; see `Retry-After` |
+| <a id="problem-idempotency-unavailable"></a>`idempotency-unavailable` | 503 | The idempotency store (Redis or the database) cannot be reached; the request was not run; see `Retry-After` |
 | <a id="problem-error"></a>`error` | 4xx | Any other error status an optional feature reports; `status` gives it |
 
 The table is the complete list: a test checks that the runtime cannot answer with a type that is not in it.
@@ -145,9 +145,9 @@ Send `Idempotency-Key: <key>` (1 to 200 letters, digits, `.`, `_`, `:` or `-`) w
 - **Same request:** a retry must send the same body, query string and `Content-Type`; otherwise it is another request (`422`).
 - **Uploads:** a multipart request with a key answers `400`; send uploads without one.
 - **Scope and lifetime:** keys are per caller, method and path, and remembered for 24 hours. Without sign-in (`identity.mode=none`) every caller is the same anonymous caller, so clients must pick keys that cannot collide, such as UUIDs.
-- **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, shared by every runtime instance and kept across restarts; the Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
-- **Store unavailable:** if Redis cannot be reached, the request is refused with `503` (`idempotency-unavailable`, with `Retry-After`) and not run. Retry later with the same key.
-- **Long requests:** while a request runs, its key is held (Redis renews it), however long the request takes.
+- **Where they are kept:** in the runtime's memory by default. With `opencrawling.api.idempotency.store=redis` they are kept in Redis, and with `jdbc` in the control-plane database; either way they are shared by every runtime instance and kept across restarts. The Docker Compose stacks use Redis. See [Configuration Guide](Configuration-Guide.md#-platform-api-idempotency-keys).
+- **Store unavailable:** if Redis or the database cannot be reached, the request is refused with `503` (`idempotency-unavailable`, with `Retry-After`) and not run. Retry later with the same key.
+- **Long requests:** while a request runs, its key is held (Redis or the database renews it), however long the request takes.
 - **Limits of the memory store:** at most 10,000 keys, and 1,000 per caller. A key whose request still runs is never dropped before the retention ends; when a new key would need dropping one, the request is refused with `503`. Finished keys may be dropped before 24 hours when a caller or the runtime is at its limit. Without sign-in all clients are one caller and share its 1,000 keys; use the Redis store when many clients send keys.
 - **The one gap:** if Redis fails after the request ran and stays down while the runtime retries keeping its outcome, the outcome is lost. Once the key's in-progress marker expires (10 minutes), a retry would run the request again. The runtime logs this as an error.
 - **Failures:** only successful answers are remembered, so a failed request can be retried with the same key.
