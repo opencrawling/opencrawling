@@ -148,6 +148,21 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
             }
             if (result == null || result.docs() == null || result.docs().isEmpty()) {
                 result = luxirClient.search(properties.collection(), Map.of("query", byUri, "limit", documentFetchSize()));
+                // Chunks stored without a position come back unordered: when the document has more than one fetch
+                // holds, its first chunks are asked for by the ids the pipeline gives them.
+                String documentId = result != null && result.docs() != null && result.docs().size() >= documentFetchSize()
+                        ? result.docs().stream().filter(Objects::nonNull)
+                                .map(doc -> doc.get(LuxirConstants.FIELD_DOC_ID)).filter(Objects::nonNull)
+                                .map(String::valueOf).findFirst().orElse(null)
+                        : null;
+                if (documentId != null) {
+                    LuxirClient.LuxirSearchResult first = luxirClient.search(properties.collection(), Map.of(
+                            "query", byUri + " AND (" + idQuery(DocumentChunks.pipelineChunkIds(documentId, documentMaxChunks())) + ")",
+                            "limit", documentFetchSize()));
+                    if (first != null && first.docs() != null && !first.docs().isEmpty()) {
+                        result = first;
+                    }
+                }
             }
 
             List<Map<String, Object>> candidates = result != null && result.docs() != null
@@ -236,5 +251,13 @@ public class LuxirMcpSearchBackend extends GatedMcpSearchBackend {
         if (value != null) {
             fields.put(key, value);
         }
+    }
+
+    private static String idQuery(List<String> ids) {
+        StringBuilder query = new StringBuilder();
+        for (String id : ids) {
+            query.append(query.isEmpty() ? "" : " OR ").append(LuxirConstants.FIELD_ID).append(":\"").append(escape(id)).append('"');
+        }
+        return query.toString();
     }
 }

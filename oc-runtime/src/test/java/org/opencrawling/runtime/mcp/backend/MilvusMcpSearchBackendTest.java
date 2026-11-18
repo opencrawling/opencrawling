@@ -205,7 +205,10 @@ class MilvusMcpSearchBackendTest {
         assertThat(result.complete()).isFalse();
         ArgumentCaptor<QueryReq> request = ArgumentCaptor.forClass(QueryReq.class);
         verify(milvusClient).query(request.capture());
-        assertThat(request.getValue().getFilter()).isEqualTo("uri == \"file:///milvus.txt\"");
+        // Its first chunks are asked for by the ids the pipeline gives them, the URI standing for the document id.
+        assertThat(request.getValue().getFilter())
+                .startsWith("uri == \"file:///milvus.txt\" and id in [\"" + DocumentChunksTest.pipelineId("file:///milvus.txt", 0) + "\"")
+                .contains(DocumentChunksTest.pipelineId("file:///milvus.txt", GatedMcpSearchBackend.DEFAULT_DOCUMENT_MAX_CHUNKS - 1));
         assertThat(request.getValue().getOutputFields()).doesNotContain(DocumentChunks.CHUNK_INDEX);
     }
 
@@ -236,5 +239,23 @@ class MilvusMcpSearchBackendTest {
                         MilvusConstants.FIELD_TEXT, text,
                         MilvusConstants.FIELD_ACL, "public"))
                 .build();
+    }
+
+    @Test
+    void aCollectionWithoutDynamicFieldsWhoseIdsAreNotThePipelinesGetsThePlainLookup() {
+        // A document whose id is not its URI (CMIS): the ids derived from the URI find nothing.
+        dynamicFields(false);
+        QueryResp none = mock(QueryResp.class);
+        when(none.getQueryResults()).thenReturn(List.of());
+        QueryResp plain = mock(QueryResp.class);
+        when(plain.getQueryResults()).thenReturn(List.of(milvusChunk(0, "first")));
+        when(milvusClient.query(any(QueryReq.class))).thenReturn(none, plain);
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///milvus.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first");
+        ArgumentCaptor<QueryReq> requests = ArgumentCaptor.forClass(QueryReq.class);
+        verify(milvusClient, times(2)).query(requests.capture());
+        assertThat(requests.getAllValues().get(1).getFilter()).isEqualTo("uri == \"file:///milvus.txt\"");
     }
 }

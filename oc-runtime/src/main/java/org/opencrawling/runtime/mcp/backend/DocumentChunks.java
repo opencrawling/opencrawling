@@ -69,6 +69,18 @@ public final class DocumentChunks {
         }
     }
 
+    /**
+     * The ids the ingestion pipeline gives a document's chunks at positions {@code 0} to {@code count - 1}, so a store
+     * that keeps no position can be asked for a document's first chunks by id.
+     */
+    public static List<String> pipelineChunkIds(String documentId, int count) {
+        List<String> ids = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            ids.add(UUID.nameUUIDFromBytes((documentId + "#" + i).getBytes(StandardCharsets.UTF_8)).toString());
+        }
+        return ids;
+    }
+
     /** How many chunks to ask the store for: one more than are returned, which tells a document that has more. */
     public static int fetchSize(int maxChunks) {
         return maxChunks + 1;
@@ -125,6 +137,11 @@ public final class DocumentChunks {
         positioned.sort(Comparator.comparing((Positioned p) -> p.index() == null)
                 .thenComparing(p -> p.index() == null ? 0 : p.index())
                 .thenComparing(p -> Objects.toString(p.chunk().id(), "")));
+        // A chunk whose position cannot be told cannot be put in its place: joined at the end it would scramble the
+        // text. It is kept only when no chunk has a position (a store that records none, read without the ids).
+        if (positioned.stream().anyMatch(p -> p.index() != null)) {
+            positioned.removeIf(p -> p.index() == null);
+        }
         List<Positioned> ordered = distinctWithin(positioned, totalChunks);
         if (ordered.isEmpty()) {
             // Every chunk lies past the recorded length: the record is wrong, not the chunks.
@@ -223,12 +240,17 @@ public final class DocumentChunks {
 
     /** The document's chunk count, as its lowest-positioned chunk that records one says. */
     private static Integer totalChunks(List<Positioned> positioned) {
+        // Counts that are not positive are a store's unset value (Vespa's undefined int): another chunk may record it.
         return positioned.stream()
-                .filter(p -> intValue(p.chunk().metadata().get(TOTAL_CHUNKS)) != null)
+                .filter(p -> recordedCount(p) != null)
                 .min(Comparator.comparing((Positioned p) -> p.index() == null ? Integer.MAX_VALUE : p.index()))
-                .map(p -> intValue(p.chunk().metadata().get(TOTAL_CHUNKS)))
-                .filter(total -> total > 0)
+                .map(DocumentChunks::recordedCount)
                 .orElse(null);
+    }
+
+    private static Integer recordedCount(Positioned p) {
+        Integer total = intValue(p.chunk().metadata().get(TOTAL_CHUNKS));
+        return total != null && total > 0 ? total : null;
     }
 
     /**

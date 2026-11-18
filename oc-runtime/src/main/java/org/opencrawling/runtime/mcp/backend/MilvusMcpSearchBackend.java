@@ -165,6 +165,11 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
                 // stored without a position are found by the plain lookup.
                 candidates = documentChunks(byUri + " and " + DocumentChunks.CHUNK_INDEX + " < " + documentMaxChunks(),
                         true);
+            } else {
+                // A collection without dynamic fields keeps no position: its first chunks are asked for by the ids
+                // the pipeline gives them, with the URI as the document id (true for most sources).
+                candidates = documentChunks(byUri + " and " + MilvusConstants.FIELD_ID + " in "
+                        + idList(DocumentChunks.pipelineChunkIds(documentUri, documentMaxChunks())), false);
             }
             if (candidates.isEmpty()) {
                 candidates = documentChunks(byUri, positions);
@@ -290,5 +295,13 @@ public class MilvusMcpSearchBackend extends GatedMcpSearchBackend {
         List<String> all = new ArrayList<>(first);
         all.addAll(second);
         return List.copyOf(all);
+    }
+
+    private static String idList(List<String> ids) {
+        StringBuilder list = new StringBuilder("[");
+        for (int i = 0; i < ids.size(); i++) {
+            list.append(i == 0 ? "" : ", ").append('"').append(escapeFilter(ids.get(i))).append('"');
+        }
+        return list.append(']').toString();
     }
 }

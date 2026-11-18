@@ -150,10 +150,18 @@ public class QdrantMcpSearchBackend extends GatedMcpSearchBackend {
             Common.Filter plain = Common.Filter.newBuilder()
                     .addMust(matchKeyword(QdrantFields.FIELD_URI, documentUri))
                     .build();
+            // Points written before the mapper kept numbers hold the position as text, which a range does not match.
+            List<String> positionsAsText = new ArrayList<>();
+            for (int i = 0; i < documentMaxChunks(); i++) {
+                positionsAsText.add(Integer.toString(i));
+            }
             Common.Filter bounded = plain.toBuilder()
-                    .addMust(Common.Condition.newBuilder().setField(Common.FieldCondition.newBuilder()
-                            .setKey(DocumentChunks.CHUNK_INDEX)
-                            .setRange(Common.Range.newBuilder().setLt(documentMaxChunks()).build())))
+                    .addMust(Common.Condition.newBuilder().setFilter(Common.Filter.newBuilder()
+                            .addShould(Common.Condition.newBuilder().setField(Common.FieldCondition.newBuilder()
+                                    .setKey(DocumentChunks.CHUNK_INDEX)
+                                    .setRange(Common.Range.newBuilder().setLt(documentMaxChunks()).build())))
+                            .addShould(io.qdrant.client.ConditionFactory.matchKeywords(
+                                    DocumentChunks.CHUNK_INDEX, positionsAsText))))
                     .build();
 
             Points.ScrollResponse scrollResp = qdrantClient.scrollAsync(documentScroll(bounded)).get();

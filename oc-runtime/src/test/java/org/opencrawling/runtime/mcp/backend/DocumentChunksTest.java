@@ -189,11 +189,29 @@ class DocumentChunksTest {
     }
 
     @Test
-    void chunksOfUnknownPositionComeLastAndTheDocumentIsIncomplete() {
-        DocumentDetailsResult doc = assemble(List.of(chunk("legacy", DOC, "unplaced", Map.of()), chunk(0, 1)));
+    void aChunkWhosePositionCannotBeToldIsLeftOutRatherThanAppended() {
+        // Appended in id order it would scramble the text (a store's unordered fetch can return any chunk).
+        DocumentDetailsResult doc = assemble(List.of(chunk("legacy", DOC, "unplaced", Map.of()), chunk(0, 2), chunk(1, 2)));
 
-        assertThat(doc.content()).isEqualTo("part 0\nunplaced");
-        assertThat(doc.complete()).isFalse();
+        assertThat(doc.content()).isEqualTo("part 0\npart 1");
+        assertThat(doc.complete()).isTrue();
+    }
+
+    @Test
+    void theCountComesFromTheLowestChunkThatRecordsOne() {
+        // Chunk 0 holds Vespa's unset count, chunk 1 the real one.
+        DocumentDetailsResult doc = assemble(List.of(
+                chunk("c0", DOC, "part 0", Map.of(DocumentChunks.CHUNK_INDEX, 0, DocumentChunks.TOTAL_CHUNKS, Integer.MIN_VALUE)),
+                chunk(1, 2)));
+
+        assertThat(doc.totalChunks()).isEqualTo(2);
+        assertThat(doc.complete()).isTrue();
+    }
+
+    @Test
+    void theIdsOfADocumentsFirstPositionsAreThePipelines() {
+        assertThat(DocumentChunks.pipelineChunkIds(DOC, 3))
+                .containsExactly(pipelineId(DOC, 0), pipelineId(DOC, 1), pipelineId(DOC, 2));
     }
 
     @Test

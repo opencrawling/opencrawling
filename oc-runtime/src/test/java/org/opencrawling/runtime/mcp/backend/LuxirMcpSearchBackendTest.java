@@ -187,4 +187,26 @@ class LuxirMcpSearchBackendTest {
                 LuxirConstants.FIELD_ACL, "public",
                 properties.vectorField(), List.of(0.1f, 0.2f));
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aLongDocumentStoredWithoutPositionsIsAskedForItsFirstChunksById() throws IOException, InterruptedException {
+        backend.setDocumentMaxChunks(2);
+        // No position: the bounded lookup finds nothing; the plain lookup fills a whole fetch (3), so there are more.
+        when(luxirClient.search(eq("opencrawling"), any()))
+                .thenReturn(new LuxirClient.LuxirSearchResult(0, List.of()))
+                .thenReturn(new LuxirClient.LuxirSearchResult(3,
+                        List.of(luxirChunk(7, "eighth"), luxirChunk(3, "fourth"), luxirChunk(5, "sixth"))))
+                .thenReturn(new LuxirClient.LuxirSearchResult(2, List.of(luxirChunk(1, "second"), luxirChunk(0, "first"))));
+
+        McpVectorServer.DocumentDetailsResult result = backend.getDocumentContent("file:///doc.txt", "user", List.of(), null);
+
+        assertThat(result.content()).isEqualTo("first\nsecond");
+        assertThat(result.complete()).isFalse();
+        ArgumentCaptor<Map<String, Object>> payloads = ArgumentCaptor.forClass(Map.class);
+        verify(luxirClient, times(3)).search(eq("opencrawling"), payloads.capture());
+        assertThat((String) payloads.getAllValues().get(2).get("query")).isEqualTo("uri_s:\"file:///doc.txt\" AND (id:\""
+                + DocumentChunksTest.pipelineId("file:///doc.txt", 0) + "\" OR id:\""
+                + DocumentChunksTest.pipelineId("file:///doc.txt", 1) + "\")");
+    }
 }

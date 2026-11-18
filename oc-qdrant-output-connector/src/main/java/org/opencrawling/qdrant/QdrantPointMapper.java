@@ -107,6 +107,13 @@ public class QdrantPointMapper {
             }
             return stringListValue(strings);
         }
+        // Numbers stay numbers, so numeric conditions match them (getDocumentContent asks for chunk_index < limit).
+        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+            return ValueFactory.value(((Number) value).longValue());
+        }
+        if (value instanceof Double || value instanceof Float) {
+            return ValueFactory.value(((Number) value).doubleValue());
+        }
         return ValueFactory.value(String.valueOf(value));
     }
 
