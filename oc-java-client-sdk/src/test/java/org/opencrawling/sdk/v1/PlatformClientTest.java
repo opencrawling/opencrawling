@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -256,5 +256,58 @@ class PlatformClientTest {
         } finally {
             java.nio.file.Files.deleteIfExists(target);
         }
+    }
+
+    @Test
+    void waitForCompletionPollsUntilTerminalStateAndTimesOutWhenStuck() {
+        answerOnce("GET /api/v1/job-runs/exec-9/history", 200,
+                "{\"executionId\":\"exec-9\",\"jobId\":\"1\",\"state\":\"RUNNING\",\"steps\":[]}", Map.of());
+        answer("GET /api/v1/job-runs/exec-9/history", 200,
+                "{\"executionId\":\"exec-9\",\"jobId\":\"1\",\"state\":\"COMPLETED\",\"endedAt\":\"2026-11-18T12:00:00Z\",\"steps\":[]}",
+                Map.of());
+
+        var completed = api.jobRuns().waitForCompletion("exec-9", java.time.Duration.ofMillis(5), java.time.Duration.ofSeconds(1));
+        assertThat(completed.state()).isEqualTo("COMPLETED");
+        assertThat(requests).containsExactly(
+                "GET /api/v1/job-runs/exec-9/history",
+                "GET /api/v1/job-runs/exec-9/history");
+
+        answer("GET /api/v1/job-runs/exec-stuck/history", 200,
+                "{\"executionId\":\"exec-stuck\",\"jobId\":\"1\",\"state\":\"RUNNING\",\"steps\":[]}", Map.of());
+        assertThat(catchThrowableOfType(org.opencrawling.sdk.exceptions.OpenCrawlingException.class,
+                () -> api.jobRuns().waitForCompletion("exec-stuck", java.time.Duration.ofMillis(5), java.time.Duration.ofMillis(15))))
+                .hasMessageContaining("Timed out");
+    }
+
+    @Test
+    void typedTransportSettingsAndSidecarStreamsPreserveFieldsAndFollowCursors() throws Exception {
+        answer("GET /api/v1/settings/transport", 200,
+                "{\"grpcEnabled\":true,\"grpcHost\":\"localhost\",\"grpcPort\":9095,\"futureFlag\":\"kept\"}",
+                Map.of("ETag", "\"t1\""));
+        var transport = api.settings().transportSettings();
+        assertThat(transport.etag()).isEqualTo("\"t1\"");
+        assertThat(transport.value().grpcEnabled()).isTrue();
+        assertThat(transport.value().grpcPort()).isEqualTo(9095);
+
+        var updated = transport.value().withGrpcPort(9099);
+        ObjectNode node = new ObjectMapper().valueToTree(updated);
+        assertThat(node.get("grpcPort").asInt()).isEqualTo(9099);
+        assertThat(node.get("futureFlag").asText()).isEqualTo("kept");
+
+        answer("GET /api/v1/sidecar-stores", 200,
+                "[{\"name\":\"S3_Out\",\"description\":\"S3 Sink\",\"kind\":\"s3\"}]", Map.of());
+        assertThat(api.sidecars().listStores()).singleElement().satisfies(s -> {
+            assertThat(s.name()).isEqualTo("S3_Out");
+            assertThat(s.kind()).isEqualTo("s3");
+        });
+
+        answer("GET /api/v1/sidecar-stores/S3_Out/sidecars?prefix=hr%2F", 200,
+                "{\"connector\":\"S3_Out\",\"prefix\":\"hr/\",\"items\":[{\"id\":\"d1\"}],\"nextCursor\":\"c2\",\"truncated\":false}",
+                Map.of());
+        answer("GET /api/v1/sidecar-stores/S3_Out/sidecars?prefix=hr%2F&cursor=c2", 200,
+                "{\"connector\":\"S3_Out\",\"prefix\":\"hr/\",\"items\":[{\"id\":\"d2\"}],\"nextCursor\":null,\"truncated\":false}",
+                Map.of());
+        assertThat(api.sidecars().stream("S3_Out", "hr/").map(m -> m.get("id")))
+                .containsExactly("d1", "d2");
     }
 }

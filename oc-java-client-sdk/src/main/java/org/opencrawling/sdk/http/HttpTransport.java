@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -372,5 +372,10 @@ public class HttpTransport {
 
     public ObjectMapper getObjectMapper() {
         return objectMapper;
+    }
+
+    /** Returns a transport sharing this HTTP client and settings, but authenticating with {@code override}. */
+    public HttpTransport withTokenProvider(TokenProvider override) {
+        return new HttpTransport(httpClient, baseUrl, apiKey, override, requestTimeout, objectMapper);
     }
 }

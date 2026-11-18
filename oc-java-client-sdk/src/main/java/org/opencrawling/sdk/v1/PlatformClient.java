@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,12 +42,16 @@ import org.opencrawling.sdk.v1.model.DynamicJobRequest;
 import org.opencrawling.sdk.v1.model.Health;
 import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.SystemSettings;
+import org.opencrawling.sdk.v1.model.TransportSettings;
+import org.opencrawling.sdk.v1.model.SidecarPage;
+import org.opencrawling.sdk.v1.model.SidecarStoreInfo;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
 import org.opencrawling.sdk.v1.model.JobRunHistory;
 import org.opencrawling.sdk.v1.model.VersionInfo;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -232,6 +236,17 @@ public interface PlatformClient {
 
         /** The run, in progress or ended, with the history of its states, while it is kept. */
         JobRunHistory history(String executionId);
+
+        /**
+         * Polls {@link #history(String)} at {@code pollInterval} until the run reaches a terminal state
+         * ({@code COMPLETED}, {@code STOPPED}, {@code FAILED}, or {@code INTERRUPTED}) or {@code timeout} elapses.
+         */
+        JobRunHistory waitForCompletion(String executionId, Duration pollInterval, Duration timeout);
+
+        /** Polls every 2 seconds for up to 10 minutes until the run reaches a terminal state. */
+        default JobRunHistory waitForCompletion(String executionId) {
+            return waitForCompletion(executionId, Duration.ofSeconds(2), Duration.ofMinutes(10));
+        }
     }
 
     interface Executions {
@@ -292,6 +307,12 @@ public interface PlatformClient {
         Versioned<JsonNode> transport();
 
         Versioned<JsonNode> replaceTransport(Object settings, RequestOptions options);
+
+        /** Typed, lossless view of {@code /api/v1/settings/transport}. */
+        Versioned<TransportSettings> transportSettings();
+
+        /** Replaces transport settings using a typed {@link TransportSettings} document. */
+        Versioned<TransportSettings> replaceTransportSettings(TransportSettings settings, RequestOptions options);
 
         /** Tests a gRPC connection; null host and port test the configured one. */
         JsonNode testGrpc(String host, Integer port);
@@ -364,7 +385,16 @@ public interface PlatformClient {
         /** The stores sidecars can be read from. */
         JsonNode stores();
 
+        /** Typed list of registered OIS sidecar stores. */
+        List<SidecarStoreInfo> listStores();
+
         /** One page of a store's sidecars: {@code items} and {@code nextCursor}. */
         JsonNode read(String connector, String prefix, Integer limit, String cursor);
+
+        /** Typed page of a store's OIS metadata sidecars. */
+        SidecarPage readPage(String connector, String prefix, Integer limit, String cursor);
+
+        /** Lazily streams all authorized OIS sidecars matching {@code prefix} across pages. */
+        Stream<Map<String, Object>> stream(String connector, String prefix);
     }
 }
