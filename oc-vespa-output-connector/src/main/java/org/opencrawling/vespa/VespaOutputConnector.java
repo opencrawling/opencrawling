@@ -45,6 +45,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import ai.vespa.feed.client.DocumentId;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.opencrawling.core.document.DocumentAction;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "vespa")
@@ -54,6 +66,7 @@ public class VespaOutputConnector implements OutputConnector {
 
     // Built from the code point rather than a source-level escape to strip NUL characters, which downstream stores reject.
     private static final String NUL_CHAR = Character.toString(0);
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final FeedClient client;
     private final VespaOutputProperties properties;
@@ -66,6 +79,7 @@ public class VespaOutputConnector implements OutputConnector {
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
     private final TextExtractionService textExtractionService;
+    private final HttpClient searchClient;
 
     @Autowired
     public VespaOutputConnector(
@@ -97,6 +111,9 @@ public class VespaOutputConnector implements OutputConnector {
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
         this.outsidePipeline = outsidePipeline;
+        this.searchClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(this.properties != null ? this.properties.timeoutSeconds() : 30))
+                .build();
     }
 
     public VespaOutputConnector(
@@ -139,6 +156,18 @@ public class VespaOutputConnector implements OutputConnector {
     @Override
     public Mono<Void> send(RepositoryDocument document) {
         return Mono.fromRunnable(() -> {
+            if (document.action() == DocumentAction.DELETE) {
+                // A tombstone has no content; it removes what earlier runs stored for the document.
+                try {
+                    deleteDocument(document);
+                } catch (Exception e) {
+                    if (e instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw new IllegalStateException("Failed to delete document " + document.id() + " from Vespa", e);
+                }
+                return;
+            }
             try (InputStream is = document.contentStream()) {
                 byte[] contentBytes = is.readAllBytes();
                 if (contentBytes.length == 0) {
@@ -225,5 +254,61 @@ public class VespaOutputConnector implements OutputConnector {
                 return embeddingModel.embed(text);
             }
         }, chunk.getText(), documentId);
+    }
+
+    /** Vespa's default query profile answers at most this many hits per query. */
+    static final int DELETE_PAGE = 400;
+
+    /**
+     * Removes every chunk stored for the document, in every document type (chunks go to the type of their
+     * embedding's length). Chunks are found by URI, the field they are indexed under; a tombstone without one is
+     * looked up by its id, which is then also the URI the chunks were stored with. Looks again until no chunk is left,
+     * since one query returns at most {@link #DELETE_PAGE}.
+     */
+    void deleteDocument(RepositoryDocument document) throws Exception {
+        String uri = document.uri() != null && !document.uri().isBlank() ? document.uri() : document.id();
+        Set<String> removed = new HashSet<>();
+        while (true) {
+            List<String> ids = new ArrayList<>(storedChunkIds(uri));
+            ids.removeAll(removed);
+            if (ids.isEmpty()) {
+                break;
+            }
+            List<CompletableFuture<Result>> removals = new ArrayList<>(ids.size());
+            for (String id : ids) {
+                removals.add(client.remove(DocumentId.of(id), OperationParameters.empty()));
+            }
+            for (CompletableFuture<Result> removal : removals) {
+                removal.get();
+            }
+            removed.addAll(ids);
+        }
+        log.info("Deleted document {} from Vespa ({} chunks).", document.id(), removed.size());
+    }
+
+    /** The Vespa document ids of the chunks stored under this URI, across all document types. */
+    List<String> storedChunkIds(String uri) throws Exception {
+        ObjectNode body = JSON.createObjectNode();
+        body.put("yql", "select documentid from sources * where " + VespaFields.FIELD_URI + " contains \""
+                + uri.replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
+        body.put("hits", DELETE_PAGE);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(properties.endpoint() + "/search/"))
+                .timeout(Duration.ofSeconds(properties.timeoutSeconds()))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        HttpResponse<String> response = searchClient.send(request, HttpResponse.BodyHandlers.ofString());
+        JsonNode root = JSON.readTree(response.body()).path("root");
+        if (response.statusCode() >= 300 || (root.path("errors").isArray() && !root.path("errors").isEmpty())) {
+            throw new IllegalStateException("Vespa lookup of the chunks of " + uri + " failed: " + response.body());
+        }
+        List<String> ids = new ArrayList<>();
+        for (JsonNode hit : root.path("children")) {
+            String id = hit.path("id").asText("");
+            if (id.startsWith("id:")) {
+                ids.add(id);
+            }
+        }
+        return ids;
     }
 }

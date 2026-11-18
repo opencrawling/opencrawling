@@ -113,9 +113,25 @@ class JobControllerConnectorResolutionTest {
         assertThat(job.status()).isEqualTo("Error");
         assertThat(job.currentStage()).startsWith("Rejected: ").contains("governance").contains("decoupled");
         verify(orchestrator, never()).runJob(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // The output built for the job (a per-job Qdrant or Vespa owns its clients) is released, not leaked.
+        verify(factory).release(output);
         // The run's slot was released, so the job can start once nothing bypasses the gate.
         when(orchestrator.bypassesGovernance(output, PipelineMode.RAG)).thenReturn(false);
         assertThat(controller.startJob(jobId).getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void aMigrationOnlyOutputInARagJobIsRejectedAndReleased() {
+        // Ozone and S3 outputs are built for the job and own their clients.
+        OutputConnector ozone = mock(org.opencrawling.ozone.OzoneOutputConnector.class);
+        when(factory.repository(any())).thenReturn(mock(RepositoryConnector.class));
+        when(factory.output(any(), eq(PipelineMode.RAG))).thenReturn(ozone);
+
+        assertThat(controller.startJob(jobId).getStatusCode().value()).isNotEqualTo(200);
+
+        assertThat(controller.getJob(jobId).getBody().currentStage()).contains("requires migration mode");
+        verify(factory).release(ozone);
+        verify(orchestrator, never()).runJob(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
