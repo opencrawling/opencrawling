@@ -24,6 +24,8 @@ public final class VespaFields {
     public static final String FIELD_CHUNK_ID = "chunk_id";
     public static final String FIELD_TEXT = "text";
     public static final String FIELD_URI = "uri";
+    /** The source document's id, queryable, so a deletion finds every chunk of its document. */
+    public static final String FIELD_DOCUMENT_ID = "document_id";
     public static final String FIELD_ACL = "acl";
     public static final String FIELD_LAST_MODIFIED = "lastModified";
     public static final String FIELD_EMBEDDING = "embedding";

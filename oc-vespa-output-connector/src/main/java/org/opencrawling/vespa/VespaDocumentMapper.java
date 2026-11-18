@@ -51,6 +51,10 @@ public class VespaDocumentMapper {
         fields.put(VespaFields.FIELD_CHUNK_ID, chunkId);
         fields.put(VespaFields.FIELD_TEXT, text != null ? text : "");
         fields.put(VespaFields.FIELD_URI, uri != null ? uri : "");
+        // The source document's id has a field of its own, so a deletion can find the document's chunks.
+        if (extraMetadata != null && extraMetadata.get("documentId") instanceof String documentId && !documentId.isBlank()) {
+            fields.put(VespaFields.FIELD_DOCUMENT_ID, documentId);
+        }
         // An empty security_allowed_read array is not fed, and readers then fall back to the acl field, so it
         // holds the effective readers rather than the raw acl string (which permission rules override).
         fields.put(VespaFields.FIELD_ACL, String.join(",", aclResult.allowedRead()));

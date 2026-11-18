@@ -217,7 +217,10 @@ class VespaOutputConnectorTest {
             local.send(RepositoryDocument.createTombstone("doc-777", "file://tmp/doc-777.txt")).block();
 
             assertThat(stored).isEmpty();
-            assertThat(queries).allMatch(query -> query.contains("from sources * where uri contains \\\"file://tmp/doc-777.txt\\\""));
+            // Looked up by the document's id in the types this output writes, not by URI across every schema.
+            assertThat(queries).allMatch(query -> query.contains("where document_id contains \\\"doc-777\\\""))
+                    .allMatch(query -> query.contains("from sources opencrawling_chunk, opencrawling_chunk_384, "
+                            + "opencrawling_chunk_768, opencrawling_chunk_1024 where"));
         } finally {
             vespa.stop(0);
         }
