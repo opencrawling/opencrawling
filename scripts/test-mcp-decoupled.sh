@@ -844,7 +844,7 @@ ingest_ois_doc "$(jq -n --arg id "${DOC_LONG}" --arg text "${MARKER_LONG_START} 
 # The tool's answer, from the structured content or the text content of the JSON-RPC result.
 long_document() {
   invoke_get_content "${DOC_LONG}" "alice@company.com" "public" \
-    | jq -c '.result.structuredContent // (.result.content[0].text | fromjson)' 2>/dev/null
+    | jq -c '.result.structuredContent // (.result.content[0].text | fromjson?)' 2>/dev/null || true
 }
 # Chunks are stored one by one, so the document is complete once the writer has stored them all.
 LONG_DOC_JSON=""
@@ -859,7 +859,7 @@ until [ "$(echo "$LONG_DOC_JSON" | jq -r 'select(.chunkCount > 1) | .complete' 2
   sleep 2
   LONG_WAITED=$((LONG_WAITED + 2))
   # Until the first chunk is stored the tool answers "not found", which is no JSON document: try again.
-  LONG_DOC_JSON=$(long_document) || LONG_DOC_JSON=""
+  LONG_DOC_JSON=$(long_document || true)
 done
 log_info "Multi-chunk document: $(echo "$LONG_DOC_JSON" | jq -c '{id, chunkCount, totalChunks, complete, length: (.content | length)}')"
 echo "$LONG_DOC_JSON" | jq -e --arg start "${MARKER_LONG_START}" --arg end "${MARKER_LONG_END}" '
