@@ -181,7 +181,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.head_sha }}
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v6.1.0
+        uses: actions/setup-java@v6.3.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -348,7 +348,7 @@ jobs:
 
       - name: Set up JDK 25 (For Version Stamping)
         if: matrix.needs_stamp == true
-        uses: actions/setup-java@v6.1.0
+        uses: actions/setup-java@v6.3.0
         with:
           java-version: '25'
           distribution: 'temurin'
