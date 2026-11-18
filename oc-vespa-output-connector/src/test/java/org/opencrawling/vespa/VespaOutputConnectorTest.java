@@ -37,8 +37,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import com.sun.net.httpserver.HttpServer;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -64,8 +62,10 @@ class VespaOutputConnectorTest {
     @Mock
     private EmbeddingModel embeddingModel;
 
-    private final VespaOutputProperties properties = new VespaOutputProperties(
-            "http://localhost:8080", "opencrawling", "opencrawling_chunk", 2, 30, false, null, null, null);
+    private final VespaOutputProperties properties = VespaOutputProperties.builder()
+            .endpoint("http://localhost:8080")
+            .dimensions(2)
+            .build();
 
     @BeforeEach
     void setUp() {
@@ -191,62 +191,54 @@ class VespaOutputConnectorTest {
 
     @Test
     void aTombstoneRemovesEveryChunkTheDocumentStoredInEveryDocumentType() throws Exception {
-        // A per-job Vespa output gets RAG tombstones directly (the pipeline's writer does not reach it). The stand-in
-        // search answers with what is stored, as Vespa would: the fed chunks until they are removed.
-        Set<String> stored = new java.util.concurrent.ConcurrentSkipListSet<>();
-        Result result = mock(Result.class);
-        when(feedClient.put(any(DocumentId.class), anyString(), any(OperationParameters.class))).thenAnswer(call -> {
-            stored.add(call.getArgument(0).toString());
-            return CompletableFuture.completedFuture(result);
-        });
-        when(feedClient.remove(any(DocumentId.class), any(OperationParameters.class))).thenAnswer(call -> {
-            stored.remove(call.getArgument(0).toString());
-            return CompletableFuture.completedFuture(result);
-        });
-        // 1024 dimensions: the chunks go to the dimension-specific document type, not the configured default one.
-        when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[1024]);
-        List<String> queries = new java.util.concurrent.CopyOnWriteArrayList<>();
-        HttpServer vespa = searchServer(queries, () -> stored);
-        try {
-            VespaOutputConnector local = new VespaOutputConnector(feedClient, endpoint(vespa), new VespaDocumentMapper(),
+        // A per-job Vespa output gets RAG tombstones directly (the pipeline's writer does not reach it). What the
+        // connector feeds is stored in the stand-in, which deletes by selection like Vespa.
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            Result result = mock(Result.class);
+            when(feedClient.put(any(DocumentId.class), anyString(), any(OperationParameters.class))).thenAnswer(call -> {
+                DocumentId id = call.getArgument(0);
+                com.fasterxml.jackson.databind.JsonNode fields = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree((String) call.getArgument(1)).path("fields");
+                vespa.store(id.namespace(), id.documentType(), id.userSpecific(),
+                        fields.path("document_id").asText(null), fields.path("uri").asText());
+                return CompletableFuture.completedFuture(result);
+            });
+            // 1024 dimensions: the chunks go to the dimension-specific document type, not the configured default one.
+            when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[1024]);
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
                     embeddingModel);
             String text = "Section of the handbook covers retention, indexing and search practices. ".repeat(400);
             local.send(failFastDocument("doc-777", text)).block();
-            assertThat(stored).hasSizeGreaterThan(1).allMatch(id -> id.startsWith("id:opencrawling:opencrawling_chunk_1024::"));
+            assertThat(vespa.documents).hasSizeGreaterThan(1)
+                    .allSatisfy((id, fields) -> assertThat(id).startsWith("id:opencrawling:opencrawling_chunk_1024::"));
 
             local.send(RepositoryDocument.createTombstone("doc-777", "file://tmp/doc-777.txt")).block();
 
-            assertThat(stored).isEmpty();
-            // Looked up by the document's id in the types this output writes, not by URI across every schema; then by URI
-            // for chunks that predate document_id.
-            assertThat(queries).first().asString().contains("where document_id contains \\\"doc-777\\\"");
-            assertThat(queries).allMatch(query -> query.contains("from sources opencrawling_chunk, opencrawling_chunk_384, "
-                    + "opencrawling_chunk_768, opencrawling_chunk_1024 where"));
-        } finally {
-            vespa.stop(0);
+            assertThat(vespa.documents).isEmpty();
         }
     }
 
     @Test
     void aTombstoneForADocumentNothingWasStoredForRemovesNothing() throws Exception {
-        HttpServer vespa = searchServer(new java.util.concurrent.CopyOnWriteArrayList<>(), Set::of);
-        try {
-            VespaOutputConnector local = new VespaOutputConnector(feedClient, endpoint(vespa), new VespaDocumentMapper(),
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            vespa.store("opencrawling", "opencrawling_chunk_1024", "kept", "another-doc", "file://tmp/another.txt");
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
                     embeddingModel);
 
             local.send(RepositoryDocument.createTombstone("doc-778", "file://tmp/doc-778.txt")).block();
 
-            verify(feedClient, never()).remove(any(DocumentId.class), any(OperationParameters.class));
-        } finally {
-            vespa.stop(0);
+            assertThat(vespa.documents).containsOnlyKeys("id:opencrawling:opencrawling_chunk_1024::kept");
         }
     }
 
     @Test
-    void aTombstoneWhoseChunksCannotBeLookedUpFailsTheDocument() {
-        // Nothing listens on the endpoint: the chunks cannot be found, so the delete must not report success.
-        VespaOutputConnector local = new VespaOutputConnector(feedClient, new VespaOutputProperties(
-                "http://127.0.0.1:59998", "opencrawling", "opencrawling_chunk", 2, 2, false, null, null, null),
+    void aTombstoneVespaCannotBeAskedToDeleteFailsTheDocument() {
+        // Nothing listens on the endpoint: the delete must not report success.
+        VespaOutputConnector local = new VespaOutputConnector(feedClient, VespaOutputProperties.builder()
+                .endpoint("http://127.0.0.1:59998")
+                .dimensions(2)
+                .timeoutSeconds(2)
+                .build(),
                 new VespaDocumentMapper(), embeddingModel);
 
         assertThatThrownBy(() -> local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt")).block())
@@ -263,30 +255,5 @@ class VespaOutputConnectorTest {
         assertThatThrownBy(() -> connector.send(failFastDocument("doc-11", "Some text to feed.")).block())
                 .hasStackTraceContaining("deploy the updated schemas");
         verify(feedClient, times(1)).put(any(DocumentId.class), anyString(), any(OperationParameters.class));
-    }
-
-    /** A stand-in for Vespa's search endpoint, answering a chunk lookup with the stored document ids. */
-    private static HttpServer searchServer(List<String> queries, java.util.function.Supplier<Set<String>> stored)
-            throws java.io.IOException {
-        HttpServer server = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/search/", exchange -> {
-            queries.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            StringBuilder children = new StringBuilder();
-            for (String id : stored.get()) {
-                children.append(children.isEmpty() ? "" : ",").append("{\"id\":\"").append(id).append("\"}");
-            }
-            byte[] answer = ("{\"root\":{\"children\":[" + children + "]}}").getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, answer.length);
-            exchange.getResponseBody().write(answer);
-            exchange.close();
-        });
-        server.start();
-        return server;
-    }
-
-    private static VespaOutputProperties endpoint(HttpServer server) {
-        return new VespaOutputProperties("http://127.0.0.1:" + server.getAddress().getPort(), "opencrawling",
-                "opencrawling_chunk", 1024, 5, false, null, null, null);
     }
 }

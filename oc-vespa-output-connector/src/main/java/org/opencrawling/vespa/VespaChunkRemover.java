@@ -15,57 +15,45 @@
  */
 package org.opencrawling.vespa;
 
-import ai.vespa.feed.client.DocumentId;
-import ai.vespa.feed.client.FeedClient;
-import ai.vespa.feed.client.OperationParameters;
-import ai.vespa.feed.client.Result;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.opencrawling.vespa.config.VespaOutputProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 /**
- * Removes every chunk Vespa holds for a source document, in the document types this output writes (its configured
- * type and the dimension-specific ones its embeddings are routed to) and in its namespace only, so an output sharing
- * the endpoint keeps its own chunks.
+ * Removes every chunk Vespa holds for a source document, through Vespa's delete by selection
+ * ({@code DELETE /document/v1/<namespace>/<type>/docid?selection=…&cluster=…}): the content nodes remove exactly the
+ * documents the selection matches. Nothing is searched, so the result does not depend on search visibility, coverage,
+ * paging or case-insensitive matching, and the namespace and document type in the path keep other outputs' documents
+ * out of reach. Only the document types this output writes are addressed: its configured type and the
+ * dimension-specific ones its embeddings are routed to.
  *
- * <p>Chunks are found by {@code document_id}, which every chunk carries whatever URI it was written with (a direct
- * write may carry the claim-check URI, a tombstone the source's). Chunks fed before that field existed, or an
- * application not yet redeployed with it, are found by URI instead.
+ * <p>A document's chunks are matched by {@code document_id}, which every chunk carries whatever URI it was written with
+ * (a direct write may carry the claim-check URI, a tombstone the source's). Chunks without one (fed before the field
+ * existed) are matched by URI. A selection naming a field the deployed schema lacks matches nothing for
+ * {@code document_id == "…"} and everything for {@code document_id == null}, so an application deployed before the
+ * field existed is handled by the URI selection alone.
  */
 public final class VespaChunkRemover {
 
-    private static final Logger log = LoggerFactory.getLogger(VespaChunkRemover.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** Vespa's default query profile answers at most this many hits per query, from offsets below 1000. */
-    static final int PAGE = 400;
-    static final int MAX_OFFSET = 1000;
-    /** Rounds of looking up and removing; each removes what it finds (up to ~1000 chunks), then looks again. */
-    static final int MAX_ROUNDS = 50;
-
-    private final FeedClient feedClient;
     private final VespaOutputProperties properties;
     private final Set<String> documentTypes;
-    /** Built on first use: a connector is constructed even when its TLS files are unreadable (a send then fails). */
+    /** Built on first use: a connector is constructed even when its TLS files are unreadable (a deletion then fails). */
     private volatile HttpClient http;
 
-    public VespaChunkRemover(FeedClient feedClient, VespaOutputProperties properties) {
-        this.feedClient = feedClient;
+    public VespaChunkRemover(VespaOutputProperties properties) {
         this.properties = properties;
         this.documentTypes = new LinkedHashSet<>(List.of(properties.documentType(), VespaFields.DOCUMENT_TYPE_384,
                 VespaFields.DOCUMENT_TYPE_768, VespaFields.DOCUMENT_TYPE_1024));
@@ -76,78 +64,56 @@ public final class VespaChunkRemover {
      *
      * @param documentId the source document's id
      * @param uri        the URI it was stored under, for chunks that predate {@code document_id}; may be null
-     * @return how many chunks were removed
-     * @throws Exception when Vespa cannot be asked or a removal fails: the document is then not deleted
+     * @return how many chunks Vespa removed
+     * @throws Exception when Vespa refuses or cannot be reached: the document is then not deleted
      */
     public int removeDocument(String documentId, String uri) throws Exception {
         int removed = 0;
-        boolean schemaHasDocumentId = true;
-        try {
-            removed = remove(VespaFields.FIELD_DOCUMENT_ID, documentId, false);
-        } catch (QueryRejected e) {
-            // An application deployed before document_id existed rejects the field.
-            schemaHasDocumentId = false;
-            log.debug("Vespa rejected the document_id lookup of {}, looking up by URI: {}", documentId, e.getMessage());
-        }
-        if (uri != null && !uri.isBlank()) {
-            // Chunks fed before document_id existed (or by a writer still feeding without it) are found only by URI,
-            // also next to newer chunks of the same document. Where the schema has the field, a chunk carrying
-            // another document's id is left alone.
-            removed += remove(VespaFields.FIELD_URI, uri, schemaHasDocumentId);
+        for (String type : documentTypes) {
+            removed += deleteWhere(type, type + "." + VespaFields.FIELD_DOCUMENT_ID + " == " + literal(documentId));
+            if (uri != null && !uri.isBlank()) {
+                removed += deleteWhere(type, type + "." + VespaFields.FIELD_URI + " == " + literal(uri) + " and "
+                        + type + "." + VespaFields.FIELD_DOCUMENT_ID + " == null");
+            }
         }
         return removed;
     }
 
-    /**
-     * @param withoutDocumentIdOnly remove only chunks that carry no {@code document_id} (those the id lookup cannot
-     *                              find)
-     */
-    private int remove(String field, String value, boolean withoutDocumentIdOnly) throws Exception {
-        Set<String> removed = new HashSet<>();
-        for (int round = 0; ; round++) {
-            List<String> ids = ownedChunkIds(field, value, withoutDocumentIdOnly);
-            ids.removeAll(removed);
-            if (ids.isEmpty()) {
-                return removed.size();
+    /** Deletes the type's documents matching the selection; a large set is removed over several calls. */
+    int deleteWhere(String type, String selection) throws Exception {
+        int removed = 0;
+        String continuation = null;
+        do {
+            StringBuilder path = new StringBuilder(properties.endpoint()).append("/document/v1/")
+                    .append(encode(properties.namespace())).append('/').append(encode(type)).append("/docid")
+                    .append("?selection=").append(encode(selection))
+                    .append("&cluster=").append(encode(properties.contentCluster()));
+            if (continuation != null) {
+                path.append("&continuation=").append(encode(continuation));
             }
-            if (round == MAX_ROUNDS) {
-                throw new IllegalStateException("Chunks of " + field + " " + value + " are still found after "
-                        + MAX_ROUNDS + " rounds of removal");
+            HttpRequest request = HttpRequest.newBuilder(URI.create(path.toString()))
+                    .timeout(Duration.ofSeconds(properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30))
+                    .DELETE()
+                    .build();
+            HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 300) {
+                throw new IllegalStateException("Vespa refused to delete " + selection + " (" + response.statusCode()
+                        + "): " + response.body());
             }
-            List<CompletableFuture<Result>> removals = new ArrayList<>(ids.size());
-            for (String id : ids) {
-                removals.add(feedClient.remove(DocumentId.of(id), OperationParameters.empty()));
-            }
-            for (CompletableFuture<Result> removal : removals) {
-                removal.get();
-            }
-            removed.addAll(ids);
-        }
+            JsonNode answer = JSON.readTree(response.body());
+            removed += answer.path("documentCount").asInt(0);
+            continuation = answer.hasNonNull("continuation") ? answer.path("continuation").asText() : null;
+        } while (continuation != null);
+        return removed;
     }
 
-    /**
-     * The ids of the chunks with this field value that this output owns. Every full page is read, so hits of other
-     * namespaces cannot end the lookup before this output's chunks are found.
-     */
-    List<String> ownedChunkIds(String field, String value, boolean withoutDocumentIdOnly) throws Exception {
-        List<String> owned = new ArrayList<>();
-        for (int offset = 0; offset < MAX_OFFSET; offset += PAGE) {
-            List<Hit> page = chunkIds(field, value, offset, withoutDocumentIdOnly);
-            for (Hit hit : page) {
-                if (owns(hit.id()) && (!withoutDocumentIdOnly || hit.documentId() == null || hit.documentId().isBlank())) {
-                    owned.add(hit.id());
-                }
-            }
-            if (page.size() < PAGE) {
-                return owned;
-            }
-        }
-        if (owned.isEmpty()) {
-            // Every page Vespa lets us read is other outputs' chunks: this output's may lie beyond them.
-            throw new IllegalStateException("More than " + MAX_OFFSET + " chunks of other outputs share " + field + " "
-                    + value + ": this output's chunks cannot be reached");
-        }
-        return owned;
+    /** A string literal of Vespa's document selection language. */
+    static String literal(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private HttpClient http() {
@@ -161,60 +127,5 @@ public final class VespaChunkRemover {
             }
         }
         return client;
-    }
-
-    /** Whether a Vespa document id ({@code id:<namespace>:<type>::<local>}) is in this output's namespace and types. */
-    boolean owns(String id) {
-        String[] parts = id.split(":", 5);
-        return parts.length == 5 && "id".equals(parts[0]) && properties.namespace().equals(parts[1])
-                && documentTypes.contains(parts[2]);
-    }
-
-    private List<Hit> chunkIds(String field, String value, int offset, boolean withDocumentId) throws Exception {
-        ObjectNode body = JSON.createObjectNode();
-        body.put("yql", "select " + (withDocumentId ? "documentid, " + VespaFields.FIELD_DOCUMENT_ID : "documentid")
-                + " from sources " + String.join(", ", documentTypes) + " where " + field
-                + " contains \"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
-        body.put("hits", PAGE);
-        body.put("offset", offset);
-        HttpRequest request = HttpRequest.newBuilder(URI.create(properties.endpoint() + "/search/"))
-                .timeout(Duration.ofSeconds(properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
-        HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
-        JsonNode root = JSON.readTree(response.body()).path("root");
-        if (root.path("errors").isArray() && !root.path("errors").isEmpty()) {
-            String errors = root.path("errors").toString();
-            // Only an application deployed before the field existed falls back to URIs; a timeout or any other error
-            // must fail the deletion, or a document could be reported deleted while its chunks stay.
-            if (errors.contains("Field '" + field + "' does not exist")) {
-                throw new QueryRejected(errors);
-            }
-            throw new IllegalStateException("Vespa could not look up the chunks with " + field + " " + value + ": " + errors);
-        }
-        if (response.statusCode() >= 300) {
-            throw new IllegalStateException("Vespa answered " + response.statusCode() + " to a chunk lookup: "
-                    + response.body());
-        }
-        List<Hit> hits = new ArrayList<>();
-        for (JsonNode hit : root.path("children")) {
-            String id = hit.path("id").asText("");
-            if (id.startsWith("id:")) {
-                JsonNode documentId = hit.path("fields").path(VespaFields.FIELD_DOCUMENT_ID);
-                hits.add(new Hit(id, documentId.isTextual() ? documentId.asText() : null));
-            }
-        }
-        return hits;
-    }
-
-    /** A chunk Vespa returned: its Vespa id, and its {@code document_id} when asked for and set. */
-    record Hit(String id, String documentId) {}
-
-    /** Vespa answered the lookup with errors (an unknown field, for instance). */
-    static final class QueryRejected extends IllegalStateException {
-        QueryRejected(String errors) {
-            super("Vespa rejected the chunk lookup: " + errors);
-        }
     }
 }

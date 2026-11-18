@@ -34,6 +34,7 @@ All properties are bound via `VespaOutputProperties` under the `spring.opencrawl
 | **TLS Certificate** | `spring.opencrawling.output.vespa.tls-certificate` | *(none)* | Path to client certificate PEM file |
 | **TLS Private Key** | `spring.opencrawling.output.vespa.tls-private-key` | *(none)* | Path to client private key PEM file |
 | **TLS CA Certificates** | `spring.opencrawling.output.vespa.tls-ca-certificates` | *(none)* | Path to CA certificates PEM file, overrides the JVM default truststore |
+| **Content Cluster** | `spring.opencrawling.output.vespa.content-cluster` | `opencrawling_content` | The content cluster deletions address (Vespa's document API requires it for a delete by selection); the bundled `vespa-app/services.xml` names it `opencrawling_content` |
 
 To select this connector, set `spring.opencrawling.output.type=vespa`.
 
@@ -67,7 +68,7 @@ Vespa rejects any field its deployed schema does not declare, and the schemas in
 
 | Field | Type | Used for |
 |---|---|---|
-| `document_id` | `string`, `attribute: fast-search`, `rank: filter` | Finding every chunk of a document when it is deleted: a direct write may carry the claim-check URI and the tombstone the source's, so the URI is not a stable key. |
+| `document_id` | `string`, `attribute: fast-search`, `rank: filter` | Deleting every chunk of a document (a delete by selection on `document_id`): a direct write may carry the claim-check URI and the tombstone the source's, so the URI is not a stable key. Chunks without it are deleted by URI. |
 | `chunk_index` | `int`, `attribute` | Ordering a document's chunks in `getDocumentContent`. |
 | `total_chunks` | `int`, `attribute` | Telling whether a document is complete. |
 

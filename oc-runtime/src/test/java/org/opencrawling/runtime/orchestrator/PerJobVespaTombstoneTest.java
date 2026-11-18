@@ -95,9 +95,10 @@ class PerJobVespaTombstoneTest {
         EmbeddingModel embeddingModel = mock(EmbeddingModel.class);
         when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[1024]);
         // Built for one job, outside the pipeline: a RAG run sends its documents, and tombstones, here directly.
-        output = new VespaOutputConnector(feedClient(), new VespaOutputProperties(
-                "http://127.0.0.1:" + vespa.getAddress().getPort(), "opencrawling", "opencrawling_chunk", 1024, 5,
-                false, null, null, null), new VespaDocumentMapper(), embeddingModel, null, true);
+        output = new VespaOutputConnector(feedClient(), VespaOutputProperties.builder()
+                .endpoint("http://127.0.0.1:" + vespa.getAddress().getPort())
+                .timeoutSeconds(5)
+                .build(), new VespaDocumentMapper(), embeddingModel, null, true);
     }
 
     @AfterEach
@@ -127,7 +128,7 @@ class PerJobVespaTombstoneTest {
                 () -> false);
     }
 
-    /** Keeps what is fed and removed, like Vespa. */
+    /** Keeps what is fed, like Vespa. */
     private FeedClient feedClient() {
         FeedClient feedClient = mock(FeedClient.class);
         Result result = mock(Result.class);
@@ -135,27 +136,30 @@ class PerJobVespaTombstoneTest {
             stored.put(call.getArgument(0).toString(), JSON.readTree((String) call.getArgument(1)).path("fields"));
             return CompletableFuture.completedFuture(result);
         });
-        when(feedClient.remove(any(DocumentId.class), any(OperationParameters.class))).thenAnswer(call -> {
-            stored.remove(call.getArgument(0).toString());
-            return CompletableFuture.completedFuture(result);
-        });
         return feedClient;
     }
 
-    /** Answers a chunk lookup like Vespa: the stored ids whose field holds the value. */
+    /** Deletes by selection like Vespa's document API: exact document_id, or URI for chunks without one. */
     private void startVespa() throws Exception {
         vespa = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        vespa.createContext("/search/", exchange -> {
-            String yql = JSON.readTree(exchange.getRequestBody().readAllBytes()).path("yql").asText();
-            String field = yql.substring(yql.indexOf(" where ") + 7, yql.indexOf(" contains "));
-            String value = yql.substring(yql.indexOf("contains \"") + 10, yql.length() - 1);
-            List<String> ids = new ArrayList<>();
+        vespa.createContext("/document/v1/", exchange -> {
+            String[] path = exchange.getRequestURI().getPath().split("/");
+            String prefix = "id:" + path[3] + ":" + path[4] + "::";
+            String selection = java.net.URLDecoder.decode(exchange.getRequestURI().getRawQuery().replaceAll(".*selection=([^&]*).*", "$1"),
+                    StandardCharsets.UTF_8);
+            String value = selection.substring(selection.indexOf("== \"") + 4, selection.indexOf('"', selection.indexOf("== \"") + 4));
+            boolean byDocumentId = selection.startsWith(path[4] + ".document_id == ");
+            List<String> removed = new ArrayList<>();
             stored.forEach((id, fields) -> {
-                if (value.equals(fields.path(field).asText(null))) {
-                    ids.add("{\"id\":\"" + id + "\"}");
+                boolean match = byDocumentId
+                        ? value.equals(fields.path("document_id").asText(null))
+                        : value.equals(fields.path("uri").asText(null)) && fields.path("document_id").isMissingNode();
+                if (id.startsWith(prefix) && match) {
+                    removed.add(id);
                 }
             });
-            byte[] answer = ("{\"root\":{\"children\":[" + String.join(",", ids) + "]}}").getBytes(StandardCharsets.UTF_8);
+            removed.forEach(stored::remove);
+            byte[] answer = ("{\"documentCount\":" + removed.size() + "}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, answer.length);
             exchange.getResponseBody().write(answer);

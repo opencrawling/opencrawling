@@ -39,7 +39,11 @@ class VespaStoreWriterConsumerTest {
     @Test
     void testConsumeDeleteTombstoneDeletesFromVespa() throws Exception {
         FeedClient client = mock(FeedClient.class);
-        VespaOutputProperties properties = new VespaOutputProperties("http://localhost:8080", "opencrawling", "opencrawling_chunk", 384, 10, false, null, null, null);
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint("http://localhost:8080")
+                .dimensions(384)
+                .timeoutSeconds(10)
+                .build();
         VespaDocumentMapper mapper = new VespaDocumentMapper();
 
         when(client.remove(any(DocumentId.class), any(OperationParameters.class)))
@@ -64,7 +68,11 @@ class VespaStoreWriterConsumerTest {
     @Test
     void aFailedDeleteIsRethrownSoKafkaRetriesIt() {
         FeedClient client = mock(FeedClient.class);
-        VespaOutputProperties properties = new VespaOutputProperties("http://localhost:8080", "opencrawling", "opencrawling_chunk", 384, 10, false, null, null, null);
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint("http://localhost:8080")
+                .dimensions(384)
+                .timeoutSeconds(10)
+                .build();
         when(client.remove(any(DocumentId.class), any(OperationParameters.class)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("vespa unavailable")));
         VespaStoreWriterConsumer consumer = new VespaStoreWriterConsumer(client, properties, new VespaDocumentMapper());
@@ -79,7 +87,11 @@ class VespaStoreWriterConsumerTest {
     @Test
     void anUpsertWithoutAnEmbeddingIsRefusedAndNothingIsWritten() throws Exception {
         FeedClient client = mock(FeedClient.class);
-        VespaOutputProperties properties = new VespaOutputProperties("http://localhost:8080", "opencrawling", "opencrawling_chunk", 384, 10, false, null, null, null);
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint("http://localhost:8080")
+                .dimensions(384)
+                .timeoutSeconds(10)
+                .build();
         VespaStoreWriterConsumer consumer = new VespaStoreWriterConsumer(client, properties, new VespaDocumentMapper());
         org.mockito.Mockito.clearInvocations(client);
         for (float[] missing : new float[][] {null, new float[0]}) {

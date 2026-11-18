@@ -31,8 +31,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class VespaMcpSearchBackendTest {
 
-    private static final VespaOutputProperties UNREACHABLE = new VespaOutputProperties(
-            "http://127.0.0.1:59999", "opencrawling", "opencrawling_chunk", 1024, 2, false, null, null, null);
+    private static final VespaOutputProperties UNREACHABLE = VespaOutputProperties.builder()
+            .endpoint("http://127.0.0.1:59999")
+            .timeoutSeconds(2)
+            .build();
 
     private final VespaMcpSearchBackend backend = new VespaMcpSearchBackend(UNREACHABLE, null, null);
 
@@ -84,9 +86,10 @@ class VespaMcpSearchBackendTest {
         });
         vespa.start();
         try {
-            VespaMcpSearchBackend local = new VespaMcpSearchBackend(new VespaOutputProperties(
-                    "http://127.0.0.1:" + vespa.getAddress().getPort(), "opencrawling", "opencrawling_chunk", 1024, 2,
-                    false, null, null, null), null, null);
+            VespaMcpSearchBackend local = new VespaMcpSearchBackend(VespaOutputProperties.builder()
+                    .endpoint("http://127.0.0.1:" + vespa.getAddress().getPort())
+                    .timeoutSeconds(2)
+                    .build(), null, null);
 
             McpVectorServer.DocumentDetailsResult result = local.getDocumentContent("file:///doc.txt", "user", List.of(), null);
 
@@ -131,9 +134,10 @@ class VespaMcpSearchBackendTest {
         });
         vespa.start();
         try {
-            VespaMcpSearchBackend local = new VespaMcpSearchBackend(new VespaOutputProperties(
-                    "http://127.0.0.1:" + vespa.getAddress().getPort(), "opencrawling", "opencrawling_chunk", 1024, 2,
-                    false, null, null, null), null, null);
+            VespaMcpSearchBackend local = new VespaMcpSearchBackend(VespaOutputProperties.builder()
+                    .endpoint("http://127.0.0.1:" + vespa.getAddress().getPort())
+                    .timeoutSeconds(2)
+                    .build(), null, null);
 
             McpVectorServer.DocumentDetailsResult result = local.getDocumentContent("file:///doc.txt", "user", List.of(), null);
 

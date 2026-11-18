@@ -89,8 +89,9 @@ class OutputWritePathContractTest {
         // runtime's pipeline writer's; the flag is fixed at construction. The runtime's own beans are inside it.
         QdrantOutputProperties qdrant = new QdrantOutputProperties("qdrant.test", 6334, "", "job_kb", 1024,
                 QdrantOutputProperties.Distance.COSINE, QdrantOutputProperties.Quantization.NONE, false, 500);
-        VespaOutputProperties vespa = new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
-                "opencrawling_chunk", 1024, 30, false, null, null, null);
+        VespaOutputProperties vespa = VespaOutputProperties.builder()
+                .endpoint("http://vespa.test:8080")
+                .build();
 
         assertThat(new QdrantOutputConnector(mock(QdrantClient.class), qdrant, new QdrantPointMapper(), null, null, true)
                 .writtenByPipeline(PipelineMode.RAG)).isFalse();

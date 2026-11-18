@@ -17,7 +17,6 @@ package org.opencrawling.vespa;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
 import ai.vespa.feed.client.FeedClient;
-import ai.vespa.feed.client.OperationParameters;
 import ai.vespa.feed.client.Result;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
@@ -59,7 +58,7 @@ public class VespaOutputConnector implements OutputConnector {
     private final FeedClient client;
     private final VespaOutputProperties properties;
     /**
-     * Whether this connector was built for one job whose Vespa destination (endpoint and namespace) is not the one the runtime's
+     * Whether this connector was built for one job whose Vespa destination (endpoint, namespace and document type) is not the one the runtime's
      * pipeline writer stores to: its documents are then sent to it directly. Fixed at construction.
      */
     private final boolean outsidePipeline;
@@ -83,7 +82,7 @@ public class VespaOutputConnector implements OutputConnector {
      * A connector built for one job ({@code ConnectorFactory}).
      *
      * @param outsidePipeline whether the runtime's pipeline writer does not store to this connector's destination
-     *                        (endpoint and namespace), so a RAG run sends its documents here directly
+     *                        (endpoint, namespace and document type), so a RAG run sends its documents here directly
      */
     public VespaOutputConnector(
             FeedClient client,
@@ -99,7 +98,7 @@ public class VespaOutputConnector implements OutputConnector {
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
         this.outsidePipeline = outsidePipeline;
-        this.chunkRemover = new VespaChunkRemover(client, this.properties);
+        this.chunkRemover = new VespaChunkRemover(this.properties);
     }
 
     public VespaOutputConnector(
@@ -117,7 +116,7 @@ public class VespaOutputConnector implements OutputConnector {
 
     /**
      * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here,
-     * unless this connector was built for one job whose Vespa destination (endpoint and namespace) the writer does not write.
+     * unless this connector was built for one job whose Vespa destination (endpoint, namespace and document type) the writer does not write.
      */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {

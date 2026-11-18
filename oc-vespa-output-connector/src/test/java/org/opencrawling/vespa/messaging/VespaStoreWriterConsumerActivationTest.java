@@ -32,8 +32,9 @@ import static org.mockito.Mockito.mock;
  */
 class VespaStoreWriterConsumerActivationTest {
 
-    private static final VespaOutputProperties PROPERTIES = new VespaOutputProperties(
-            "http://localhost:8080", "opencrawling", "opencrawling_chunk", 1024, 30, false, null, null, null);
+    private static final VespaOutputProperties PROPERTIES = VespaOutputProperties.builder()
+            .endpoint("http://localhost:8080")
+            .build();
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withBean(FeedClient.class, () -> mock(FeedClient.class))

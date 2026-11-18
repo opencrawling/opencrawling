@@ -285,7 +285,7 @@ class ConnectorFactoryTest {
     }
 
     @Test
-    void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameEndpointAndNamespace() {
+    void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameDocumentType() {
         assertThat(factory.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isFalse();
 
         VespaOutputConnector active = mock(VespaOutputConnector.class);
@@ -294,17 +294,13 @@ class ConnectorFactoryTest {
 
         // The same endpoint, written without the trailing slash.
         assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isTrue();
-        // Another configured type still writes where the pipeline writes: both paths route the usual embedding sizes
-        // to the dimension-specific types, so sending directly would store the documents twice.
-        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isTrue();
-        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "another_namespace",
-                "opencrawling_chunk", 1024, 30, false, null, null, null))).isFalse();
-        // Embeddings of other sizes go to each output's configured type: another type is another destination.
-        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
-                "other_chunk", 1536, 30, false, null, null, null))).isFalse();
-        assertThat(vespaRuntime.pipelineWritesVespa(new VespaOutputProperties("http://vespa.test:8080", "opencrawling",
-                "opencrawling_chunk", 1536, 30, false, null, null, null))).isTrue();
-        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.other:8080", "opencrawling_chunk"))).isFalse();
+        // Where a chunk lands depends on its embedding's length, unknown here: only an identical configuration is the
+        // same destination (another type never loses documents; it may store them twice).
+        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isFalse();
+        assertThat(vespaRuntime.pipelineWritesVespa(VespaOutputProperties.builder()
+                .endpoint("http://vespa.test:8080")
+                .namespace("another_namespace")
+                .build())).isFalse();
     }
 
     @Test
@@ -321,6 +317,9 @@ class ConnectorFactoryTest {
     }
 
     private static VespaOutputProperties vespa(String endpoint, String documentType) {
-        return new VespaOutputProperties(endpoint, "opencrawling", documentType, 1024, 30, false, null, null, null);
+        return VespaOutputProperties.builder()
+                .endpoint(endpoint)
+                .documentType(documentType)
+                .build();
     }
 }

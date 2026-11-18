@@ -486,12 +486,19 @@ public class ConnectorFactory {
         }
         ai.vespa.feed.client.FeedClient feedClient = feedClientBuilder.build();
 
-        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = new org.opencrawling.vespa.config.VespaOutputProperties(
-                endpoint, namespace, documentType, dimensions, timeoutSeconds, tlsEnabled,
-                tlsCertificate.isBlank() ? null : tlsCertificate,
-                tlsPrivateKey.isBlank() ? null : tlsPrivateKey,
-                tlsCaCertificates.isBlank() ? null : tlsCaCertificates
-        );
+        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = org.opencrawling.vespa.config.VespaOutputProperties.builder()
+                .endpoint(endpoint)
+                .namespace(namespace)
+                .documentType(documentType)
+                .dimensions(dimensions)
+                .timeoutSeconds(timeoutSeconds)
+                .tlsEnabled(tlsEnabled)
+                .tlsCertificate(tlsCertificate.isBlank() ? null : tlsCertificate)
+                .tlsPrivateKey(tlsPrivateKey.isBlank() ? null : tlsPrivateKey)
+                .tlsCaCertificates(tlsCaCertificates.isBlank() ? null : tlsCaCertificates)
+                .contentCluster(config.getOrDefault("vespaContentCluster",
+                        org.opencrawling.vespa.config.VespaOutputProperties.DEFAULT_CONTENT_CLUSTER))
+                .build();
 
         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
         log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
@@ -501,16 +508,16 @@ public class ConnectorFactory {
     }
 
     /**
-     * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa, with the same
-     * endpoint and namespace, and both write the job's chunks to the same document type. That type follows the
-     * embedding's length ({@code VespaDocumentMapper.resolveDocumentType}): the usual sizes (384, 768, 1024) go to their
-     * dimension-specific types whatever type is configured, other sizes to each output's configured type. The job's
-     * configured dimensions stand for the embedding's length. Otherwise a RAG run sends the job's documents to it
-     * directly.
+     * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa with the same
+     * endpoint, namespace and configured document type. Otherwise a RAG run sends the job's documents to it directly.
      *
-     * <p>Like {@link #pipelineWritesQdrant}, this compares this process's configuration as written: it cannot tell
-     * which writer consumes the embedded topic in a decoupled deployment (it assumes the crawler and the writer share
-     * the output settings), nor that two host names reach the same server (then documents are written both ways).
+     * <p>Which document type a chunk lands in depends on its embedding's actual length, which is not known here (the
+     * usual sizes go to the dimension-specific types whatever type is configured), so only an identical configuration
+     * counts as the same destination. A difference never loses documents; a job pointing at the runtime's endpoint
+     * and namespace with another type stores its documents twice. Like {@link #pipelineWritesQdrant}, this compares
+     * this process's configuration as written: it cannot tell which writer consumes the embedded topic in a decoupled
+     * deployment (it assumes the crawler and the writer share the output settings), nor that two host names reach the
+     * same server (then documents are written both ways).
      */
     boolean pipelineWritesVespa(org.opencrawling.vespa.config.VespaOutputProperties job) {
         return activeOutputConnector instanceof org.opencrawling.vespa.VespaOutputConnector active
@@ -521,9 +528,7 @@ public class ConnectorFactory {
                                         org.opencrawling.vespa.config.VespaOutputProperties b) {
         return a != null && b != null && java.util.Objects.equals(endpoint(a.endpoint()), endpoint(b.endpoint()))
                 && java.util.Objects.equals(a.namespace(), b.namespace())
-                && java.util.Objects.equals(
-                        org.opencrawling.vespa.VespaDocumentMapper.resolveDocumentType(b.dimensions(), a.documentType()),
-                        org.opencrawling.vespa.VespaDocumentMapper.resolveDocumentType(b.dimensions(), b.documentType()));
+                && java.util.Objects.equals(a.documentType(), b.documentType());
     }
 
     private static String endpoint(String endpoint) {

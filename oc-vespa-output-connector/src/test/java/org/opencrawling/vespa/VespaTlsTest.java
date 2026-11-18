@@ -82,8 +82,14 @@ class VespaTlsTest {
         Path ca = pem("ca.pem", serverCertificate);
         Path certificate = pem("client.pem", clientCertificate);
         Path key = pkcs8("client-key.pem", clientKey);
-        VespaOutputProperties properties = new VespaOutputProperties(endpoint(), "opencrawling", "opencrawling_chunk",
-                1024, 5, true, certificate.toString(), key.toString(), ca.toString());
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint(endpoint())
+                .timeoutSeconds(5)
+                .tlsEnabled(true)
+                .tlsCertificate(certificate.toString())
+                .tlsPrivateKey(key.toString())
+                .tlsCaCertificates(ca.toString())
+                .build();
 
         HttpResponse<String> response = VespaTls.httpClient(properties).send(
                 HttpRequest.newBuilder(URI.create(endpoint() + "/search/")).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -109,9 +115,13 @@ class VespaTlsTest {
 
     @Test
     void aMissingFileIsReportedWithTheEndpoint() {
-        VespaOutputProperties properties = new VespaOutputProperties("https://vespa.test:8443", "opencrawling",
-                "opencrawling_chunk", 1024, 5, true, dir.resolve("absent.pem").toString(),
-                dir.resolve("absent-key.pem").toString(), null);
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint("https://vespa.test:8443")
+                .timeoutSeconds(5)
+                .tlsEnabled(true)
+                .tlsCertificate(dir.resolve("absent.pem").toString())
+                .tlsPrivateKey(dir.resolve("absent-key.pem").toString())
+                .build();
 
         assertThatThrownBy(() -> VespaTls.sslContext(properties)).hasMessageContaining("https://vespa.test:8443");
     }
