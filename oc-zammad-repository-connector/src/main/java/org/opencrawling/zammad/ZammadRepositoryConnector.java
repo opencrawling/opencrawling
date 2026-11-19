@@ -338,7 +338,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                             new ZammadCrawlState.State(nextWatermark, mergedTickets, mergedKb, nextFullScanAt));
                 }
 
-                log.info("Zammad scan of {} completed ({} ticket enumeration{}): {} documents, {} unchanged tickets, "
+                log.info("Zammad scan of {} completed ({} ticket enumeration{}): {} documents, {} unchanged tickets and KB answers, "
                                 + "{} unchanged documents, {} tombstones, {} skipped, {} failed.",
                         settings.baseUrl(), fullEnumeration ? "full" : "incremental",
                         scheduledFullScan ? ", periodic full scan" : "",
