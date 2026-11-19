@@ -384,7 +384,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 return groupName != null ? "group.name:\"" + groupName + "\"" : "group_id:" + groupId;
             }
             if (overridePath.startsWith("/Groups/")) {
-                String groupName = overridePath.substring("/Groups/".length()).replaceAll("^/+|/+$", "");
+                String groupName = stripSlashes(overridePath.substring("/Groups/".length()));
                 return "group.name:\"" + groupName + "\"";
             }
             return overridePath;
@@ -1263,7 +1263,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             groupId = parseLong(reference.substring("group:".length()), -1L);
             groupName = groupsById.get(groupId);
         } else if (reference.startsWith("/Groups/")) {
-            String targetName = reference.substring("/Groups/".length()).replaceAll("^/+|/+$", "");
+            String targetName = stripSlashes(reference.substring("/Groups/".length()));
             for (Map.Entry<Long, String> entry : groupsById.entrySet()) {
                 if (entry.getValue().equalsIgnoreCase(targetName)) {
                     groupId = entry.getKey();
@@ -1563,6 +1563,21 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    private static String stripSlashes(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        int start = 0;
+        int end = value.length();
+        while (start < end && value.charAt(start) == '/') {
+            start++;
+        }
+        while (end > start && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return value.substring(start, end);
     }
 
     private static String firstNonBlank(String... values) {

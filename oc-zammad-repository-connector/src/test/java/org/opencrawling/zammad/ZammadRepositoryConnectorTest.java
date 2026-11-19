@@ -400,6 +400,10 @@ class ZammadRepositoryConnectorTest {
         DiscoveryNode startGroup = connector.crawlStart("group:4", VisibilityFilter.ALL);
         assertThat(startGroup.sourceId()).isEqualTo("group:4");
         assertThat(startGroup.name()).isEqualTo("Tier-2-Identity-Security");
+
+        DiscoveryNode startByPath = connector.crawlStart("/Groups///Tier-2-Identity-Security///", VisibilityFilter.ALL);
+        assertThat(startByPath.sourceId()).isEqualTo("group:4");
+        assertThat(startByPath.name()).isEqualTo("Tier-2-Identity-Security");
         connector.disconnect();
     }
 
