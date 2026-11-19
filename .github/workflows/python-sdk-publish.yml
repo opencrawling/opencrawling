@@ -167,10 +167,20 @@ jobs:
           name: opencrawling-python-sdk-dist
           path: dist/
 
-      - name: Attach Python SDK Artifacts to GitHub Release
+      - name: Generate SHA-256 Checksums for Release Assets
+        run: |
+          cd dist
+          for f in *.whl *.tar.gz; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "${f}.sha256"
+          done
+          ls -lh
+
+      - name: Attach Python SDK Artifacts & Checksums to GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.build-python-sdk.outputs.tag_name }}
           files: |
             dist/*.whl
             dist/*.tar.gz
+            dist/*.sha256
