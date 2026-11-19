@@ -46,6 +46,11 @@ final class VespaDocumentApiStandIn implements AutoCloseable {
     final Map<String, Map<String, String>> documents = new ConcurrentHashMap<>();
     /** The selections deleted, as "namespace/type: selection". */
     final List<String> deletions = new CopyOnWriteArrayList<>();
+    /** The document types the application has; the others answer like Vespa does for an undeployed type. */
+    volatile java.util.Set<String> deployedTypes = java.util.Set.of("opencrawling_chunk", "opencrawling_chunk_384",
+            "opencrawling_chunk_768", "opencrawling_chunk_1024");
+    /** The timeChunk each call asked for. */
+    final List<String> timeChunks = new CopyOnWriteArrayList<>();
     /** At most this many documents are removed per call; the rest is left for a continuation. */
     volatile int perCall = Integer.MAX_VALUE;
     private final HttpServer server;
@@ -59,7 +64,13 @@ final class VespaDocumentApiStandIn implements AutoCloseable {
             Map<String, String> query = query(exchange.getRequestURI().getRawQuery());
             String answer;
             int status = 200;
-            if (!"DELETE".equals(exchange.getRequestMethod()) || !"opencrawling_content".equals(query.get("cluster"))) {
+            timeChunks.add(String.valueOf(query.get("timeChunk")));
+            if ("DELETE".equals(exchange.getRequestMethod()) && "opencrawling_content".equals(query.get("cluster"))
+                    && !deployedTypes.contains(type)) {
+                status = 400;
+                answer = "{\"message\":\"There is no document type '" + type + "' in cluster 'opencrawling_content', only "
+                        + deployedTypes + "\"}";
+            } else if (!"DELETE".equals(exchange.getRequestMethod()) || !"opencrawling_content".equals(query.get("cluster"))) {
                 status = 400;
                 answer = "{\"message\":\"Your Vespa deployment has no content cluster '" + query.get("cluster") + "'\"}";
             } else {

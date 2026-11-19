@@ -131,6 +131,58 @@ class JobOrchestratorWritePathTest {
         assertThat(JobOrchestrator.sendsDirectly(output, PipelineMode.RAG)).isFalse();
     }
 
+    /** A document whose content goes through the claim-check store (not a local file). */
+    private void claimCheckedSource(java.util.concurrent.atomic.AtomicBoolean claimConsumed) throws Exception {
+        when(repository.scan(anyString())).thenAnswer(invocation -> Flux.just(new RepositoryDocument("doc-2",
+                "https://repo.test/doc-2", new ByteArrayInputStream("the whole text".getBytes(StandardCharsets.UTF_8)),
+                Map.of("title", List.of("Doc 2")), "public", Instant.now())));
+        when(claimCheckStore.put(anyString(), any(), org.mockito.ArgumentMatchers.anyLong(), any()))
+                .thenReturn(java.net.URI.create("s3://claims/doc-2"));
+        when(claimCheckStore.get(java.net.URI.create("s3://claims/doc-2"))).thenAnswer(invocation -> {
+            if (claimConsumed.get()) {
+                throw new java.nio.file.NoSuchFileException("s3://claims/doc-2");
+            }
+            return new ByteArrayInputStream("the whole text".getBytes(StandardCharsets.UTF_8));
+        });
+        // Ingestion consumes the published message and deletes its claim (cleanup-on-consume), as fast as it can.
+        when(kafkaTemplate.send(anyString(), anyString(), any())).thenAnswer(invocation -> {
+            claimConsumed.set(true);
+            return CompletableFuture.completedFuture(null);
+        });
+    }
+
+    @Test
+    void aDirectSendGetsTheContentBeforeIngestionCanConsumeTheClaim() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean claimConsumed = new java.util.concurrent.atomic.AtomicBoolean();
+        claimCheckedSource(claimConsumed);
+        java.util.concurrent.atomic.AtomicReference<String> delivered = new java.util.concurrent.atomic.AtomicReference<>();
+        when(output.send(any())).thenAnswer(invocation -> {
+            RepositoryDocument document = invocation.getArgument(0);
+            delivered.set(new String(document.contentStream().readAllBytes(), StandardCharsets.UTF_8));
+            return Mono.empty();
+        });
+
+        run(PipelineMode.RAG);
+
+        assertThat(delivered.get()).isEqualTo("the whole text");
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(output, kafkaTemplate);
+        order.verify(output).send(any());
+        order.verify(kafkaTemplate).send(eq(KafkaConfig.TOPIC_NAME), eq("doc-2"), any());
+        assertThat(ledgerStatus()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    void aClaimThatCannotBeReopenedFailsTheDocumentInsteadOfSendingItEmpty() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean claimConsumed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        claimCheckedSource(claimConsumed);
+
+        run(PipelineMode.RAG);
+
+        verify(output, never()).send(any());
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+        assertThat(ledgerStatus()).isEqualTo("FAILED");
+    }
+
     private String ledgerStatus() {
         ArgumentCaptor<DocumentLedgerEntry> entry = ArgumentCaptor.forClass(DocumentLedgerEntry.class);
         verify(ledger).recordDocument(entry.capture());

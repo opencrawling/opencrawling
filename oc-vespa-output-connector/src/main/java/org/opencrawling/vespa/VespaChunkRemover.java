@@ -69,12 +69,22 @@ public final class VespaChunkRemover {
      */
     public int removeDocument(String documentId, String uri) throws Exception {
         int removed = 0;
+        int deployed = 0;
         for (String type : documentTypes) {
-            removed += deleteWhere(type, type + "." + VespaFields.FIELD_DOCUMENT_ID + " == " + literal(documentId));
-            if (uri != null && !uri.isBlank()) {
-                removed += deleteWhere(type, type + "." + VespaFields.FIELD_URI + " == " + literal(uri) + " and "
-                        + type + "." + VespaFields.FIELD_DOCUMENT_ID + " == null");
+            try {
+                removed += deleteWhere(type, type + "." + VespaFields.FIELD_DOCUMENT_ID + " == " + literal(documentId));
+                if (uri != null && !uri.isBlank()) {
+                    removed += deleteWhere(type, type + "." + VespaFields.FIELD_URI + " == " + literal(uri) + " and "
+                            + type + "." + VespaFields.FIELD_DOCUMENT_ID + " == null");
+                }
+                deployed++;
+            } catch (TypeNotDeployed e) {
+                // A custom application package may deploy only some of the types: nothing was written to this one.
             }
+        }
+        if (deployed == 0) {
+            throw new IllegalStateException("None of the document types " + documentTypes + " is deployed in content cluster '"
+                    + properties.contentCluster() + "' at " + properties.endpoint());
         }
         return removed;
     }
@@ -87,7 +97,10 @@ public final class VespaChunkRemover {
             StringBuilder path = new StringBuilder(properties.endpoint()).append("/document/v1/")
                     .append(encode(properties.namespace())).append('/').append(encode(type)).append("/docid")
                     .append("?selection=").append(encode(selection))
-                    .append("&cluster=").append(encode(properties.contentCluster()));
+                    .append("&cluster=").append(encode(properties.contentCluster()))
+                    // Each call works at most this long and returns a continuation, well before the client gives up
+                    // (Vespa's own default slice, 60 s, outlasts the usual timeout).
+                    .append("&timeChunk=").append(timeChunkSeconds()).append('s');
             if (continuation != null) {
                 path.append("&continuation=").append(encode(continuation));
             }
@@ -97,6 +110,9 @@ public final class VespaChunkRemover {
                     .build();
             HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 300) {
+                if (response.statusCode() == 400 && response.body().contains("There is no document type '" + type + "'")) {
+                    throw new TypeNotDeployed(type);
+                }
                 throw new IllegalStateException("Vespa refused to delete " + selection + " (" + response.statusCode()
                         + "): " + response.body());
             }
@@ -105,6 +121,19 @@ public final class VespaChunkRemover {
             continuation = answer.hasNonNull("continuation") ? answer.path("continuation").asText() : null;
         } while (continuation != null);
         return removed;
+    }
+
+    /** Half the client's timeout, so a slice's answer always arrives in time. */
+    int timeChunkSeconds() {
+        int timeout = properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30;
+        return Math.max(1, timeout / 2);
+    }
+
+    /** Vespa answered that the application has no such document type. */
+    static final class TypeNotDeployed extends IllegalStateException {
+        TypeNotDeployed(String type) {
+            super("Document type " + type + " is not deployed");
+        }
     }
 
     /** A string literal of Vespa's document selection language. */

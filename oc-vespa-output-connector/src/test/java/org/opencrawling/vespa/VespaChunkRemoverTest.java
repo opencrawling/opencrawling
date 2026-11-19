@@ -128,4 +128,32 @@ class VespaChunkRemoverTest {
 
         assertThat(new VespaChunkRemover(vespa.properties()).removeDocument("C:\\docs\\\"q\".txt", null)).isEqualTo(1);
     }
+
+    @Test
+    void aCustomApplicationWithOnlySomeOfTheTypesStillDeletesFromThoseItHas() throws Exception {
+        // A 1024-only application package: the configured fallback type and the other sizes are not deployed.
+        vespa.deployedTypes = java.util.Set.of("opencrawling_chunk_1024");
+        vespa.store("opencrawling", "opencrawling_chunk_1024", "a", "doc-15", "u");
+
+        assertThat(new VespaChunkRemover(vespa.properties()).removeDocument("doc-15", "u")).isEqualTo(1);
+
+        assertThat(vespa.documents).isEmpty();
+    }
+
+    @Test
+    void anApplicationWithNoneOfTheTypesFailsTheDeletion() {
+        // Most likely the wrong endpoint or cluster: reporting the document deleted would be wrong.
+        vespa.deployedTypes = java.util.Set.of("unrelated_type");
+
+        assertThatThrownBy(() -> new VespaChunkRemover(vespa.properties()).removeDocument("doc-16", "u"))
+                .hasMessageContaining("None of the document types");
+    }
+
+    @Test
+    void everyCallAsksForASliceShorterThanTheClientsTimeout() throws Exception {
+        // The stand-in's properties time out after 5 s; Vespa's default slice of 60 s would outlast it.
+        new VespaChunkRemover(vespa.properties()).removeDocument("doc-17", "u");
+
+        assertThat(vespa.timeChunks).isNotEmpty().allMatch("2s"::equals);
+    }
 }
