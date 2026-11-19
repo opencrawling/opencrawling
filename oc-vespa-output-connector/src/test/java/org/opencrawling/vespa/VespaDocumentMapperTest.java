@@ -119,6 +119,25 @@ class VespaDocumentMapperTest {
     }
 
     @Test
+    void theSourceDocumentsIdGetsAQueryableFieldSoADeletionFindsItsChunks() throws Exception {
+        VespaDocumentMapper.VespaDocument document = mapper.toDocument("opencrawling", "opencrawling_chunk",
+                "doc-5_chunk-0", "text", "https://claims.test/x", "acl-5", "2026-01-01T00:00:00Z",
+                null, new float[]{0.3f}, Map.of("documentId", "https://repo.test/doc-5"));
+
+        JsonNode fields = json.readTree(document.json()).get("fields");
+        assertThat(fields.get("document_id").asText()).isEqualTo("https://repo.test/doc-5");
+    }
+
+    @Test
+    void aChunkWithoutADocumentIdGetsNoDocumentIdField() throws Exception {
+        VespaDocumentMapper.VespaDocument document = mapper.toDocument("opencrawling", "opencrawling_chunk",
+                "doc-6_chunk-0", "text", "file:///doc-6.txt", "acl-6", "2026-01-01T00:00:00Z",
+                null, new float[]{0.3f}, Map.of());
+
+        assertThat(json.readTree(document.json()).get("fields").has("document_id")).isFalse();
+    }
+
+    @Test
     void theChunksPositionAndTheDocumentsChunkCountGetFieldsOfTheirOwn() throws Exception {
         // Declared in the schemas, so getDocumentContent can order a document's chunks; they stay in metadata_json too.
         VespaDocumentMapper.VespaDocument document = mapper.toDocument("opencrawling", "opencrawling_chunk",

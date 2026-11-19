@@ -16,12 +16,14 @@
 package org.opencrawling.vespa.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import ai.vespa.feed.client.DocumentId;
 import ai.vespa.feed.client.FeedClient;
 import ai.vespa.feed.client.OperationParameters;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
 import org.opencrawling.vespa.VespaDocumentMapper;
+import org.opencrawling.vespa.VespaFeeds;
 import org.opencrawling.vespa.VespaFields;
 import org.opencrawling.vespa.config.VespaOutputProperties;
 import org.slf4j.Logger;
@@ -56,7 +58,7 @@ public class VespaStoreWriterConsumer {
         log.info("VespaStoreWriterConsumer initialized successfully!");
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for Vespa storage: {} (Dimensions: {})", message.chunkId(),
                 message.embedding() != null ? message.embedding().length : 0);
@@ -94,7 +96,7 @@ public class VespaStoreWriterConsumer {
                     message.embedding(),
                     message.metadata());
 
-            client.put(vespaDocument.id(), vespaDocument.json(), OperationParameters.empty()).get();
+            VespaFeeds.put(client, vespaDocument).get();
             log.info("Successfully fed chunk {} to Vespa document type '{}'.", message.chunkId(), documentType);
         } catch (Exception e) {
             if (e instanceof InterruptedException) {

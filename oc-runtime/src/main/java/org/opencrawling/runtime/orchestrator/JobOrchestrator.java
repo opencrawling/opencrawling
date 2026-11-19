@@ -382,6 +382,41 @@ public class JobOrchestrator {
                                 chunking
                             );
                             
+                            // Direct ingestion, for outputs that no pipeline writer stores in this mode. It runs before
+                            // the Kafka publish: once published, ingestion may consume the claim (cleanup-on-consume)
+                            // before it is reopened here, and the output would get no content.
+                            if (sendsDirectly(outputConnector, pipelineMode)) {
+                                try {
+                                    RepositoryDocument outputDoc = doc;
+                                    if (doc.contentStream() != null && !finalUri.equals(doc.uri())) {
+                                        try {
+                                            InputStream freshStream = claimCheckStore.get(URI.create(finalUri));
+                                            outputDoc = new RepositoryDocument(
+                                                doc.id(),
+                                                finalUri,
+                                                freshStream,
+                                                doc.metadata(),
+                                                doc.acl(),
+                                                doc.security(),
+                                                doc.lastModified(),
+                                                doc.action()
+                                            );
+                                        } catch (Exception ex) {
+                                            // The original stream was consumed into the claim: sending it would
+                                            // deliver an empty document, which outputs skip without failing.
+                                            throw new IllegalStateException("Cannot reopen the content of " + doc.id()
+                                                    + " from the claim-check store: " + ex.getMessage(), ex);
+                                        }
+                                    }
+                                    outputConnector.send(outputDoc).block();
+                                    log.info("Successfully ingested document {} directly into OutputConnector: {}", doc.id(), outputConnector.getName());
+                                } catch (Exception outEx) {
+                                    log.error("Direct OutputConnector ingestion failed for doc {}: {}", doc.id(), outEx.getMessage(), outEx);
+                                    // Recorded as a failure below, never as a success: the output did not take the document.
+                                    throw new OutputFailure(outputConnector.getName(), rootMessage(outEx), outEx);
+                                }
+                            }
+
                             // Publish document metadata to Kafka topic and wait for confirmation
                             try {
                                 kafkaTemplate.send(KafkaConfig.TOPIC_NAME, doc.id(), msg).get();
@@ -406,36 +441,6 @@ public class JobOrchestrator {
                                 log.warn("Kafka publish skipped or unavailable for doc {}: {}", doc.id(), kafkaEx.getMessage());
                             }
                             
-                            // Direct ingestion, for outputs that no pipeline writer stores in this mode
-                            if (sendsDirectly(outputConnector, pipelineMode)) {
-                                try {
-                                    RepositoryDocument outputDoc = doc;
-                                    if (doc.contentStream() != null && !finalUri.equals(doc.uri())) {
-                                        try {
-                                            InputStream freshStream = claimCheckStore.get(URI.create(finalUri));
-                                            outputDoc = new RepositoryDocument(
-                                                doc.id(),
-                                                finalUri,
-                                                freshStream,
-                                                doc.metadata(),
-                                                doc.acl(),
-                                                doc.security(),
-                                                doc.lastModified(),
-                                                doc.action()
-                                            );
-                                        } catch (Exception ex) {
-                                            log.debug("Could not resolve fresh stream from ClaimCheckStore: {}", ex.getMessage());
-                                        }
-                                    }
-                                    outputConnector.send(outputDoc).block();
-                                    log.info("Successfully ingested document {} directly into OutputConnector: {}", doc.id(), outputConnector.getName());
-                                } catch (Exception outEx) {
-                                    log.error("Direct OutputConnector ingestion failed for doc {}: {}", doc.id(), outEx.getMessage(), outEx);
-                                    // Recorded as a failure below, never as a success: the output did not take the document.
-                                    throw new OutputFailure(outputConnector.getName(), rootMessage(outEx), outEx);
-                                }
-                            }
-
                             if (ledgerAccumulator != null) {
                                 long docDuration = System.currentTimeMillis() - docStartTime;
                                 if (pipelineMode == PipelineMode.MIGRATION) {

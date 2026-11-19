@@ -16,6 +16,7 @@
 package org.opencrawling.seatunnel.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import jakarta.annotation.PostConstruct;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -59,7 +60,7 @@ public class SeaTunnelStoreWriterConsumer {
         log.info("SeaTunnelStoreWriterConsumer initialized successfully. Monitoring pipeline '{}' at '{}'", jobName, restUrl);
     }
 
-    @KafkaListener(topics = "${spring.opencrawling.output.seatunnel.kafka.topic:opencrawling-embedded}")
+    @KafkaListener(topics = "${spring.opencrawling.output.seatunnel.kafka.topic:" + PipelineTopics.EMBEDDED + "}")
     public void consume(DocumentEmbeddedMessage message) {
         if (message == null) {
             return;

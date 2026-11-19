@@ -16,6 +16,7 @@
 package org.opencrawling.opensearch3.messaging;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
+import org.opencrawling.core.messaging.PipelineTopics;
 import org.opencrawling.core.security.EffectiveAcl;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.messaging.DocumentEmbeddedMessage;
@@ -72,7 +73,7 @@ public class OpenSearch3StoreWriterConsumer {
         }
     }
 
-    @KafkaListener(topics = "opencrawling-embedded")
+    @KafkaListener(topics = PipelineTopics.EMBEDDED)
     public void consume(DocumentEmbeddedMessage message) {
         log.info("Received embedded chunk for OpenSearch 3.x storage: {} (Dimensions: {})", message.chunkId(), 
             message.embedding() != null ? message.embedding().length : 0);

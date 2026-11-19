@@ -478,6 +478,8 @@ public class JobController {
             if ((resolvedOutputConnector instanceof org.opencrawling.ozone.OzoneOutputConnector
                     || resolvedOutputConnector instanceof org.opencrawling.s3.S3OutputConnector) && !mode.isMigration()) {
                 reservation.release();
+                // Built for this job, it owns clients the run would have released.
+                connectorFactory.release(resolvedOutputConnector);
                 String connectorName = resolvedOutputConnector.getClass().getSimpleName();
                 log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
                 updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
@@ -487,6 +489,8 @@ public class JobController {
             // With pre-embedding governance on, nothing may be embedded without passing the gate.
             if (jobOrchestrator.bypassesGovernance(resolvedOutputConnector, mode)) {
                 reservation.release();
+                // A per-job output (Qdrant, Vespa, …) owns clients the run would have released.
+                connectorFactory.release(resolvedOutputConnector);
                 log.error("Job {} rejected: {}", id, JobOrchestrator.GOVERNANCE_BYPASS);
                 updateJobStatusAndStage(id, "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
                         getActualDbDocCount());

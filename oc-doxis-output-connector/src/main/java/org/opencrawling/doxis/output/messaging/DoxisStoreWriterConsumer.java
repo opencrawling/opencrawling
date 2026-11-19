@@ -16,6 +16,7 @@
 package org.opencrawling.doxis.output.messaging;
 
 import org.opencrawling.core.claimcheck.ClaimCheckStore;
+import org.opencrawling.core.messaging.PipelineTopics;
 import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.messaging.IngestionMessage;
@@ -55,7 +56,7 @@ public class DoxisStoreWriterConsumer {
         this.claimCheckStore = claimCheckStore;
     }
 
-    @KafkaListener(topics = "opencrawling-documents",
+    @KafkaListener(topics = PipelineTopics.DOCUMENTS,
             groupId = "${spring.opencrawling.output.doxis.consumer-group:opencrawling-doxis-writer}")
     public void consume(IngestionMessage message) {
         log.info("Received document {} for Doxis archiving ({}).", message.documentId(),

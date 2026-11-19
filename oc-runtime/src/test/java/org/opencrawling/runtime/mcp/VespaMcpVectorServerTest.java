@@ -25,8 +25,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class VespaMcpVectorServerTest {
 
-    private static final VespaOutputProperties UNREACHABLE = new VespaOutputProperties(
-            "http://127.0.0.1:59999", "opencrawling", "opencrawling_chunk", 1024, 2, false, null, null, null);
+    private static final VespaOutputProperties UNREACHABLE = VespaOutputProperties.builder()
+            .endpoint("http://127.0.0.1:59999")
+            .timeoutSeconds(2)
+            .build();
 
     private final VespaMcpVectorServer mcpServer = new VespaMcpVectorServer(UNREACHABLE, null);
 

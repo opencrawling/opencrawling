@@ -448,8 +448,25 @@ public class ConnectorFactory {
 
         org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
         log.info("Resolving dynamic Qdrant output connector for collection '{}'", collectionName);
+        // Unless the pipeline's writer stores to this destination, the job's documents go to it directly.
         return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper,
-                available(embeddingModels), available(textExtractionServices));
+                available(embeddingModels), available(textExtractionServices), !pipelineWritesQdrant(props));
+    }
+
+    /**
+     * Whether the runtime's pipeline writer stores to this Qdrant destination: its active output is Qdrant, with the
+     * same host, port and collection. Only then may a RAG run leave the job's documents to the pipeline; otherwise
+     * they are sent to the job's Qdrant directly, or they would never reach it.
+     */
+    boolean pipelineWritesQdrant(org.opencrawling.qdrant.config.QdrantOutputProperties job) {
+        return activeOutputConnector instanceof org.opencrawling.qdrant.QdrantOutputConnector active
+                && sameQdrantDestination(active.getProperties(), job);
+    }
+
+    static boolean sameQdrantDestination(org.opencrawling.qdrant.config.QdrantOutputProperties a,
+                                         org.opencrawling.qdrant.config.QdrantOutputProperties b) {
+        return a != null && b != null && java.util.Objects.equals(a.host(), b.host()) && a.port() == b.port()
+                && java.util.Objects.equals(a.collectionName(), b.collectionName());
     }
 
     private OutputConnector buildVespa(Map<String, String> config, PipelineMode mode) {
@@ -478,17 +495,53 @@ public class ConnectorFactory {
         }
         ai.vespa.feed.client.FeedClient feedClient = feedClientBuilder.build();
 
-        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = new org.opencrawling.vespa.config.VespaOutputProperties(
-                endpoint, namespace, documentType, dimensions, timeoutSeconds, tlsEnabled,
-                tlsCertificate.isBlank() ? null : tlsCertificate,
-                tlsPrivateKey.isBlank() ? null : tlsPrivateKey,
-                tlsCaCertificates.isBlank() ? null : tlsCaCertificates
-        );
+        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = org.opencrawling.vespa.config.VespaOutputProperties.builder()
+                .endpoint(endpoint)
+                .namespace(namespace)
+                .documentType(documentType)
+                .dimensions(dimensions)
+                .timeoutSeconds(timeoutSeconds)
+                .tlsEnabled(tlsEnabled)
+                .tlsCertificate(tlsCertificate.isBlank() ? null : tlsCertificate)
+                .tlsPrivateKey(tlsPrivateKey.isBlank() ? null : tlsPrivateKey)
+                .tlsCaCertificates(tlsCaCertificates.isBlank() ? null : tlsCaCertificates)
+                .contentCluster(config.getOrDefault("vespaContentCluster",
+                        org.opencrawling.vespa.config.VespaOutputProperties.DEFAULT_CONTENT_CLUSTER))
+                .build();
 
         org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
         log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
+        // Unless the pipeline's writer feeds this destination, the job's documents go to it directly.
         return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper,
-                available(embeddingModels), available(textExtractionServices));
+                available(embeddingModels), available(textExtractionServices), !pipelineWritesVespa(vespaProps));
+    }
+
+    /**
+     * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa with the same
+     * endpoint, namespace and configured document type. Otherwise a RAG run sends the job's documents to it directly.
+     *
+     * <p>Which document type a chunk lands in depends on its embedding's actual length, which is not known here (the
+     * usual sizes go to the dimension-specific types whatever type is configured), so only an identical configuration
+     * counts as the same destination. A difference never loses documents; a job pointing at the runtime's endpoint
+     * and namespace with another type stores its documents twice. Like {@link #pipelineWritesQdrant}, this compares
+     * this process's configuration as written: it cannot tell which writer consumes the embedded topic in a decoupled
+     * deployment (it assumes the crawler and the writer share the output settings), nor that two host names reach the
+     * same server (then documents are written both ways).
+     */
+    boolean pipelineWritesVespa(org.opencrawling.vespa.config.VespaOutputProperties job) {
+        return activeOutputConnector instanceof org.opencrawling.vespa.VespaOutputConnector active
+                && sameVespaDestination(active.getProperties(), job);
+    }
+
+    static boolean sameVespaDestination(org.opencrawling.vespa.config.VespaOutputProperties a,
+                                        org.opencrawling.vespa.config.VespaOutputProperties b) {
+        return a != null && b != null && java.util.Objects.equals(endpoint(a.endpoint()), endpoint(b.endpoint()))
+                && java.util.Objects.equals(a.namespace(), b.namespace())
+                && java.util.Objects.equals(a.documentType(), b.documentType());
+    }
+
+    private static String endpoint(String endpoint) {
+        return endpoint != null && endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
     }
 
     private OutputConnector buildSeaTunnel(Map<String, String> config, PipelineMode mode) {
@@ -498,7 +551,7 @@ public class ConnectorFactory {
         String targetSinks = config.getOrDefault("seatunnelTargetSinks", "console");
         org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
                 restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
-                "opencrawling-embedded", "opencrawling-seatunnel-group",
+                org.opencrawling.core.messaging.PipelineTopics.EMBEDDED, "opencrawling-seatunnel-group",
                 targetSinks, 1024, true, 30
         );
         org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);

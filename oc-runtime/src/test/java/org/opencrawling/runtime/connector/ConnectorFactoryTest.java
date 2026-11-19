@@ -33,6 +33,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.opencrawling.qdrant.QdrantOutputConnector;
+import org.opencrawling.qdrant.config.QdrantOutputProperties;
+import org.opencrawling.vespa.VespaOutputConnector;
+import org.opencrawling.vespa.config.VespaOutputProperties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -258,5 +262,67 @@ class ConnectorFactoryTest {
         org.mockito.Mockito.doThrow(new IllegalStateException("logout failed")).when(perJob).disconnect();
         factory.release(perJob);
         verify(perJob).disconnect();
+    }
+
+    // --- per-job vector outputs: the pipeline only writes the runtime's own destination ---
+
+    // Building a per-job Qdrant or Vespa output connects to it, so these tests ask the factory's decision directly:
+    // its builders build the output outside the pipeline when the decision is no (see OutputWritePathContractTest).
+
+    @Test
+    void aPerJobQdrantOnARuntimeWritingAnotherStoreIsNotLeftToThePipeline() {
+        // The runtime's pipeline writes pgvector (or anything but Qdrant): it would never reach the job's Qdrant.
+        assertThat(factory.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "job_kb"))).isFalse();
+    }
+
+    @Test
+    void aPerJobQdrantIsLeftToThePipelineOnlyWhenTheRuntimeWritesThatSameCollection() {
+        QdrantOutputConnector active = mock(QdrantOutputConnector.class);
+        when(active.getProperties()).thenReturn(qdrant("qdrant.test", 6334, "job_kb"));
+        ConnectorFactory qdrantRuntime = new ConnectorFactory(fileSystem, active, pipelineProperties());
+
+        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "job_kb"))).isTrue();
+        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "other_kb"))).isFalse();
+        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.internal", 6334, "job_kb"))).isFalse();
+        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6335, "job_kb"))).isFalse();
+    }
+
+    @Test
+    void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameDocumentType() {
+        assertThat(factory.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isFalse();
+
+        VespaOutputConnector active = mock(VespaOutputConnector.class);
+        when(active.getProperties()).thenReturn(vespa("http://vespa.test:8080/", "opencrawling_chunk"));
+        ConnectorFactory vespaRuntime = new ConnectorFactory(fileSystem, active, pipelineProperties());
+
+        // The same endpoint, written without the trailing slash.
+        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isTrue();
+        // Where a chunk lands depends on its embedding's length, unknown here: only an identical configuration is the
+        // same destination (another type never loses documents; it may store them twice).
+        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isFalse();
+        assertThat(vespaRuntime.pipelineWritesVespa(VespaOutputProperties.builder()
+                .endpoint("http://vespa.test:8080")
+                .namespace("another_namespace")
+                .build())).isFalse();
+    }
+
+    @Test
+    void aPerJobSeaTunnelReadsThePipelinesTopicSoThePipelineFeedsIt() {
+        OutputConnector output = factory.output(connector("job-seatunnel",
+                "org.opencrawling.seatunnel.SeaTunnelOutputConnector", Map.of()), PipelineMode.RAG);
+
+        assertThat(output.writtenByPipeline(PipelineMode.RAG)).isTrue();
+    }
+
+    private static QdrantOutputProperties qdrant(String host, int port, String collection) {
+        return new QdrantOutputProperties(host, port, "", collection, 1024, QdrantOutputProperties.Distance.COSINE,
+                QdrantOutputProperties.Quantization.NONE, false, 500);
+    }
+
+    private static VespaOutputProperties vespa(String endpoint, String documentType) {
+        return VespaOutputProperties.builder()
+                .endpoint(endpoint)
+                .documentType(documentType)
+                .build();
     }
 }

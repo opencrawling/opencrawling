@@ -62,8 +62,10 @@ class VespaOutputConnectorTest {
     @Mock
     private EmbeddingModel embeddingModel;
 
-    private final VespaOutputProperties properties = new VespaOutputProperties(
-            "http://localhost:8080", "opencrawling", "opencrawling_chunk", 2, 30, false, null, null, null);
+    private final VespaOutputProperties properties = VespaOutputProperties.builder()
+            .endpoint("http://localhost:8080")
+            .dimensions(2)
+            .build();
 
     @BeforeEach
     void setUp() {
@@ -185,5 +187,90 @@ class VespaOutputConnectorTest {
                 new java.io.ByteArrayInputStream(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 java.util.Map.of("mimeType", java.util.List.of("text/plain")), "",
                 org.opencrawling.core.security.SecurityConfig.createPublic(), java.time.Instant.now());
+    }
+
+    @Test
+    void aTombstoneRemovesEveryChunkTheDocumentStoredInEveryDocumentType() throws Exception {
+        // A per-job Vespa output gets RAG tombstones directly (the pipeline's writer does not reach it). What the
+        // connector feeds is stored in the stand-in, which deletes by selection like Vespa.
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            Result result = mock(Result.class);
+            when(feedClient.put(any(DocumentId.class), anyString(), any(OperationParameters.class))).thenAnswer(call -> {
+                DocumentId id = call.getArgument(0);
+                com.fasterxml.jackson.databind.JsonNode fields = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree((String) call.getArgument(1)).path("fields");
+                vespa.store(id.namespace(), id.documentType(), id.userSpecific(),
+                        fields.path("document_id").asText(null), fields.path("uri").asText());
+                return CompletableFuture.completedFuture(result);
+            });
+            // 1024 dimensions: the chunks go to the dimension-specific document type, not the configured default one.
+            when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[1024]);
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
+                    embeddingModel);
+            String text = "Section of the handbook covers retention, indexing and search practices. ".repeat(400);
+            local.send(failFastDocument("doc-777", text)).block();
+            assertThat(vespa.documents).hasSizeGreaterThan(1)
+                    .allSatisfy((id, fields) -> assertThat(id).startsWith("id:opencrawling:opencrawling_chunk_1024::"));
+
+            local.send(RepositoryDocument.createTombstone("doc-777", "file://tmp/doc-777.txt")).block();
+
+            assertThat(vespa.documents).isEmpty();
+        }
+    }
+
+    @Test
+    void aTombstoneForADocumentNothingWasStoredForRemovesNothing() throws Exception {
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            vespa.store("opencrawling", "opencrawling_chunk_1024", "kept", "another-doc", "file://tmp/another.txt");
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
+                    embeddingModel);
+
+            local.send(RepositoryDocument.createTombstone("doc-778", "file://tmp/doc-778.txt")).block();
+
+            assertThat(vespa.documents).containsOnlyKeys("id:opencrawling:opencrawling_chunk_1024::kept");
+        }
+    }
+
+    @Test
+    void disconnectingClosesTheChunkRemoversClientToo() throws Exception {
+        // A per-job output is disconnected when its run ends; the deletions' HTTP client must not outlive it.
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
+                    embeddingModel);
+            local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt")).block();
+
+            local.disconnect();
+
+            verify(feedClient).close();
+            assertThatThrownBy(() -> local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt"))
+                    .block()).hasRootCauseMessage("The Vespa chunk remover for " + vespa.properties().endpoint()
+                    + " is closed");
+        }
+    }
+
+    @Test
+    void aTombstoneVespaCannotBeAskedToDeleteFailsTheDocument() {
+        // Nothing listens on the endpoint: the delete must not report success.
+        VespaOutputConnector local = new VespaOutputConnector(feedClient, VespaOutputProperties.builder()
+                .endpoint("http://127.0.0.1:59998")
+                .dimensions(2)
+                .timeoutSeconds(2)
+                .build(),
+                new VespaDocumentMapper(), embeddingModel);
+
+        assertThatThrownBy(() -> local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt")).block())
+                .hasMessageContaining("doc-779");
+    }
+
+    @Test
+    void aDirectWriteDoesNotFallBackToAnOlderSchema() {
+        when(embeddingModel.embed(any(org.springframework.ai.document.Document.class))).thenReturn(new float[]{0.1f, 0.2f});
+        when(feedClient.put(any(DocumentId.class), anyString(), any(OperationParameters.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException(
+                        "Field 'document_id' is not defined in document type 'opencrawling_chunk'")));
+
+        assertThatThrownBy(() -> connector.send(failFastDocument("doc-11", "Some text to feed.")).block())
+                .hasStackTraceContaining("deploy the updated schemas");
+        verify(feedClient, times(1)).put(any(DocumentId.class), anyString(), any(OperationParameters.class));
     }
 }

@@ -331,8 +331,24 @@ public class VespaMcpSearchBackend extends GatedMcpSearchBackend {
         return new RawSearchResult(hits, totalCount, false, null);
     }
 
+    /** Built once, on first use: the configured client certificate and CA, like the feed client's. */
+    private volatile HttpClient httpClient;
+
+    private HttpClient httpClient() {
+        HttpClient client = httpClient;
+        if (client == null) {
+            synchronized (this) {
+                if (httpClient == null) {
+                    httpClient = org.opencrawling.vespa.VespaTls.httpClient(properties);
+                }
+                client = httpClient;
+            }
+        }
+        return client;
+    }
+
     public JsonNode postSearch(ObjectNode body) throws Exception {
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.timeoutSeconds())).build();
+        HttpClient client = httpClient();
         HttpRequest request = HttpRequest.newBuilder(URI.create(properties.endpoint() + "/search/"))
                 .timeout(Duration.ofSeconds(properties.timeoutSeconds()))
                 .header("Content-Type", "application/json")

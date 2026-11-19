@@ -17,7 +17,6 @@ package org.opencrawling.vespa;
 
 import org.opencrawling.core.embedding.RequiredEmbeddings;
 import ai.vespa.feed.client.FeedClient;
-import ai.vespa.feed.client.OperationParameters;
 import ai.vespa.feed.client.Result;
 import org.opencrawling.core.text.TextExtractionService;
 import org.opencrawling.core.text.TextExtractionResult;
@@ -45,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import org.opencrawling.core.document.DocumentAction;
 
 @Component
 @ConditionalOnProperty(name = "spring.opencrawling.output.type", havingValue = "vespa")
@@ -57,10 +57,16 @@ public class VespaOutputConnector implements OutputConnector {
 
     private final FeedClient client;
     private final VespaOutputProperties properties;
+    /**
+     * Whether this connector was built for one job whose Vespa destination (endpoint, namespace and document type) is not the one the runtime's
+     * pipeline writer stores to: its documents are then sent to it directly. Fixed at construction.
+     */
+    private final boolean outsidePipeline;
     private final VespaDocumentMapper mapper;
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
     private final TextExtractionService textExtractionService;
+    private final VespaChunkRemover chunkRemover;
 
     @Autowired
     public VespaOutputConnector(
@@ -69,12 +75,30 @@ public class VespaOutputConnector implements OutputConnector {
             VespaDocumentMapper mapper,
             @Autowired(required = false) @Qualifier("ollamaEmbeddingModel") EmbeddingModel embeddingModel,
             @Autowired(required = false) TextExtractionService textExtractionService) {
+        this(client, properties, mapper, embeddingModel, textExtractionService, false);
+    }
+
+    /**
+     * A connector built for one job ({@code ConnectorFactory}).
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this connector's destination
+     *                        (endpoint, namespace and document type), so a RAG run sends its documents here directly
+     */
+    public VespaOutputConnector(
+            FeedClient client,
+            VespaOutputProperties properties,
+            VespaDocumentMapper mapper,
+            EmbeddingModel embeddingModel,
+            TextExtractionService textExtractionService,
+            boolean outsidePipeline) {
         this.client = client;
         this.properties = properties;
         this.mapper = mapper;
         this.embeddingModel = embeddingModel;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+        this.outsidePipeline = outsidePipeline;
+        this.chunkRemover = new VespaChunkRemover(this.properties);
     }
 
     public VespaOutputConnector(
@@ -90,10 +114,18 @@ public class VespaOutputConnector implements OutputConnector {
         return "VespaOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here,
+     * unless this connector was built for one job whose Vespa destination (endpoint, namespace and document type) the writer does not write.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
+    }
+
+    /** The settings this connector writes with. */
+    public VespaOutputProperties getProperties() {
+        return properties;
     }
 
     @Override
@@ -103,12 +135,29 @@ public class VespaOutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
-        client.close();
+        try {
+            client.close();
+        } finally {
+            chunkRemover.close();
+        }
     }
 
     @Override
     public Mono<Void> send(RepositoryDocument document) {
         return Mono.fromRunnable(() -> {
+            if (document.action() == DocumentAction.DELETE) {
+                // A tombstone has no content; it removes what earlier runs stored for the document.
+                try {
+                    int removed = chunkRemover.removeDocument(document.id(), document.uri());
+                    log.info("Deleted document {} from Vespa ({} chunks).", document.id(), removed);
+                } catch (Exception e) {
+                    if (e instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw new IllegalStateException("Failed to delete document " + document.id() + " from Vespa", e);
+                }
+                return;
+            }
             try (InputStream is = document.contentStream()) {
                 byte[] contentBytes = is.readAllBytes();
                 if (contentBytes.length == 0) {
@@ -147,10 +196,26 @@ public class VespaOutputConnector implements OutputConnector {
 
                 List<CompletableFuture<Result>> feeds = new ArrayList<>(vespaDocuments.size());
                 for (VespaDocumentMapper.VespaDocument vespaDocument : vespaDocuments) {
-                    feeds.add(client.put(vespaDocument.id(), vespaDocument.json(), OperationParameters.empty()));
+                    // Never without document_id: a tombstone finds the chunks of a direct write only by it.
+                    feeds.add(VespaFeeds.putWithAllFields(client, vespaDocument));
                 }
 
-                FeedClient.await(feeds);
+                // Each failure keeps its cause (FeedClient.await reports only the feed client's own exceptions).
+                List<Throwable> failures = new ArrayList<>();
+                for (CompletableFuture<Result> feed : feeds) {
+                    try {
+                        feed.get();
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        failures.add(e.getCause() != null ? e.getCause() : e);
+                    }
+                }
+                if (!failures.isEmpty()) {
+                    IllegalStateException failed = new IllegalStateException(failures.size() + " of " + feeds.size()
+                            + " chunks of document " + document.id() + " were not fed: " + failures.getFirst().getMessage(),
+                            failures.getFirst());
+                    failures.stream().skip(1).forEach(failed::addSuppressed);
+                    throw failed;
+                }
                 log.info("Successfully fed {} chunks for document {} to Vespa.", feeds.size(), document.id());
             } catch (Exception e) {
                 log.error("Error processing document {} for Vespa: {}", document.id(), e.getMessage());

@@ -101,7 +101,7 @@ Each hook approves the document, approves a sanitized version, or rejects it.
 - **Permissions:** a hook never changes a document's permissions.
 - **Fail closed:** if a hook cannot decide, nothing is embedded.
 - **Rejections:** a rejected new version removes the earlier one unless `on-rejected-update: keep`.
-- **Direct outputs:** with governance on, jobs that would send documents straight to an output connector, and so bypass the gate, are refused. RAG jobs on the vector stores write through the pipeline only, so they are governed and run.
+- **Direct outputs:** with governance on, jobs that would send documents straight to an output connector, and so bypass the gate, are refused. RAG jobs on the runtime's vector store write through the pipeline only, so they are governed and run; a job with its own Qdrant or Vespa output elsewhere is sent directly, so it is refused.
 
 See [Configuration Guide, Pre-Embedding Governance](Configuration-Guide#%EF%B8%8F-pre-embedding-governance).
 

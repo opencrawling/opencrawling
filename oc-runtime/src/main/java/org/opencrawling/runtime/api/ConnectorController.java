@@ -450,7 +450,7 @@ public class ConnectorController {
             "seaTunnelJobName", "opencrawling_ingestion_pipeline",
             "seaTunnelJobMode", "STREAMING",
             "seaTunnelKafkaBootstrapServers", "localhost:9092",
-            "seaTunnelKafkaTopic", "opencrawling-embedded",
+            "seaTunnelKafkaTopic", org.opencrawling.core.messaging.PipelineTopics.EMBEDDED,
             "seaTunnelTargetSinks", "clickhouse,milvus"
         )));
         defaults.add(new ConnectorDTO("Ozone_Migration_Output", "Apache Ozone Migration Target (Migration Mode only)", "output", "org.opencrawling.ozone.OzoneOutputConnector", 10, Map.of(

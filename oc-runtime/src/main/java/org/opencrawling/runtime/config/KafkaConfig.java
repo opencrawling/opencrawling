@@ -16,6 +16,7 @@
 package org.opencrawling.runtime.config;
 
 import java.util.HashMap;
+import org.opencrawling.core.messaging.PipelineTopics;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -53,9 +54,9 @@ import org.springframework.util.backoff.BackOff;
 @EnableKafka
 public class KafkaConfig {
 
-    public static final String TOPIC_NAME = "opencrawling-documents";
-    public static final String CHUNKS_TOPIC_NAME = "opencrawling-chunks";
-    public static final String EMBEDDED_TOPIC_NAME = "opencrawling-embedded";
+    public static final String TOPIC_NAME = PipelineTopics.DOCUMENTS;
+    public static final String CHUNKS_TOPIC_NAME = PipelineTopics.CHUNKS;
+    public static final String EMBEDDED_TOPIC_NAME = PipelineTopics.EMBEDDED;
 
     /** Suffix of the dead-letter topic a record goes to once its retries are exhausted (Spring Kafka's default). */
     public static final String DLT_SUFFIX = ".DLT";

@@ -123,8 +123,10 @@ class VespaOutputConnectorIT {
             }
         };
 
-        VespaOutputProperties properties = new VespaOutputProperties(
-                searchEndpoint, "opencrawling", "opencrawling_chunk", VECTOR_1024.length, 30, false, null, null, null);
+        VespaOutputProperties properties = VespaOutputProperties.builder()
+                .endpoint(searchEndpoint)
+                .dimensions(VECTOR_1024.length)
+                .build();
 
         connector = new VespaOutputConnector(client, properties, new VespaDocumentMapper(), dummyModel);
     }

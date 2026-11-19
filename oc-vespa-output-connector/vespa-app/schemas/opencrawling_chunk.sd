@@ -19,6 +19,14 @@ schema opencrawling_chunk {
             rank: filter
         }
 
+        # The source document's id, so a deletion finds every chunk of the document: its URI is not a stable key (a
+        # direct write may carry the claim-check URI, the tombstone the source's).
+        field document_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+
         field text type string {
             indexing: summary | index
             index: enable-bm25

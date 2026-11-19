@@ -34,6 +34,7 @@ All properties are bound via `VespaOutputProperties` under the `spring.opencrawl
 | **TLS Certificate** | `spring.opencrawling.output.vespa.tls-certificate` | *(none)* | Path to client certificate PEM file |
 | **TLS Private Key** | `spring.opencrawling.output.vespa.tls-private-key` | *(none)* | Path to client private key PEM file |
 | **TLS CA Certificates** | `spring.opencrawling.output.vespa.tls-ca-certificates` | *(none)* | Path to CA certificates PEM file, overrides the JVM default truststore |
+| **Content Cluster** | `spring.opencrawling.output.vespa.content-cluster` | `opencrawling_content` | The content cluster deletions address (Vespa's document API requires it for a delete by selection); the bundled `vespa-app/services.xml` names it `opencrawling_content` |
 
 To select this connector, set `spring.opencrawling.output.type=vespa`.
 
@@ -47,6 +48,9 @@ Every fed document carries these fields (see `VespaFields`), plus a `metadata_js
     "chunk_id": "doc-123_a1b2c3",
     "text": "...chunk text...",
     "uri": "file:///data/doc-123.pdf",
+    "document_id": "/data/doc-123.pdf",
+    "chunk_index": 0,
+    "total_chunks": 12,
     "acl": "acl-123",
     "lastModified": "2026-07-23T08:00:00Z",
     "security_inheritance": true,
@@ -57,6 +61,32 @@ Every fed document carries these fields (see `VespaFields`), plus a `metadata_js
   }
 }
 ```
+
+## Upgrading: Deploy the Schemas First
+
+Vespa rejects any field its deployed schema does not declare, and the schemas in `vespa-app/schemas/` have gained three:
+
+| Field | Type | Used for |
+|---|---|---|
+| `document_id` | `string`, `attribute: fast-search`, `rank: filter` | Deleting every chunk of a document (a delete by selection on `document_id`): a direct write may carry the claim-check URI and the tombstone the source's, so the URI is not a stable key. Chunks without it are deleted by URI. |
+| `chunk_index` | `int`, `attribute` | Ordering a document's chunks in `getDocumentContent`. |
+| `total_chunks` | `int`, `attribute` | Telling whether a document is complete. |
+
+Deploy the new schemas to every Vespa cluster OpenCrawling writes to, all four types (`opencrawling_chunk`, `opencrawling_chunk_384`, `opencrawling_chunk_768`, `opencrawling_chunk_1024`), in one of two ways:
+
+1. **Before upgrading**, deploy the new release's `vespa-app` package yourself (for example with the Vespa CLI, `vespa deploy oc-vespa-output-connector/vespa-app`, or the `vespa-deploy` container of the new release's Compose stacks). Not the Admin UI's bundled deploy (`POST /api/vespa/deploy/bundled`): until the runtime is upgraded, it deploys the old release's schemas, which lack the new fields.
+2. **Or right after upgrading the runtime**, run the bundled deploy (`POST /api/vespa/deploy/bundled`) from the upgraded runtime, before starting any job that writes to Vespa directly (a per-job Vespa output).
+
+If you deploy your own application package, add the three fields to every document type OpenCrawling writes, with the definitions above (see `vespa-app/schemas/opencrawling_chunk.sd`).
+
+Then re-crawl, so existing chunks get the new fields.
+
+Adding fields is a live schema change in Vespa: no restart and no data migration.
+
+If OpenCrawling writes before the new schemas are deployed:
+
+- **The pipeline writer** keeps ingesting. It feeds chunks without the three fields and logs a warning once. Documents are then not ordered or complete in `getDocumentContent`.
+- **Per-job outputs that are written directly** fail every write and say why. Their chunks carry the claim-check URI, so without `document_id` a later deletion could not find them.
 
 ## Admin UI: Model Insights & Secure MCP
 
@@ -126,6 +156,7 @@ Once the pipeline has fed a real document, this also asserts the Model Insights 
 
 ## Known Limitations
 
+- **Deleting a document through the Kafka pipeline does not remove its chunks from Vespa yet.** `VespaStoreWriterConsumer` handles a tombstone by removing the one Vespa document whose id is the tombstone's, which no chunk has. Per-job outputs, which get tombstones directly, delete through `VespaChunkRemover`; the pipeline writer is being moved onto it.
 - Dynamic routing only covers the three embedding dimensions already used across OpenCrawling (`all-minilm` 384, `nomic-embed-text` 768, `mxbai-embed-large` 1024). A model producing any other dimension falls back to the configurable default document type (`opencrawling_chunk`), whose tensor dimension is fixed at schema-deploy time; there is no runtime cross-check of that fallback against the live schema, so a custom-dimension model still requires editing `opencrawling_chunk.sd` and redeploying.
 - Schema/application package deployment is a one-time operator step, not something the connector automates on every startup (unlike Qdrant/Milvus's collection auto-provisioning), since Vespa application package deploys are a heavier, versioned operation typically owned by CI/CD or the `vespa` CLI rather than a per-instance side effect. All four document types (`opencrawling_chunk` plus the three dimension-specific ones) must be deployed together for dynamic routing to work. The Model Insights panel's one-click deploy (see above) is an optional convenience on top of this, not a replacement for it.
 - The Secure MCP tools' query-side ACL push-down only excludes `security_denied_read` matches; it does not also push down the allow-list (public/legacy `acl` fallback), since that would require expressing "array is empty" in YQL. The authoritative check is always the Java-side re-check in `VespaMcpVectorServer`, so this only affects candidate-set efficiency, never correctness.
