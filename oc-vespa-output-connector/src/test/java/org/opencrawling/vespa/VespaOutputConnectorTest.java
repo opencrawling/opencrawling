@@ -232,6 +232,23 @@ class VespaOutputConnectorTest {
     }
 
     @Test
+    void disconnectingClosesTheChunkRemoversClientToo() throws Exception {
+        // A per-job output is disconnected when its run ends; the deletions' HTTP client must not outlive it.
+        try (VespaDocumentApiStandIn vespa = new VespaDocumentApiStandIn()) {
+            VespaOutputConnector local = new VespaOutputConnector(feedClient, vespa.properties(), new VespaDocumentMapper(),
+                    embeddingModel);
+            local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt")).block();
+
+            local.disconnect();
+
+            verify(feedClient).close();
+            assertThatThrownBy(() -> local.send(RepositoryDocument.createTombstone("doc-779", "file://tmp/doc-779.txt"))
+                    .block()).hasRootCauseMessage("The Vespa chunk remover for " + vespa.properties().endpoint()
+                    + " is closed");
+        }
+    }
+
+    @Test
     void aTombstoneVespaCannotBeAskedToDeleteFailsTheDocument() {
         // Nothing listens on the endpoint: the delete must not report success.
         VespaOutputConnector local = new VespaOutputConnector(feedClient, VespaOutputProperties.builder()

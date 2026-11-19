@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (michael@michaelcizmar.com)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ import java.util.Set;
  * {@code document_id == "…"} and everything for {@code document_id == null}, so an application deployed before the
  * field existed is handled by the URI selection alone.
  */
-public final class VespaChunkRemover {
+public final class VespaChunkRemover implements AutoCloseable {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -52,6 +52,7 @@ public final class VespaChunkRemover {
     private final Set<String> documentTypes;
     /** Built on first use: a connector is constructed even when its TLS files are unreadable (a deletion then fails). */
     private volatile HttpClient http;
+    private boolean closed;
 
     public VespaChunkRemover(VespaOutputProperties properties) {
         this.properties = properties;
@@ -149,6 +150,9 @@ public final class VespaChunkRemover {
         HttpClient client = http;
         if (client == null) {
             synchronized (this) {
+                if (closed) {
+                    throw new IllegalStateException("The Vespa chunk remover for " + properties.endpoint() + " is closed");
+                }
                 if (http == null) {
                     http = VespaTls.httpClient(properties);
                 }
@@ -156,5 +160,24 @@ public final class VespaChunkRemover {
             }
         }
         return client;
+    }
+
+    /** The HTTP client, if a deletion created one. */
+    HttpClient createdClient() {
+        return http;
+    }
+
+    /**
+     * Closes the HTTP client, if one was created, so its selector thread ends now rather than at garbage collection
+     * (per-job outputs are built and released per run). A closed remover deletes nothing.
+     */
+    @Override
+    public synchronized void close() {
+        closed = true;
+        HttpClient client = http;
+        http = null;
+        if (client != null) {
+            client.close();
+        }
     }
 }

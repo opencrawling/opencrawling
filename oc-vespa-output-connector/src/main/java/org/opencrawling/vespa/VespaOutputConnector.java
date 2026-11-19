@@ -135,7 +135,11 @@ public class VespaOutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
-        client.close();
+        try {
+            client.close();
+        } finally {
+            chunkRemover.close();
+        }
     }
 
     @Override

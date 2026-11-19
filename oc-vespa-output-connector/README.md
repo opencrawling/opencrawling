@@ -72,15 +72,18 @@ Vespa rejects any field its deployed schema does not declare, and the schemas in
 | `chunk_index` | `int`, `attribute` | Ordering a document's chunks in `getDocumentContent`. |
 | `total_chunks` | `int`, `attribute` | Telling whether a document is complete. |
 
-Before upgrading the runtime, the writer or the crawler:
+Deploy the new schemas to every Vespa cluster OpenCrawling writes to, all four types (`opencrawling_chunk`, `opencrawling_chunk_384`, `opencrawling_chunk_768`, `opencrawling_chunk_1024`), in one of two ways:
 
-1. Deploy the updated application package to every Vespa cluster OpenCrawling writes to: all four schemas (`opencrawling_chunk`, `opencrawling_chunk_384`, `opencrawling_chunk_768`, `opencrawling_chunk_1024`). Use the Admin UI's bundled deploy (`POST /api/vespa/deploy/bundled`), the `vespa-deploy` container of the Compose stacks, or your own deployment.
-2. If you deploy your own application package, add the three fields to every document type OpenCrawling writes, with the definitions above (see `vespa-app/schemas/opencrawling_chunk.sd`).
-3. Then upgrade OpenCrawling and re-crawl, so existing chunks get the new fields.
+1. **Before upgrading**, deploy the new release's `vespa-app` package yourself (for example with the Vespa CLI, `vespa deploy oc-vespa-output-connector/vespa-app`, or the `vespa-deploy` container of the new release's Compose stacks). Not the Admin UI's bundled deploy (`POST /api/vespa/deploy/bundled`): until the runtime is upgraded, it deploys the old release's schemas, which lack the new fields.
+2. **Or right after upgrading the runtime**, run the bundled deploy (`POST /api/vespa/deploy/bundled`) from the upgraded runtime, before starting any job that writes to Vespa directly (a per-job Vespa output).
+
+If you deploy your own application package, add the three fields to every document type OpenCrawling writes, with the definitions above (see `vespa-app/schemas/opencrawling_chunk.sd`).
+
+Then re-crawl, so existing chunks get the new fields.
 
 Adding fields is a live schema change in Vespa: no restart and no data migration.
 
-If OpenCrawling is upgraded first:
+If OpenCrawling writes before the new schemas are deployed:
 
 - **The pipeline writer** keeps ingesting. It feeds chunks without the three fields and logs a warning once. Documents are then not ordered or complete in `getDocumentContent`.
 - **Per-job outputs that are written directly** fail every write and say why. Their chunks carry the claim-check URI, so without `document_id` a later deletion could not find them.

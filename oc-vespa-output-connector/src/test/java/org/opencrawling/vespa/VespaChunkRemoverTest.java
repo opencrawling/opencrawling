@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (michael@michaelcizmar.com)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -166,5 +166,27 @@ class VespaChunkRemoverTest {
         vespa.store("opencrawling", "opencrawling_chunk_1024", "a", "doc-18", "u");
 
         assertThat(new VespaChunkRemover(withSlash).removeDocument("doc-18", "u")).isEqualTo(1);
+    }
+
+    @Test
+    void closingTheRemoverClosesItsHttpClientAndEndsDeletions() throws Exception {
+        VespaChunkRemover remover = new VespaChunkRemover(vespa.properties());
+        remover.removeDocument("doc-19", "u");
+        java.net.http.HttpClient client = remover.createdClient();
+        assertThat(client).isNotNull();
+
+        remover.close();
+
+        assertThat(client.isTerminated()).isTrue();
+        assertThatThrownBy(() -> remover.removeDocument("doc-19", "u")).hasMessageContaining("is closed");
+    }
+
+    @Test
+    void closingAnUnusedRemoverCreatesNoClient() {
+        VespaChunkRemover remover = new VespaChunkRemover(vespa.properties());
+
+        remover.close();
+
+        assertThat(remover.createdClient()).isNull();
     }
 }
