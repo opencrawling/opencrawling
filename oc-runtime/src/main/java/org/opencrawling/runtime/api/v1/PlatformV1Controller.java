@@ -72,6 +72,7 @@ public class PlatformV1Controller {
         // Each readable collection and resource, under its own name.
         Map<String, String> links = new LinkedHashMap<>();
         links.put("jobs", ApiV1.BASE + "/jobs");
+        links.put("schedules", ApiV1.BASE + "/schedules");
         links.put("jobRuns", ApiV1.BASE + "/job-runs");
         links.put("executions", ApiV1.BASE + "/executions");
         links.put("connectors", ApiV1.BASE + "/connectors");
@@ -95,6 +96,7 @@ public class PlatformV1Controller {
         features.put("discovery", enabled("opencrawling.discovery.enabled"));
         features.put("dynamicJobs", enabled("opencrawling.jobs.dynamic.enabled"));
         features.put("sidecars", enabled("opencrawling.sidecars.enabled"));
+        features.put("scheduler", environment.getProperty("opencrawling.scheduler.enabled", Boolean.class, true));
         features.put("managementAuthorization", enabled("opencrawling.security.management.enabled"));
         return new ApiIndex("OpenCrawling Platform API", ApiV1.VERSION, links, features, Map.of(
                 "openapi", "/v3/api-docs/" + ApiV1.OPENAPI_GROUP,

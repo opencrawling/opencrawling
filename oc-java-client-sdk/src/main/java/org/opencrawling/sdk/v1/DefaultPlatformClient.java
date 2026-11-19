@@ -41,12 +41,18 @@ import org.opencrawling.sdk.models.ThroughputMetricsResponse;
 import org.opencrawling.sdk.v1.model.ApiIndex;
 import org.opencrawling.sdk.v1.model.Connector;
 import org.opencrawling.sdk.v1.model.ConnectorInput;
+import org.opencrawling.sdk.v1.model.CronValidationRequest;
+import org.opencrawling.sdk.v1.model.CronValidationResult;
 import org.opencrawling.sdk.v1.model.DocumentIngestRequest;
 import org.opencrawling.sdk.v1.model.DynamicJob;
 import org.opencrawling.sdk.v1.model.DynamicJobAccepted;
 import org.opencrawling.sdk.v1.model.DynamicJobRequest;
 import org.opencrawling.sdk.v1.model.Health;
 import org.opencrawling.sdk.v1.model.Job;
+import org.opencrawling.sdk.v1.model.JobSchedule;
+import org.opencrawling.sdk.v1.model.JobScheduleConfig;
+import org.opencrawling.sdk.v1.model.ScheduleDispatch;
+import org.opencrawling.sdk.v1.model.SchedulerOverview;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.opencrawling.sdk.v1.model.TransportSettings;
 import org.opencrawling.sdk.v1.model.SidecarPage;
@@ -159,6 +165,11 @@ public class DefaultPlatformClient implements PlatformClient {
     @Override
     public Jobs jobs() {
         return jobs;
+    }
+
+    @Override
+    public Schedules schedules() {
+        return schedules;
     }
 
     @Override
@@ -298,6 +309,78 @@ public class DefaultPlatformClient implements PlatformClient {
         @Override
         public ErrorLogsResponse errors(String id, String timeframe) {
             return getJson(path("jobs", id, "errors") + params("timeframe", timeframe), ErrorLogsResponse.class);
+        }
+    };
+
+    private final Schedules schedules = new Schedules() {
+        @Override
+        public Page<JobSchedule> list(ScheduleFilter filter, PageRequest page) {
+            ScheduleFilter f = filter != null ? filter : ScheduleFilter.all();
+            return getPage(path("schedules"), params("enabled", f.enabled(), "outcome", f.outcome(),
+                    "q", f.q(), "sort", f.sort()), page, JobSchedule.class);
+        }
+
+        @Override
+        public Stream<JobSchedule> stream(ScheduleFilter filter) {
+            return streamOf(page -> list(filter, page));
+        }
+
+        @Override
+        public SchedulerOverview overview(String horizon, Integer limit) {
+            return getJson(path("schedules", "overview") + params("horizon", horizon, "limit", limit),
+                    SchedulerOverview.class);
+        }
+
+        @Override
+        public CronValidationResult validateCron(CronValidationRequest request) {
+            return post(action(path("schedules"), "validate-cron"), request, CronValidationResult.class);
+        }
+
+        @Override
+        public Versioned<JobSchedule> get(String jobId) {
+            return versioned(send("GET", path("jobs", jobId, "schedule"), null, null, RequestOptions.none(), Map.of()),
+                    JobSchedule.class);
+        }
+
+        @Override
+        public Optional<Versioned<JobSchedule>> getIfChanged(String jobId, String etag) {
+            HttpTransport.RawResponse response = send("GET", path("jobs", jobId, "schedule"), null, null,
+                    RequestOptions.none(), etag != null ? Map.of("If-None-Match", etag) : Map.of());
+            return response.status() == 304 ? Optional.empty() : Optional.of(versioned(response, JobSchedule.class));
+        }
+
+        @Override
+        public Versioned<JobSchedule> set(String jobId, JobScheduleConfig config, RequestOptions options) {
+            return versioned(send("PUT", path("jobs", jobId, "schedule"), config, JSON, options, Map.of()),
+                    JobSchedule.class);
+        }
+
+        @Override
+        public void delete(String jobId, RequestOptions options) {
+            ok(send("DELETE", path("jobs", jobId, "schedule"), null, null, options, Map.of()));
+        }
+
+        @Override
+        public Versioned<JobSchedule> pause(String jobId, RequestOptions options) {
+            return versioned(send("POST", action(path("jobs", jobId, "schedule"), "pause"), null, null, options,
+                    Map.of()), JobSchedule.class);
+        }
+
+        @Override
+        public Versioned<JobSchedule> resume(String jobId, RequestOptions options) {
+            return versioned(send("POST", action(path("jobs", jobId, "schedule"), "resume"), null, null, options,
+                    Map.of()), JobSchedule.class);
+        }
+
+        @Override
+        public Page<ScheduleDispatch> dispatches(String jobId, String outcome, PageRequest page) {
+            return getPage(path("jobs", jobId, "schedule", "dispatches"), params("outcome", outcome), page,
+                    ScheduleDispatch.class);
+        }
+
+        @Override
+        public Stream<ScheduleDispatch> streamDispatches(String jobId, String outcome) {
+            return streamOf(page -> dispatches(jobId, outcome, page));
         }
     };
 

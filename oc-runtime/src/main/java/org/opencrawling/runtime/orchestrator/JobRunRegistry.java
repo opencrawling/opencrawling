@@ -106,6 +106,7 @@ public class JobRunRegistry {
     /** The runs whose thread is in this runtime, by execution id. */
     private final Map<String, Run> local = new ConcurrentHashMap<>();
     private final List<Consumer<RunInfo>> interruptionListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<RunInfo>> finishedListeners = new CopyOnWriteArrayList<>();
 
     @Autowired
     public JobRunRegistry(@Value("${opencrawling.jobs.max-concurrent-runs:0}") int maxConcurrentRuns,
@@ -169,6 +170,14 @@ public class JobRunRegistry {
      */
     public void onInterrupted(Consumer<RunInfo> listener) {
         interruptionListeners.add(listener);
+    }
+
+    /**
+     * Calls {@code listener} after any local run has finished and released its slot in {@link RunStore}, or after a
+     * stale shared run was marked {@link RunState#INTERRUPTED}.
+     */
+    public void onFinished(Consumer<RunInfo> listener) {
+        finishedListeners.add(listener);
     }
 
     /** Takes the job's slot for a run with no known caller. */
@@ -343,6 +352,18 @@ public class JobRunRegistry {
                 log.warn("Interruption listener failed for job {}: {}", run.jobId(), e.getMessage(), e);
             }
         }
+        notifyFinished(info);
+    }
+
+    private void notifyFinished(RunInfo info) {
+        for (Consumer<RunInfo> listener : finishedListeners) {
+            try {
+                listener.accept(info);
+            } catch (RuntimeException e) {
+                log.warn("Finished listener failed for job {} [Exec ID: {}]: {}",
+                        info.jobId(), info.executionId(), e.getMessage(), e);
+            }
+        }
     }
 
     private void interruptStale() {
@@ -362,13 +383,20 @@ public class JobRunRegistry {
     }
 
     private void end(Run run, RunState state, String detail) {
+        RunInfo endedInfo = null;
         try {
             store.finish(run.executionId, state, runtimeId, clock.instant(), detail);
+            endedInfo = store.get(run.executionId).map(RunInfo::of).orElseGet(
+                    () -> new RunInfo(run.jobId, run.executionId, null, run.stopRequested.get(), null,
+                            state, runtimeId, clock.instant()));
         } catch (RuntimeException e) {
             log.error("Job {} run [Exec ID: {}] ended {} but could not be recorded: {}",
                     run.jobId, run.executionId, state, e.getMessage(), e);
         } finally {
             local.remove(run.executionId, run);
+        }
+        if (endedInfo != null) {
+            notifyFinished(endedInfo);
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,10 @@ package org.opencrawling.runtime.controlplane;
 import org.opencrawling.runtime.api.PersistenceHelper;
 import org.opencrawling.runtime.orchestrator.InMemoryRunStore;
 import org.opencrawling.runtime.orchestrator.RunStore;
+import org.opencrawling.runtime.scheduler.FileScheduleStore;
+import org.opencrawling.runtime.scheduler.ScheduleStore;
+import org.opencrawling.runtime.scheduler.SchedulerProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -32,6 +36,7 @@ import java.util.Locale;
 
 /** Chooses the control-plane store with {@code opencrawling.control-plane.store}: {@code file} (default) or {@code jdbc}. */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(SchedulerProperties.class)
 public class ControlPlaneConfiguration {
 
     public static final String STORE_PROPERTY = "opencrawling.control-plane.store";
@@ -61,5 +66,17 @@ public class ControlPlaneConfiguration {
         return controlPlaneStore instanceof JdbcControlPlaneStore
                 ? new JdbcRunStore(jdbc.getObject(), controlPlaneStore)
                 : new InMemoryRunStore();
+    }
+
+    /**
+     * Where job schedule runtime states and dispatch audit records (#197) are kept: JSON files in {@code data/} with
+     * {@code file}, or {@code oc_schedule_state} / {@code oc_schedule_dispatch} in the control-plane database with
+     * {@code jdbc}.
+     */
+    @Bean
+    public ScheduleStore scheduleStore(ControlPlaneStore controlPlaneStore, ObjectProvider<JdbcTemplate> jdbc) {
+        return controlPlaneStore instanceof JdbcControlPlaneStore
+                ? new JdbcScheduleStore(jdbc.getObject(), controlPlaneStore)
+                : new FileScheduleStore(controlPlaneStore, Path.of(PersistenceHelper.DATA_DIR));
     }
 }

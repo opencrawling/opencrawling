@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """Check the DCTM REST mock against OpenText's published OpenAPI specification.
 
 OpenText publishes the Documentum REST API as an OpenAPI 3 document on developer.opentext.com ("Documentum D2", the D2

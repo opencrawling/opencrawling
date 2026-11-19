@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Holds the permissions the SharePoint connector indexed against an independent RBAC oracle: sergey-shulyak/mock-graph-server's
 company.visibility.yaml, the exact files each of its users can read, generated from that mock's own permission model.

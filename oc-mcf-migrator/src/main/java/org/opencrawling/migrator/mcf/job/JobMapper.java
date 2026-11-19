@@ -26,7 +26,9 @@ import org.opencrawling.migrator.mcf.mcf.model.McfFileSystemSpec.StartPoint;
 import org.opencrawling.migrator.mcf.mcf.model.McfJob;
 import org.opencrawling.migrator.mcf.mcf.model.McfPipelineStage;
 import org.opencrawling.migrator.mcf.mcf.parse.DocumentSpecificationParser;
+import org.opencrawling.migrator.mcf.ois.CronTranslator;
 import org.opencrawling.sdk.models.JobRequest;
+import org.opencrawling.sdk.v1.model.JobScheduleConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -114,9 +116,28 @@ public class JobMapper {
         String path = resolvePath(job, connectionsByKey, notes);
         checkRuntimeResolution(repositoryKey, outputKey, mappingResultsByKey, notes);
 
-        notes.add(new FieldNote("schedule", FieldNoteKind.DROPPED,
-            "schedule/hopcount/recrawl/priority/expiration/reseed settings have no target — OpenCrawling has no "
-                + "scheduler; job is created in Ready state for manual/API start"));
+        Optional<String> translatedCron = CronTranslator.tryTranslate(job.scheduleRecords());
+        JobScheduleConfig migratedSchedule = null;
+        if (translatedCron.isPresent()) {
+            migratedSchedule = JobScheduleConfig.builder()
+                .cron(translatedCron.get())
+                .timezone("UTC")
+                .enabled(false)
+                .build();
+            notes.add(new FieldNote("schedule", FieldNoteKind.CONVERTED,
+                "ManifoldCF schedule translated to 5-field cron '" + translatedCron.get()
+                    + "' (imported paused/disabled by default — enable via the Scheduler panel or API after verification); "
+                    + "hopcount/recrawl/priority/expiration/reseed settings dropped"));
+        } else if (!job.scheduleRecords().isEmpty()) {
+            notes.add(new FieldNote("schedule", FieldNoteKind.DROPPED,
+                "ManifoldCF schedule could not be translated cleanly to a single cron expression (multiple windows, "
+                    + "duration bounds, or month/day-of-month filters); configure a schedule in OpenCrawling's "
+                    + "Scheduler panel if needed, and hopcount/recrawl/priority/expiration/reseed settings dropped"));
+        } else {
+            notes.add(new FieldNote("schedule", FieldNoteKind.DROPPED,
+                "No ManifoldCF schedule records present (or hopcount/recrawl/priority/expiration/reseed settings "
+                    + "dropped); job is created in Ready state for manual, API, or cron Scheduler start"));
+        }
         if (job.notificationStageCount() > 0) {
             notes.add(new FieldNote("notifications", FieldNoteKind.DROPPED,
                 job.notificationStageCount() + " notification stage(s) ignored — no target concept"));
@@ -135,6 +156,7 @@ public class JobMapper {
             .currentStage("Idle")
             .documents(0)
             .lastRun("N/A")
+            .schedule(migratedSchedule)
             .build();
 
         return JobMappingResult.supported(target, notes);

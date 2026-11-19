@@ -36,8 +36,11 @@ import org.opencrawling.runtime.api.v1.model.JobInput;
 import org.opencrawling.runtime.api.v1.model.JobResource;
 import org.opencrawling.runtime.api.v1.model.JobRunResource;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
+import org.opencrawling.runtime.scheduler.JobScheduleState;
+import org.opencrawling.runtime.scheduler.ScheduleStore;
 import org.opencrawling.runtime.security.ManagementAuthorization.JobAction;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -77,13 +80,21 @@ public class JobsV1Controller {
     private final ConnectorController connectors;
     private final JsonMapper json;
     private final Validator validator;
+    private final ScheduleStore scheduleStore;
 
     public JobsV1Controller(JobController jobs, ConnectorController connectors, JsonMapper json,
                             ObjectProvider<Validator> validator) {
+        this(jobs, connectors, json, validator, null);
+    }
+
+    @Autowired
+    public JobsV1Controller(JobController jobs, ConnectorController connectors, JsonMapper json,
+                            ObjectProvider<Validator> validator, ObjectProvider<ScheduleStore> scheduleStore) {
         this.jobs = jobs;
         this.connectors = connectors;
         this.json = json;
         this.validator = validator.getIfAvailable(() -> Validation.buildDefaultValidatorFactory().getValidator());
+        this.scheduleStore = scheduleStore != null ? scheduleStore.getIfAvailable() : null;
     }
 
     @Operation(operationId = "listJobs", summary = "List jobs",
@@ -101,13 +112,14 @@ public class JobsV1Controller {
             @Parameter(description = "Cursor from page.nextCursor") @RequestParam(required = false) String cursor,
             HttpServletResponse response) {
         Map<String, List<JobAction>> permissions = jobs.getJobPermissions();
+        Map<String, JobScheduleState> scheduleStates = scheduleStore != null ? scheduleStore.getAllStates() : Map.of();
         List<JobResource> items = jobs.getAllJobs().stream()
                 .filter(job -> status == null || status.equalsIgnoreCase(job.status()))
                 .filter(job -> pipelineMode == null || pipelineMode.equalsIgnoreCase(String.valueOf(job.pipelineMode())))
                 .filter(job -> repositoryConnector == null || repositoryConnector.equalsIgnoreCase(job.repositoryConnector()))
                 .filter(job -> outputConnector == null || outputConnector.equalsIgnoreCase(job.outputConnector()))
                 .filter(job -> q == null || (job.name() != null && job.name().toLowerCase(Locale.ROOT).contains(q.toLowerCase(Locale.ROOT))))
-                .map(job -> JobResource.of(job, permissions.get(job.id())))
+                .map(job -> JobResource.of(job, permissions.get(job.id()), scheduleStates.get(job.id())))
                 .toList();
         items = Paging.sort(items, sort == null ? "id" : sort, Map.of(
                 "id", Comparator.comparing(JobResource::id, Comparator.nullsLast(Comparator.naturalOrder())),
@@ -316,6 +328,7 @@ public class JobsV1Controller {
                     ? "Only admins and members of the job creator groups may create jobs."
                     : "Only the job's owner or an admin may change it.");
             case SaveOutcome.InvalidMode invalid -> throw ApiProblem.invalid("pipelineMode", invalid.reason());
+            case SaveOutcome.InvalidSchedule invalid -> throw ApiProblem.invalid("schedule." + invalid.field(), invalid.reason());
             case SaveOutcome.Invalid invalid -> throw new ApiProblem(HttpStatus.BAD_REQUEST, "job-invalid", "Invalid job",
                     "The repository connector rejects this job: " + invalid.reason());
         };
@@ -360,7 +373,9 @@ public class JobsV1Controller {
     }
 
     private JobResource resource(JobDTO job) {
-        return JobResource.of(job, jobs.getJobPermissions().get(job.id()));
+        JobScheduleState scheduleState = scheduleStore != null && job.schedule() != null
+                ? scheduleStore.getState(job.id()).orElse(null) : null;
+        return JobResource.of(job, jobs.getJobPermissions().get(job.id()), scheduleState);
     }
 
     /**

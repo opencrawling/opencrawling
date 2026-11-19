@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package org.opencrawling.runtime.api;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.opencrawling.runtime.controlplane.ControlPlaneStore;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -51,6 +52,16 @@ import org.opencrawling.runtime.security.CallerResolver;
 import org.opencrawling.runtime.security.ManagementAuthorization;
 import org.opencrawling.runtime.security.ManagementAuthorization.JobAction;
 import org.opencrawling.runtime.security.JwtCallerMapper;
+import org.opencrawling.runtime.scheduler.CronScheduleParser;
+import org.opencrawling.runtime.scheduler.JobScheduleConfig;
+import org.opencrawling.runtime.scheduler.JobScheduleState;
+import org.opencrawling.runtime.scheduler.ScheduleStore;
+import org.opencrawling.runtime.scheduler.ScheduleValidationException;
+import org.opencrawling.runtime.scheduler.SchedulerProperties;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -89,6 +100,15 @@ public class JobController {
     /** Absent when a test builds the controller itself; then every request is allowed, as with authorization off. */
     @Autowired(required = false)
     private ManagementAuthorization authorization;
+
+    @Autowired(required = false)
+    private ScheduleStore scheduleStore;
+
+    @Autowired(required = false)
+    private SchedulerProperties schedulerProperties;
+
+    private final Set<String> activeScheduledExecutions = ConcurrentHashMap.newKeySet();
+    private volatile Clock scheduleClock = Clock.systemUTC();
 
     public JobController(JobOrchestrator jobOrchestrator, ConnectorFactory connectorFactory, JobRunRegistry runRegistry,
                          JdbcTemplate jdbcTemplate) {
@@ -198,9 +218,38 @@ public class JobController {
         return jobs().stream().filter(j -> j.id().equals(id)).findFirst().orElse(null);
     }
 
+    /** All saved jobs without per-caller filtering: for internal background components such as the scheduler. */
+    public List<JobDTO> allJobsUnfiltered() {
+        return jobs();
+    }
+
     /** Whether the current caller may see this job, its runs, reports and traces. */
     public boolean canRead(JobDTO job) {
         return job != null && allowed(job, JobAction.READ);
+    }
+
+    /** Whether the current caller may modify or delete this job and its schedule. */
+    public boolean canManage(JobDTO job) {
+        return job != null && allowed(job, JobAction.MANAGE);
+    }
+
+    /** Whether the current caller may start, stop or pause this job. */
+    public boolean canExecute(JobDTO job) {
+        return job != null && allowed(job, JobAction.EXECUTE);
+    }
+
+    public boolean consumeScheduledExecution(String executionId) {
+        return executionId != null && activeScheduledExecutions.remove(executionId);
+    }
+
+    public void setScheduleStore(ScheduleStore scheduleStore, SchedulerProperties schedulerProperties) {
+        setScheduleStore(scheduleStore, schedulerProperties, Clock.systemUTC());
+    }
+
+    public void setScheduleStore(ScheduleStore scheduleStore, SchedulerProperties schedulerProperties, Clock scheduleClock) {
+        this.scheduleStore = scheduleStore;
+        this.schedulerProperties = schedulerProperties;
+        this.scheduleClock = scheduleClock != null ? scheduleClock : Clock.systemUTC();
     }
 
     @Operation(summary = "Create or update a pipeline job", description = "Creates a new crawling job or updates an existing job definition.")
@@ -215,6 +264,7 @@ public class JobController {
             case SaveOutcome.Missing missing -> ResponseEntity.status(201).build(); // unchanged legacy behaviour
             case SaveOutcome.InvalidMode invalid -> ResponseEntity.badRequest().build();
             case SaveOutcome.Invalid invalid -> ResponseEntity.badRequest().body(Map.of("error", invalid.reason()));
+            case SaveOutcome.InvalidSchedule invalid -> ResponseEntity.badRequest().body(Map.of("error", invalid.field() + ": " + invalid.reason()));
             case SaveOutcome.Forbidden forbidden -> ResponseEntity.status(403).build();
             case SaveOutcome.NotFound notFound -> ResponseEntity.notFound().build();
         };
@@ -228,6 +278,7 @@ public class JobController {
         record Missing(String id) implements SaveOutcome {}
         record InvalidMode(String reason) implements SaveOutcome {}
         record Invalid(String reason) implements SaveOutcome {}
+        record InvalidSchedule(String field, String reason) implements SaveOutcome {}
         record Forbidden() implements SaveOutcome {}
         record NotFound() implements SaveOutcome {}
     }
@@ -265,11 +316,19 @@ public class JobController {
             return new SaveOutcome.Invalid(validationError);
         }
         JobDTO saved = null;
+        JobScheduleConfig previousSchedule = null;
         boolean created = false;
         if (job.id() == null || job.id().isBlank() || job.id().equals("new")) {
             if (authorization != null && !authorization.canCreateJobs()) {
                 log.warn("Rejecting job '{}': the caller may not create jobs.", job.name());
                 return new SaveOutcome.Forbidden();
+            }
+            if (job.schedule() != null) {
+                try {
+                    CronScheduleParser.validate(job.schedule(), effectiveSchedulerProperties(), scheduleClock.instant());
+                } catch (ScheduleValidationException e) {
+                    return new SaveOutcome.InvalidSchedule(e.getField(), e.getMessage());
+                }
             }
             // Timestamp-based id, moved forward while taken: jobs saved in the same millisecond used to share one.
             String newId = newJobId();
@@ -288,7 +347,8 @@ public class JobController {
                 job.narrativization(),
                 job.pipelineMode(),
                 job.crawlSpec(),
-                accessForNewJob(job.access())
+                accessForNewJob(job.access()),
+                job.schedule()
             );
             jobs.add(newJob);
             saved = newJob;
@@ -306,6 +366,15 @@ public class JobController {
             for (int i = 0; i < jobs.size(); i++) {
                 if (jobs.get(i).id().equals(job.id())) {
                     JobDTO existing = jobs.get(i);
+                    previousSchedule = existing.schedule();
+                    JobScheduleConfig nextSchedule = job.schedule() != null || replace ? job.schedule() : existing.schedule();
+                    if (nextSchedule != null) {
+                        try {
+                            CronScheduleParser.validate(nextSchedule, effectiveSchedulerProperties(), scheduleClock.instant());
+                        } catch (ScheduleValidationException e) {
+                            return new SaveOutcome.InvalidSchedule(e.getField(), e.getMessage());
+                        }
+                    }
                     saved = new JobDTO(
                         job.id(),
                         job.name(),
@@ -322,7 +391,8 @@ public class JobController {
                         job.narrativization() != null || replace ? job.narrativization() : existing.narrativization(),
                         job.pipelineMode() != null || replace ? job.pipelineMode() : existing.pipelineMode(),
                         job.crawlSpec() != null || replace ? job.crawlSpec() : existing.crawlSpec(),
-                        accessForUpdate(existing.access(), job.access())
+                        accessForUpdate(existing.access(), job.access()),
+                        nextSchedule
                     );
                     jobs.set(i, saved);
                     break;
@@ -330,6 +400,9 @@ public class JobController {
             }
         }
         controlPlaneStore.save("jobs.json", jobs);
+        if (saved != null) {
+            syncScheduleStateLocked(saved.id(), previousSchedule, saved.schedule());
+        }
         return saved == null ? new SaveOutcome.Missing(job.id()) : new SaveOutcome.Saved(saved, created);
     }
 
@@ -356,6 +429,9 @@ public class JobController {
         List<JobDTO> jobs = jobs();
         jobs.removeIf(j -> j.id().equals(id));
         controlPlaneStore.save("jobs.json", jobs);
+        if (scheduleStore != null) {
+            scheduleStore.deleteState(id);
+        }
         return ResponseEntity.ok().build();
     }
 
@@ -400,8 +476,20 @@ public class JobController {
     public StartOutcome start(String id, String correlationId) {
         log.info("Starting job {}", id);
         // Taken here, on the request thread: the run's own thread has no security context.
-        final ExecutionProvenance provenance = provenance(correlationId);
+        return startInternal(id, provenance(correlationId), true);
+    }
 
+    /**
+     * Starts {@code id} on behalf of the native job scheduler (#197) with anonymous {@code SOURCE_SCHEDULER}
+     * provenance. Authorization was enforced when the schedule was configured.
+     */
+    public StartOutcome startScheduled(String id, Instant scheduledFor) {
+        log.info("Starting scheduled run for job {} (scheduledFor={})", id, scheduledFor);
+        String correlation = scheduledFor != null ? "sched:" + id + ":" + scheduledFor.getEpochSecond() : "sched:" + id;
+        return startInternal(id, ExecutionProvenance.anonymous(ExecutionProvenance.SOURCE_SCHEDULER, correlation), false);
+    }
+
+    private StartOutcome startInternal(String id, ExecutionProvenance provenance, boolean checkAccess) {
         final String cleanId = id != null ? id.trim() : "";
 
         // Find the job to get parameters
@@ -410,11 +498,11 @@ public class JobController {
             .filter(j -> j.id() != null && j.id().trim().equalsIgnoreCase(cleanId))
             .findFirst()
             .orElse(null);
-            
-        if (activeJob == null || !allowed(activeJob, JobAction.READ)) {
+
+        if (activeJob == null || (checkAccess && !allowed(activeJob, JobAction.READ))) {
             log.warn("Job with ID '{}' not found in loaded jobs list: {}", cleanId, jobs.stream().map(JobDTO::id).toList());
             return new StartOutcome.NotFound();
-        } else if (!allowed(activeJob, JobAction.EXECUTE)) {
+        } else if (checkAccess && !allowed(activeJob, JobAction.EXECUTE)) {
             log.warn("Job {} not started: the caller may see it but not run it.", activeJob.id());
             return new StartOutcome.Forbidden();
         } else {
@@ -436,7 +524,7 @@ public class JobController {
                 }
                 case JobRunRegistry.Reserved reserved -> reservation = reserved.reservation();
             }
-            updateJobStatus(id, "Running");
+            updateJobStatus(activeJob.id(), "Running");
             final PipelineMode mode = resolvePipelineMode(activeJob);
             RepositoryConnector resolvedConnector;
             OutputConnector resolvedOutputConnector;
@@ -459,8 +547,8 @@ public class JobController {
                         resolvedConnector = factory.create(connConfig.configuration(), jobContext(activeJob));
                     } catch (IllegalArgumentException e) {
                         reservation.release();
-                        log.error("Job {} rejected: invalid configuration: {}", id, e.getMessage(), e);
-                        updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
+                        log.error("Job {} rejected: invalid configuration: {}", activeJob.id(), e.getMessage(), e);
+                        updateJobStatusAndStage(activeJob.id(), "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
                         return new StartOutcome.Rejected("Invalid configuration: " + e.getMessage());
                     }
                 } else {
@@ -469,8 +557,8 @@ public class JobController {
                 resolvedOutputConnector = connectorFactory.output(outConfig, mode);
             } catch (ConnectorResolutionException e) {
                 reservation.release();
-                log.error("Job {} rejected: {}", id, e.getMessage(), e);
-                updateJobStatusAndStage(id, "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
+                log.error("Job {} rejected: {}", activeJob.id(), e.getMessage(), e);
+                updateJobStatusAndStage(activeJob.id(), "Error", "Rejected: " + e.getMessage(), getActualDbDocCount());
                 return new StartOutcome.Rejected(e.getMessage());
             }
 
@@ -481,8 +569,8 @@ public class JobController {
                 // Built for this job, it owns clients the run would have released.
                 connectorFactory.release(resolvedOutputConnector);
                 String connectorName = resolvedOutputConnector.getClass().getSimpleName();
-                log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", id, connectorName, mode.externalName());
-                updateJobStatusAndStage(id, "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
+                log.error("Job {} rejected: {} requires pipeline mode 'migration' but job resolved to '{}'", activeJob.id(), connectorName, mode.externalName());
+                updateJobStatusAndStage(activeJob.id(), "Error", "Rejected: " + connectorName + " requires migration mode", getActualDbDocCount());
                 return new StartOutcome.Rejected(connectorName + " requires pipeline mode 'migration'");
             }
 
@@ -491,8 +579,8 @@ public class JobController {
                 reservation.release();
                 // A per-job output (Qdrant, Vespa, …) owns clients the run would have released.
                 connectorFactory.release(resolvedOutputConnector);
-                log.error("Job {} rejected: {}", id, JobOrchestrator.GOVERNANCE_BYPASS);
-                updateJobStatusAndStage(id, "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
+                log.error("Job {} rejected: {}", activeJob.id(), JobOrchestrator.GOVERNANCE_BYPASS);
+                updateJobStatusAndStage(activeJob.id(), "Error", "Rejected: governance is on; run RAG jobs on the decoupled pipeline",
                         getActualDbDocCount());
                 return new StartOutcome.Rejected("Governance is on: run RAG jobs on the decoupled pipeline");
             }
@@ -500,8 +588,11 @@ public class JobController {
             final RepositoryConnector finalConnector = resolvedConnector;
             final OutputConnector finalOutputConnector = resolvedOutputConnector;
             final JobDTO finalActiveJob = activeJob;
+            if (ExecutionProvenance.SOURCE_SCHEDULER.equals(provenance.triggerSource())) {
+                activeScheduledExecutions.add(executionId);
+            }
 
-            log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", id, finalOutputConnector.getName(), mode.externalName());
+            log.info("Launching background Virtual Thread for job {} with OutputConnector: {} (pipeline mode: {})", activeJob.id(), finalOutputConnector.getName(), mode.externalName());
             
             // Execute real crawler inside virtual thread
             reservation.startJob(stopRequested -> {
@@ -518,13 +609,13 @@ public class JobController {
                 Thread.interrupted();
                 long docCount = resolveExecutionDocCount(executionId, finalActiveJob.documents());
                 if (stopRequested.getAsBoolean()) {
-                    log.info("Job {} stopped [Exec ID: {}].", id, executionId);
-                    updateJobStatusAndStage(id, "Finished", "Stopped", docCount);
+                    log.info("Job {} stopped [Exec ID: {}].", finalActiveJob.id(), executionId);
+                    updateJobStatusAndStage(finalActiveJob.id(), "Finished", "Stopped", docCount);
                 } else if (succeeded) {
                     log.info("Background Virtual Thread completed successfully!");
-                    updateJobStatusAndStage(id, "Finished", "Completed", docCount);
+                    updateJobStatusAndStage(finalActiveJob.id(), "Finished", "Completed", docCount);
                 } else {
-                    updateJobStatusAndStage(id, "Error", "Failed", docCount);
+                    updateJobStatusAndStage(finalActiveJob.id(), "Error", "Failed", docCount);
                 }
                 return succeeded;
             });
@@ -835,7 +926,8 @@ public class JobController {
                     job.narrativization(),
                     job.pipelineMode(),
                     job.crawlSpec(),
-                    job.access()
+                    job.access(),
+                    job.schedule()
                 ));
                 break;
             }
@@ -870,7 +962,8 @@ public class JobController {
                     job.narrativization(),
                     job.pipelineMode(),
                     job.crawlSpec(),
-                    job.access()
+                    job.access(),
+                    job.schedule()
                 ));
                 break;
             }
@@ -907,7 +1000,8 @@ public class JobController {
                     job.narrativization(),
                     job.pipelineMode(),
                     job.crawlSpec(),
-                    job.access()
+                    job.access(),
+                    job.schedule()
                 ));
                 controlPlaneStore.save("jobs.json", jobs);
                 break;
@@ -1031,6 +1125,68 @@ public class JobController {
             environment != null ? environment::getProperty : key -> null);
     }
 
+    /**
+     * Atomically updates the schedule definition on an existing job (bypassing user-thread RBAC checks when invoked
+     * for internal transitions such as circuit-breaker auto-pause). Must be called inside or synchronized through the
+     * control-plane lock.
+     */
+    public Optional<JobDTO> updateScheduleDefinition(String jobId, JobScheduleConfig nextSchedule) {
+        return controlPlaneStore.locked(() -> {
+            List<JobDTO> list = jobs();
+            for (int i = 0; i < list.size(); i++) {
+                JobDTO existing = list.get(i);
+                if (existing.id().equals(jobId)) {
+                    JobDTO updated = existing.withSchedule(nextSchedule);
+                    list.set(i, updated);
+                    controlPlaneStore.save("jobs.json", list);
+                    return Optional.of(updated);
+                }
+            }
+            return Optional.empty();
+        });
+    }
+
+    private SchedulerProperties effectiveSchedulerProperties() {
+        return schedulerProperties != null ? schedulerProperties : new SchedulerProperties();
+    }
+
+    private void syncScheduleStateLocked(String jobId, JobScheduleConfig previous, JobScheduleConfig current) {
+        if (scheduleStore == null) {
+            return;
+        }
+        if (current == null) {
+            scheduleStore.deleteState(jobId);
+            return;
+        }
+        if (Objects.equals(previous, current) && scheduleStore.getState(jobId).isPresent()) {
+            return;
+        }
+        Instant now = scheduleClock.instant();
+        JobScheduleState prev = scheduleStore.getState(jobId).orElse(null);
+        boolean configReset = previous == null
+                || !Objects.equals(previous.cron(), current.cron())
+                || !Objects.equals(previous.timezone(), current.timezone())
+                || !Objects.equals(previous.startAt(), current.startAt())
+                || !Objects.equals(previous.endAt(), current.endAt())
+                || (!previous.enabled() && current.enabled());
+        Instant nextFireAt = CronScheduleParser.computeNextFireAt(
+                current, effectiveSchedulerProperties().getDefaultTimezone(), now).orElse(null);
+        int consecutiveFailures = configReset || prev == null ? 0 : prev.consecutiveFailures();
+        boolean coalescePending = (!configReset && prev != null) && prev.coalescePending() && current.enabled();
+        JobScheduleState synced = new JobScheduleState(
+                jobId,
+                current.enabled(),
+                nextFireAt,
+                prev != null ? prev.lastFiredAt() : null,
+                prev != null ? prev.lastExecutionId() : null,
+                configReset ? null : (prev != null ? prev.lastOutcome() : null),
+                configReset ? null : (prev != null ? prev.lastDetail() : null),
+                coalescePending,
+                consecutiveFailures,
+                now);
+        scheduleStore.saveState(synced);
+    }
+
     @Schema(description = "Pipeline job definition and execution status")
     public static record JobDTO(
         @Schema(description = "Unique job identifier", example = "1")
@@ -1062,7 +1218,9 @@ public class JobController {
         @Schema(description = "Connector-specific job settings, such as the web crawler's seeds and limits")
         Map<String, Object> crawlSpec,
         @Schema(description = "Who may see and run the job when management authorization is on; null for jobs created before it")
-        JobAccess access
+        JobAccess access,
+        @Schema(description = "Optional recurring schedule configuration (#197)")
+        JobScheduleConfig schedule
     ) {
         public JobDTO {
             if (narrativization == null) narrativization = NarrativizationConfig.disabled();
@@ -1082,7 +1240,7 @@ public class JobController {
             String transformationConnector,
             NarrativizationConfig narrativization
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null, null, null);
         }
 
         public JobDTO(
@@ -1100,7 +1258,7 @@ public class JobController {
             NarrativizationConfig narrativization,
             String pipelineMode
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null, null, null);
         }
 
         /** The fourteen-field form used before jobs carried an access block. */
@@ -1120,15 +1278,40 @@ public class JobController {
             String pipelineMode,
             Map<String, Object> crawlSpec
         ) {
-            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, null);
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, null, null);
+        }
+
+        /** The fifteen-field form used before jobs carried a schedule block. */
+        public JobDTO(
+            String id,
+            String name,
+            String repositoryConnector,
+            String outputConnector,
+            String authorityConnector,
+            String path,
+            String status,
+            String currentStage,
+            long documents,
+            String lastRun,
+            String transformationConnector,
+            NarrativizationConfig narrativization,
+            String pipelineMode,
+            Map<String, Object> crawlSpec,
+            JobAccess access
+        ) {
+            this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, access, null);
         }
 
         public JobDTO withPipelineMode(String mode) {
-            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec, access);
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, mode, crawlSpec, access, schedule);
         }
 
         public JobDTO withAccess(JobAccess newAccess) {
-            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, newAccess);
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, newAccess, schedule);
+        }
+
+        public JobDTO withSchedule(JobScheduleConfig newSchedule) {
+            return new JobDTO(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, crawlSpec, access, newSchedule);
         }
     }
 }

@@ -40,7 +40,7 @@ import java.util.concurrent.Callable;
 @Command(
     name = "job",
     mixinStandardHelpOptions = true,
-    description = "Manage data crawling & ingestion jobs (list, start, status, pause, stop, delete, create)",
+    description = "Manage data crawling & ingestion jobs (list, start, status, pause, stop, delete, create, schedule)",
     subcommands = {
         JobCommand.JobListCommand.class,
         JobCommand.JobStartCommand.class,
@@ -48,14 +48,15 @@ import java.util.concurrent.Callable;
         JobCommand.JobPauseCommand.class,
         JobCommand.JobStopCommand.class,
         JobCommand.JobDeleteCommand.class,
-        JobCommand.JobCreateCommand.class
+        JobCommand.JobCreateCommand.class,
+        JobScheduleCommand.class
     }
 )
 public class JobCommand implements Runnable {
 
     @Override
     public void run() {
-        System.out.println(AnsiColors.yellow("Please specify a subcommand: list, start, status, pause, stop, delete, create"));
+        System.out.println(AnsiColors.yellow("Please specify a subcommand: list, start, status, pause, stop, delete, create, schedule"));
     }
 
     /** Allowed values for {@code --mode}; mirrors {@code org.opencrawling.core.pipeline.PipelineMode}. */

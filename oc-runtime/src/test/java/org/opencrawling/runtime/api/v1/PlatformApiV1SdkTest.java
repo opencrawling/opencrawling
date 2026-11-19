@@ -54,6 +54,11 @@ import org.opencrawling.sdk.v1.model.Job;
 import org.opencrawling.sdk.v1.model.JobInput;
 import org.opencrawling.sdk.v1.model.JobRun;
 import org.opencrawling.sdk.v1.model.JobRunHistory;
+import org.opencrawling.sdk.v1.model.JobSchedule;
+import org.opencrawling.sdk.v1.model.JobScheduleConfig;
+import org.opencrawling.sdk.v1.model.CronValidationRequest;
+import org.opencrawling.sdk.v1.model.CronValidationResult;
+import org.opencrawling.sdk.v1.model.SchedulerOverview;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -160,6 +165,7 @@ class PlatformApiV1SdkTest {
         Recorder.REQUESTS.clear();
         platform();
         String jobId = jobs();
+        schedules(jobId);
         runs(jobId);
         executions(jobId);
         connectors();
@@ -237,6 +243,38 @@ class PlatformApiV1SdkTest {
         assertThat(api.jobs().traces(id).spans()).hasSize(1);
         assertThat(api.jobs().errors(id, "24h").errorCount()).isEqualTo(1);
         return id;
+    }
+
+    private void schedules(String jobId) {
+        CronValidationResult validation = api.schedules().validateCron(new CronValidationRequest("0 2 * * *", "Europe/Rome", 3));
+        assertThat(validation.valid()).isTrue();
+        assertThat(validation.normalizedCron()).isEqualTo("0 0 2 * * *");
+        assertThat(validation.nextFireTimes()).hasSize(3);
+
+        Versioned<JobSchedule> set = api.schedules().set(jobId,
+                JobScheduleConfig.builder().cron("0 2 * * *").timezone("Europe/Rome").enabled(true)
+                        .overlapPolicy(JobScheduleConfig.OverlapPolicy.SKIP)
+                        .misfirePolicy(JobScheduleConfig.MisfirePolicy.FIRE_ONCE)
+                        .jitterSeconds(30).maxConsecutiveFailures(3).build(),
+                RequestOptions.none());
+        assertThat(set.etag()).isNotBlank();
+        assertThat(set.value().schedule().enabled()).isTrue();
+
+        Versioned<JobSchedule> read = api.schedules().get(jobId);
+        assertThat(api.schedules().getIfChanged(jobId, read.etag())).isEmpty();
+        assertThat(api.schedules().list(PlatformClient.ScheduleFilter.all().withEnabled(true), PageRequest.ofSize(10)).items())
+                .extracting(JobSchedule::jobId).contains(jobId);
+
+        SchedulerOverview overview = api.schedules().overview("24h", 10);
+        assertThat(overview.activeSchedules()).isGreaterThanOrEqualTo(1);
+
+        Versioned<JobSchedule> paused = api.schedules().pause(jobId, RequestOptions.ifMatch(read.etag()));
+        assertThat(paused.value().schedule().enabled()).isFalse();
+        Versioned<JobSchedule> resumed = api.schedules().resume(jobId, RequestOptions.ifMatch(paused.etag()));
+        assertThat(resumed.value().schedule().enabled()).isTrue();
+
+        assertThat(api.schedules().dispatches(jobId, null, PageRequest.ofSize(10)).items()).isNotNull();
+        api.schedules().delete(jobId, RequestOptions.ifMatch(resumed.etag()));
     }
 
     private void runs(String jobId) throws Exception {

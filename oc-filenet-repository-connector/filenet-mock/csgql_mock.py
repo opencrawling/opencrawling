@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 CSGQL mock: an emulator of the IBM FileNet Content Services GraphQL API (the read side) for testing the OpenCrawling
 FileNet connector without a FileNet P8 installation.

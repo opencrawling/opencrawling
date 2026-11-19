@@ -33,7 +33,8 @@ import {
   Terminal,
   ShieldCheck,
   X,
-  Play
+  Play,
+  CalendarClock
 } from 'lucide-react'
 import {
   reportApi,
@@ -402,8 +403,17 @@ export default function ReportDashboard() {
                       }`}
                     >
                       <td className="py-3.5 px-4 font-medium">
-                        <div className="font-semibold text-foreground flex items-center gap-2">
+                        <div className="font-semibold text-foreground flex items-center gap-2 flex-wrap">
                           {report.jobName}
+                          {report.provenance?.triggerSource === 'scheduler' && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
+                              title={report.provenance.correlationId ? `Scheduled run (${report.provenance.correlationId})` : 'Triggered automatically by the native scheduler'}
+                            >
+                              <CalendarClock className="w-3 h-3" aria-hidden="true" />
+                              Scheduled
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs font-mono text-muted-foreground mt-0.5">
                           {report.executionId}
@@ -502,6 +512,12 @@ export default function ReportDashboard() {
                 <h3 className="text-lg font-bold text-foreground">
                   Audit Ledger: {selectedReport.jobName}
                 </h3>
+                {selectedReport.provenance?.triggerSource === 'scheduler' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                    <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
+                    Scheduled
+                  </span>
+                )}
                 <span className="text-xs font-mono px-2 py-0.5 rounded bg-secondary text-muted-foreground border border-border">
                   {selectedReport.executionId}
                 </span>

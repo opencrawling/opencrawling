@@ -154,7 +154,8 @@ Where the runtime keeps its definitions (jobs, connectors, system settings and t
     *   **Runs (`jdbc`):** every job run is a row of `oc_run`, with the runtime that runs it and its state, and every change of its state a row of `oc_run_step` (its history, served at `GET /api/v1/job-runs/{executionId}/history`). The limit of one run per job and the caps on runs at the same time (`opencrawling.jobs.max-concurrent-runs`, `max-concurrent-runs-per-caller`) count the runs of every runtime. A run is listed, stopped, paused and resumed from any runtime; its own runtime applies a stop, pause or resume asked elsewhere at its next heartbeat. A run whose runtime stops renewing its heartbeat (it crashed, or was shut down mid-run) is marked `INTERRUPTED`, its job's status becomes `Error` with stage `Interrupted`, and the job can be started again. With `file`, runs are kept in the runtime's memory.
     *   **Pause:** a paused run holds before its next document, in its runtime, until it is resumed or stopped. A pause does not survive the runtime: if it restarts, the paused run is interrupted, and the job starts again from the beginning. A connector that holds a session or cursor open may lose it during a long pause.
     *   **Idempotency keys:** the Platform API's idempotency keys are kept apart, in the runtime's memory by default. With several runtimes on one database, set `opencrawling.api.idempotency.store=jdbc` to keep them in this database too, or `redis` (see [Platform API Idempotency Keys](#-platform-api-idempotency-keys)).
-    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`, `V3__control_plane_runs.sql`, `V4__control_plane_idempotency.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Schema:** Flyway creates and upgrades the tables at startup (`db/migration`: `V1__control_plane.sql`, `V2__control_plane_lock.sql`, `V3__control_plane_runs.sql`, `V4__control_plane_idempotency.sql`, `V5__control_plane_schedules.sql`). A database that already holds other tables, such as the vector store's, is baselined first (`spring.flyway.baseline-on-migrate`), so nothing else in it is touched.
+    *   **Schedules (`file` vs. `jdbc`):** runtime schedule state (`nextFireAt`, `lastOutcome`, `coalescePending`, `consecutiveFailures`) and bounded dispatch audit records are stored in `data/schedule-state.json` and `data/schedule-dispatches.json` in `file` mode, or in `oc_schedule_state` and `oc_schedule_dispatch` (`V5__control_plane_schedules.sql`) in `jdbc` mode. With `jdbc`, every runtime shares the scheduler queue safely via `ControlPlaneStore.locked`.
     *   **Moving from `file`:** on its first start with `jdbc`, the runtime imports the existing files in `data/` into the tables and leaves the files unchanged. After that the tables are the source; later edits of the files are ignored.
     *   **Errors:** a definition that cannot be saved fails the request instead of being logged and lost. An unknown value stops the runtime at startup.
 *   **`OPENCRAWLING_CONTROL_PLANE_REFRESH_INTERVAL`** (`opencrawling.control-plane.refresh-interval`): how often a runtime checks for system or transport settings that another runtime saved, and applies them (Tika settings and the default chunk size; the gRPC server is restarted with new transport settings). The runtime that saves them applies them at once.
@@ -174,6 +175,43 @@ Where the runtime keeps its definitions (jobs, connectors, system settings and t
 *   **`OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION_INTERVAL`** (`opencrawling.control-plane.run-retention-interval`): how often the retention runs (first one minute after startup).
     *   *Type*: `duration`
     *   *Default*: `6h`
+
+---
+
+## ⏰ Native Job Scheduler
+
+OpenCrawling embeds a cluster-safe cron scheduler (`JobSchedulerEngine`, [#197](https://github.com/opencrawling/opencrawling/issues/197)) that evaluates per-job `schedule` definitions (`5-field` UNIX or `6-field` Spring cron expressions plus `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly` presets, in an explicit IANA timezone):
+
+*   **Cluster & HA safety:** When `opencrawling.control-plane.store=jdbc`, ticks claim due schedules under `ControlPlaneStore.locked` (`oc_lock`), advance `nextFireAt` atomically, and record every evaluation outcome (`STARTED`, `SKIPPED_OVERLAP`, `SKIPPED_CAPACITY`, `MISSED_SKIPPED`, `REJECTED`, `AUTO_PAUSED`) in `oc_schedule_dispatch`. Runtimes launched with `--crawl-on-startup` bypass background scheduler polling.
+*   **Policies & guardrails:** Each job schedule supports `overlapPolicy` (`SKIP`, `COALESCE`, `STOP_PREVIOUS`), `misfirePolicy` (`SKIP`, `FIRE_ONCE`), deterministic per-job `jitterSeconds`, optional `startAt`/`endAt` window bounds, and `maxConsecutiveFailures` auto-pause circuit breaking (with automatic `[Scheduled]` provenance recorded on ledger rows).
+*   **Metrics & traces:** Exposes Micrometer gauges/counters/timers (`opencrawling.scheduler.jobs.active`, `opencrawling.scheduler.jobs.paused`, `opencrawling.scheduler.dispatches.total`, `opencrawling.scheduler.lag.seconds`) and OpenTelemetry span attributes (`opencrawling.schedule.outcome`, `opencrawling.execution.id`).
+
+Properties (`opencrawling.scheduler.*`):
+
+*   **`OPENCRAWLING_SCHEDULER_ENABLED`** (`opencrawling.scheduler.enabled`): enable or disable background cron polling on the runtime.
+    *   *Type*: `boolean`
+    *   *Default*: `true`
+*   **`OPENCRAWLING_SCHEDULER_POLL_INTERVAL`** (`opencrawling.scheduler.poll-interval`): how frequently the scheduler checks for due jobs.
+    *   *Type*: `duration`
+    *   *Default*: `PT5S`
+*   **`OPENCRAWLING_SCHEDULER_MIN_INTERVAL`** (`opencrawling.scheduler.min-interval`): shortest permitted interval between consecutive ticks of a job cron expression.
+    *   *Type*: `duration`
+    *   *Default*: `PT1M`
+*   **`OPENCRAWLING_SCHEDULER_MISFIRE_GRACE_PERIOD`** (`opencrawling.scheduler.misfire-grace-period`): age window within which a delayed tick still fires normally; older missed ticks apply the job's `misfirePolicy` (`SKIP` or `FIRE_ONCE`).
+    *   *Type*: `duration`
+    *   *Default*: `PT15M`
+*   **`OPENCRAWLING_SCHEDULER_DEFAULT_TIMEZONE`** (`opencrawling.scheduler.default-timezone`): fallback IANA timezone when a job schedule omits `timezone`.
+    *   *Type*: `string`
+    *   *Default*: `UTC`
+*   **`OPENCRAWLING_SCHEDULER_MAX_BATCH_PER_TICK`** (`opencrawling.scheduler.max-batch-per-tick`): maximum due schedules claimed in a single poll cycle (clamped to `>= 1`).
+    *   *Type*: `int`
+    *   *Default*: `25`
+*   **`OPENCRAWLING_SCHEDULER_DISPATCH_RETENTION`** (`opencrawling.scheduler.dispatch-retention`): how long `oc_schedule_dispatch` audit entries are retained before `RunRetention` purges them.
+    *   *Type*: `duration`
+    *   *Default*: `90d`
+*   **`OPENCRAWLING_SCHEDULER_STOP_PREVIOUS_WAIT`** (`opencrawling.scheduler.stop-previous-wait`): how long `STOP_PREVIOUS` overlap handling waits for the active run to stop before coalescing.
+    *   *Type*: `duration`
+    *   *Default*: `PT2S`
 
 ## 🧭 Platform API Idempotency Keys
 

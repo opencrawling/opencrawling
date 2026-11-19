@@ -35,6 +35,7 @@ class OisMetadataTest {
     @Test
     void triggerSourcesMapToTheRecommendedValuesAndOthersPassThrough() {
         assertEquals("manual", OisMetadata.triggeredBy(ExecutionProvenance.SOURCE_API));
+        assertEquals("scheduler", OisMetadata.triggeredBy(ExecutionProvenance.SOURCE_SCHEDULER));
         assertEquals("mcp-agent", OisMetadata.triggeredBy(ExecutionProvenance.SOURCE_MCP));
         assertEquals("webhook", OisMetadata.triggeredBy(ExecutionProvenance.SOURCE_BPM));
         assertEquals("system", OisMetadata.triggeredBy(ExecutionProvenance.SOURCE_STARTUP));

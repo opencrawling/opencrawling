@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Graph mock: an emulator of the Microsoft Entra ID token endpoint and the Microsoft Graph v1.0 SharePoint APIs, for
 testing the OpenCrawling SharePoint connector without a Microsoft 365 tenant. Standard library only.

@@ -98,7 +98,8 @@ final class PlatformApiTestSupport {
             VespaInsightsController.class, NarrativizationCopilotController.class,
             ApiV1Configuration.class, ApiV1OpenApiConfiguration.class,
             org.opencrawling.runtime.controlplane.ControlPlaneConfiguration.class,
-            PlatformV1Controller.class, JobsV1Controller.class, JobRunsV1Controller.class, ExecutionsV1Controller.class,
+            org.opencrawling.runtime.scheduler.JobSchedulerEngine.class,
+            PlatformV1Controller.class, JobsV1Controller.class, SchedulesV1Controller.class, JobRunsV1Controller.class, ExecutionsV1Controller.class,
             ConnectorsV1Controller.class, SettingsV1Controller.class, OperationsV1Controller.class, ToolsV1Controller.class})
     static class PlatformApi {
 
@@ -227,6 +228,15 @@ final class PlatformApiTestSupport {
             java.util.Map.entry("diagnoseJob", "GET /api/v1/jobs/{jobId}/diagnosis"),
             java.util.Map.entry("getJobTraces", "GET /api/v1/jobs/{jobId}/traces"),
             java.util.Map.entry("getJobErrors", "GET /api/v1/jobs/{jobId}/errors"),
+            java.util.Map.entry("getJobSchedule", "GET /api/v1/jobs/{id}/schedule"),
+            java.util.Map.entry("setJobSchedule", "PUT /api/v1/jobs/{id}/schedule"),
+            java.util.Map.entry("deleteJobSchedule", "DELETE /api/v1/jobs/{id}/schedule"),
+            java.util.Map.entry("pauseJobSchedule", "POST /api/v1/jobs/{id}/schedule:pause"),
+            java.util.Map.entry("resumeJobSchedule", "POST /api/v1/jobs/{id}/schedule:resume"),
+            java.util.Map.entry("listJobScheduleDispatches", "GET /api/v1/jobs/{id}/schedule/dispatches"),
+            java.util.Map.entry("listSchedules", "GET /api/v1/schedules"),
+            java.util.Map.entry("getSchedulerOverview", "GET /api/v1/schedules/overview"),
+            java.util.Map.entry("validateCron", "POST /api/v1/schedules:validate-cron"),
             java.util.Map.entry("listJobRuns", "GET /api/v1/job-runs"),
             java.util.Map.entry("getJobRun", "GET /api/v1/job-runs/{executionId}"),
             java.util.Map.entry("stopJobRun", "POST /api/v1/job-runs/{executionId}:stop"),

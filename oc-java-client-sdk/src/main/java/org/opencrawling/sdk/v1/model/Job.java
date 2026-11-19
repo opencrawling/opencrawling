@@ -32,7 +32,16 @@ import java.util.Map;
 public record Job(String id, String name, String repositoryConnector, String outputConnector,
                   String authorityConnector, String transformationConnector, String path, String pipelineMode,
                   Map<String, Object> crawlSpec, NarrativizationConfig narrativization, JobAccess access,
-                  State state, List<JobAction> permissions) {
+                  State state, List<JobAction> permissions,
+                  JobScheduleConfig schedule, JobScheduleState scheduleState) {
+
+    public Job(String id, String name, String repositoryConnector, String outputConnector,
+               String authorityConnector, String transformationConnector, String path, String pipelineMode,
+               Map<String, Object> crawlSpec, NarrativizationConfig narrativization, JobAccess access,
+               State state, List<JobAction> permissions) {
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path,
+                pipelineMode, crawlSpec, narrativization, access, state, permissions, null, null);
+    }
 
     /**
      * A job's current state.
@@ -52,6 +61,6 @@ public record Job(String id, String name, String repositoryConnector, String out
     /** This job's definition, to change and send back with {@code replace}. */
     public JobInput toInput() {
         return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector,
-                path, pipelineMode, crawlSpec, narrativization, access);
+                path, pipelineMode, crawlSpec, narrativization, access, schedule);
     }
 }

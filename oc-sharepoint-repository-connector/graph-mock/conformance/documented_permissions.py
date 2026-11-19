@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Which Microsoft Graph application permission the SharePoint connector needs, from Microsoft's documentation
 (github.com/microsoftgraph/microsoft-graph-docs-contrib at a pinned commit): every API page has a permissions table with

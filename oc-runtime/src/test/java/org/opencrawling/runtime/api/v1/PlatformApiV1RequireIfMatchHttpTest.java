@@ -58,6 +58,17 @@ class PlatformApiV1RequireIfMatchHttpTest {
         HttpResponse<String> conditional = http.send("PATCH", "/api/v1/jobs/" + id, "{\"path\":\"/tmp/y\"}",
                 "Content-Type", "application/merge-patch+json", "If-Match", etag);
         assertThat(conditional.statusCode()).as(conditional.body()).isEqualTo(200);
+
+        // Initial PUT /jobs/{id}/schedule needs no If-Match; once configured, updating or deleting without If-Match returns 428.
+        HttpResponse<String> initialSched = http.send("PUT", "/api/v1/jobs/" + id + "/schedule",
+                "{\"cron\":\"0 2 * * *\",\"timezone\":\"UTC\",\"enabled\":true}");
+        assertThat(initialSched.statusCode()).as(initialSched.body()).isEqualTo(200);
+        String schedEtag = initialSched.headers().firstValue("ETag").orElseThrow();
+        assertThat(http.send("PUT", "/api/v1/jobs/" + id + "/schedule",
+                "{\"cron\":\"0 3 * * *\",\"timezone\":\"UTC\",\"enabled\":true}").statusCode()).isEqualTo(428);
+        assertThat(http.send("DELETE", "/api/v1/jobs/" + id + "/schedule", null).statusCode()).isEqualTo(428);
+        assertThat(http.send("DELETE", "/api/v1/jobs/" + id + "/schedule", null, "If-Match", schedEtag).statusCode()).isEqualTo(204);
+
         assertThat(http.send("POST", "/api/v1/jobs/" + id + ":pause", null).statusCode()).as("actions are not changes of the version")
                 .isNotEqualTo(428);
         // The pause changed the job's state, and with it its version: the delete names the current one.

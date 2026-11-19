@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Checks recorded Graph traffic against Microsoft's own Microsoft Graph v1.0 OpenAPI description
 (github.com/microsoftgraph/msgraph-metadata, openapi/v1.0/openapi.yaml, at a pinned commit).

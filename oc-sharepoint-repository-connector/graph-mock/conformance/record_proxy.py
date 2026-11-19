@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 A recording reverse proxy for another Graph-like server: every exchange is appended to a JSON-lines file in the format of
 graph_mock.py's GRAPH_RECORD, so check_conformance.py can check a server that wasn't written by us. The Host header is

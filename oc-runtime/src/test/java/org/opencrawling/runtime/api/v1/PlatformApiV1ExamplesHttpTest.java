@@ -98,16 +98,19 @@ class PlatformApiV1ExamplesHttpTest {
     @Test
     void everyDocumentedExampleIsAcceptedByItsEndpoint() {
         assertThat(ApiV1Documentation.EXAMPLES.keySet()).as("every example is exercised below").containsExactlyInAnyOrder(
-                "createJob", "replaceJob", "patchJob", "createConnector", "replaceConnector", "checkConnectorDefinition",
-                "queryExecutions", "replaceSystemSettings", "replaceTransportSettings", "testGrpcTransport",
-                "planManifoldCfMigration", "applyManifoldCfMigration", "queryVespa", "deployVespaBundledSchema",
-                "generateNarrativizationTemplate", "startDynamicJob", "ingestDynamicDocument", "rejectDynamicJob", "dryRunDiscovery");
+                "createJob", "replaceJob", "patchJob", "setJobSchedule", "validateCron", "createConnector", "replaceConnector",
+                "checkConnectorDefinition", "queryExecutions", "replaceSystemSettings", "replaceTransportSettings",
+                "testGrpcTransport", "planManifoldCfMigration", "applyManifoldCfMigration", "queryVespa",
+                "deployVespaBundledSchema", "generateNarrativizationTemplate", "startDynamicJob", "ingestDynamicDocument",
+                "rejectDynamicJob", "dryRunDiscovery");
 
         HttpResponse<String> created = send("createJob", "POST", "/api/v1/jobs");
         assertThat(created.statusCode()).as("createJob " + created.body()).isEqualTo(201);
         jobId = json.readTree(created.body()).get("id").asString();
         assertOk("replaceJob", send("replaceJob", "PUT", "/api/v1/jobs/" + jobId));
         assertOk("patchJob", send("patchJob", "PATCH", "/api/v1/jobs/" + jobId, "Content-Type", ApiV1.MERGE_PATCH_JSON));
+        assertOk("setJobSchedule", send("setJobSchedule", "PUT", "/api/v1/jobs/" + jobId + "/schedule"));
+        assertOk("validateCron", send("validateCron", "POST", "/api/v1/schedules:validate-cron"));
 
         assertThat(send("createConnector", "POST", "/api/v1/connectors").statusCode()).as("createConnector").isEqualTo(201);
         assertOk("replaceConnector", send("replaceConnector", "PUT", "/api/v1/connectors/HR_Share"));

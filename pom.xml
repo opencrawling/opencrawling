@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+    Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -568,6 +568,7 @@
                     <properties>
                         <owner>the original author or authors</owner>
                         <email>piergiorgio@apache.org</email>
+                        <year>2026</year>
                     </properties>
                     <mapping>
                         <ts>SLASHSTAR_STYLE</ts>
@@ -592,6 +593,18 @@
                                 <exclude>**/dist/**</exclude>
                                 <exclude>**/node/**</exclude>
                                 <exclude>**/node_modules/**</exclude>
+                                <exclude>.pdf-generator-venv/**</exclude>
+                                <exclude>**/.venv/**</exclude>
+                                <exclude>**/.pytest_cache/**</exclude>
+                                <exclude>**/__pycache__/**</exclude>
+                                <exclude>**/.mypy_cache/**</exclude>
+                                <exclude>**/.ruff_cache/**</exclude>
+                                <exclude>**/.claude/**</exclude>
+                                <exclude>**/data/**</exclude>
+                                <exclude>**/crawl-data/**</exclude>
+                                <exclude>**/requirements.txt</exclude>
+                                <exclude>tutorials/data/**</exclude>
+                                <exclude>**/vespa-app/services.xml</exclude>
                             </excludes>
                         </licenseSet>
                     </licenseSets>

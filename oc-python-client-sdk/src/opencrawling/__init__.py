@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """Official OpenCrawling Python Client SDK (``opencrawling-sdk``)."""
 
 from opencrawling._version import __maven_version__, __version__
@@ -74,12 +77,14 @@ from opencrawling.v1 import (
     CopilotField,
     CopilotRequest,
     CopilotResponse,
+    CronValidationResult,
     DiagnosticReport,
     DiscoveryConnectorInfo,
     DiscoveryDryRunRequest,
     DiscoveryDryRunView,
     DiscoveryNodeView,
     DiscoveryTreeView,
+    DispatchOutcome,
     DocumentIngestRequest,
     DocumentLedgerEntry,
     DynamicJob,
@@ -98,11 +103,19 @@ from opencrawling.v1 import (
     JobRun,
     JobRunHistory,
     JobRunStep,
+    JobSchedule,
+    JobScheduleConfig,
+    JobScheduleState,
     JobState,
     JobTraceResponse,
     MetricRecord,
+    MisfirePolicy,
     NarrativizationConfig,
+    OverlapPolicy,
     QueryResult,
+    ScheduleDispatch,
+    ScheduleFilter,
+    SchedulerOverview,
     SidecarPage,
     SidecarStoreInfo,
     SpanRecord,
@@ -110,6 +123,7 @@ from opencrawling.v1 import (
     SystemStatus,
     ThroughputMetricsResponse,
     TransportSettings,
+    UpcomingExecution,
     VersionInfo,
 )
 from opencrawling.versioned import Versioned
@@ -130,6 +144,7 @@ __all__ = [
     "CopilotField",
     "CopilotRequest",
     "CopilotResponse",
+    "CronValidationResult",
     "DeviceAuthorization",
     "DeviceCodeLogin",
     "DiagnosticReport",
@@ -138,6 +153,7 @@ __all__ = [
     "DiscoveryDryRunView",
     "DiscoveryNodeView",
     "DiscoveryTreeView",
+    "DispatchOutcome",
     "DocumentIngestRequest",
     "DocumentLedgerEntry",
     "DynamicJob",
@@ -167,9 +183,13 @@ __all__ = [
     "JobRun",
     "JobRunHistory",
     "JobRunStep",
+    "JobSchedule",
+    "JobScheduleConfig",
+    "JobScheduleState",
     "JobState",
     "JobTraceResponse",
     "MetricRecord",
+    "MisfirePolicy",
     "NarrativizationConfig",
     "NetworkError",
     "OAuth2Client",
@@ -183,6 +203,7 @@ __all__ = [
     "OisSource",
     "OpenCrawlingClient",
     "OpenCrawlingError",
+    "OverlapPolicy",
     "Page",
     "PageInfo",
     "PageRequest",
@@ -192,6 +213,9 @@ __all__ = [
     "RefreshTokenProvider",
     "RequestOptions",
     "RetryPolicy",
+    "ScheduleDispatch",
+    "ScheduleFilter",
+    "SchedulerOverview",
     "SecurityConfig",
     "SidecarPage",
     "SidecarStoreInfo",
@@ -204,6 +228,7 @@ __all__ = [
     "TokenExchangeProvider",
     "TokenProvider",
     "TransportSettings",
+    "UpcomingExecution",
     "VersionInfo",
     "Versioned",
     "__maven_version__",

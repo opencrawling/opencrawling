@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,10 +30,12 @@ import {
   Terminal,
   LogIn,
   LogOut,
-  ShieldAlert
+  ShieldAlert,
+  CalendarClock
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import JobTable from './components/JobTable'
+import SchedulerPanel from './components/SchedulerPanel'
 import ConnectorForm from './components/ConnectorForm'
 import Settings from './components/Settings'
 import Narrativization from './components/Narrativization'
@@ -44,7 +46,7 @@ import { statusApi } from './lib/api'
 import { useAuth } from './lib/useAuth'
 import { initials, type Me } from './lib/auth'
 
-type View = 'dashboard' | 'jobs' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings' | 'api-console'
+type View = 'dashboard' | 'jobs' | 'scheduler' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings' | 'api-console'
 
 /** Which views a caller may open; the runtime enforces the same rules on the API. */
 function canOpen(view: View, me: Me): boolean {
@@ -174,6 +176,7 @@ function Console({ me }: { me: Me }) {
   const menuItems = ([
     { id: 'dashboard',       label: 'Dashboard',              icon: LayoutDashboard },
     { id: 'jobs',            label: 'Job Management',         icon: PlayCircle },
+    { id: 'scheduler',       label: 'Scheduler',              icon: CalendarClock },
     { id: 'connectors',      label: 'Connectors',              icon: Plug2 },
     { id: 'reports',         label: 'Reports & Audit',        icon: FileSpreadsheet },
     { id: 'mcf-migration',   label: 'ManifoldCF Migration',   icon: ArrowRightLeft },
@@ -237,7 +240,7 @@ function Console({ me }: { me: Me }) {
             <span>Admin</span>
             <ChevronRight className="w-4 h-4" />
             <span className="text-foreground font-medium capitalize">
-              {activeView === 'mcf-migration' ? 'ManifoldCF Migration' : activeView === 'reports' ? 'Reports & Audit Ledger' : activeView === 'api-console' ? 'API Console' : activeView}
+              {activeView === 'mcf-migration' ? 'ManifoldCF Migration' : activeView === 'reports' ? 'Reports & Audit Ledger' : activeView === 'api-console' ? 'API Console' : activeView === 'scheduler' ? 'Scheduler' : activeView}
             </span>
           </div>
           
@@ -272,6 +275,7 @@ function Console({ me }: { me: Me }) {
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-8 custom-scrollbar">
           {activeView === 'dashboard' && <Dashboard />}
           {activeView === 'jobs' && <JobTable setActiveView={setActiveView} />}
+          {activeView === 'scheduler' && <SchedulerPanel />}
           {activeView === 'connectors' && canOpen('connectors', me) && <ConnectorForm />}
           {activeView === 'reports' && <ReportDashboard />}
           {activeView === 'api-console' && <ApiConsole />}

@@ -270,13 +270,13 @@ every generated report's "Known target-system limitations" section:
   the connector you expect. Every connector/job combination outside this list gets a `RUNTIME_RISK`
   note in the report rather than being silently reported as a clean migration — this is what the
   OpenSearch2 mapper's caveat above is an instance of.
-- **No scheduler.** Jobs only run via a manual/API `start` call. ManifoldCF's schedule, hopcount,
-  recrawl-interval and reseed settings have no target and are always dropped (in `audit`/`import`'s
-  reports). `convert`'s OIS output makes a best effort: a job with exactly one schedule record and a
-  single specific hour/minute (and no month/day-of-month restriction) gets a real translated cron
-  expression; anything more complex (multiple records, a duration window, more than one hour/minute
-  value) falls back to a defaulted daily crontab with an explanatory note — see `CronTranslator`.
-  Either way, OpenCrawling has no scheduler to actually honor it.
+- **Schedule translation (disabled by default).** When a ManifoldCF job has a single simple schedule
+  record (specific hour and minute, no month/day-of-month filter), `audit`/`import` and `convert`
+  translate it via `CronTranslator` to a 5-field cron `JobScheduleConfig` on the target job
+  **with `enabled: false` (paused by default)** so operators can review it in OpenCrawling's
+  **Scheduler** panel or API before enabling automatic triggers (#197). Complex schedules
+  (multiple windows, duration bounds, month/day-of-month filters) and hopcount/recrawl/reseed
+  intervals fall back to manual start with an explanatory `DROPPED` note.
 - **No filesystem filtering.** `FileSystemRepositoryConnector` scans every file under its root
   unconditionally. Any ManifoldCF include/exclude filters are dropped — flagged in reports as
   `SCOPE_CHANGE`, a step above ordinary `DROPPED`, since it changes what actually gets crawled.

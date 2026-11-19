@@ -154,6 +154,15 @@ opencrawling:
     # deleted after this; 0 keeps everything.
     run-retention: ${OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION:90d}
     run-retention-interval: ${OPENCRAWLING_CONTROL_PLANE_RUN_RETENTION_INTERVAL:6h}
+  # Built-in cluster-safe job scheduler (#197). Disabled automatically when crawl-on-startup=true.
+  scheduler:
+    enabled: ${OPENCRAWLING_SCHEDULER_ENABLED:true}
+    poll-interval: ${OPENCRAWLING_SCHEDULER_POLL_INTERVAL:5s}
+    min-interval: ${OPENCRAWLING_SCHEDULER_MIN_INTERVAL:1m}
+    misfire-grace-period: ${OPENCRAWLING_SCHEDULER_MISFIRE_GRACE_PERIOD:15m}
+    default-timezone: ${OPENCRAWLING_SCHEDULER_DEFAULT_TIMEZONE:UTC}
+    max-batch-per-tick: ${OPENCRAWLING_SCHEDULER_MAX_BATCH_PER_TICK:25}
+    dispatch-retention: ${OPENCRAWLING_SCHEDULER_DISPATCH_RETENTION:90d}
   transport:
     mode: AUTO # Options: AUTO, GRPC, REST
     grpc:

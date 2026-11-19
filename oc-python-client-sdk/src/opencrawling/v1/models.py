@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """Pydantic v2 data models for OpenCrawling Platform API v1 (``/api/v1``)."""
 
 from __future__ import annotations
@@ -149,6 +152,128 @@ class JobState(OpenCrawlingModel):
     last_run: str | None = None
 
 
+class OverlapPolicy(StrEnum):
+    """Behavior when a scheduled tick fires while the job already has an active run."""
+
+    SKIP = "SKIP"
+    COALESCE = "COALESCE"
+    STOP_PREVIOUS = "STOP_PREVIOUS"
+
+
+class MisfirePolicy(StrEnum):
+    """Behavior when scheduled ticks are missed during downtime past grace period."""
+
+    SKIP = "SKIP"
+    FIRE_ONCE = "FIRE_ONCE"
+
+
+class DispatchOutcome(StrEnum):
+    """Outcome recorded by the native job scheduler when evaluating a tick."""
+
+    STARTED = "STARTED"
+    SKIPPED_OVERLAP = "SKIPPED_OVERLAP"
+    SKIPPED_CAPACITY = "SKIPPED_CAPACITY"
+    MISSED_SKIPPED = "MISSED_SKIPPED"
+    REJECTED = "REJECTED"
+    AUTO_PAUSED = "AUTO_PAUSED"
+
+
+class JobScheduleConfig(OpenCrawlingModel):
+    """Recurring cron schedule definition for a pipeline job."""
+
+    cron: str
+    timezone: str | None = "UTC"
+    enabled: bool = True
+    overlap_policy: OverlapPolicy | str | None = OverlapPolicy.SKIP
+    misfire_policy: MisfirePolicy | str | None = MisfirePolicy.SKIP
+    jitter_seconds: int | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    max_consecutive_failures: int | None = None
+
+
+class JobScheduleState(OpenCrawlingModel):
+    """Runtime-managed execution state for a job schedule."""
+
+    enabled: bool = False
+    next_fire_at: datetime | None = None
+    last_fired_at: datetime | None = None
+    last_execution_id: str | None = None
+    last_outcome: DispatchOutcome | str | None = None
+    last_detail: str | None = None
+    coalesce_pending: bool = False
+    consecutive_failures: int = 0
+    updated_at: datetime | None = None
+
+
+class JobSchedule(OpenCrawlingModel):
+    """Combined job schedule configuration, runtime state and next fire timestamps."""
+
+    job_id: str
+    job_name: str = ""
+    schedule: JobScheduleConfig
+    state: JobScheduleState | None = None
+    next_fire_times: list[datetime] = Field(default_factory=list)
+
+
+class UpcomingExecution(OpenCrawlingModel):
+    """Chronological timeline entry returned in scheduler overview."""
+
+    job_id: str
+    job_name: str = ""
+    cron: str = ""
+    timezone: str = "UTC"
+    scheduled_at: datetime
+
+
+class SchedulerOverview(OpenCrawlingModel):
+    """Cluster/runtime scheduler overview and upcoming timeline."""
+
+    scheduler_enabled: bool = True
+    poll_interval: str = "PT5S"
+    default_timezone: str = "UTC"
+    total_scheduled_jobs: int = 0
+    active_schedules: int = 0
+    paused_schedules: int = 0
+    auto_paused_schedules: int = 0
+    skipped_last_24h: int = Field(default=0, validation_alias="skippedLast24h", serialization_alias="skippedLast24h")
+    upcoming: list[UpcomingExecution] = Field(default_factory=list)
+
+
+class CronValidationResult(OpenCrawlingModel):
+    """Response from ``POST /api/v1/schedules:validate-cron``."""
+
+    valid: bool = False
+    cron: str = ""
+    normalized_cron: str | None = None
+    timezone: str = "UTC"
+    human_description: str | None = None
+    next_fire_times: list[datetime] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ScheduleDispatch(OpenCrawlingModel):
+    """Immutable audit record of a single scheduler dispatch attempt."""
+
+    id: str
+    job_id: str
+    scheduled_for: datetime | None = None
+    dispatched_at: datetime | None = None
+    runtime_id: str = ""
+    execution_id: str | None = None
+    outcome: DispatchOutcome | str = DispatchOutcome.STARTED
+    detail: str | None = None
+
+
+class ScheduleFilter(OpenCrawlingModel):
+    """Optional filters for listing scheduled jobs (``GET /api/v1/schedules``)."""
+
+    enabled: bool | None = None
+    outcome: DispatchOutcome | str | None = None
+    q: str | None = None
+    sort: str | None = None
+
+
 class JobInput(OpenCrawlingModel):
     """Job definition payload for creating or replacing a pipeline job."""
 
@@ -162,6 +287,7 @@ class JobInput(OpenCrawlingModel):
     crawl_spec: dict[str, Any] | None = None
     narrativization: NarrativizationConfig | None = None
     access: JobAccess | None = None
+    schedule: JobScheduleConfig | None = None
 
 
 class Job(OpenCrawlingModel):
@@ -180,6 +306,8 @@ class Job(OpenCrawlingModel):
     access: JobAccess | None = None
     state: JobState | None = None
     permissions: list[JobAction] = Field(default_factory=list)
+    schedule: JobScheduleConfig | None = None
+    schedule_state: JobScheduleState | None = None
 
     def to_input(self) -> JobInput:
         """Convert this job resource into a ``JobInput`` suitable for ``replace``."""
@@ -194,6 +322,7 @@ class Job(OpenCrawlingModel):
             crawl_spec=self.crawl_spec,
             narrativization=self.narrativization,
             access=self.access,
+            schedule=self.schedule,
         )
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,22 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-///
-/// Copyright © ${year} the original author or authors (piergiorgio@apache.org)
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-///     http://www.apache.org/licenses/LICENSE-2.0
-///
-/// Unless required by applicable law or agreed to in writing, software
-/// distributed under the License is distributed on an "AS IS" BASIS,
-/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-/// See the License for the specific language governing permissions and
-/// limitations under the License.
-///
-
 import axios from 'axios'
 import type { JobAction } from './auth'
 
@@ -149,6 +133,97 @@ export interface NarrativizationConfig {
   connectorType: string
 }
 
+export type OverlapPolicy = 'SKIP' | 'COALESCE' | 'STOP_PREVIOUS'
+export type MisfirePolicy = 'SKIP' | 'FIRE_ONCE'
+export type DispatchOutcome =
+  | 'STARTED'
+  | 'SKIPPED_OVERLAP'
+  | 'SKIPPED_CAPACITY'
+  | 'MISSED_SKIPPED'
+  | 'REJECTED'
+  | 'AUTO_PAUSED'
+
+export interface JobScheduleConfig {
+  cron: string
+  timezone?: string | null
+  enabled: boolean
+  overlapPolicy?: OverlapPolicy | null
+  misfirePolicy?: MisfirePolicy | null
+  jitterSeconds?: number | null
+  startAt?: string | null
+  endAt?: string | null
+  maxConsecutiveFailures?: number | null
+}
+
+export interface JobScheduleState {
+  enabled: boolean
+  nextFireAt: string | null
+  lastFiredAt: string | null
+  lastExecutionId: string | null
+  lastOutcome: DispatchOutcome | null
+  lastDetail: string | null
+  coalescePending: boolean
+  consecutiveFailures: number
+  updatedAt: string | null
+}
+
+export interface JobScheduleResource {
+  jobId: string
+  jobName: string
+  schedule: JobScheduleConfig
+  state: JobScheduleState | null
+  nextFireTimes: string[]
+}
+
+export interface UpcomingExecution {
+  jobId: string
+  jobName: string
+  cron: string
+  timezone: string
+  scheduledAt: string
+}
+
+export interface SchedulerOverviewResource {
+  schedulerEnabled: boolean
+  pollInterval: string
+  defaultTimezone: string
+  totalScheduledJobs: number
+  activeSchedules: number
+  pausedSchedules: number
+  autoPausedSchedules: number
+  skippedLast24h: number
+  upcoming: UpcomingExecution[]
+}
+
+export interface CronValidationRequest {
+  cron: string
+  timezone?: string | null
+  count?: number
+  startAt?: string | null
+  endAt?: string | null
+}
+
+export interface CronValidationResult {
+  valid: boolean
+  cron: string
+  normalizedCron: string | null
+  timezone: string
+  humanDescription: string | null
+  nextFireTimes: string[]
+  error: string | null
+}
+
+export interface ScheduleDispatchRecord {
+  id: string
+  jobId: string
+  scheduledFor: string | null
+  dispatchedAt: string
+  runtimeId: string | null
+  executionId: string | null
+  outcome: DispatchOutcome
+  detail: string | null
+}
+
 /** A job as `GET /api/v1/jobs` returns it. */
 export interface JobResource {
   id: string
@@ -164,6 +239,8 @@ export interface JobResource {
   access: Record<string, unknown> | null
   state: { status: string; stage: string | null; documents: number; lastRun: string | null }
   permissions: JobAction[] | null
+  schedule?: JobScheduleConfig | null
+  scheduleState?: JobScheduleState | null
 }
 
 /** A job as the UI shows it (the legacy flat shape). */
@@ -184,6 +261,8 @@ export interface Job {
   pipelineMode?: PipelineMode | null
   crawlSpec?: Record<string, unknown>
   permissions: JobAction[]
+  schedule?: JobScheduleConfig | null
+  scheduleState?: JobScheduleState | null
 }
 
 export function toJob(job: JobResource): Job {
@@ -204,6 +283,8 @@ export function toJob(job: JobResource): Job {
     pipelineMode: mode === 'rag' || mode === 'migration' ? mode : null,
     crawlSpec: job.crawlSpec ?? undefined,
     permissions: job.permissions ?? [],
+    schedule: job.schedule ?? undefined,
+    scheduleState: job.scheduleState ?? undefined,
   }
 }
 
@@ -292,6 +373,58 @@ export const jobApi = {
   /** What the caller may do with each job they can see (READ, EXECUTE, MANAGE), from the jobs' `permissions`. */
   permissions: async () => ({
     data: Object.fromEntries((await listJobs()).map((job) => [job.id, job.permissions])) as Record<string, JobAction[]>,
+  }),
+}
+
+// ---- Native Job Scheduler (#197) ----------------------------------------------------------------------------
+
+export const scheduleApi = {
+  list: async (params: { enabled?: boolean; outcome?: string; q?: string; sort?: string } = {}) => ({
+    data: await fetchAll<JobScheduleResource>('/schedules', {
+      enabled: params.enabled === undefined ? undefined : String(params.enabled),
+      outcome: params.outcome,
+      q: params.q,
+      sort: params.sort,
+    }),
+  }),
+  overview: (horizon = '24h', limit = 50) =>
+    api.get<SchedulerOverviewResource>('/schedules/overview', { params: { horizon, limit } }),
+  validateCron: (request: CronValidationRequest) =>
+    api.post<CronValidationResult>('/schedules:validate-cron', request),
+  get: async (jobId: string): Promise<Versioned<JobScheduleResource>> => {
+    const res = await api.get<JobScheduleResource>(`/jobs/${seg(jobId)}/schedule`)
+    return { data: res.data, etag: etagOf(res.headers) }
+  },
+  set: async (jobId: string, config: JobScheduleConfig, etag?: string | null): Promise<Versioned<JobScheduleResource>> => {
+    const res = await api.put<JobScheduleResource>(`/jobs/${seg(jobId)}/schedule`, config, { headers: ifMatch(etag) })
+    return { data: res.data, etag: etagOf(res.headers) }
+  },
+  delete: async (jobId: string, etag?: string | null) => {
+    let resolved = etag
+    if (!resolved) {
+      try {
+        const current = await api.get<JobScheduleResource>(`/jobs/${seg(jobId)}/schedule`)
+        resolved = etagOf(current.headers)
+      } catch (err) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) return
+        throw err
+      }
+    }
+    return api.delete(`/jobs/${seg(jobId)}/schedule`, { headers: ifMatch(resolved) })
+  },
+  pause: async (jobId: string, etag?: string | null): Promise<Versioned<JobScheduleResource>> => {
+    const res = await api.post<JobScheduleResource>(`/jobs/${seg(jobId)}/schedule:pause`, undefined,
+      { headers: ifMatch(etag) })
+    return { data: res.data, etag: etagOf(res.headers) }
+  },
+  resume: async (jobId: string, etag?: string | null): Promise<Versioned<JobScheduleResource>> => {
+    const res = await api.post<JobScheduleResource>(`/jobs/${seg(jobId)}/schedule:resume`, undefined,
+      { headers: ifMatch(etag) })
+    return { data: res.data, etag: etagOf(res.headers) }
+  },
+  dispatches: async (jobId: string, outcome?: string) => ({
+    data: await fetchAll<ScheduleDispatchRecord>(`/jobs/${seg(jobId)}/schedule/dispatches`,
+      outcome ? { outcome } : {}),
   }),
 }
 
@@ -565,6 +698,14 @@ export interface JobReportSummary {
   reportPathParquet?: string
   reportPathCsv?: string
   reportPathJson?: string
+  // Execution provenance (scheduler, manual/API caller, agent)
+  provenance?: {
+    triggeredBy?: string | null
+    onBehalfOf?: string | null
+    triggerSource?: string | null
+    callerVerified?: boolean
+    correlationId?: string | null
+  } | null
 }
 
 export interface DocumentLedgerEntry {
