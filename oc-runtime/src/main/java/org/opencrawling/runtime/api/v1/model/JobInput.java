@@ -22,6 +22,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.opencrawling.runtime.api.JobAccess;
 import org.opencrawling.runtime.api.JobController;
+import org.opencrawling.runtime.scheduler.JobScheduleConfig;
 
 import java.util.Map;
 
@@ -55,20 +56,30 @@ public record JobInput(
         @Schema(description = "Auto-narrativization settings")
         JobController.NarrativizationConfig narrativization,
         @Schema(description = "Who may see and run the job when management authorization is on. On create the caller becomes the owner; on replace, leave it out to keep the current access")
-        JobAccess access) {
+        JobAccess access,
+        @jakarta.validation.Valid
+        @Schema(description = "Optional recurring schedule configuration (#197)")
+        JobScheduleConfig schedule) {
+
+    public JobInput(String name, String repositoryConnector, String outputConnector, String authorityConnector,
+                    String transformationConnector, String path, String pipelineMode, Map<String, Object> crawlSpec,
+                    JobController.NarrativizationConfig narrativization, JobAccess access) {
+        this(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path,
+                pipelineMode, crawlSpec, narrativization, access, null);
+    }
 
     /** The input that recreates a stored job's definition. */
     public static JobInput of(JobController.JobDTO job) {
         return new JobInput(job.name(), job.repositoryConnector(), job.outputConnector(),
                 blankToNull(job.authorityConnector()), job.transformationConnector(), job.path(), job.pipelineMode(),
-                job.crawlSpec(), job.narrativization(), job.access());
+                job.crawlSpec(), job.narrativization(), job.access(), job.schedule());
     }
 
     /** The legacy job model for this input; {@code id} null for a new job. Status fields stay as the runtime has them. */
     public JobController.JobDTO toJob(String id) {
         return new JobController.JobDTO(id, name, repositoryConnector, outputConnector,
                 authorityConnector == null ? "" : authorityConnector, path, null, null, 0, null,
-                transformationConnector, narrativization, pipelineMode, crawlSpec, access);
+                transformationConnector, narrativization, pipelineMode, crawlSpec, access, schedule);
     }
 
     static String blankToNull(String value) {

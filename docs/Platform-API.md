@@ -188,7 +188,21 @@ Use one for `:start`, so that a network retry does not start a second run.
 | GET | `/api/v1/jobs/{id}/traces` | OpenTelemetry spans |
 | GET | `/api/v1/jobs/{id}/errors` | Error log entries (`timeframe`) |
 
-A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `transformationConnector`, `authorityConnector`), `path`, `pipelineMode`, `crawlSpec`, `narrativization`, `access`, then `state` (`status`, `stage`, `documents`, `lastRun`) and `permissions` (`READ`, `EXECUTE`, `MANAGE`). On input, `state` and `permissions` are not accepted. Every connector named must exist and be of the right category.
+A job: `id`, `name`, connectors (`repositoryConnector`, `outputConnector`, `transformationConnector`, `authorityConnector`), `path`, `pipelineMode`, `crawlSpec`, `narrativization`, `access`, optional `schedule` (`cron`, `timezone`, `enabled`, `overlapPolicy`, `misfirePolicy`, `jitterSeconds`, `startAt`, `endAt`, `maxConsecutiveFailures`), then read-only `state` (`status`, `stage`, `documents`, `lastRun`), `scheduleState`, and `permissions` (`READ`, `EXECUTE`, `MANAGE`). On input, `state`, `scheduleState`, and `permissions` are not accepted. Every connector named must exist and be of the right category.
+
+### Schedules
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/schedules` | List scheduled jobs (`enabled`, `outcome`, `q`, `sort`, cursor paging) |
+| GET | `/api/v1/schedules/overview` | Cluster scheduler configuration, counts, `skippedLast24h`, and upcoming fires (`horizon`, `limit`) |
+| POST | `/api/v1/schedules:validate-cron` | Validate cron syntax/cadence guardrail and preview `nextFireTimes` |
+| GET | `/api/v1/jobs/{id}/schedule` | Read the job's schedule definition, live `state`, and next fire times (with `ETag`) |
+| PUT | `/api/v1/jobs/{id}/schedule` | Create or update the job's cron schedule (`If-Match` supported) |
+| DELETE | `/api/v1/jobs/{id}/schedule` | Remove the job's schedule (`204`) |
+| POST | `/api/v1/jobs/{id}/schedule:pause` | Pause the job's schedule (`enabled = false`) |
+| POST | `/api/v1/jobs/{id}/schedule:resume` | Resume the job's schedule and recompute `nextFireAt` |
+| GET | `/api/v1/jobs/{id}/schedule/dispatches` | Cursor-paged scheduler dispatch audit history (`outcome` filter) |
 
 ### Job runs (in progress)
 
@@ -383,6 +397,7 @@ Every `oc` command uses `/api/v1`, with these exceptions and changes:
 - **`oc connector create`:** still creates or updates. It creates the connector, and replaces it when the name exists.
 - **`oc connector delete`:** refuses a connector that jobs use, and names them; `--force` deletes it anyway.
 - **`oc job start`:** creates and starts the job with idempotency keys. `--output` picks the output connector, and `--wait` follows the run until it ends.
+- **`oc job schedule`:** manage recurring job cron schedules (`set`, `get`, `list`, `pause`, `resume`, `remove`, `dispatches`, `validate`).
 - **`oc report ledger --page N`:** follows the cursors to page N.
 - **`oc system settings`:** shows every setting.
 

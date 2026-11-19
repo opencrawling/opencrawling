@@ -35,12 +35,18 @@ import org.opencrawling.sdk.models.ThroughputMetricsResponse;
 import org.opencrawling.sdk.v1.model.ApiIndex;
 import org.opencrawling.sdk.v1.model.Connector;
 import org.opencrawling.sdk.v1.model.ConnectorInput;
+import org.opencrawling.sdk.v1.model.CronValidationRequest;
+import org.opencrawling.sdk.v1.model.CronValidationResult;
 import org.opencrawling.sdk.v1.model.DocumentIngestRequest;
 import org.opencrawling.sdk.v1.model.DynamicJob;
 import org.opencrawling.sdk.v1.model.DynamicJobAccepted;
 import org.opencrawling.sdk.v1.model.DynamicJobRequest;
 import org.opencrawling.sdk.v1.model.Health;
 import org.opencrawling.sdk.v1.model.Job;
+import org.opencrawling.sdk.v1.model.JobSchedule;
+import org.opencrawling.sdk.v1.model.JobScheduleConfig;
+import org.opencrawling.sdk.v1.model.ScheduleDispatch;
+import org.opencrawling.sdk.v1.model.SchedulerOverview;
 import org.opencrawling.sdk.v1.model.SystemSettings;
 import org.opencrawling.sdk.v1.model.TransportSettings;
 import org.opencrawling.sdk.v1.model.SidecarPage;
@@ -91,6 +97,8 @@ public interface PlatformClient {
     CallerInfo me();
 
     Jobs jobs();
+
+    Schedules schedules();
 
     JobRuns jobRuns();
 
@@ -396,5 +404,58 @@ public interface PlatformClient {
 
         /** Lazily streams all authorized OIS sidecars matching {@code prefix} across pages. */
         Stream<Map<String, Object>> stream(String connector, String prefix);
+    }
+
+    /**
+     * Filters for scheduled jobs; null fields do not filter. Start from {@link #all()}.
+     *
+     * @param sort a field (nextFireAt, name, lastFiredAt), with {@code -} in front for descending
+     */
+    record ScheduleFilter(Boolean enabled, String outcome, String q, String sort) {
+        public static ScheduleFilter all() {
+            return new ScheduleFilter(null, null, null, null);
+        }
+
+        public ScheduleFilter withEnabled(Boolean value) {
+            return new ScheduleFilter(value, outcome, q, sort);
+        }
+
+        public ScheduleFilter withOutcome(String value) {
+            return new ScheduleFilter(enabled, value, q, sort);
+        }
+
+        public ScheduleFilter withText(String value) {
+            return new ScheduleFilter(enabled, outcome, value, sort);
+        }
+
+        public ScheduleFilter withSort(String value) {
+            return new ScheduleFilter(enabled, outcome, q, value);
+        }
+    }
+
+    interface Schedules {
+        Page<JobSchedule> list(ScheduleFilter filter, PageRequest page);
+
+        Stream<JobSchedule> stream(ScheduleFilter filter);
+
+        SchedulerOverview overview(String horizon, Integer limit);
+
+        CronValidationResult validateCron(CronValidationRequest request);
+
+        Versioned<JobSchedule> get(String jobId);
+
+        Optional<Versioned<JobSchedule>> getIfChanged(String jobId, String etag);
+
+        Versioned<JobSchedule> set(String jobId, JobScheduleConfig config, RequestOptions options);
+
+        void delete(String jobId, RequestOptions options);
+
+        Versioned<JobSchedule> pause(String jobId, RequestOptions options);
+
+        Versioned<JobSchedule> resume(String jobId, RequestOptions options);
+
+        Page<ScheduleDispatch> dispatches(String jobId, String outcome, PageRequest page);
+
+        Stream<ScheduleDispatch> streamDispatches(String jobId, String outcome);
     }
 }

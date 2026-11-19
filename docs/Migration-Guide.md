@@ -80,6 +80,7 @@ report you can open directly in a browser).
 
 ## 🚧 Known gaps (verified against OpenCrawling's own source, not assumed)
 
+* **Job schedules migrate paused by default** — ManifoldCF `<schedule>` windows that translate via `CronTranslator` are attached to migrated jobs as `JobScheduleConfig` definitions with `enabled: false`, so imported jobs never fire unexpectedly until reviewed and resumed in `oc-admin-ui`, `oc job schedule resume`, or `/api/v1/jobs/{id}/schedule:resume`.
 * **No CMIS, SharePoint, Web, HDFS, JDBC, or Solr connectors exist in OpenCrawling yet** — there is
   nothing to map ManifoldCF's equivalents into. `--map-connector` is the workaround if you've built
   one by hand.

@@ -1,5 +1,5 @@
 /**
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,18 @@
 @layer base {
   :root {
     color-scheme: dark;
+  }
+
+  /* Stop scroll gestures inside modal <dialog> elements from chaining to the page */
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+
+  dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+    background-color: rgb(2 6 23 / 0.72);
+    backdrop-filter: blur(4px);
   }
 }
 

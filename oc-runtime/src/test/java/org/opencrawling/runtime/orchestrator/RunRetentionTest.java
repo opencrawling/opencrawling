@@ -124,4 +124,26 @@ class RunRetentionTest {
         assertThat(store.get("exec-old")).isPresent();
         assertThat(summary).exists();
     }
+
+    @Test
+    void oldScheduleDispatchesAreSweptWhileRecentOnesAreKept() {
+        Instant old = NOW.minus(RETENTION).minusSeconds(60);
+        Instant recent = NOW.minus(RETENTION).plusSeconds(60);
+        var scheduleStore = new org.opencrawling.runtime.scheduler.InMemoryScheduleStore();
+        scheduleStore.recordDispatch(new org.opencrawling.runtime.scheduler.ScheduleDispatchRecord(
+                "d-old", "job-1", old, old, "rt", "e-1",
+                org.opencrawling.runtime.scheduler.DispatchOutcome.STARTED, null));
+        scheduleStore.recordDispatch(new org.opencrawling.runtime.scheduler.ScheduleDispatchRecord(
+                "d-recent", "job-1", recent, recent, "rt", "e-2",
+                org.opencrawling.runtime.scheduler.DispatchOutcome.STARTED, null));
+
+        RunRetention retention = new RunRetention(new InMemoryRunStore(), null, null,
+                scheduleStore, RETENTION, RETENTION, Clock.fixed(NOW, ZoneOffset.UTC));
+        RunRetention.Swept swept = retention.sweep();
+
+        assertThat(swept.scheduleDispatches()).isEqualTo(1);
+        assertThat(scheduleStore.listDispatches("job-1"))
+                .extracting(org.opencrawling.runtime.scheduler.ScheduleDispatchRecord::id)
+                .containsExactly("d-recent");
+    }
 }

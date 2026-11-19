@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError, AxiosHeaders, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import api, {
   connectorApi, fetchAll, isPreconditionFailed, jobApi, mcfMigrationApi, narrativizationApi, observabilityApi,
-  problemMessage, reportApi, statusApi, toConnectorInput, toJob, toJobInput, toJobPatch, transportApi, vespaInsightsApi,
+  problemMessage, reportApi, scheduleApi, statusApi, toConnectorInput, toJob, toJobInput, toJobPatch, transportApi, vespaInsightsApi,
   CHECK_PLACEHOLDER_NAME, MAX_PAGE_SIZE, type JobResource,
 } from './api'
 
@@ -411,5 +411,67 @@ describe('problemMessage', () => {
     expect(problemMessage(await failing({ status: 500, data: 'plain text' }), 'x')).toBe('plain text')
     expect(problemMessage(await failing({ status: 502, data: {} }), 'x')).toBe('Request failed with status code 502')
     expect(problemMessage(undefined, 'fallback')).toBe('fallback')
+  })
+})
+
+describe('scheduleApi', () => {
+  const sampleSchedule = {
+    jobId: '17',
+    jobName: 'HR',
+    schedule: { cron: '0 2 * * *', timezone: 'Europe/Rome', enabled: true },
+    state: {
+      enabled: true,
+      nextFireAt: '2026-11-20T01:00:00Z',
+      lastFiredAt: null,
+      lastExecutionId: null,
+      lastOutcome: null,
+      lastDetail: null,
+      coalescePending: false,
+      consecutiveFailures: 0,
+      updatedAt: '2026-11-19T12:00:00Z',
+    },
+    nextFireTimes: ['2026-11-20T01:00:00Z'],
+  }
+
+  it('lists schedules, reads overview, validates cron and manages schedule lifecycle', async () => {
+    reply(page([sampleSchedule]))
+    expect((await scheduleApi.list({ enabled: true })).data).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ method: 'GET', url: '/api/v1/schedules', params: { enabled: 'true', limit: MAX_PAGE_SIZE } })
+
+    reply({ data: { schedulerEnabled: true, activeSchedules: 1, pausedSchedules: 0, autoPausedSchedules: 0, skippedLast24h: 0, totalScheduledJobs: 1, pollInterval: 'PT5S', defaultTimezone: 'UTC', upcoming: [] } })
+    expect((await scheduleApi.overview('24h', 25)).data.activeSchedules).toBe(1)
+    expect(calls[1]).toMatchObject({ method: 'GET', url: '/api/v1/schedules/overview', params: { horizon: '24h', limit: 25 } })
+
+    reply({ data: { valid: true, cron: '0 2 * * *', normalizedCron: '0 0 2 * * *', timezone: 'Europe/Rome', humanDescription: 'Every day at 02:00', nextFireTimes: [] } })
+    expect((await scheduleApi.validateCron({ cron: '0 2 * * *', timezone: 'Europe/Rome', count: 5 })).data.valid).toBe(true)
+    expect(calls[2]).toMatchObject({ method: 'POST', url: '/api/v1/schedules:validate-cron' })
+
+    reply({ data: sampleSchedule, headers: { etag: '"s1"' } })
+    const read = await scheduleApi.get('17')
+    expect(read.etag).toBe('"s1"')
+
+    reply({ data: sampleSchedule, headers: { etag: '"s2"' } })
+    await scheduleApi.set('17', sampleSchedule.schedule, read.etag)
+    expect(calls[4].method).toBe('PUT')
+    expect(calls[4].url).toBe('/api/v1/jobs/17/schedule')
+    expect(calls[4].headers.get('if-match')).toBe('"s1"')
+
+    reply({ data: sampleSchedule, headers: { etag: '"s3"' } })
+    await scheduleApi.pause('17', '"s2"')
+    expect(calls[5]).toMatchObject({ method: 'POST', url: '/api/v1/jobs/17/schedule:pause' })
+
+    reply({ data: sampleSchedule, headers: { etag: '"s4"' } })
+    await scheduleApi.resume('17', '"s3"')
+    expect(calls[6]).toMatchObject({ method: 'POST', url: '/api/v1/jobs/17/schedule:resume' })
+
+    reply(page([]))
+    await scheduleApi.dispatches('17', 'STARTED')
+    expect(calls[7]).toMatchObject({ method: 'GET', url: '/api/v1/jobs/17/schedule/dispatches', params: { outcome: 'STARTED', limit: MAX_PAGE_SIZE } })
+
+    reply({ status: 204 })
+    await scheduleApi.delete('17', '"s4"')
+    expect(calls[8].method).toBe('DELETE')
+    expect(calls[8].url).toBe('/api/v1/jobs/17/schedule')
+    expect(calls[8].headers.get('if-match')).toBe('"s4"')
   })
 })

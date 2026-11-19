@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,9 +55,22 @@ import {
   Info,
   Globe,
   Archive,
-  Cloud
+  Cloud,
+  CalendarClock
 } from 'lucide-react'
-import { jobApi, connectorApi, observabilityApi, narrativizationApi, problemMessage, isPreconditionFailed, isNotRunning } from '../lib/api'
+import {
+  jobApi,
+  connectorApi,
+  observabilityApi,
+  narrativizationApi,
+  scheduleApi,
+  problemMessage,
+  isPreconditionFailed,
+  isNotRunning,
+  type JobScheduleConfig,
+  type JobScheduleState,
+} from '../lib/api'
+import ScheduleModal from './ScheduleModal'
 import { useAuth } from '../lib/useAuth'
 import type { JobAction } from '../lib/auth'
 
@@ -94,6 +107,8 @@ interface Job {
   transformationConnector: string
   narrativization?: NarrativizationConfig
   pipelineMode?: PipelineMode | null
+  schedule?: JobScheduleConfig | null
+  scheduleState?: JobScheduleState | null
 }
 
 const statusStyles: Record<JobStatus, string> = {
@@ -188,7 +203,7 @@ const getStageProgress = (stage: string): number => {
 }
 
 interface JobTableProps {
-  setActiveView: (view: 'dashboard' | 'jobs' | 'connectors' | 'logs' | 'settings' | 'narrativization') => void
+  setActiveView: (view: 'dashboard' | 'jobs' | 'scheduler' | 'connectors' | 'reports' | 'mcf-migration' | 'logs' | 'narrativization' | 'settings' | 'api-console') => void
 }
 
 export default function JobTable({ setActiveView }: JobTableProps) {
@@ -244,6 +259,22 @@ export default function JobTable({ setActiveView }: JobTableProps) {
   const [traceData, setTraceData] = useState<any>(null)
   const [errorData, setErrorData] = useState<any[]>([])
   const [selectedSpan, setSelectedSpan] = useState<any>(null)
+  const [scheduleModalJob, setScheduleModalJob] = useState<Job | null>(null)
+
+  const toggleJobSchedule = async (job: Job) => {
+    setActionLoading(`${job.id}-sched`)
+    try {
+      const latest = await scheduleApi.get(job.id)
+      const enabled = job.scheduleState?.enabled ?? job.schedule?.enabled ?? false
+      if (enabled) await scheduleApi.pause(job.id, latest.etag)
+      else await scheduleApi.resume(job.id, latest.etag)
+      await fetchJobs(false)
+    } catch (err) {
+      console.error(`Failed to toggle schedule for job ${job.id}:`, err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   const handleDiagnoseJob = async (job: Job) => {
     setIsDiagnosing(true)
@@ -792,6 +823,36 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         <FolderOpen className="w-3 h-3 text-cyan-500/60 flex-shrink-0" />
                         <span className="truncate max-w-[140px] sm:max-w-[220px]" title={job.path}>{job.path}</span>
                       </div>
+                      {job.schedule && (
+                        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                              (job.scheduleState?.enabled ?? job.schedule.enabled)
+                                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
+                                : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                            }`}
+                            title={
+                              job.scheduleState?.nextFireAt
+                                ? `Next fire: ${new Date(job.scheduleState.nextFireAt).toLocaleString()}`
+                                : 'Schedule paused'
+                            }
+                          >
+                            <CalendarClock className="w-3 h-3" aria-hidden="true" />
+                            {job.schedule.cron} · {job.schedule.timezone || 'UTC'}
+                            {!(job.scheduleState?.enabled ?? job.schedule.enabled) && ' (paused)'}
+                          </span>
+                          {may(job.id, 'MANAGE') && (
+                            <button
+                              type="button"
+                              onClick={() => toggleJobSchedule(job)}
+                              disabled={actionLoading !== null}
+                              className="text-[10px] text-cyan-400 hover:underline disabled:opacity-40"
+                            >
+                              {(job.scheduleState?.enabled ?? job.schedule.enabled) ? 'Pause' : 'Resume'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                     
                     {/* Pipeline Flow */}
@@ -914,6 +975,19 @@ export default function JobTable({ setActiveView }: JobTableProps) {
                         </button>
  
                         {may(job.id, 'MANAGE') && <>
+                        <button
+                          type="button"
+                          onClick={() => setScheduleModalJob(job)}
+                          className={`p-1.5 rounded transition-colors ${
+                            job.schedule
+                              ? 'bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20'
+                              : 'hover:bg-slate-700 hover:text-foreground'
+                          }`}
+                          title={job.schedule ? 'Configure cron schedule' : 'Add cron schedule'}
+                          aria-label={job.schedule ? `Configure cron schedule for ${job.name}` : `Add cron schedule for ${job.name}`}
+                        >
+                          <CalendarClock className="w-4 h-4" />
+                        </button>
                         <button 
                           onClick={() => openEditForm(job)}
                           className="p-1.5 rounded hover:bg-slate-700 hover:text-foreground transition-colors"
@@ -1756,6 +1830,17 @@ export default function JobTable({ setActiveView }: JobTableProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {scheduleModalJob && (
+        <ScheduleModal
+          open={Boolean(scheduleModalJob)}
+          jobId={scheduleModalJob.id}
+          jobName={scheduleModalJob.name}
+          initialSchedule={scheduleModalJob.schedule}
+          onClose={() => setScheduleModalJob(null)}
+          onSaved={() => fetchJobs(false)}
+        />
       )}
     </div>
   )

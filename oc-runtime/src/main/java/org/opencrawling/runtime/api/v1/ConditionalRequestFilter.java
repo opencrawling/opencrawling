@@ -38,7 +38,7 @@ public class ConditionalRequestFilter extends OncePerRequestFilter {
     private static final Set<String> CHANGES = Set.of("PUT", "PATCH", "DELETE");
     /** The resources with ETags. */
     private static final Pattern VERSIONED = Pattern.compile(
-            ApiV1.BASE + "/(jobs/[^/:]+|connectors/[^/:]+|settings/system|settings/transport)");
+            ApiV1.BASE + "/(jobs/[^/:]+|jobs/[^/:]+/schedule|connectors/[^/:]+|settings/system|settings/transport)");
 
     private final JsonMapper json;
 
@@ -51,6 +51,10 @@ public class ConditionalRequestFilter extends OncePerRequestFilter {
         String uri = request.getRequestURI();
         String context = request.getContextPath();
         String path = context != null && !context.isEmpty() && uri.startsWith(context) ? uri.substring(context.length()) : uri;
+        if ("PUT".equals(request.getMethod()) && path.matches(ApiV1.BASE + "/jobs/[^/:]+/schedule")) {
+            // Creating an initial schedule via PUT has no prior schedule ETag; SchedulesV1Controller enforces If-Match when updating an existing schedule.
+            return true;
+        }
         return !CHANGES.contains(request.getMethod()) || !VERSIONED.matcher(path).matches()
                 || request.getHeader("If-Match") != null;
     }

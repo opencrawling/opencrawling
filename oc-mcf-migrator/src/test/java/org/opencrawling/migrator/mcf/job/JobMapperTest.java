@@ -25,6 +25,7 @@ import org.opencrawling.migrator.mcf.mcf.model.McfConnection;
 import org.opencrawling.migrator.mcf.mcf.model.McfConnectionKind;
 import org.opencrawling.migrator.mcf.mcf.model.McfJob;
 import org.opencrawling.migrator.mcf.mcf.model.McfPipelineStage;
+import org.opencrawling.migrator.mcf.mcf.model.McfScheduleRecord;
 import org.opencrawling.sdk.models.ConnectorRequest;
 
 import java.util.List;
@@ -238,6 +239,54 @@ class JobMapperTest {
         assertThat(result.notes()).anySatisfy(n -> {
             assertThat(n.kind()).isEqualTo(FieldNoteKind.RUNTIME_RISK);
             assertThat(n.field()).isEqualTo("repositoryConnector");
+        });
+    }
+
+    @Test
+    void simpleScheduleRecord_populatesDisabledScheduleConfigWithConvertedNote() throws Exception {
+        McfConnection repo = connection(McfConnectionKind.REPOSITORY, "SharepointDrive", FILE_CONNECTOR_CLASS);
+        McfScheduleRecord rec = new McfScheduleRecord(List.of(1, 5), List.of(2), List.of(15), List.of(), List.of(), null);
+        McfJob job = new McfJob("42", "Scheduled job", "SharepointDrive", specWithPath("/data"),
+            List.of(stage(0, -1, true, "Vespa Federated Index")), 0, "windowbegin", "scan once", "accurate",
+            "5", "-1", "-1", "-1", "-1", List.of(rec));
+
+        JobMappingResult result = jobMapper.map(job,
+            Map.of(key(McfConnectionKind.REPOSITORY, "SharepointDrive"), repo),
+            Map.of(key(McfConnectionKind.REPOSITORY, "SharepointDrive"), supportedWithTargetClass("SharepointDrive", "org.opencrawling.filesystem.FileSystemRepositoryConnector"),
+                key(McfConnectionKind.OUTPUT, "Vespa Federated Index"), supportedWithTargetClass("Vespa Federated Index", "org.opencrawling.vespa.VespaOutputConnector")),
+            options);
+
+        assertThat(result.supported()).isTrue();
+        assertThat(result.target().schedule()).isNotNull();
+        assertThat(result.target().schedule().cron()).isEqualTo("15 2 * * 1,5");
+        assertThat(result.target().schedule().timezone()).isEqualTo("UTC");
+        assertThat(result.target().schedule().enabled()).isFalse();
+        assertThat(result.notes()).anySatisfy(n -> {
+            assertThat(n.field()).isEqualTo("schedule");
+            assertThat(n.kind()).isEqualTo(FieldNoteKind.CONVERTED);
+        });
+    }
+
+    @Test
+    void complexScheduleRecord_leavesScheduleNullWithDroppedNote() throws Exception {
+        McfConnection repo = connection(McfConnectionKind.REPOSITORY, "SharepointDrive", FILE_CONNECTOR_CLASS);
+        McfScheduleRecord rec = new McfScheduleRecord(List.of(), List.of(2, 14), List.of(0), List.of(), List.of(), 60);
+        McfJob job = new McfJob("43", "Complex job", "SharepointDrive", specWithPath("/data"),
+            List.of(stage(0, -1, true, "Vespa Federated Index")), 0, "windowbegin", "scan once", "accurate",
+            "5", "-1", "-1", "-1", "-1", List.of(rec));
+
+        JobMappingResult result = jobMapper.map(job,
+            Map.of(key(McfConnectionKind.REPOSITORY, "SharepointDrive"), repo),
+            Map.of(key(McfConnectionKind.REPOSITORY, "SharepointDrive"), supportedWithTargetClass("SharepointDrive", "org.opencrawling.filesystem.FileSystemRepositoryConnector"),
+                key(McfConnectionKind.OUTPUT, "Vespa Federated Index"), supportedWithTargetClass("Vespa Federated Index", "org.opencrawling.vespa.VespaOutputConnector")),
+            options);
+
+        assertThat(result.supported()).isTrue();
+        assertThat(result.target().schedule()).isNull();
+        assertThat(result.notes()).anySatisfy(n -> {
+            assertThat(n.field()).isEqualTo("schedule");
+            assertThat(n.kind()).isEqualTo(FieldNoteKind.DROPPED);
+            assertThat(n.message()).doesNotContain("has no scheduler");
         });
     }
 

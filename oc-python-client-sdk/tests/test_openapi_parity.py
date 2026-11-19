@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """OpenAPI v1 parity tests verifying 100% coverage of all Platform API v1 operations.
 
 Mirrors ``PlatformApiV1SdkTest`` in ``oc-runtime``: verifies that every operation in
@@ -40,10 +43,12 @@ from opencrawling import (
     ExecutionFilter,
     JobFilter,
     JobInput,
+    JobScheduleConfig,
     OpenCrawlingClient,
     PageRequest,
     RequestOptions,
     RetryPolicy,
+    ScheduleFilter,
     SystemSettings,
     TransportSettings,
 )
@@ -270,6 +275,29 @@ def _mock_response_for(request: httpx.Request) -> httpx.Response:
     if path == "/api/v1/sidecar-stores/Ozone_Out/sidecars":
         return httpx.Response(200, headers=headers, json={"connector": "Ozone_Out", "items": [{"id": "doc-1"}], "nextCursor": None, "truncated": False})
 
+    # Schedules
+    schedule_payload = {
+        "jobId": "job-1",
+        "jobName": "HR Docs",
+        "schedule": {"cron": "0 2 * * *", "timezone": "UTC", "enabled": True, "overlapPolicy": "SKIP", "misfirePolicy": "SKIP"},
+        "state": {"enabled": True, "nextFireAt": "2026-11-20T02:00:00Z", "coalescePending": False, "consecutiveFailures": 0},
+        "nextFireTimes": ["2026-11-20T02:00:00Z"],
+    }
+    if path == "/api/v1/schedules" and method == "GET":
+        return httpx.Response(200, headers=headers, json={"items": [schedule_payload], "page": {"limit": 50, "nextCursor": None, "totalItems": 1}})
+    if path == "/api/v1/schedules/overview" and method == "GET":
+        return httpx.Response(200, headers=headers, json={"schedulerEnabled": True, "pollInterval": "PT5S", "defaultTimezone": "UTC", "totalScheduledJobs": 1, "activeSchedules": 1, "pausedSchedules": 0, "autoPausedSchedules": 0, "skippedLast24h": 0, "upcoming": []})
+    if path == "/api/v1/schedules:validate-cron" and method == "POST":
+        return httpx.Response(200, headers=headers, json={"valid": True, "cron": "0 2 * * *", "normalizedCron": "0 0 2 * * *", "timezone": "UTC", "humanDescription": "Every day at 02:00 (UTC)", "nextFireTimes": ["2026-11-20T02:00:00Z"]})
+    if path == "/api/v1/jobs/job-1/schedule" and method in {"GET", "PUT"}:
+        return httpx.Response(200, headers=headers, json=schedule_payload)
+    if path == "/api/v1/jobs/job-1/schedule" and method == "DELETE":
+        return httpx.Response(204, headers={"X-Request-Id": "req-parity"})
+    if path in {"/api/v1/jobs/job-1/schedule:pause", "/api/v1/jobs/job-1/schedule:resume"} and method == "POST":
+        return httpx.Response(200, headers=headers, json=schedule_payload)
+    if path == "/api/v1/jobs/job-1/schedule/dispatches" and method == "GET":
+        return httpx.Response(200, headers=headers, json={"items": [{"id": "disp-1", "jobId": "job-1", "outcome": "STARTED", "runtimeId": "rt-1"}], "page": {"limit": 50, "nextCursor": None, "totalItems": 1}})
+
     raise AssertionError(f"Unhandled mock request: {method} {path}")
 
 
@@ -284,7 +312,7 @@ def test_template_matching_rules() -> None:
 
 def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> None:
     expected_operations = load_v1_operations()
-    assert len(expected_operations) == 65, f"Expected 65 Platform API v1 operations, found {len(expected_operations)}"
+    assert len(expected_operations) == 74, f"Expected 74 Platform API v1 operations, found {len(expected_operations)}"
 
     recorded: list[str] = []
 
@@ -394,6 +422,17 @@ def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> N
         assert len(client.sidecars.stores()) == 1
         assert len(client.sidecars.read("Ozone_Out", prefix="hr/").items) == 1
 
+        # Schedules (9)
+        assert len(client.schedules.list(ScheduleFilter(enabled=True))) == 1
+        assert client.schedules.overview().active_schedules == 1
+        assert client.schedules.validate_cron("0 2 * * *").valid
+        sched = client.schedules.set("job-1", JobScheduleConfig(cron="0 2 * * *"))
+        assert client.schedules.get("job-1").data.job_id == "job-1"
+        client.schedules.pause("job-1", RequestOptions.matching(sched.etag or ""))
+        client.schedules.resume("job-1", RequestOptions.matching(sched.etag or ""))
+        assert len(client.schedules.dispatches("job-1")) == 1
+        client.schedules.delete("job-1", RequestOptions.matching(sched.etag or ""))
+
     uncovered = sorted(
         op for op in expected_operations if not any(match_operation_template(op, req) for req in recorded)
     )
@@ -402,7 +441,7 @@ def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> N
 
 async def test_async_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> None:
     expected_operations = load_v1_operations()
-    assert len(expected_operations) == 65
+    assert len(expected_operations) == 74
 
     recorded: list[str] = []
 
@@ -507,6 +546,17 @@ async def test_async_client_covers_every_platform_api_v1_operation(tmp_path: Pat
         # Sidecars (2)
         await client.sidecars.stores()
         await client.sidecars.read("Ozone_Out")
+
+        # Schedules (9)
+        await client.schedules.list()
+        await client.schedules.overview()
+        await client.schedules.validate_cron("0 2 * * *")
+        await client.schedules.set("job-1", JobScheduleConfig(cron="0 2 * * *"))
+        await client.schedules.get("job-1")
+        await client.schedules.pause("job-1")
+        await client.schedules.resume("job-1")
+        await client.schedules.dispatches("job-1")
+        await client.schedules.delete("job-1")
 
     uncovered = sorted(
         op for op in expected_operations if not any(match_operation_template(op, req) for req in recorded)

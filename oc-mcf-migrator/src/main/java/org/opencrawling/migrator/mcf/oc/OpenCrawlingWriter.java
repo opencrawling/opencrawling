@@ -92,7 +92,7 @@ public class OpenCrawlingWriter {
     public void upsertJob(JobRequest request) {
         JobInput input = new JobInput(request.name(), request.repositoryConnector(), request.outputConnector(),
             blankToNull(request.authorityConnector()), blankToNull(request.transformationConnector()), request.path(),
-            blankToNull(request.pipelineMode()), null, request.narrativization(), null);
+            blankToNull(request.pipelineMode()), null, request.narrativization(), null, request.schedule());
         Optional<Job> existing = api.jobs().stream(PlatformClient.JobFilter.all().withText(request.name()))
             .filter(job -> job.name().equals(request.name()))
             .findFirst();

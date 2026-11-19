@@ -41,10 +41,9 @@ import java.util.Optional;
  *
  * <p>Deliberately does not populate {@code spec.pipeline} — ManifoldCF never declares per-job
  * text-extraction/chunking/embedding-provider settings, and inventing plausible-looking values
- * would violate this tool's own "never guess" design. {@code spec.schedule} is always defaulted
- * to a fixed daily crontab since the schema requires *some* value but neither ManifoldCF's
- * schedule model nor OpenCrawling (no scheduler) has anything real to put there — both omissions
- * are surfaced as {@link OisConversionResult#notes()} rather than silently glossed over.
+ * would violate this tool's own "never guess" design. When a ManifoldCF schedule record is too
+ * complex for a single crontab, {@code spec.schedule} defaults to a fixed daily crontab so the OIS
+ * schema remains valid — both omissions/defaults are surfaced as {@link OisConversionResult#notes()}.
  *
  * <p>Any configuration value that looks like a secret ({@link SecretRedactor}) is redacted before
  * it reaches the document — matching this tool's existing report-writing posture, and the OIS
@@ -129,8 +128,8 @@ public class OisJobRenderer {
             : scheduleRecords.size() + " schedule record(s) present but too complex to translate to a single "
                 + "cron expression (multiple records, a month/day-of-month restriction, or more than one "
                 + "hour/minute value)";
-        notes.add("spec.schedule defaulted to '" + DEFAULT_SCHEDULE + "' (daily) — " + why + ", and OpenCrawling "
-            + "has no scheduler to honor a real one anyway. Edit this if a real schedule matters to you.");
+        notes.add("spec.schedule defaulted to '" + DEFAULT_SCHEDULE + "' (daily) — " + why
+            + ". Review and update spec.schedule (or the job's Scheduler panel in OpenCrawling) before enabling.");
         return DEFAULT_SCHEDULE;
     }
 

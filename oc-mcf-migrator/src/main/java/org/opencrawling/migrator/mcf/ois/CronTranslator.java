@@ -35,12 +35,12 @@ import java.util.stream.Collectors;
  * empty and this always returns empty — it can never produce an incorrect cron expression from
  * misread data, only fail to produce one at all.
  */
-final class CronTranslator {
+public final class CronTranslator {
 
     private CronTranslator() {
     }
 
-    static Optional<String> tryTranslate(List<McfScheduleRecord> records) {
+    public static Optional<String> tryTranslate(List<McfScheduleRecord> records) {
         if (records.size() != 1) {
             return Optional.empty();
         }

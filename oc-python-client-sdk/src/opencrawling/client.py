@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """Synchronous (``OpenCrawlingClient``) and asynchronous (``AsyncOpenCrawlingClient``) SDK entry points."""
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from opencrawling.v1.migrations import AsyncMigrationsClient, MigrationsClient
 from opencrawling.v1.models import ApiIndex, CallerInfo, Health, VersionInfo
 from opencrawling.v1.narrativization import AsyncNarrativizationClient, NarrativizationClient
 from opencrawling.v1.operations import AsyncOperationsClient, OperationsClient
+from opencrawling.v1.schedules import AsyncSchedulesClient, SchedulesClient
 from opencrawling.v1.settings import AsyncSettingsClient, SettingsClient
 from opencrawling.v1.sidecars import AsyncSidecarsClient, SidecarsClient
 from opencrawling.v1.vespa import AsyncVespaClient, VespaClient
@@ -129,6 +133,7 @@ class OpenCrawlingClient:
             )
 
         self.jobs = JobsClient(self._transport)
+        self.schedules = SchedulesClient(self._transport)
         self.job_runs = JobRunsClient(self._transport)
         self.executions = ExecutionsClient(self._transport)
         self.connectors = ConnectorsClient(self._transport)
@@ -226,6 +231,7 @@ class AsyncOpenCrawlingClient:
             )
 
         self.jobs = AsyncJobsClient(self._transport)
+        self.schedules = AsyncSchedulesClient(self._transport)
         self.job_runs = AsyncJobRunsClient(self._transport)
         self.executions = AsyncExecutionsClient(self._transport)
         self.connectors = AsyncConnectorsClient(self._transport)

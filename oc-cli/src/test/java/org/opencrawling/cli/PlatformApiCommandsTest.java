@@ -282,4 +282,47 @@ class PlatformApiCommandsTest {
         List<String> legacy = requests().stream().filter(r -> !r.contains("/api/v1/")).toList();
         assertEquals(List.of(), legacy, "no legacy endpoint is called");
     }
+
+    @Test
+    void jobScheduleCommandsExerciseAllV1ScheduleEndpoints() {
+        String schedJson = "{\"jobId\":\"42\",\"jobName\":\"HR contracts\","
+                + "\"schedule\":{\"cron\":\"0 2 * * *\",\"timezone\":\"Europe/Rome\",\"enabled\":true,"
+                + "\"overlapPolicy\":\"COALESCE\",\"misfirePolicy\":\"FIRE_ONCE\",\"jitterSeconds\":30,\"maxConsecutiveFailures\":3},"
+                + "\"state\":{\"enabled\":true,\"nextFireAt\":\"2026-11-20T01:00:00Z\",\"lastOutcome\":\"STARTED\"},"
+                + "\"nextFireTimes\":[\"2026-11-20T01:00:00Z\"]}";
+
+        answer("GET /api/v1/jobs/42/schedule", 200, schedJson, "ETag", "\"sched-v1\"");
+        answer("PUT /api/v1/jobs/42/schedule", 200, schedJson, "ETag", "\"sched-v2\"");
+        assertEquals(0, oc("job", "schedule", "set", "--id", "42", "--cron", "0 2 * * *",
+                "--timezone", "Europe/Rome", "--overlap", "COALESCE", "--misfire", "FIRE_ONCE",
+                "--jitter", "30", "--max-failures", "3"));
+        assertTrue(requests().contains("PUT /api/v1/jobs/42/schedule"));
+
+        assertEquals(0, oc("job", "schedule", "get", "--id", "42"));
+        assertTrue(text().contains("0 2 * * *") && text().contains("Europe/Rome"));
+
+        answer("GET /api/v1/schedules", 200, page(schedJson));
+        assertEquals(0, oc("job", "schedule", "list"));
+        assertTrue(text().contains("HR contracts"));
+
+        answer("POST /api/v1/jobs/42/schedule:pause", 200, schedJson.replace("\"enabled\":true", "\"enabled\":false"), "ETag", "\"sched-v3\"");
+        assertEquals(0, oc("job", "schedule", "pause", "--id", "42"));
+
+        answer("POST /api/v1/jobs/42/schedule:resume", 200, schedJson, "ETag", "\"sched-v4\"");
+        assertEquals(0, oc("job", "schedule", "resume", "--id", "42"));
+
+        answer("GET /api/v1/jobs/42/schedule/dispatches", 200,
+                page("{\"id\":\"disp-1\",\"jobId\":\"42\",\"scheduledFor\":\"2026-11-19T01:00:00Z\",\"dispatchedAt\":\"2026-11-19T01:00:01Z\",\"runtimeId\":\"rt-1\",\"executionId\":\"exec-1\",\"outcome\":\"STARTED\"}"));
+        assertEquals(0, oc("job", "schedule", "dispatches", "--id", "42"));
+        assertTrue(text().contains("disp-1") && text().contains("STARTED"));
+
+        answer("POST /api/v1/schedules:validate-cron", 200,
+                "{\"valid\":true,\"cron\":\"0 2 * * *\",\"normalizedCron\":\"0 0 2 * * *\",\"timezone\":\"Europe/Rome\",\"humanDescription\":\"Every day at 02:00 (Europe/Rome)\",\"nextFireTimes\":[\"2026-11-20T01:00:00Z\"]}");
+        assertEquals(0, oc("job", "schedule", "validate", "--cron", "0 2 * * *", "--timezone", "Europe/Rome"));
+        assertTrue(text().contains("Every day at 02:00"));
+
+        answer("DELETE /api/v1/jobs/42/schedule", 204, "");
+        assertEquals(0, oc("job", "schedule", "remove", "--id", "42"));
+        assertEquals("\"sched-v1\"", seen.getLast().headers().get("if-match"));
+    }
 }

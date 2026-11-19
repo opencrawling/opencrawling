@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * @param callerTenant   the verified caller's tenant; {@code null} when unknown
  * @param callerVerified {@code true} only when the identity fields come from a validated token, or name a BPM
  *                       event source ({@code bpm:<name>}) authenticated by its signature or token
- * @param triggerSource  how the execution started: {@link #SOURCE_API}, {@link #SOURCE_DYNAMIC_API},
+ * @param triggerSource  how the execution started: {@link #SOURCE_API}, {@link #SOURCE_SCHEDULER}, {@link #SOURCE_DYNAMIC_API},
  *                       {@link #SOURCE_MCP}, {@link #SOURCE_BPM}, {@link #SOURCE_OIS}, {@link #SOURCE_GRPC_PUSH}, {@link #SOURCE_STARTUP};
  *                       {@code null} when unknown
  * @param correlationId  a caller-supplied id that ties the execution to the caller's own request or workflow
@@ -50,6 +50,8 @@ public record ExecutionProvenance(
 
     /** Started through the job API ({@code POST /api/jobs/{id}/start}). */
     public static final String SOURCE_API = "api";
+    /** Triggered automatically by the built-in job scheduler (#197). */
+    public static final String SOURCE_SCHEDULER = "scheduler";
     /** A job the caller described itself, through {@code POST /api/jobs/dynamic}. */
     public static final String SOURCE_DYNAMIC_API = "dynamic-api";
     /** A job the caller described itself, through an MCP tool. */

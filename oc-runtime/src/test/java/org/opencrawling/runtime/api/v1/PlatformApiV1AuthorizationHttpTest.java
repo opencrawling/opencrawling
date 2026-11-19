@@ -186,4 +186,37 @@ class PlatformApiV1AuthorizationHttpTest {
         assertThat(as(HR, "POST", "/api/v1/narrativization:generate-template", "{}").statusCode()).isNotEqualTo(403);
         assertThat(as(FINANCE, "POST", "/api/v1/narrativization:generate-template", "{}").statusCode()).isEqualTo(403);
     }
+
+    @Test
+    void schedulesEnforceJobVisibilityAndManagePermission() {
+        HttpResponse<String> created = as(ADMIN, "POST", "/api/v1/jobs",
+                "{\"name\":\"sched-auth-" + tag + "\",\"repositoryConnector\":\"FileSystem_Local\","
+                        + "\"outputConnector\":\"PGVector_Output\",\"path\":\"/tmp\","
+                        + "\"access\":{\"owner\":\"ops\",\"viewerGroups\":[\"hr-team\"]},"
+                        + "\"schedule\":{\"cron\":\"0 2 * * *\",\"timezone\":\"UTC\",\"enabled\":true}}");
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        jobId = json.readTree(created.body()).get("id").asString();
+
+        // Viewer (HR) can read the schedule, dispatches, list, overview and validate-cron, but cannot mutate it
+        assertThat(as(HR, "GET", "/api/v1/jobs/" + jobId + "/schedule", null).statusCode()).isEqualTo(200);
+        assertThat(as(HR, "GET", "/api/v1/jobs/" + jobId + "/schedule/dispatches", null).statusCode()).isEqualTo(200);
+        assertThat(as(HR, "GET", "/api/v1/schedules?q=sched-auth-" + tag, null).body()).contains("\"totalItems\":1");
+        assertThat(as(HR, "POST", "/api/v1/schedules:validate-cron", "{\"cron\":\"0 2 * * *\"}").statusCode()).isEqualTo(200);
+
+        assertThat(as(HR, "PUT", "/api/v1/jobs/" + jobId + "/schedule",
+                "{\"cron\":\"0 3 * * *\",\"enabled\":true}").statusCode()).isEqualTo(403);
+        assertThat(as(HR, "POST", "/api/v1/jobs/" + jobId + "/schedule:pause", null).statusCode()).isEqualTo(403);
+        assertThat(as(HR, "POST", "/api/v1/jobs/" + jobId + "/schedule:resume", null).statusCode()).isEqualTo(403);
+        assertThat(as(HR, "DELETE", "/api/v1/jobs/" + jobId + "/schedule", null).statusCode()).isEqualTo(403);
+
+        // Unauthorized team (FINANCE) gets 404 on job-scoped schedule routes and sees 0 items in /schedules
+        assertThat(as(FINANCE, "GET", "/api/v1/jobs/" + jobId + "/schedule", null).statusCode()).isEqualTo(404);
+        assertThat(as(FINANCE, "PUT", "/api/v1/jobs/" + jobId + "/schedule",
+                "{\"cron\":\"0 3 * * *\",\"enabled\":true}").statusCode()).isEqualTo(404);
+        assertThat(as(FINANCE, "GET", "/api/v1/schedules?q=sched-auth-" + tag, null).body()).contains("\"totalItems\":0");
+
+        // Owner/Admin can pause & remove
+        assertThat(as(ADMIN, "POST", "/api/v1/jobs/" + jobId + "/schedule:pause", null).statusCode()).isEqualTo(200);
+        assertThat(as(ADMIN, "DELETE", "/api/v1/jobs/" + jobId + "/schedule", null).statusCode()).isEqualTo(204);
+    }
 }

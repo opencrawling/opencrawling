@@ -445,7 +445,7 @@ Accessible at [http://localhost:3000](http://localhost:3000) (or `http://localho
 
 ### 5.2 Job Pipeline Scheduler & AIOps Diagnostics
 * **Create & Edit Ingestion Jobs**: Bind source repository connectors (Alfresco, SharePoint, CMIS, Filesystem) to target vector databases.
-* **Execution Triggers**: Schedule cron crawls or trigger on-demand scans.
+* **Execution Triggers & Native Scheduler**: Configure recurring 5/6-field cron or preset schedules with IANA timezones, overlap/misfire policies, jitter, auto-pause failure guardrails, and dispatch audit history in the Scheduler panel, or trigger on-demand scans.
 * **AIOps "Diagnose with AI"**: One-click analysis of failed crawl jobs inspecting OpenTelemetry traces, child JVM logs, and Kafka error partitions.
 
 ### 5.3 Connector Registry Configuration

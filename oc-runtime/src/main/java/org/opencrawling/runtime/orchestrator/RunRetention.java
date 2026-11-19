@@ -17,6 +17,7 @@ package org.opencrawling.runtime.orchestrator;
 
 import org.opencrawling.runtime.reporting.JobLedgerAccumulator;
 import org.opencrawling.runtime.reporting.JobReportProperties;
+import org.opencrawling.runtime.scheduler.ScheduleStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -57,37 +58,53 @@ public class RunRetention {
     private final RunStore store;
     private final JobReportProperties reports;
     private final JobLedgerAccumulator ledger;
+    private final ScheduleStore scheduleStore;
     private final Duration retention;
+    private final Duration dispatchRetention;
     private final Clock clock;
 
     @Autowired
     public RunRetention(ObjectProvider<RunStore> store, ObjectProvider<JobReportProperties> reports,
                         ObjectProvider<JobLedgerAccumulator> ledger,
-                        @Value("${opencrawling.control-plane.run-retention:90d}") String retention) {
-        this(store.getIfAvailable(InMemoryRunStore::new), reports.getIfAvailable(), ledger.getIfAvailable(), DurationStyle.detectAndParse(retention),
-                Clock.systemUTC());
+                        ObjectProvider<ScheduleStore> scheduleStore,
+                        @Value("${opencrawling.control-plane.run-retention:90d}") String retention,
+                        @Value("${opencrawling.scheduler.dispatch-retention:90d}") String dispatchRetention) {
+        this(store.getIfAvailable(InMemoryRunStore::new), reports.getIfAvailable(), ledger.getIfAvailable(),
+                scheduleStore.getIfAvailable(), DurationStyle.detectAndParse(retention),
+                DurationStyle.detectAndParse(dispatchRetention), Clock.systemUTC());
     }
 
     public RunRetention(RunStore store, JobReportProperties reports, JobLedgerAccumulator ledger, Duration retention,
                         Clock clock) {
+        this(store, reports, ledger, null, retention, retention, clock);
+    }
+
+    public RunRetention(RunStore store, JobReportProperties reports, JobLedgerAccumulator ledger,
+                        ScheduleStore scheduleStore, Duration retention, Duration dispatchRetention, Clock clock) {
         this.store = store;
         this.reports = reports;
         this.ledger = ledger;
+        this.scheduleStore = scheduleStore;
         this.retention = retention;
+        this.dispatchRetention = dispatchRetention != null ? dispatchRetention : retention;
         this.clock = clock;
     }
 
     /** What one sweep deleted. */
-    public record Swept(int runs, int reportFiles, int executions) {}
+    public record Swept(int runs, int reportFiles, int executions, int scheduleDispatches) {
+        public Swept(int runs, int reportFiles, int executions) {
+            this(runs, reportFiles, executions, 0);
+        }
+    }
 
     @Scheduled(initialDelayString = "${opencrawling.control-plane.run-retention-initial-delay:1m}",
             fixedDelayString = "${opencrawling.control-plane.run-retention-interval:6h}")
     public void scheduledSweep() {
         try {
             Swept swept = sweep();
-            if (swept.runs() + swept.reportFiles() + swept.executions() > 0) {
-                log.info("Run retention ({}): deleted {} runs, {} report files, {} executions kept in memory.",
-                        retention, swept.runs(), swept.reportFiles(), swept.executions());
+            if (swept.runs() + swept.reportFiles() + swept.executions() + swept.scheduleDispatches() > 0) {
+                log.info("Run retention ({}): deleted {} runs, {} report files, {} executions kept in memory, {} schedule dispatches.",
+                        retention, swept.runs(), swept.reportFiles(), swept.executions(), swept.scheduleDispatches());
             }
         } catch (RuntimeException e) {
             log.warn("Run retention sweep failed; it is tried again later: {}", e.getMessage(), e);
@@ -96,14 +113,20 @@ public class RunRetention {
 
     /** Deletes what is older than the retention, now. */
     public Swept sweep() {
-        if (retention.isZero() || retention.isNegative()) {
-            return new Swept(0, 0, 0);
+        int runs = 0;
+        int files = 0;
+        int executions = 0;
+        if (!retention.isZero() && !retention.isNegative()) {
+            Instant cutoff = clock.instant().minus(retention);
+            runs = store.deleteEndedBefore(cutoff);
+            files = deleteReportFiles(cutoff);
+            executions = ledger == null ? 0 : ledger.forgetCompletedBefore(cutoff);
         }
-        Instant cutoff = clock.instant().minus(retention);
-        int runs = store.deleteEndedBefore(cutoff);
-        int files = deleteReportFiles(cutoff);
-        int executions = ledger == null ? 0 : ledger.forgetCompletedBefore(cutoff);
-        return new Swept(runs, files, executions);
+        int dispatches = 0;
+        if (scheduleStore != null && dispatchRetention != null && !dispatchRetention.isZero() && !dispatchRetention.isNegative()) {
+            dispatches = scheduleStore.deleteDispatchesBefore(clock.instant().minus(dispatchRetention));
+        }
+        return new Swept(runs, files, executions, dispatches);
     }
 
     private int deleteReportFiles(Instant cutoff) {

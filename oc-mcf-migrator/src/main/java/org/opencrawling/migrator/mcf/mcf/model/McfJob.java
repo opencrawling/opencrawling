@@ -22,10 +22,10 @@ import java.util.List;
 /**
  * A ManifoldCF job, as extracted from {@code /json/jobs}. {@code documentSpecification} is the
  * raw ConfigurationNode-shaped tree ({@code DocumentSpecificationParser} only understands the
- * stock FileConnector's shape within it); the schedule/hopcount/recrawl fields have no
- * OpenCrawling target at all (it has no scheduler) and are kept purely so the report can name
- * them explicitly rather than silently drop them — {@code scheduleRecords} is additionally used by
- * {@code convert}'s OIS output to attempt a best-effort cron translation for the simple case.
+ * stock FileConnector's shape within it); hopcount/recrawl/expiration/reseed fields have no direct
+ * OpenCrawling equivalent and are kept purely so the audit report can name them explicitly, while
+ * {@code scheduleRecords} are best-effort translated into paused OpenCrawling cron schedules (#197)
+ * and {@code convert}'s OIS {@code spec.schedule}.
  */
 public record McfJob(
     String id,

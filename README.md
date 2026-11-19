@@ -172,7 +172,7 @@ The `oc-admin-ui` provides a modern web-based administration console to monitor 
 
 #### 📋 Job Pipeline Scheduler
 ![Pipeline Job Management](images/screenshots/ui-pipeline-job-management.png)
-*Schedule, monitor, start, and pause ingestion crawl tasks. Review document indexing status reports.*
+*Configure recurring native cron schedules (with timezone support, presets, overlap/misfire policies, and dispatch audit logs), monitor, start, and pause ingestion crawl tasks. Review document indexing status reports.*
 
 #### 📁 Connector Configurations
 ![Connector Registry Configuration](images/screenshots/ui-connector-configuration.png)
@@ -219,7 +219,7 @@ oc --version
 
 | Command | Subcommands | Description |
 |---|---|---|
-| `oc job` | `list`, `start`, `status`, `pause`, `stop`, `delete`, `create` | Manage crawling and data ingestion jobs. |
+| `oc job` | `list`, `start`, `status`, `pause`, `stop`, `delete`, `create`, `schedule` | Manage crawling, data ingestion jobs, and native cron schedules. |
 | `oc connector` | `list`, `check`, `create`, `delete` | Inspect connector health and registry definitions. |
 | `oc system` | `status`, `logs`, `settings`, `throughput` | Query runtime component health and settings. |
 | `oc aiops` | `rca`, `spans`, `errors`, `metrics` | Query OpenTelemetry traces and AI Root Cause Analysis. |

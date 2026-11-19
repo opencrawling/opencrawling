@@ -58,10 +58,26 @@ class InProcessMigrationWriter extends OpenCrawlingWriter {
                 request.narrativization() == null ? null : new JobController.NarrativizationConfig(
                         request.narrativization().enabled(), request.narrativization().template(),
                         request.narrativization().connectorType()),
-                request.pipelineMode(), null, null);
+                request.pipelineMode(), null, null, toRuntimeSchedule(request.schedule()));
         JobController.SaveOutcome outcome = jobs.save(job);
         if (!(outcome instanceof JobController.SaveOutcome.Saved)) {
             throw new ManifoldCFApiException("Saving job '" + request.name() + "' failed: " + outcome);
         }
+    }
+
+    private static org.opencrawling.runtime.scheduler.JobScheduleConfig toRuntimeSchedule(
+            org.opencrawling.sdk.v1.model.JobScheduleConfig src) {
+        if (src == null) {
+            return null;
+        }
+        org.opencrawling.runtime.scheduler.JobScheduleConfig.OverlapPolicy overlap = src.overlapPolicy() != null
+                ? org.opencrawling.runtime.scheduler.JobScheduleConfig.OverlapPolicy.valueOf(src.overlapPolicy().name())
+                : null;
+        org.opencrawling.runtime.scheduler.JobScheduleConfig.MisfirePolicy misfire = src.misfirePolicy() != null
+                ? org.opencrawling.runtime.scheduler.JobScheduleConfig.MisfirePolicy.valueOf(src.misfirePolicy().name())
+                : null;
+        return new org.opencrawling.runtime.scheduler.JobScheduleConfig(
+                src.cron(), src.timezone(), src.enabled(), overlap, misfire,
+                src.jitterSeconds(), src.startAt(), src.endAt(), src.maxConsecutiveFailures());
     }
 }

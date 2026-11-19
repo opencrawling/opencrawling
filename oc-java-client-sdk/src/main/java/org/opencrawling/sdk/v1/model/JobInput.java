@@ -33,41 +33,53 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record JobInput(String name, String repositoryConnector, String outputConnector, String authorityConnector,
                        String transformationConnector, String path, String pipelineMode,
-                       Map<String, Object> crawlSpec, NarrativizationConfig narrativization, JobAccess access) {
+                       Map<String, Object> crawlSpec, NarrativizationConfig narrativization, JobAccess access,
+                       JobScheduleConfig schedule) {
+
+    public JobInput(String name, String repositoryConnector, String outputConnector, String authorityConnector,
+                    String transformationConnector, String path, String pipelineMode,
+                    Map<String, Object> crawlSpec, NarrativizationConfig narrativization, JobAccess access) {
+        this(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path,
+                pipelineMode, crawlSpec, narrativization, access, null);
+    }
 
     public static JobInput of(String name, String repositoryConnector, String outputConnector, String path) {
-        return new JobInput(name, repositoryConnector, outputConnector, null, null, path, null, null, null, null);
+        return new JobInput(name, repositoryConnector, outputConnector, null, null, path, null, null, null, null, null);
     }
 
     public JobInput withName(String value) {
-        return new JobInput(value, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, narrativization, access);
+        return new JobInput(value, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, narrativization, access, schedule);
     }
 
     public JobInput withPath(String value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, value, pipelineMode, crawlSpec, narrativization, access);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, value, pipelineMode, crawlSpec, narrativization, access, schedule);
     }
 
     public JobInput withAuthorityConnector(String value) {
-        return new JobInput(name, repositoryConnector, outputConnector, value, transformationConnector, path, pipelineMode, crawlSpec, narrativization, access);
+        return new JobInput(name, repositoryConnector, outputConnector, value, transformationConnector, path, pipelineMode, crawlSpec, narrativization, access, schedule);
     }
 
     public JobInput withTransformationConnector(String value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, value, path, pipelineMode, crawlSpec, narrativization, access);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, value, path, pipelineMode, crawlSpec, narrativization, access, schedule);
     }
 
     public JobInput withPipelineMode(String value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, value, crawlSpec, narrativization, access);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, value, crawlSpec, narrativization, access, schedule);
     }
 
     public JobInput withCrawlSpec(Map<String, Object> value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, value, narrativization, access);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, value, narrativization, access, schedule);
     }
 
     public JobInput withNarrativization(NarrativizationConfig value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, value, access);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, value, access, schedule);
     }
 
     public JobInput withAccess(JobAccess value) {
-        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, narrativization, value);
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, narrativization, value, schedule);
+    }
+
+    public JobInput withSchedule(JobScheduleConfig value) {
+        return new JobInput(name, repositoryConnector, outputConnector, authorityConnector, transformationConnector, path, pipelineMode, crawlSpec, narrativization, access, value);
     }
 }

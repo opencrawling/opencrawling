@@ -48,6 +48,7 @@ final class ApiV1Documentation {
     static final Map<String, String> TAGS = Map.ofEntries(
             Map.entry("Platform", "The entry point: what this installation offers, its version and health, and who you are to it."),
             Map.entry("Jobs", "Pipeline jobs: their definitions and state, and starting, stopping and pausing their runs."),
+            Map.entry("Schedules", "Recurring cron job schedules, upcoming timeline and dispatch audit history."),
             Map.entry("Job runs", "Runs in progress in this runtime. A finished run becomes an execution, with its report."),
             Map.entry("Executions", "Finished runs: reports, document ledgers, report files, and SQL analytics over the audit lake."),
             Map.entry("Connectors", "Configured repository, output, transformation and authority connectors, with live connectivity checks."),
@@ -133,7 +134,11 @@ final class ApiV1Documentation {
             Map.entry("rejectDynamicJob", """
                     {"reason":"Outside the legal team's scope"}"""),
             Map.entry("dryRunDiscovery", """
-                    {"scope":"/Sites/legal/documentLibrary","sampleSize":5,"maxScan":10000}"""));
+                    {"scope":"/Sites/legal/documentLibrary","sampleSize":5,"maxScan":10000}"""),
+            Map.entry("setJobSchedule", """
+                    {"cron":"0 2 * * *","timezone":"Europe/Rome","enabled":true,"overlapPolicy":"SKIP","misfirePolicy":"FIRE_ONCE","jitterSeconds":60,"maxConsecutiveFailures":5}"""),
+            Map.entry("validateCron", """
+                    {"cron":"30 2 1 * *","timezone":"Europe/Rome","count":5}"""));
 
     /** Example values for path variables and required query parameters in the code samples. */
     private static final Map<String, String> SAMPLE_VALUES = Map.of(

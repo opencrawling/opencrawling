@@ -16,6 +16,7 @@
 package org.opencrawling.sdk.models;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import org.opencrawling.sdk.v1.model.JobScheduleConfig;
 
 /**
  * Request payload for creating or updating an OpenCrawling Job.
@@ -35,7 +36,8 @@ public record JobRequest(
     String transformationConnector,
     NarrativizationConfig narrativization,
     String pipelineMode,
-    JobAccess access
+    JobAccess access,
+    JobScheduleConfig schedule
 ) {
 
     public JobRequest {
@@ -58,7 +60,7 @@ public record JobRequest(
         String transformationConnector,
         NarrativizationConfig narrativization
     ) {
-        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null);
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, null, null, null);
     }
 
     public JobRequest(
@@ -76,7 +78,26 @@ public record JobRequest(
         NarrativizationConfig narrativization,
         String pipelineMode
     ) {
-        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null);
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, null, null);
+    }
+
+    public JobRequest(
+        String id,
+        String name,
+        String repositoryConnector,
+        String outputConnector,
+        String authorityConnector,
+        String path,
+        String status,
+        String currentStage,
+        long documents,
+        String lastRun,
+        String transformationConnector,
+        NarrativizationConfig narrativization,
+        String pipelineMode,
+        JobAccess access
+    ) {
+        this(id, name, repositoryConnector, outputConnector, authorityConnector, path, status, currentStage, documents, lastRun, transformationConnector, narrativization, pipelineMode, access, null);
     }
 
     public static Builder builder() {
@@ -98,6 +119,7 @@ public record JobRequest(
         private NarrativizationConfig narrativization;
         private String pipelineMode; // null = inherit the server-side opencrawling.pipeline.mode default
         private JobAccess access; // null = on update, keep the job's current access
+        private JobScheduleConfig schedule;
 
         public Builder id(String id) {
             this.id = id;
@@ -175,6 +197,12 @@ public record JobRequest(
             return this;
         }
 
+        /** Optional recurring schedule configuration (#197). */
+        public Builder schedule(JobScheduleConfig schedule) {
+            this.schedule = schedule;
+            return this;
+        }
+
         public JobRequest build() {
             return new JobRequest(
                 id,
@@ -189,9 +217,9 @@ public record JobRequest(
                 lastRun,
                 transformationConnector,
                 narrativization != null ? narrativization : NarrativizationConfig.disabled(),
-                pipelineMode
-            ,
-                access
+                pipelineMode,
+                access,
+                schedule
             );
         }
     }

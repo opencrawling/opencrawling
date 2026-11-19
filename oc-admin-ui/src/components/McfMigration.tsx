@@ -1,5 +1,5 @@
 /*
- * Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -561,7 +561,7 @@ function ReviewStep({ plan, onApply, selectedConnections, selectedJobs, onToggle
         <div className="text-sm text-muted space-y-1.5">
           <p className="font-semibold text-foreground">Known target-system limitations</p>
           <p>• Dynamic connector resolution at job-start only covers Alfresco/Iceberg repositories and Qdrant/Vespa outputs — other combinations may not run as expected.</p>
-          <p>• OpenCrawling has no scheduler; migrated jobs are created in a Ready state for manual/API start.</p>
+          <p>• Simple ManifoldCF schedules (single hour/minute) are imported as paused cron schedules (<code>enabled: false</code>) so you can verify them in the Scheduler panel before activating; complex windows or hopcount/recrawl intervals fall back to manual start.</p>
           <p>• The filesystem connector scans every file under its root unconditionally — ManifoldCF include/exclude filters cannot be preserved.</p>
         </div>
       </div>

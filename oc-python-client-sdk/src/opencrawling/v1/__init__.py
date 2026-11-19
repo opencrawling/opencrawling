@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """Platform API v1 resource clients and Pydantic models."""
 
 from opencrawling.v1.connectors import AsyncConnectorsClient, ConnectorsClient
@@ -29,12 +32,14 @@ from opencrawling.v1.models import (
     CopilotField,
     CopilotRequest,
     CopilotResponse,
+    CronValidationResult,
     DiagnosticReport,
     DiscoveryConnectorInfo,
     DiscoveryDryRunRequest,
     DiscoveryDryRunView,
     DiscoveryNodeView,
     DiscoveryTreeView,
+    DispatchOutcome,
     DocumentIngestRequest,
     DocumentLedgerEntry,
     DynamicJob,
@@ -53,11 +58,19 @@ from opencrawling.v1.models import (
     JobRun,
     JobRunHistory,
     JobRunStep,
+    JobSchedule,
+    JobScheduleConfig,
+    JobScheduleState,
     JobState,
     JobTraceResponse,
     MetricRecord,
+    MisfirePolicy,
     NarrativizationConfig,
+    OverlapPolicy,
     QueryResult,
+    ScheduleDispatch,
+    ScheduleFilter,
+    SchedulerOverview,
     SidecarPage,
     SidecarStoreInfo,
     SpanRecord,
@@ -65,10 +78,12 @@ from opencrawling.v1.models import (
     SystemStatus,
     ThroughputMetricsResponse,
     TransportSettings,
+    UpcomingExecution,
     VersionInfo,
 )
 from opencrawling.v1.narrativization import AsyncNarrativizationClient, NarrativizationClient
 from opencrawling.v1.operations import AsyncOperationsClient, OperationsClient
+from opencrawling.v1.schedules import AsyncSchedulesClient, SchedulesClient
 from opencrawling.v1.settings import AsyncSettingsClient, SettingsClient
 from opencrawling.v1.sidecars import AsyncSidecarsClient, SidecarsClient
 from opencrawling.v1.vespa import AsyncVespaClient, VespaClient
@@ -84,6 +99,7 @@ __all__ = [
     "AsyncMigrationsClient",
     "AsyncNarrativizationClient",
     "AsyncOperationsClient",
+    "AsyncSchedulesClient",
     "AsyncSettingsClient",
     "AsyncSidecarsClient",
     "AsyncVespaClient",
@@ -95,6 +111,7 @@ __all__ = [
     "CopilotField",
     "CopilotRequest",
     "CopilotResponse",
+    "CronValidationResult",
     "DiagnosticReport",
     "DiscoveryClient",
     "DiscoveryConnectorInfo",
@@ -102,6 +119,7 @@ __all__ = [
     "DiscoveryDryRunView",
     "DiscoveryNodeView",
     "DiscoveryTreeView",
+    "DispatchOutcome",
     "DocumentIngestRequest",
     "DocumentLedgerEntry",
     "DynamicJob",
@@ -123,15 +141,24 @@ __all__ = [
     "JobRunHistory",
     "JobRunStep",
     "JobRunsClient",
+    "JobSchedule",
+    "JobScheduleConfig",
+    "JobScheduleState",
     "JobState",
     "JobTraceResponse",
     "JobsClient",
     "MetricRecord",
     "MigrationsClient",
+    "MisfirePolicy",
     "NarrativizationClient",
     "NarrativizationConfig",
     "OperationsClient",
+    "OverlapPolicy",
     "QueryResult",
+    "ScheduleDispatch",
+    "ScheduleFilter",
+    "SchedulerOverview",
+    "SchedulesClient",
     "SettingsClient",
     "SidecarPage",
     "SidecarStoreInfo",
@@ -141,6 +168,7 @@ __all__ = [
     "SystemStatus",
     "ThroughputMetricsResponse",
     "TransportSettings",
+    "UpcomingExecution",
     "VersionInfo",
     "VespaClient",
 ]
