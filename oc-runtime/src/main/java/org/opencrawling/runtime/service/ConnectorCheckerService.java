@@ -940,10 +940,24 @@ public class ConnectorCheckerService {
         try (org.opencrawling.zammad.ZammadClient client = new org.opencrawling.zammad.ZammadClient(settings)) {
             JsonNode me = client.getCurrentUser();
             String user = me.path("email").asText(me.path("login").asText("authenticated user"));
+            com.fasterxml.jackson.databind.node.ObjectNode summary =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            if (me.has("id")) {
+                summary.put("id", me.path("id").asLong());
+            }
+            if (me.hasNonNull("login")) {
+                summary.put("login", me.path("login").asText());
+            }
+            if (me.hasNonNull("email")) {
+                summary.put("email", me.path("email").asText());
+            }
+            if (me.has("active")) {
+                summary.put("active", me.path("active").asBoolean());
+            }
             return new ConnectionCheckResult(true,
                     "Successfully authenticated to Zammad REST API v1 at " + settings.baseUrl()
                             + " as '" + user + "'.",
-                    me.toString());
+                    summary.toString());
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

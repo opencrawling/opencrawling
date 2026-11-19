@@ -54,6 +54,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,6 +65,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -90,6 +92,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     }
 
     private final ZammadProperties settings;
+    private final boolean ownsClient;
     private ZammadClient client;
     private ZammadSecurityMapper securityMapper;
 
@@ -113,11 +116,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
     public ZammadRepositoryConnector(ZammadProperties settings) {
         this.settings = settings;
+        this.ownsClient = true;
         this.securityMapper = new ZammadSecurityMapper(settings);
     }
 
     public ZammadRepositoryConnector(ZammadProperties settings, ZammadClient client) {
         this.settings = settings;
+        this.ownsClient = (client == null);
         this.client = client;
         this.securityMapper = new ZammadSecurityMapper(settings);
     }
@@ -186,6 +191,11 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             }
         }
 
+        // Clear per-scan user/organization lookup caches so reused connector instances do not leak memory
+        // or serve stale organization.shared ACL flags across runs.
+        userEmailsById.clear();
+        orgsById.clear();
+
         connected = true;
         log.info("Connected to Zammad at {} as '{}' ({} groups, {} states, {} roles loaded).",
                 client.getBaseUrl(), login, groupsById.size(), statesById.size(), rolesById.size());
@@ -194,8 +204,9 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     @Override
     public synchronized void disconnect() {
         connected = false;
-        if (client != null) {
+        if (client != null && ownsClient) {
             client.close();
+            client = null;
         }
     }
 
@@ -220,6 +231,8 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         final AtomicLong unchanged = new AtomicLong();
         final AtomicLong skipped = new AtomicLong();
         final AtomicLong failed = new AtomicLong();
+        final AtomicBoolean cancelled = new AtomicBoolean();
+        final AtomicBoolean interrupted = new AtomicBoolean();
         final Set<String> seenTicketIds = ConcurrentHashMap.newKeySet();
         final Set<String> seenKbIds = ConcurrentHashMap.newKeySet();
         Map<String, ZammadCrawlState.Entry> previousTickets = Map.of();
@@ -228,31 +241,52 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         final Map<String, ZammadCrawlState.Entry> nextKb = new ConcurrentHashMap<>();
         final Set<String> removedTickets = ConcurrentHashMap.newKeySet();
         final Set<String> removedKb = ConcurrentHashMap.newKeySet();
+
+        boolean isStopRequested(FluxSink<?> sink) {
+            return cancelled.get() || interrupted.get() || sink.isCancelled() || Thread.currentThread().isInterrupted();
+        }
     }
 
     @Override
     public Flux<RepositoryDocument> scan(String basePath) {
         return Flux.create(sink -> {
+            CrawlSession crawl = new CrawlSession();
+            sink.onCancel(() -> crawl.cancelled.set(true));
             try {
                 connect();
-                CrawlSession crawl = new CrawlSession();
                 Path statePath = ZammadCrawlState.file(settings);
                 ZammadCrawlState.State previousState = ZammadCrawlState.load(statePath);
                 crawl.previousTickets = previousState.tickets();
                 crawl.previousKb = previousState.kbAnswers();
 
                 Instant scanStart = Instant.now();
+                Instant watermarkAnchor = client.lastServerTime().orElse(scanStart);
                 String trimmedPath = basePath == null ? "" : basePath.strip();
                 boolean hasOverride = !trimmedPath.isEmpty()
                         && !"default".equalsIgnoreCase(trimmedPath)
                         && !"/".equals(trimmedPath);
 
-                if (settings.includeTickets() && !trimmedPath.startsWith("kb-category:") && !trimmedPath.startsWith("/KnowledgeBase")) {
+                if (!crawl.isStopRequested(sink)
+                        && settings.includeTickets()
+                        && !trimmedPath.startsWith("kb-category:")
+                        && !trimmedPath.startsWith("/KnowledgeBase")) {
                     crawlTickets(trimmedPath, hasOverride, previousState.watermark(), crawl, sink);
                 }
 
-                if (settings.includeKnowledgeBase() && !trimmedPath.startsWith("group:") && !trimmedPath.startsWith("/Groups")) {
+                if (!crawl.isStopRequested(sink)
+                        && settings.includeKnowledgeBase()
+                        && !trimmedPath.startsWith("group:")
+                        && !trimmedPath.startsWith("/Groups")) {
                     crawlKnowledgeBase(trimmedPath, crawl, sink);
+                }
+
+                if (crawl.isStopRequested(sink)) {
+                    log.info("Zammad scan of {} cancelled/interrupted before completion ({} documents emitted); incremental state not advanced.",
+                            settings.baseUrl(), crawl.documents.get());
+                    if (!sink.isCancelled()) {
+                        sink.complete();
+                    }
+                    return;
                 }
 
                 if (!hasOverride) {
@@ -265,7 +299,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     mergedKb.putAll(crawl.nextKb);
 
                     String nextWatermark = crawl.failed.get() == 0
-                            ? scanStart.minusSeconds(60).truncatedTo(ChronoUnit.SECONDS).toString()
+                            ? watermarkAnchor.minusSeconds(60).truncatedTo(ChronoUnit.SECONDS).toString()
                             : previousState.watermark();
                     ZammadCrawlState.save(statePath, new ZammadCrawlState.State(nextWatermark, mergedTickets, mergedKb));
                 }
@@ -277,6 +311,10 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
+                }
+                if (crawl.cancelled.get() || sink.isCancelled()) {
+                    log.info("Zammad scan of {} stopped after downstream cancellation.", settings.baseUrl());
+                    return;
                 }
                 log.error("Zammad scan failed: {}", e.getMessage(), e);
                 sink.error(e);
@@ -297,11 +335,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         boolean fullEnumeration = !hasOverride && (settings.crawlMode() == CrawlMode.FULL || watermark == null);
 
         int page = 1;
-        int pageSize = settings.pageSize();
-        while (true) {
+        int effectivePageSize = (searchQuery != null)
+                ? Math.min(settings.pageSize(), ZammadClient.MAX_TICKETS_SEARCH_PAGE_SIZE)
+                : Math.min(settings.pageSize(), ZammadClient.MAX_TICKETS_INDEX_PAGE_SIZE);
+        while (!crawl.isStopRequested(sink)) {
             List<JsonNode> tickets = (searchQuery != null)
-                    ? client.searchTicketsPage(searchQuery, page, pageSize)
-                    : client.listTicketsPage(page, pageSize);
+                    ? client.searchTicketsPage(searchQuery, page, effectivePageSize)
+                    : client.listTicketsPage(page, effectivePageSize);
             if (tickets.isEmpty()) {
                 break;
             }
@@ -312,15 +352,21 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     batch.add(ticket);
                 }
             }
-            processTicketBatch(batch, crawl, sink);
-            if (tickets.size() < pageSize) {
+            if (batch.isEmpty()) {
                 break;
+            }
+            processTicketBatch(batch, crawl, sink);
+            if (crawl.isStopRequested(sink)) {
+                return;
             }
             page++;
         }
 
-        if (fullEnumeration && !crawl.previousTickets.isEmpty()) {
+        if (fullEnumeration && !crawl.isStopRequested(sink) && !crawl.previousTickets.isEmpty()) {
             for (Map.Entry<String, ZammadCrawlState.Entry> prev : crawl.previousTickets.entrySet()) {
+                if (crawl.isStopRequested(sink)) {
+                    return;
+                }
                 String ticketId = prev.getKey();
                 if (!crawl.seenTicketIds.contains(ticketId)) {
                     emitTombstones(prev.getValue().ids(), ticketId, "ticket", crawl, sink);
@@ -344,7 +390,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             return overridePath;
         }
         if (settings.crawlMode() == CrawlMode.SEARCH_DELTA && watermark != null && !watermark.isBlank()) {
-            return "updated_at:>=" + watermark;
+            return "updated_at:[" + watermark + " TO *]";
         }
         return null;
     }
@@ -352,21 +398,33 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     @SuppressWarnings("preview")
     private void processTicketBatch(List<JsonNode> tickets, CrawlSession crawl, FluxSink<RepositoryDocument> sink)
             throws InterruptedException {
-        if (tickets.isEmpty()) {
+        if (tickets.isEmpty() || crawl.isStopRequested(sink)) {
             return;
         }
         Semaphore permits = new Semaphore(settings.parallelism());
         try (var scope = StructuredTaskScope.open()) {
             for (JsonNode ticket : tickets) {
+                if (crawl.isStopRequested(sink)) {
+                    break;
+                }
                 permits.acquire();
+                if (crawl.isStopRequested(sink)) {
+                    permits.release();
+                    break;
+                }
                 scope.fork(ObservabilityTask.observed(() -> {
                     try {
-                        handleTicket(ticket, crawl, sink);
+                        if (!crawl.isStopRequested(sink)) {
+                            handleTicket(ticket, crawl, sink);
+                        }
                     } catch (InterruptedException e) {
+                        crawl.interrupted.set(true);
                         Thread.currentThread().interrupt();
                     } catch (Exception e) {
-                        crawl.failed.incrementAndGet();
-                        log.error("Failed to process Zammad ticket {}: {}", ticket.path("id").asText("?"), e.getMessage());
+                        if (!crawl.isStopRequested(sink)) {
+                            crawl.failed.incrementAndGet();
+                            log.error("Failed to process Zammad ticket {}: {}", ticket.path("id").asText("?"), e.getMessage());
+                        }
                     } finally {
                         permits.release();
                     }
@@ -379,6 +437,9 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
     private void handleTicket(JsonNode ticketNode, CrawlSession crawl, FluxSink<RepositoryDocument> sink)
             throws IOException, InterruptedException {
+        if (crawl.isStopRequested(sink)) {
+            return;
+        }
         long ticketId = ticketNode.path("id").asLong(-1L);
         if (ticketId <= 0) {
             return;
@@ -434,6 +495,9 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
         if (settings.articleGranularity() == ArticleGranularity.PER_ARTICLE) {
             for (JsonNode article : articles) {
+                if (crawl.isStopRequested(sink)) {
+                    return;
+                }
                 boolean isInternal = article.path("internal").asBoolean(false);
                 if (isInternal && !settings.includeInternalArticles()) {
                     continue;
@@ -459,20 +523,26 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 }
             }
 
-            RepositoryDocument publicDoc = ZammadDocumentBuilder.buildTicketThread(ctx, publicArticles, false, publicSecurity);
-            emit(sink, publicDoc);
-            emittedIds.add(publicDoc.id());
-            crawl.documents.incrementAndGet();
+            if (!publicArticles.isEmpty() && !crawl.isStopRequested(sink)) {
+                RepositoryDocument publicDoc = ZammadDocumentBuilder.buildTicketThread(ctx, publicArticles, false, publicSecurity);
+                emit(sink, publicDoc);
+                emittedIds.add(publicDoc.id());
+                crawl.documents.incrementAndGet();
 
-            if (settings.includeAttachments()) {
-                for (JsonNode article : publicArticles) {
-                    emitArticleAttachments(ctx, article, publicDoc.id(), publicSecurity, emittedIds, crawl, sink);
+                if (settings.includeAttachments()) {
+                    for (JsonNode article : publicArticles) {
+                        if (crawl.isStopRequested(sink)) {
+                            return;
+                        }
+                        emitArticleAttachments(ctx, article, publicDoc.id(), publicSecurity, emittedIds, crawl, sink);
+                    }
                 }
             }
 
             if (settings.includeInternalArticles()
                     && settings.articleGranularity() == ArticleGranularity.SPLIT_PUBLIC_AND_INTERNAL
-                    && !internalArticles.isEmpty()) {
+                    && !internalArticles.isEmpty()
+                    && !crawl.isStopRequested(sink)) {
                 RepositoryDocument internalDoc = ZammadDocumentBuilder.buildTicketThread(ctx, internalArticles, true, internalSecurity);
                 emit(sink, internalDoc);
                 emittedIds.add(internalDoc.id());
@@ -480,10 +550,17 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
                 if (settings.includeAttachments()) {
                     for (JsonNode article : internalArticles) {
+                        if (crawl.isStopRequested(sink)) {
+                            return;
+                        }
                         emitArticleAttachments(ctx, article, internalDoc.id(), internalSecurity, emittedIds, crawl, sink);
                     }
                 }
             }
+        }
+
+        if (crawl.isStopRequested(sink)) {
+            return;
         }
 
         if (known != null) {
@@ -505,6 +582,9 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             FluxSink<RepositoryDocument> sink
     ) throws IOException, InterruptedException {
         for (AttachmentRef att : ZammadDocumentBuilder.attachments(article)) {
+            if (crawl.isStopRequested(sink)) {
+                return;
+            }
             if (settings.maxAttachmentSizeBytes() > 0 && att.sizeBytes() > settings.maxAttachmentSizeBytes()) {
                 log.info("Skipping Zammad attachment {} on ticket {} ({} bytes exceeds max-attachment-size-bytes).",
                         att.filename(), ctx.ticketId(), att.sizeBytes());
@@ -519,6 +599,10 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     log.info("Zammad attachment {} on ticket {} exceeded max-attachment-size-bytes during stream; skipped.",
                             att.filename(), ctx.ticketId());
                     continue;
+                }
+                if (crawl.isStopRequested(sink)) {
+                    Files.deleteIfExists(temp);
+                    return;
                 }
                 InputStream stream = new TempFileInputStream(temp);
                 RepositoryDocument attDoc = ZammadDocumentBuilder.buildAttachmentDocument(
@@ -547,10 +631,14 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             filterCategoryId = parseLong(overridePath.substring("kb-category:".length()), -1L);
         }
 
-        List<KbAnswerRecord> answers = parseKnowledgeBaseAnswers(init);
+        Instant now = client.lastServerTime().orElseGet(Instant::now);
+        List<KbAnswerRecord> answers = parseKnowledgeBaseAnswers(init, now);
         List<String> activeGroups = new ArrayList<>(groupsById.values());
 
         for (KbAnswerRecord answer : answers) {
+            if (crawl.isStopRequested(sink)) {
+                return;
+            }
             if (filterCategoryId != null && filterCategoryId > 0 && answer.categoryId() != filterCategoryId) {
                 continue;
             }
@@ -567,8 +655,8 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             }
 
             ZammadSecurityMapper.Mapped security = securityMapper.forKnowledgeBase(
-                    answer.readerRoles(), activeGroups, answer.internal());
-            String fingerprint = security.fingerprint();
+                    answer.readerRoles(), answer.explicitPermissions(), activeGroups, answer.internal());
+            String fingerprint = security.fingerprint() + "|vis:" + (answer.internal() ? "internal" : "published");
 
             if (known != null && answer.updatedAt() != null && answer.updatedAt().equals(known.updatedAt())
                     && fingerprint.equals(known.aclFingerprint())) {
@@ -579,14 +667,25 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
             List<KbTranslation> translations = answer.translations();
             if (translations.isEmpty() || translations.stream().allMatch(t -> t.body() == null || t.body().isBlank())) {
-                Optional<JsonNode> fullAnswer = client.getKnowledgeBaseAnswer(answer.kbId(), answer.answerId());
+                List<Long> contentIds = translations.stream()
+                        .map(KbTranslation::contentId)
+                        .filter(id -> id > 0)
+                        .distinct()
+                        .toList();
+                Optional<JsonNode> fullAnswer = client.getKnowledgeBaseAnswer(answer.kbId(), answer.answerId(), contentIds);
                 if (fullAnswer.isPresent()) {
-                    translations = extractAnswerTranslations(fullAnswer.get(), answer.localesById());
+                    List<KbTranslation> fetched = extractAnswerTranslations(fullAnswer.get(), answer.answerId(), answer.localesById());
+                    if (!fetched.isEmpty()) {
+                        translations = fetched;
+                    }
                 }
             }
 
             List<String> emittedIds = new ArrayList<>();
             for (KbTranslation tr : translations) {
+                if (crawl.isStopRequested(sink)) {
+                    return;
+                }
                 RepositoryDocument doc = ZammadDocumentBuilder.buildKnowledgeBaseAnswer(
                         settings.instanceKey(),
                         settings.baseUrl(),
@@ -614,8 +713,11 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             crawl.nextKb.put(key, new ZammadCrawlState.Entry(answer.updatedAt(), fingerprint, List.copyOf(emittedIds)));
         }
 
-        if (filterCategoryId == null && !crawl.previousKb.isEmpty()) {
+        if (filterCategoryId == null && !crawl.isStopRequested(sink) && !crawl.previousKb.isEmpty()) {
             for (Map.Entry<String, ZammadCrawlState.Entry> prev : crawl.previousKb.entrySet()) {
+                if (crawl.isStopRequested(sink)) {
+                    return;
+                }
                 if (!crawl.seenKbIds.contains(prev.getKey())) {
                     emitTombstones(prev.getValue().ids(), prev.getKey(), "kb_answer", crawl, sink);
                     crawl.removedKb.add(prev.getKey());
@@ -624,7 +726,11 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
     }
 
-    private record KbTranslation(String locale, String title, String body) {
+    private record KbTranslation(String locale, String title, String body, long contentId) {
+    }
+
+    private record CategoryPermissions(List<String> readerRoles, boolean explicit) {
+        static final CategoryPermissions NONE = new CategoryPermissions(List.of(), false);
     }
 
     private record KbAnswerRecord(
@@ -636,24 +742,56 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             boolean internal,
             String updatedAt,
             List<String> readerRoles,
+            boolean explicitPermissions,
             List<KbTranslation> translations,
             Map<Long, String> localesById
     ) {
     }
 
-    private List<KbAnswerRecord> parseKnowledgeBaseAnswers(JsonNode init) {
+    private List<KbAnswerRecord> parseKnowledgeBaseAnswers(JsonNode init, Instant now) {
         List<KbAnswerRecord> results = new ArrayList<>();
         JsonNode assets = init.has("assets") ? init.path("assets") : init;
+
+        Map<Long, String> systemLocalesById = new LinkedHashMap<>();
+        JsonNode sysLocalesNode = assets.path("Locale");
+        if (sysLocalesNode.isObject()) {
+            sysLocalesNode.forEach(loc -> {
+                long id = loc.path("id").asLong(-1L);
+                String code = ZammadDocumentBuilder.text(loc, "locale");
+                if (id > 0 && code != null) {
+                    systemLocalesById.put(id, code);
+                }
+            });
+        }
 
         Map<Long, String> localesById = new LinkedHashMap<>();
         JsonNode localesNode = assets.path("KnowledgeBaseLocale");
         if (localesNode.isObject()) {
             localesNode.forEach(loc -> {
                 long id = loc.path("id").asLong(-1L);
-                String code = ZammadDocumentBuilder.textOrDefault(loc, "system_locale",
-                        ZammadDocumentBuilder.textOrDefault(loc, "locale", "en"));
+                long sysId = loc.path("system_locale_id").asLong(-1L);
+                String fallback = loc.path("primary").asBoolean(false) || sysId <= 0 ? "en" : "locale-" + sysId;
+                String code = firstNonBlank(
+                        ZammadDocumentBuilder.text(loc, "system_locale"),
+                        ZammadDocumentBuilder.text(loc, "locale"),
+                        systemLocalesById.get(sysId),
+                        fallback);
                 if (id > 0) {
                     localesById.put(id, code);
+                }
+            });
+        }
+
+        Map<Long, CategoryPermissions> kbLevelPermissions = new LinkedHashMap<>();
+        JsonNode kbsNode = assets.path("KnowledgeBase");
+        if (kbsNode.isObject() || kbsNode.isArray()) {
+            kbsNode.forEach(kb -> {
+                long kbId = kb.path("id").asLong(-1L);
+                if (kbId > 0) {
+                    CategoryPermissions perms = extractPermissionsFromNode(kb, null);
+                    if (perms.explicit()) {
+                        kbLevelPermissions.put(kbId, perms);
+                    }
                 }
             });
         }
@@ -671,7 +809,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
 
         Map<Long, Long> categoryToKbId = new LinkedHashMap<>();
-        Map<Long, List<String>> categoryReaderRoles = new LinkedHashMap<>();
+        Map<Long, CategoryPermissions> categoryPermissions = new LinkedHashMap<>();
         JsonNode categoriesNode = assets.path("KnowledgeBaseCategory");
         if (categoriesNode.isObject() || categoriesNode.isArray()) {
             categoriesNode.forEach(cat -> {
@@ -683,7 +821,11 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     if (directTitle != null) {
                         categoryTitles.putIfAbsent(catId, directTitle);
                     }
-                    categoryReaderRoles.put(catId, extractCategoryRoles(cat, assets.path("KnowledgeBasePermission")));
+                    CategoryPermissions perms = extractPermissionsFromNode(cat, assets.path("KnowledgeBasePermission"));
+                    if (!perms.explicit()) {
+                        perms = kbLevelPermissions.getOrDefault(kbId, CategoryPermissions.NONE);
+                    }
+                    categoryPermissions.put(catId, perms);
                 }
             });
         }
@@ -718,7 +860,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                         ZammadDocumentBuilder.text(tr.path("content"), "body"),
                         contentBodies.get(contentId));
                 translationsByAnswer.computeIfAbsent(answerId, k -> new ArrayList<>())
-                        .add(new KbTranslation(locale, title, body));
+                        .add(new KbTranslation(locale, title, body, contentId));
             });
         }
 
@@ -740,45 +882,72 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 String archivedAt = ZammadDocumentBuilder.text(ans, "archived_at");
                 String publishedAt = ZammadDocumentBuilder.text(ans, "published_at");
                 String internalAt = ZammadDocumentBuilder.text(ans, "internal_at");
-                boolean active = (archivedAt == null) && (publishedAt != null || internalAt != null
-                        || ans.path("published").asBoolean(false) || ans.path("internal").asBoolean(false));
-                boolean internal = ans.path("internal").asBoolean(false)
-                        || (internalAt != null && publishedAt == null);
+
+                // Match Zammad CanBePublished::StateMachine: future timestamps are scheduled transitions, not active yet.
+                Optional<Instant> archivedAtTs = ZammadDocumentBuilder.parseInstant(archivedAt);
+                Optional<Instant> publishedAtTs = ZammadDocumentBuilder.parseInstant(publishedAt);
+                Optional<Instant> internalAtTs = ZammadDocumentBuilder.parseInstant(internalAt);
+
+                boolean isArchived = isTimestampReached(archivedAtTs, now);
+                boolean isPublished = !isArchived && (isTimestampReached(publishedAtTs, now)
+                        || (publishedAt == null && ans.path("published").asBoolean(false)));
+                boolean isInternal = !isArchived && !isPublished && (isTimestampReached(internalAtTs, now)
+                        || (internalAt == null && ans.path("internal").asBoolean(false)));
+                boolean active = isPublished || isInternal;
+                boolean internal = isInternal;
+
                 String updatedAt = firstNonBlank(
                         ZammadDocumentBuilder.text(ans, "updated_at"),
                         internalAt,
                         publishedAt);
-                List<String> readerRoles = categoryReaderRoles.getOrDefault(categoryId, List.of());
+                CategoryPermissions perms = categoryPermissions.getOrDefault(
+                        categoryId, kbLevelPermissions.getOrDefault(kbId, CategoryPermissions.NONE));
                 List<KbTranslation> translations = new ArrayList<>(
                         translationsByAnswer.getOrDefault(answerId, List.of()));
                 if (translations.isEmpty()) {
-                    translations.addAll(extractAnswerTranslations(ans, localesById));
+                    translations.addAll(extractAnswerTranslations(ans, answerId, localesById));
                 }
                 results.add(new KbAnswerRecord(
                         kbId, answerId, categoryId, categoryTitle, active, internal,
-                        updatedAt, readerRoles, translations, localesById));
+                        updatedAt, perms.readerRoles(), perms.explicit(), translations, localesById));
             });
         }
         return results;
     }
 
-    private List<String> extractCategoryRoles(JsonNode categoryNode, JsonNode permissionsAssets) {
+    private static boolean isTimestampReached(Optional<Instant> timestamp, Instant now) {
+        return timestamp.isPresent() && !timestamp.get().isAfter(now);
+    }
+
+    private CategoryPermissions extractPermissionsFromNode(JsonNode ownerNode, JsonNode permissionsAssets) {
         List<String> roles = new ArrayList<>();
-        JsonNode inlinePerms = categoryNode.path("permissions");
-        if (inlinePerms.isArray()) {
+        // Zammad computes inherited effective permissions into permissions_effective; when non-empty it is authoritative.
+        JsonNode effectivePerms = ownerNode.path("permissions_effective");
+        if (effectivePerms.isArray() && !effectivePerms.isEmpty()) {
+            for (JsonNode perm : effectivePerms) {
+                addRoleFromPermission(perm, roles);
+            }
+            return new CategoryPermissions(List.copyOf(roles), true);
+        }
+
+        boolean explicit = false;
+        JsonNode inlinePerms = ownerNode.path("permissions");
+        if (inlinePerms.isArray() && !inlinePerms.isEmpty()) {
+            explicit = true;
             for (JsonNode perm : inlinePerms) {
                 addRoleFromPermission(perm, roles);
             }
         }
-        long catId = categoryNode.path("id").asLong(-1L);
-        if (catId > 0 && permissionsAssets != null && permissionsAssets.isObject()) {
-            permissionsAssets.forEach(perm -> {
-                if (perm.path("permissionable_id").asLong(-1L) == catId) {
+        long ownerId = ownerNode.path("id").asLong(-1L);
+        if (ownerId > 0 && permissionsAssets != null && permissionsAssets.isObject()) {
+            for (JsonNode perm : permissionsAssets) {
+                if (perm.path("permissionable_id").asLong(-1L) == ownerId) {
+                    explicit = true;
                     addRoleFromPermission(perm, roles);
                 }
-            });
+            }
         }
-        return List.copyOf(roles);
+        return new CategoryPermissions(List.copyOf(roles), explicit);
     }
 
     private void addRoleFromPermission(JsonNode perm, List<String> roles) {
@@ -796,7 +965,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
     }
 
-    private List<KbTranslation> extractAnswerTranslations(JsonNode answerPayload, Map<Long, String> localesById) {
+    private List<KbTranslation> extractAnswerTranslations(JsonNode answerPayload, long targetAnswerId, Map<Long, String> localesById) {
         JsonNode root = answerPayload.has("assets") ? answerPayload : answerPayload;
         List<KbTranslation> list = new ArrayList<>();
         JsonNode translations = root.path("translations");
@@ -806,11 +975,12 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 String locale = ZammadDocumentBuilder.textOrDefault(tr, "locale",
                         localesById.getOrDefault(locId, "en"));
                 String title = ZammadDocumentBuilder.textOrDefault(tr, "title", "Knowledge Base Answer");
+                long contentId = tr.path("content_id").asLong(-1L);
                 String body = firstNonBlank(
                         ZammadDocumentBuilder.text(tr, "body"),
                         ZammadDocumentBuilder.text(tr.path("content"), "body"));
                 if (body != null) {
-                    list.add(new KbTranslation(locale, title, body));
+                    list.add(new KbTranslation(locale, title, body, contentId));
                 }
             }
         }
@@ -824,6 +994,10 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 }
             });
             answerPayload.path("assets").path("KnowledgeBaseAnswerTranslation").forEach(tr -> {
+                long ansId = tr.path("answer_id").asLong(-1L);
+                if (targetAnswerId > 0 && ansId > 0 && ansId != targetAnswerId) {
+                    return;
+                }
                 long locId = tr.path("kb_locale_id").asLong(-1L);
                 String locale = ZammadDocumentBuilder.textOrDefault(tr, "locale",
                         localesById.getOrDefault(locId, "en"));
@@ -834,7 +1008,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                         ZammadDocumentBuilder.text(tr.path("content"), "body"),
                         bodies.get(contentId));
                 if (body != null) {
-                    list.add(new KbTranslation(locale, title, body));
+                    list.add(new KbTranslation(locale, title, body, contentId));
                 }
             });
         }
@@ -916,25 +1090,37 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             }
 
             int page = 1;
-            int pageSize = settings.pageSize();
+            int effectivePageSize = (query != null)
+                    ? Math.min(settings.pageSize(), ZammadClient.MAX_TICKETS_SEARCH_PAGE_SIZE)
+                    : Math.min(settings.pageSize(), ZammadClient.MAX_TICKETS_INDEX_PAGE_SIZE);
+            Set<Long> seenIds = new HashSet<>();
             while (true) {
                 if (System.nanoTime() - deadline > 0) {
                     return new DryRunResult(matched, CountAccuracy.LOWER_BOUND, samples, hidden, TruncationReason.TIMEOUT);
                 }
                 List<JsonNode> tickets = (query != null)
-                        ? client.searchTicketsPage(query, page, pageSize)
-                        : client.listTicketsPage(page, pageSize);
+                        ? client.searchTicketsPage(query, page, effectivePageSize)
+                        : client.listTicketsPage(page, effectivePageSize);
                 if (tickets.isEmpty()) {
                     break;
                 }
+                int newTickets = 0;
                 List<DiscoveryNode> pageNodes = new ArrayList<>();
                 for (JsonNode ticket : tickets) {
+                    long tid = ticket.path("id").asLong(-1L);
+                    if (tid > 0 && !seenIds.add(tid)) {
+                        continue;
+                    }
+                    newTickets++;
                     String groupName = resolveGroupName(ticket);
                     String stateName = resolveStateName(ticket);
                     if (!settings.acceptsGroup(groupName) || !settings.acceptsTicketState(stateName)) {
                         continue;
                     }
                     pageNodes.addAll(ticketDiscoveryNodes(ticket, groupName, stateName, "group:" + ticket.path("group_id").asLong(0L), 1));
+                }
+                if (newTickets == 0) {
+                    break;
                 }
                 boolean[] visible = VisibilityFilter.decide(filter, pageNodes);
                 for (int i = 0; i < visible.length; i++) {
@@ -950,9 +1136,6 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     if (samples.size() < request.sampleSize()) {
                         samples.add(pageNodes.get(i));
                     }
-                }
-                if (tickets.size() < pageSize) {
-                    break;
                 }
                 page++;
             }
@@ -1048,7 +1231,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     .filter(a -> a.path("internal").asBoolean(false) == targetInternal)
                     .sorted(Comparator.comparingLong(a -> a.path("id").asLong(0L)))
                     .toList();
-            if (internal && filteredArticles.isEmpty()) {
+            if (filteredArticles.isEmpty()) {
                 return new FetchedDocument.Gone(canonicalId);
             }
             RepositoryDocument doc = ZammadDocumentBuilder.buildTicketThread(ctx, filteredArticles, internal, security);

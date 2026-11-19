@@ -36,7 +36,7 @@ import java.util.Map;
  *
  * <ul>
  *   <li>{@code watermark}: the high-water {@code updated_at} timestamp used for incremental ticket search
- *       ({@code GET /api/v1/tickets/search?query=updated_at:>=...});</li>
+ *       ({@code GET /api/v1/tickets/search?query=updated_at:[<watermark> TO *]});</li>
  *   <li>{@code tickets}: per ticket ID, the last indexed {@code updated_at} timestamp, ACL fingerprint, and the list of
  *       emitted OIS document IDs (public thread, internal thread, per-article docs, and attachments);</li>
  *   <li>{@code kbAnswers}: per Knowledge Base answer ID, the last indexed {@code updated_at} timestamp, ACL fingerprint,
@@ -75,8 +75,9 @@ public final class ZammadCrawlState {
 
     private static String defaultFileName(ZammadProperties settings) {
         String scope = settings.baseUrl() + "|" + settings.groupNames() + "|" + settings.ticketStates() + "|"
-                + settings.articleGranularity() + "|" + settings.includeInternalArticles() + "|"
-                + settings.includeAttachments() + "|" + settings.includeKnowledgeBase();
+                + settings.includeTickets() + "|" + settings.articleGranularity() + "|"
+                + settings.includeInternalArticles() + "|" + settings.includeAttachments() + "|"
+                + settings.includeKnowledgeBase();
         return (settings.instanceKey() + "-" + hash(scope)).replaceAll("[^A-Za-z0-9._-]", "_") + ".json";
     }
 

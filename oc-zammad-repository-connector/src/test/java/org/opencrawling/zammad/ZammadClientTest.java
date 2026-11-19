@@ -149,4 +149,67 @@ class ZammadClientTest {
             assertThat(Files.exists(tooBigFile)).isFalse();
         }
     }
+
+    @Test
+    void clampsTicketPageSizePaginatesMetadataAndRecordsServerClockAndRetryAfter() throws Exception {
+        AtomicReference<String> listQuery = new AtomicReference<>();
+        AtomicReference<String> searchQuery = new AtomicReference<>();
+
+        server.createContext("/api/v1/tickets", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String query = exchange.getRequestURI().getQuery();
+            if ("/api/v1/tickets/search".equals(path)) {
+                searchQuery.set(query);
+            } else {
+                listQuery.set(query);
+            }
+            exchange.getResponseHeaders().set("Date", "Thu, 19 Nov 2026 10:00:00 GMT");
+            byte[] body = "[]".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+
+        server.createContext("/api/v1/groups", exchange -> {
+            String query = exchange.getRequestURI().getQuery();
+            String json = (query != null && query.startsWith("page=2&"))
+                    ? "[{\"id\":3,\"name\":\"Group-3\"}]"
+                    : "[{\"id\":1,\"name\":\"Group-1\"},{\"id\":2,\"name\":\"Group-2\"}]";
+            byte[] body = json.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        server.start();
+
+        ZammadProperties props = ZammadProperties.fromConfiguration(Map.of(
+                "baseUrl", baseUrl,
+                "authType", "token",
+                "accessToken", "tok"
+        ));
+        try (ZammadClient client = new ZammadClient(props)) {
+            client.listTicketsPage(1, 500);
+            client.searchTicketsPage("*", 1, 500);
+            assertThat(listQuery.get()).contains("per_page=100");
+            assertThat(searchQuery.get()).contains("per_page=200");
+            // JDK HttpServer always emits a live RFC 1123 Date header; verify ZammadClient captures it
+            assertThat(client.lastServerTime()).isPresent();
+            assertThat(client.lastServerTime().get())
+                    .isBetween(java.time.Instant.now().minusSeconds(60), java.time.Instant.now().plusSeconds(60));
+
+            List<JsonNode> pagedGroups = client.listAllPaginated("/api/v1/groups", 2);
+            assertThat(pagedGroups).hasSize(3);
+            assertThat(pagedGroups).extracting(n -> n.path("id").asInt()).containsExactly(1, 2, 3);
+        }
+
+        assertThat(ZammadClient.parseRetryAfterMs("5")).isEqualTo(5_000L);
+        assertThat(ZammadClient.parseRetryAfterMs("999")).isEqualTo(60_000L);
+        String futureHttpDate = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(10));
+        assertThat(ZammadClient.parseRetryAfterMs(futureHttpDate)).isBetween(1_000L, 15_000L);
+    }
 }

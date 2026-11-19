@@ -145,4 +145,24 @@ class ZammadSecurityMapperTest {
         assertThat(internal.acl()).isEqualTo("zammad-role-Agent,zammad-role-Security-Team");
         assertThat(internal.groups()).containsExactly("zammad-role-Agent", "zammad-role-Security-Team");
     }
+
+    @Test
+    void explicitKbPermissionsDenyingAllRolesFailClosedInsteadOfFallingBackToAgentGroups() {
+        ZammadProperties props = ZammadProperties.fromConfiguration(Map.of(
+                "baseUrl", "https://support.acme.com",
+                "accessToken", "test-token",
+                "allowPublicKb", "false"
+        ));
+        ZammadSecurityMapper mapper = new ZammadSecurityMapper(props);
+
+        // No explicit permissions configured -> falls back to active agent groups
+        ZammadSecurityMapper.Mapped fallback = mapper.forKnowledgeBase(List.of(), false, List.of("Support", "Ops"), true);
+        assertThat(fallback.groups()).containsExactly("zammad-group-Support", "zammad-group-Ops");
+
+        // Explicit granular permissions present (e.g. all entries access="none") -> fails closed
+        ZammadSecurityMapper.Mapped denied = mapper.forKnowledgeBase(List.of(), true, List.of("Support", "Ops"), true);
+        assertThat(denied.acl()).isEmpty();
+        assertThat(denied.groups()).isEmpty();
+        assertThat(denied.security().permissions()).isEmpty();
+    }
 }

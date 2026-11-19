@@ -85,7 +85,7 @@ public record ZammadProperties(
     }
 
     public enum CrawlMode {
-        /** Incremental ticket search by {@code updated_at:>=...} with persistent {@link ZammadCrawlState}. */
+        /** Incremental ticket search by {@code updated_at:[<watermark> TO *]} with persistent {@link ZammadCrawlState}. */
         SEARCH_DELTA,
         /** Full scan across all tickets and Knowledge Base entries. */
         FULL
@@ -128,7 +128,7 @@ public record ZammadProperties(
         boolean includeCustomer = bool(c, "includeCustomerInPublicAcl", true);
         boolean includeSharedOrg = bool(c, "includeSharedOrganizationInPublicAcl", true);
         boolean allowPublicKb = bool(c, "allowPublicKb", false);
-        int pageSize = Math.max(1, Math.min(500, integer(c, "pageSize", 50)));
+        int pageSize = Math.max(1, Math.min(ZammadClient.MAX_TICKETS_SEARCH_PAGE_SIZE, integer(c, "pageSize", 50)));
         int parallelism = Math.max(1, integer(c, "parallelism", 4));
         int maxRetries = Math.max(0, integer(c, "maxRetries", 5));
         long initialBackoffMs = Math.max(10L, longValue(c, "initialBackoffMs", 1000L));

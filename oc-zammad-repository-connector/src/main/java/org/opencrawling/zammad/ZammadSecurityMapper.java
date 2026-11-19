@@ -162,6 +162,26 @@ public class ZammadSecurityMapper {
      * @param internal        {@code true} when the KB answer is marked internal (or unpublished)
      */
     public Mapped forKnowledgeBase(List<String> readerRoleNames, List<String> fallbackGroups, boolean internal) {
+        return forKnowledgeBase(readerRoleNames, false, fallbackGroups, internal);
+    }
+
+    /**
+     * Computes effective OIS security for a Zammad Knowledge Base category or answer, distinguishing categories
+     * with no granular permissions from categories whose explicit permissions deny all roles ({@code access: "none"}).
+     *
+     * @param readerRoleNames     role names granted {@code reader} or {@code editor} access on the KB category
+     * @param explicitPermissions {@code true} when granular permission entries exist on the category/KB; if
+     *                            {@code readerRoleNames} is empty under explicit permissions, fails closed instead
+     *                            of falling back to all active agent groups
+     * @param fallbackGroups      active agent group names when no granular permissions are configured
+     * @param internal            {@code true} when the KB answer is marked internal (or unpublished)
+     */
+    public Mapped forKnowledgeBase(
+            List<String> readerRoleNames,
+            boolean explicitPermissions,
+            List<String> fallbackGroups,
+            boolean internal
+    ) {
         if (!settings.includeAcls()) {
             return publicAccess();
         }
@@ -184,7 +204,7 @@ public class ZammadSecurityMapper {
             }
         }
 
-        if (groups.isEmpty() && fallbackGroups != null) {
+        if (groups.isEmpty() && !explicitPermissions && fallbackGroups != null) {
             for (String group : fallbackGroups) {
                 String sanitized = sanitizeToken(group);
                 if (sanitized != null) {

@@ -3366,7 +3366,7 @@ export default function ConnectorForm() {
                           defaultValue="search_delta"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
-                          <option value="search_delta">Incremental Search Delta (updated_at:&gt;=…)</option>
+                          <option value="search_delta">Incremental Search Delta (updated_at:[… TO *])</option>
                           <option value="full">Full Scan & Tombstone Reconciliation</option>
                         </select>
                       </div>

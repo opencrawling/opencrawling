@@ -637,7 +637,8 @@ class ConnectorCheckerServiceTest {
 
         HttpServer zammad = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         zammad.createContext("/api/v1/users/me", exchange -> {
-            byte[] bytes = "{\"id\":2,\"email\":\"crawler@acme.com\"}".getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = "{\"id\":2,\"login\":\"crawler@acme.com\",\"email\":\"crawler@acme.com\",\"active\":true,\"phone\":\"+1-555-0100\",\"preferences\":{\"secret\":\"omit\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             exchange.getResponseBody().write(bytes);
@@ -653,6 +654,9 @@ class ConnectorCheckerServiceTest {
             ConnectionCheckResult ok = checker.check(valid);
             assertTrue(ok.success(), ok.message());
             assertTrue(ok.message().contains("crawler@acme.com"), ok.message());
+            assertTrue(ok.details().contains("\"email\":\"crawler@acme.com\""), ok.details());
+            assertFalse(ok.details().contains("preferences"), ok.details());
+            assertFalse(ok.details().contains("+1-555-0100"), ok.details());
         } finally {
             zammad.stop(0);
         }

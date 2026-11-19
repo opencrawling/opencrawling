@@ -9,7 +9,7 @@ The **Zammad Repository Connector** (`oc-zammad-repository-connector`) crawls **
   - `PER_ARTICLE`: Emits one OIS document per ticket article (`zammad://<host>/tickets/<id>/articles/<articleId>`).
   - `PUBLIC_ONLY`: Ingests only customer-visible articles (`internal: false`).
 - **Incremental `SEARCH_DELTA` Crawling & Tombstone Lifecycle**:
-  - Queries `GET /api/v1/tickets/search?query=updated_at:>=...&sort_by=updated_at&order_by=asc` and persists watermarks, emitted OIS document IDs, and ACL fingerprints in `ZammadCrawlState`, emitting `DocumentAction.DELETE` tombstones when tickets, articles, attachments, or Knowledge Base answers are removed or excluded.
+  - Queries `GET /api/v1/tickets/search?query=updated_at:[<watermark> TO *]&sort_by=updated_at&order_by=asc` and persists watermarks, emitted OIS document IDs, and ACL fingerprints in `ZammadCrawlState`, emitting `DocumentAction.DELETE` tombstones when tickets, articles, attachments, or Knowledge Base answers are removed or excluded.
 - **Zero-Trust Security (`ZammadSecurityMapper`)**:
   - Maps Zammad group permissions (`zammad-group-<groupName>`), customer email principals (`user:<customerEmail>`), shared organizations (`zammad-org-<orgName>` when `organization.shared == true`), and Knowledge Base category roles (`zammad-role-<roleName>`) into OIS `SecurityConfig`, failing closed when permissions cannot be resolved.
 - **Pre-Crawl Discovery & On-Demand Fetching**:

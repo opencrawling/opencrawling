@@ -32,10 +32,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Lightweight HTTP client for the Zammad REST API v1 ({@code /api/v1/...}) built on Java 25 {@link HttpClient}.
@@ -43,11 +50,18 @@ import java.util.Optional;
  * <p>Supports Zammad HTTP Access Token ({@code Authorization: Token token=...}), OAuth2 Bearer
  * ({@code Authorization: Bearer ...}), and Basic authentication, plus optional {@code X-On-Behalf-Of} user
  * delegation. Transient failures and HTTP {@code 429}/{@code 502}/{@code 503}/{@code 504} responses are retried
- * honoring {@code Retry-After} with exponential backoff.
+ * honoring {@code Retry-After} (seconds or RFC 1123 HTTP-date) with jittered exponential backoff.
  */
 public class ZammadClient implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ZammadClient.class);
+
+    /** Zammad {@code TicketsController#index} enforces {@code paginate_with(max: 100)}. */
+    public static final int MAX_TICKETS_INDEX_PAGE_SIZE = 100;
+    /** Zammad {@code model_search_render} enforces {@code paginate_with(max: 200, default: 50)}. */
+    public static final int MAX_TICKETS_SEARCH_PAGE_SIZE = 200;
+    /** Zammad {@code model_index_render} defaults to 500 records per page for groups, roles, states, and priorities. */
+    public static final int METADATA_PAGE_SIZE = 500;
 
     private final ZammadProperties settings;
     private final String baseUrl;
@@ -55,8 +69,10 @@ public class ZammadClient implements AutoCloseable {
     private final int maxRetries;
     private final long initialBackoffMs;
     private final HttpClient http;
+    private final boolean ownsHttpClient;
     private final ObjectMapper mapper;
     private final String authorizationHeader;
+    private volatile Instant lastServerTime;
 
     public ZammadClient(ZammadProperties settings) {
         this(settings,
@@ -64,22 +80,36 @@ public class ZammadClient implements AutoCloseable {
                         .connectTimeout(settings.timeout())
                         .followRedirects(HttpClient.Redirect.NORMAL)
                         .build(),
-                new ObjectMapper());
+                new ObjectMapper(),
+                true);
     }
 
     public ZammadClient(ZammadProperties settings, HttpClient http, ObjectMapper mapper) {
+        this(settings, http, mapper, false);
+    }
+
+    private ZammadClient(ZammadProperties settings, HttpClient http, ObjectMapper mapper, boolean ownsHttpClient) {
         this.settings = settings;
         this.baseUrl = settings.baseUrl();
         this.timeout = settings.timeout();
         this.maxRetries = settings.maxRetries();
         this.initialBackoffMs = settings.initialBackoffMs();
         this.http = http;
+        this.ownsHttpClient = ownsHttpClient;
         this.mapper = mapper;
         this.authorizationHeader = buildAuthorizationHeader(settings);
     }
 
     public String getBaseUrl() {
         return baseUrl;
+    }
+
+    /**
+     * Returns the most recent server timestamp parsed from an HTTP {@code Date} response header, if present.
+     * Used to anchor incremental search watermarks in Zammad's clock domain rather than the crawler host clock.
+     */
+    public Optional<Instant> lastServerTime() {
+        return Optional.ofNullable(lastServerTime);
     }
 
     private static String buildAuthorizationHeader(ZammadProperties settings) {
@@ -101,15 +131,15 @@ public class ZammadClient implements AutoCloseable {
         return getJson("/api/v1/users/me");
     }
 
-    /** {@code GET /api/v1/groups}: lists all Zammad groups. */
+    /** {@code GET /api/v1/groups}: lists all Zammad groups across all pages. */
     public List<JsonNode> listGroups() throws IOException, InterruptedException {
-        return items(getJson("/api/v1/groups"));
+        return listAllPaginated("/api/v1/groups", METADATA_PAGE_SIZE);
     }
 
-    /** {@code GET /api/v1/roles}: lists all Zammad roles and their group permissions. */
+    /** {@code GET /api/v1/roles}: lists all Zammad roles and their group permissions across all pages. */
     public List<JsonNode> listRoles() throws IOException, InterruptedException {
         try {
-            return items(getJson("/api/v1/roles"));
+            return listAllPaginated("/api/v1/roles", METADATA_PAGE_SIZE);
         } catch (ZammadApiException e) {
             if (e.isUnauthorized() || e.isNotFound()) {
                 log.debug("Zammad /api/v1/roles not readable (HTTP {}); relying on group and ticket metadata.", e.status());
@@ -119,10 +149,10 @@ public class ZammadClient implements AutoCloseable {
         }
     }
 
-    /** {@code GET /api/v1/ticket_states}: lists ticket state definitions ({@code id}, {@code name}). */
+    /** {@code GET /api/v1/ticket_states}: lists all ticket state definitions ({@code id}, {@code name}). */
     public List<JsonNode> listTicketStates() throws IOException, InterruptedException {
         try {
-            return items(getJson("/api/v1/ticket_states"));
+            return listAllPaginated("/api/v1/ticket_states", METADATA_PAGE_SIZE);
         } catch (ZammadApiException e) {
             if (e.isUnauthorized() || e.isNotFound()) {
                 return List.of();
@@ -131,16 +161,45 @@ public class ZammadClient implements AutoCloseable {
         }
     }
 
-    /** {@code GET /api/v1/ticket_priorities}: lists ticket priority definitions ({@code id}, {@code name}). */
+    /** {@code GET /api/v1/ticket_priorities}: lists all ticket priority definitions ({@code id}, {@code name}). */
     public List<JsonNode> listTicketPriorities() throws IOException, InterruptedException {
         try {
-            return items(getJson("/api/v1/ticket_priorities"));
+            return listAllPaginated("/api/v1/ticket_priorities", METADATA_PAGE_SIZE);
         } catch (ZammadApiException e) {
             if (e.isUnauthorized() || e.isNotFound()) {
                 return List.of();
             }
             throw e;
         }
+    }
+
+    /**
+     * Paginates a Zammad {@code model_index_render} collection endpoint until an empty page, a short page, or a page
+     * containing only previously seen record IDs is returned.
+     */
+    List<JsonNode> listAllPaginated(String basePath, int perPage) throws IOException, InterruptedException {
+        int clampedPerPage = Math.max(1, perPage);
+        List<JsonNode> all = new ArrayList<>();
+        Set<Long> seenIds = new HashSet<>();
+        for (int page = 1; ; page++) {
+            String separator = basePath.contains("?") ? "&" : "?";
+            List<JsonNode> pageItems = items(getJson(basePath + separator + "page=" + page + "&per_page=" + clampedPerPage));
+            if (pageItems.isEmpty()) {
+                break;
+            }
+            int added = 0;
+            for (JsonNode item : pageItems) {
+                long id = item.path("id").asLong(-1L);
+                if (id <= 0 || seenIds.add(id)) {
+                    all.add(item);
+                    added++;
+                }
+            }
+            if (added == 0 || pageItems.size() < clampedPerPage) {
+                break;
+            }
+        }
+        return List.copyOf(all);
     }
 
     /** {@code GET /api/v1/users/{id}}: retrieves a Zammad user (e.g. customer or owner). */
@@ -175,22 +234,26 @@ public class ZammadClient implements AutoCloseable {
 
     // ------------------------------------------------------------------ Tickets, Articles, Tags & Attachments
 
-    /** {@code GET /api/v1/tickets?page={page}&per_page={perPage}&expand=true}: lists a page of tickets. */
+    /** {@code GET /api/v1/tickets?page={page}&per_page={perPage}&expand=true}: lists a page of tickets (capped at 100 per Zammad's {@code TicketsController#index}). */
     public List<JsonNode> listTicketsPage(int page, int perPage) throws IOException, InterruptedException {
-        JsonNode result = getJson("/api/v1/tickets?page=" + page + "&per_page=" + perPage + "&expand=true");
+        int clampedPage = Math.max(1, page);
+        int clampedPerPage = Math.max(1, Math.min(MAX_TICKETS_INDEX_PAGE_SIZE, perPage));
+        JsonNode result = getJson("/api/v1/tickets?page=" + clampedPage + "&per_page=" + clampedPerPage + "&expand=true");
         return extractTickets(result);
     }
 
     /**
      * {@code GET /api/v1/tickets/search?query=...&sort_by=updated_at&order_by=asc&page=...&per_page=...&expand=true}:
-     * searches tickets matching a Zammad search expression.
+     * searches tickets matching a Zammad search expression (capped at 200 per Zammad's {@code model_search_render}).
      *
      * <p>Supports both direct array responses and Zammad's {@code assets.Ticket} envelope response.
      */
     public List<JsonNode> searchTicketsPage(String query, int page, int perPage) throws IOException, InterruptedException {
         String q = (query == null || query.isBlank()) ? "*" : query.strip();
+        int clampedPage = Math.max(1, page);
+        int clampedPerPage = Math.max(1, Math.min(MAX_TICKETS_SEARCH_PAGE_SIZE, perPage));
         String path = "/api/v1/tickets/search?query=" + enc(q)
-                + "&sort_by=updated_at&order_by=asc&page=" + page + "&per_page=" + perPage + "&expand=true";
+                + "&sort_by=updated_at&order_by=asc&page=" + clampedPage + "&per_page=" + clampedPerPage + "&expand=true";
         JsonNode result = getJson(path);
         return extractTickets(result);
     }
@@ -315,18 +378,34 @@ public class ZammadClient implements AutoCloseable {
     // ------------------------------------------------------------------ Knowledge Base
 
     /**
-     * {@code GET /api/v1/knowledge_bases/init}: retrieves the Zammad Knowledge Base structure (knowledge bases,
-     * categories, permissions, locales, and answer descriptors). Returns empty when Knowledge Base is not enabled.
+     * {@code POST /api/v1/knowledge_bases/init}: retrieves the Zammad Knowledge Base structure (knowledge bases,
+     * categories, permissions, locales, and answer descriptors). Falls back to {@code GET /api/v1/knowledge_bases/init}
+     * if a proxy or mock exposes only GET, and returns empty when Knowledge Base is not enabled.
      */
     public Optional<JsonNode> getKnowledgeBaseInit() throws IOException, InterruptedException {
         try {
-            JsonNode json = getJson("/api/v1/knowledge_bases/init");
+            JsonNode json = postJson("/api/v1/knowledge_bases/init", "{}");
             if (json == null || json.isNull() || json.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.of(json);
         } catch (ZammadApiException e) {
-            if (e.isNotFound() || e.isUnauthorized()) {
+            if (e.status() == 404 || e.status() == 405) {
+                try {
+                    JsonNode fallback = getJson("/api/v1/knowledge_bases/init");
+                    if (fallback == null || fallback.isNull() || fallback.isEmpty()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(fallback);
+                } catch (ZammadApiException fallbackEx) {
+                    if (fallbackEx.isNotFound() || fallbackEx.isUnauthorized()) {
+                        log.debug("Zammad Knowledge Base endpoint /api/v1/knowledge_bases/init answered HTTP {}; skipping KB.", fallbackEx.status());
+                        return Optional.empty();
+                    }
+                    throw fallbackEx;
+                }
+            }
+            if (e.isUnauthorized()) {
                 log.debug("Zammad Knowledge Base endpoint /api/v1/knowledge_bases/init answered HTTP {}; skipping KB.", e.status());
                 return Optional.empty();
             }
@@ -335,12 +414,30 @@ public class ZammadClient implements AutoCloseable {
     }
 
     /**
-     * {@code GET /api/v1/knowledge_bases/{kbId}/answers/{answerId}?include_contents=true}: retrieves a Knowledge Base
+     * {@code GET /api/v1/knowledge_bases/{kbId}/answers/{answerId}?include_contents=...}: retrieves a Knowledge Base
      * answer including its localized translations and body content.
      */
     public Optional<JsonNode> getKnowledgeBaseAnswer(long kbId, long answerId) throws IOException, InterruptedException {
+        return getKnowledgeBaseAnswer(kbId, answerId, List.of());
+    }
+
+    /**
+     * {@code GET /api/v1/knowledge_bases/{kbId}/answers/{answerId}?include_contents=<ids>}: retrieves a Knowledge Base
+     * answer with the requested {@code KnowledgeBaseAnswerTranslationContent} IDs (as expected by Zammad's
+     * {@code KnowledgeBase::AnswersController#show}).
+     */
+    public Optional<JsonNode> getKnowledgeBaseAnswer(long kbId, long answerId, List<Long> contentIds)
+            throws IOException, InterruptedException {
+        String includeParam = (contentIds != null && !contentIds.isEmpty())
+                ? contentIds.stream().filter(id -> id != null && id > 0).map(Object::toString)
+                        .collect(java.util.stream.Collectors.joining(","))
+                : "true";
+        if (includeParam.isBlank()) {
+            includeParam = "true";
+        }
         try {
-            return Optional.of(getJson("/api/v1/knowledge_bases/" + kbId + "/answers/" + answerId + "?include_contents=true"));
+            return Optional.of(getJson("/api/v1/knowledge_bases/" + kbId + "/answers/" + answerId
+                    + "?include_contents=" + enc(includeParam)));
         } catch (ZammadApiException e) {
             if (e.isNotFound() || e.isUnauthorized()) {
                 return Optional.empty();
@@ -363,6 +460,18 @@ public class ZammadClient implements AutoCloseable {
         return (body == null || body.isBlank()) ? mapper.createObjectNode() : mapper.readTree(body);
     }
 
+    public JsonNode postJson(String path, String jsonBody) throws IOException, InterruptedException {
+        HttpResponse<String> response = sendWithRetries(
+                postRequest(uri(path), jsonBody == null ? "{}" : jsonBody),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new ZammadApiException(response.statusCode(),
+                    "POST " + stripQuery(path) + " answered HTTP " + response.statusCode() + " " + excerpt(response.body()));
+        }
+        String body = response.body();
+        return (body == null || body.isBlank()) ? mapper.createObjectNode() : mapper.readTree(body);
+    }
+
     private HttpRequest request(URI uri, String accept) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(timeout)
@@ -375,16 +484,30 @@ public class ZammadClient implements AutoCloseable {
         return builder.build();
     }
 
+    private HttpRequest postRequest(URI uri, String jsonBody) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+                .timeout(timeout)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Authorization", authorizationHeader)
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8));
+        if (settings.onBehalfOf() != null && !settings.onBehalfOf().isBlank()) {
+            builder.header("X-On-Behalf-Of", settings.onBehalfOf());
+        }
+        return builder.build();
+    }
+
     private <T> HttpResponse<T> sendWithRetries(HttpRequest request, HttpResponse.BodyHandler<T> handler)
             throws IOException, InterruptedException {
         for (int attempt = 0; ; attempt++) {
             try {
                 HttpResponse<T> response = http.send(request, handler);
+                recordServerTime(response);
                 int status = response.statusCode();
                 if ((status == 429 || status == 502 || status == 503 || status == 504) && attempt < maxRetries) {
-                    long retryAfterSeconds = response.headers().firstValueAsLong("Retry-After").orElse(-1L);
+                    long retryAfterMs = parseRetryAfterMs(response.headers().firstValue("Retry-After").orElse(null));
                     discard(response);
-                    pause(attempt, retryAfterSeconds);
+                    pause(attempt, retryAfterMs);
                     continue;
                 }
                 return response;
@@ -398,13 +521,45 @@ public class ZammadClient implements AutoCloseable {
         }
     }
 
-    private void pause(int attempt, long retryAfterSeconds) throws InterruptedException {
+    private void recordServerTime(HttpResponse<?> response) {
+        response.headers().firstValue("Date").ifPresent(header -> {
+            try {
+                this.lastServerTime = ZonedDateTime.parse(header.strip(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+            } catch (DateTimeParseException ignored) {
+                // Ignore non-standard Date headers
+            }
+        });
+    }
+
+    static long parseRetryAfterMs(String headerValue) {
+        if (headerValue == null || headerValue.isBlank()) {
+            return -1L;
+        }
+        String trimmed = headerValue.strip();
+        try {
+            long seconds = Long.parseLong(trimmed);
+            return seconds > 0 ? Math.min(seconds * 1000L, 60_000L) : -1L;
+        } catch (NumberFormatException ignored) {
+            // Fall through to RFC 1123 HTTP-date parsing
+        }
+        try {
+            Instant target = ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+            long deltaMs = Duration.between(Instant.now(), target).toMillis();
+            return deltaMs > 0 ? Math.min(deltaMs, 60_000L) : -1L;
+        } catch (DateTimeParseException ignored) {
+            return -1L;
+        }
+    }
+
+    private void pause(int attempt, long retryAfterMs) throws InterruptedException {
         long delayMs;
-        if (retryAfterSeconds > 0) {
-            delayMs = Math.min(retryAfterSeconds * 1000L, 60_000L);
+        if (retryAfterMs > 0) {
+            delayMs = Math.min(retryAfterMs, 60_000L);
         } else {
-            long exp = initialBackoffMs * (1L << Math.min(attempt, 5));
-            delayMs = Math.min(exp, 30_000L);
+            long exp = Math.min(initialBackoffMs * (1L << Math.min(attempt, 5)), 30_000L);
+            long jitterBound = Math.max(1L, exp / 2);
+            long jitter = ThreadLocalRandom.current().nextLong(0, jitterBound);
+            delayMs = Math.min(exp + jitter, 30_000L);
         }
         Thread.sleep(delayMs);
     }
@@ -454,6 +609,8 @@ public class ZammadClient implements AutoCloseable {
 
     @Override
     public void close() {
-        // Stateless HTTP token/bearer/basic auth; nothing to close.
+        if (ownsHttpClient) {
+            http.close();
+        }
     }
 }
