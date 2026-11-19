@@ -19,8 +19,9 @@
 # OpenCrawling - Ephemeral / Release Version Stamping Utility
 #
 # Updates all Maven reactor POMs, standalone modules (oc-connector-archetypes,
-# oc-java-client-sdk, oc-mcf-migrator), archetype resource templates, and CLI
-# version banners to <target-version> (e.g. 1.0.5-rc.20261117 or 1.0.5).
+# oc-java-client-sdk, oc-mcf-migrator, oc-python-client-sdk), archetype resource
+# templates, and CLI version banners to <target-version> (e.g. 1.0.5-rc.20261117
+# or 1.0.5).
 #
 # Usage:
 #   ./scripts/stamp-version.sh <target-version> [--skip-validate]
@@ -85,6 +86,39 @@ replace_in_file "s|<opencrawling\\.version>[^<]*</opencrawling\\.version>|<openc
   oc-cli/src/main/java/org/opencrawling/cli/commands/ArchetypeCommand.java
 replace_in_file "s|OpenCrawling CLI v[^\" ]*|OpenCrawling CLI v${TARGET_VER}|g" \
   oc-cli/src/main/java/org/opencrawling/cli/OpenCrawlingCliCommand.java
+
+# Translate Maven version to PEP 440 for oc-python-client-sdk:
+#   1.0.5-SNAPSHOT     -> 1.0.5.dev0
+#   1.0.5-rc.20261118  -> 1.0.5rc20261118
+#   1.0.5-RC1          -> 1.0.5rc1
+#   1.0.5              -> 1.0.5
+to_pep440() {
+  local ver="$1"
+  if [[ "$ver" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-SNAPSHOT$ ]]; then
+    echo "${BASH_REMATCH[1]}.dev0"
+  elif [[ "$ver" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-[Rr][Cc]\.?([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}"
+  elif [[ "$ver" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-alpha\.?([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}a${BASH_REMATCH[2]}"
+  elif [[ "$ver" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-beta\.?([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}b${BASH_REMATCH[2]}"
+  else
+    echo "$ver"
+  fi
+}
+
+if [ -f oc-python-client-sdk/pyproject.toml ]; then
+  PY_VER=$(to_pep440 "$TARGET_VER")
+  echo "Stamping oc-python-client-sdk PEP 440 version: ${PY_VER} (Maven: ${TARGET_VER})"
+  replace_in_file "s|^version = \"[^\"]*\"|version = \"${PY_VER}\"|g" \
+    oc-python-client-sdk/pyproject.toml
+  if [ -f oc-python-client-sdk/src/opencrawling/_version.py ]; then
+    replace_in_file "s|^__version__ = \"[^\"]*\"|__version__ = \"${PY_VER}\"|g" \
+      oc-python-client-sdk/src/opencrawling/_version.py
+    replace_in_file "s|^__maven_version__ = \"[^\"]*\"|__maven_version__ = \"${TARGET_VER}\"|g" \
+      oc-python-client-sdk/src/opencrawling/_version.py
+  fi
+fi
 
 if [ "$SKIP_VALIDATE" != "--skip-validate" ]; then
   mvn ${MVN_FLAGS[@]+"${MVN_FLAGS[@]}"} validate -B
