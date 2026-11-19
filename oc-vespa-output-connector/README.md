@@ -82,7 +82,7 @@ Adding fields is a live schema change in Vespa: no restart and no data migration
 
 If OpenCrawling is upgraded first:
 
-- **The pipeline writer** keeps ingesting. It feeds chunks without the three fields and logs a warning once. Documents are then not ordered or complete in `getDocumentContent`, and deletions find chunks by URI.
+- **The pipeline writer** keeps ingesting. It feeds chunks without the three fields and logs a warning once. Documents are then not ordered or complete in `getDocumentContent`.
 - **Per-job outputs that are written directly** fail every write and say why. Their chunks carry the claim-check URI, so without `document_id` a later deletion could not find them.
 
 ## Admin UI: Model Insights & Secure MCP
@@ -153,6 +153,7 @@ Once the pipeline has fed a real document, this also asserts the Model Insights 
 
 ## Known Limitations
 
+- **Deleting a document through the Kafka pipeline does not remove its chunks from Vespa yet.** `VespaStoreWriterConsumer` handles a tombstone by removing the one Vespa document whose id is the tombstone's, which no chunk has. Per-job outputs, which get tombstones directly, delete through `VespaChunkRemover`; the pipeline writer is being moved onto it.
 - Dynamic routing only covers the three embedding dimensions already used across OpenCrawling (`all-minilm` 384, `nomic-embed-text` 768, `mxbai-embed-large` 1024). A model producing any other dimension falls back to the configurable default document type (`opencrawling_chunk`), whose tensor dimension is fixed at schema-deploy time; there is no runtime cross-check of that fallback against the live schema, so a custom-dimension model still requires editing `opencrawling_chunk.sd` and redeploying.
 - Schema/application package deployment is a one-time operator step, not something the connector automates on every startup (unlike Qdrant/Milvus's collection auto-provisioning), since Vespa application package deploys are a heavier, versioned operation typically owned by CI/CD or the `vespa` CLI rather than a per-instance side effect. All four document types (`opencrawling_chunk` plus the three dimension-specific ones) must be deployed together for dynamic routing to work. The Model Insights panel's one-click deploy (see above) is an optional convenience on top of this, not a replacement for it.
 - The Secure MCP tools' query-side ACL push-down only excludes `security_denied_read` matches; it does not also push down the allow-list (public/legacy `acl` fallback), since that would require expressing "array is empty" in YQL. The authoritative check is always the Java-side re-check in `VespaMcpVectorServer`, so this only affects candidate-set efficiency, never correctness.

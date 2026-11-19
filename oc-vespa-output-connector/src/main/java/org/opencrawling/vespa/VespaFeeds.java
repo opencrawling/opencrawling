@@ -57,8 +57,8 @@ public final class VespaFeeds {
                     }
                     if (WARNED.compareAndSet(false, true)) {
                         log.warn("The deployed Vespa application has no field '{}': chunks are fed without {} until "
-                                + "oc-vespa-output-connector/vespa-app is redeployed (deletions and document reads "
-                                + "then fall back to URIs).", field, LATER_FIELDS);
+                                + "oc-vespa-output-connector/vespa-app is redeployed (documents are not ordered or "
+                                + "complete in getDocumentContent until then).", field, LATER_FIELDS);
                     }
                     return client.put(document.id(), withoutLaterFields(document.json()), OperationParameters.empty());
                 });

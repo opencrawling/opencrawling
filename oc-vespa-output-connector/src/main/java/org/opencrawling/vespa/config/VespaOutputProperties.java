@@ -42,6 +42,10 @@ public record VespaOutputProperties(
      */
     @ConstructorBinding
     public VespaOutputProperties {
+        // Paths are appended to the endpoint ("/document/v1/...", "/search/"): a trailing slash would double them.
+        while (endpoint != null && endpoint.endsWith("/")) {
+            endpoint = endpoint.substring(0, endpoint.length() - 1);
+        }
         if (contentCluster == null || contentCluster.isBlank()) {
             contentCluster = DEFAULT_CONTENT_CLUSTER;
         }

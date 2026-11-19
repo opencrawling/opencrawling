@@ -156,4 +156,15 @@ class VespaChunkRemoverTest {
 
         assertThat(vespa.timeChunks).isNotEmpty().allMatch("2s"::equals);
     }
+
+    @Test
+    void anEndpointWithATrailingSlashStillReachesTheDocumentApi() throws Exception {
+        // "http://vespa:8080/" + "/document/v1/..." would double the slash, which Vespa does not route.
+        VespaOutputProperties withSlash = VespaOutputProperties.builder().endpoint(vespa.properties().endpoint() + "//")
+                .timeoutSeconds(5).build();
+        assertThat(withSlash.endpoint()).isEqualTo(vespa.properties().endpoint());
+        vespa.store("opencrawling", "opencrawling_chunk_1024", "a", "doc-18", "u");
+
+        assertThat(new VespaChunkRemover(withSlash).removeDocument("doc-18", "u")).isEqualTo(1);
+    }
 }
