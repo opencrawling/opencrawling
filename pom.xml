@@ -168,7 +168,7 @@
         <java.version>25</java.version>
         <oc-java-client-sdk.version>1.0.5-SNAPSHOT</oc-java-client-sdk.version>
         <picocli.version>4.7.6</picocli.version>
-        <jline.version>3.26.1</jline.version>
+        <jline.version>4.7.0</jline.version>
         <spring-ai.version>2.0.2</spring-ai.version>
         <tika.version>4.2.0</tika.version>
         <jackson.version>2.21.7</jackson.version>
