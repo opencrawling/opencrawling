@@ -1,0 +1,176 @@
+#
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Publish Python SDK to PyPI
+
+on:
+  release:
+    types: [ published, released ]
+  push:
+    tags:
+      - 'v*'
+      - '!v*-rc.*'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version for oc-python-client-sdk (e.g. 1.0.5)'
+        type: string
+        required: false
+        default: '1.0.5'
+
+permissions: read-all
+
+jobs:
+  build-python-sdk:
+    name: Build, Verify & Package Python Client SDK
+    if: github.event_name != 'release' || (github.event.release.prerelease != true && !contains(github.event.release.tag_name, '-rc.'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pep440_version: ${{ steps.version.outputs.pep440_version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+      is_ga: ${{ steps.version.outputs.is_ga }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve and Stamp Release Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VER="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VER="${TAG_NAME#v}"
+          elif [ -n "${{ inputs.release_version }}" ]; then
+            VER="${{ inputs.release_version }}"
+            TAG_NAME="v${VER}"
+          else
+            VER="1.0.5"
+            TAG_NAME="v1.0.5"
+          fi
+
+          if [[ "$VER" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-SNAPSHOT$ ]]; then
+            PY_VER="${BASH_REMATCH[1]}.dev0"
+            IS_GA="false"
+          elif [[ "$VER" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-[Rr][Cc]\.?([0-9]+)$ ]]; then
+            PY_VER="${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}"
+            IS_GA="false"
+          elif [[ "$VER" == *-* ]]; then
+            PY_VER="$VER"
+            IS_GA="false"
+          else
+            PY_VER="$VER"
+            IS_GA="true"
+          fi
+
+          echo "Stamping oc-python-client-sdk -> PEP 440: ${PY_VER} (release: ${VER}, GA: ${IS_GA})"
+          sed -E -i "s|^version = \"[^\"]*\"|version = \"${PY_VER}\"|" oc-python-client-sdk/pyproject.toml
+          sed -E -i "s|^__version__ = \"[^\"]*\"|__version__ = \"${PY_VER}\"|" oc-python-client-sdk/src/opencrawling/_version.py
+          sed -E -i "s|^__maven_version__ = \"[^\"]*\"|__maven_version__ = \"${VER}\"|" oc-python-client-sdk/src/opencrawling/_version.py
+
+          {
+            echo "version=${VER}"
+            echo "pep440_version=${PY_VER}"
+            echo "tag_name=${TAG_NAME}"
+            echo "is_ga=${IS_GA}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Dependencies & Run Quality Gates
+        working-directory: oc-python-client-sdk
+        run: |
+          python -m pip install --upgrade pip hatchling build twine
+          pip install -e ".[dev,http2]"
+          ruff check src tests
+          mypy --strict src/opencrawling
+          pytest -v
+
+      - name: Build Wheel & Source Distribution
+        working-directory: oc-python-client-sdk
+        run: |
+          rm -rf dist
+          python -m build --no-isolation --outdir dist .
+          twine check dist/*
+          ls -lh dist/
+
+      - name: Upload Python SDK Distributions
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: opencrawling-python-sdk-dist
+          path: oc-python-client-sdk/dist/*
+
+  publish-pypi:
+    name: Publish opencrawling-sdk to PyPI (OIDC Trusted Publisher)
+    needs: build-python-sdk
+    if: |
+      needs.build-python-sdk.outputs.is_ga == 'true' &&
+      (github.event_name != 'release' || github.event.release.prerelease != true)
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/opencrawling-sdk
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+
+    steps:
+      - name: Download Python SDK Distributions
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: opencrawling-python-sdk-dist
+          path: dist/
+
+      - name: Publish to PyPI via Trusted Publisher (OIDC + Sigstore Attestations)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          attestations: true
+
+  attach-release-assets:
+    name: Attach Wheel & Sdist to GitHub Release
+    needs: build-python-sdk
+    if: |
+      (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'workflow_dispatch' && needs.build-python-sdk.outputs.tag_name != '')) &&
+      needs.build-python-sdk.outputs.tag_name != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Python SDK Distributions
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: opencrawling-python-sdk-dist
+          path: dist/
+
+      - name: Attach Python SDK Artifacts to GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ needs.build-python-sdk.outputs.tag_name }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
