@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright © ${year} the original author or authors (piergiorgio@apache.org)
+# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 # Integration test for the gRPC Push Repository Connector (OisPushService on port 9096)
 # and oc-cli `oc push` commands in docker-compose-decoupled.yml:
 # 1. Ping health check (`oc push ping`) and Admin API (`oc connector check --name Grpc_Push_Connector`) succeed.

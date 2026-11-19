@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Conformance check against IBM's published Content Services GraphQL schema.
 

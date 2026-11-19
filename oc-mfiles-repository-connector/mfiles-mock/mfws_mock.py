@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 MFWS mock: an emulator of the M-Files Web Service (REST API) for testing the OpenCrawling M-Files connector without
 an M-Files Server. Standard library only.

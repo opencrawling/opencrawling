@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Extracts Microsoft's own example payloads for the Graph APIs the SharePoint connector uses from the Microsoft Graph
 documentation (github.com/microsoftgraph/microsoft-graph-docs-contrib, at a pinned commit) into an output directory:

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """
 Zammad REST API v1 emulator for testing OpenCrawling's Zammad Repository Connector
 (oc-zammad-repository-connector) without requiring a full multi-container Zammad +

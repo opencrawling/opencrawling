@@ -1,3 +1,4 @@
+#
 # Copyright © 2026 the original author or authors (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+
 """OAuth 2.0 / OIDC token providers (Client Credentials, Refresh Token, RFC 8693 Token Exchange)."""
 
 from __future__ import annotations
