@@ -343,9 +343,9 @@ class ZammadRepositoryConnectorTest {
                 .filter(d -> d.action() == DocumentAction.DELETE)
                 .toList();
 
-        // Only the updated public ticket is upserted (KB answer was unchanged and skipped!)
-        assertThat(upserts).extracting(RepositoryDocument::id)
-                .containsExactly(publicTicket.id());
+        // The public thread renders exactly as before (only updated_at and an attachment changed), so its content hash
+        // matches and it is not re-indexed (#412); the KB answer was unchanged and skipped too.
+        assertThat(upserts).isEmpty();
         // The removed internal thread and both removed attachments (501, 502) get DELETE tombstones!
         assertThat(deletes).extracting(RepositoryDocument::id)
                 .containsExactlyInAnyOrder(

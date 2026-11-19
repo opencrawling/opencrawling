@@ -299,6 +299,10 @@ opencrawling:
     hooks: ${OPENCRAWLING_GOVERNANCE_HOOKS:}
     # What a rejection of a new version does to the earlier one: purge (stop serving it) or keep.
     on-rejected-update: ${OPENCRAWLING_GOVERNANCE_ON_REJECTED_UPDATE:purge}
+    # Comma-separated metadata keys the hooks may read but that are never stored: removed after the gate (or, with
+    # governance off, before chunking). For example zammad.participants, the names a connector provides only so that
+    # an anonymization hook can mask them. Protected keys (acl, security, ois:*, ...) cannot be dropped.
+    drop-metadata-after-gate: ${OPENCRAWLING_GOVERNANCE_DROP_METADATA_AFTER_GATE:}
     pii:
       # email, payment-card (Luhn-checked) and/or iban (check digits verified).
       types: email,payment-card,iban

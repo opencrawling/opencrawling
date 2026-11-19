@@ -21,16 +21,23 @@ import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Builds OIS {@link RepositoryDocument} instances from Zammad tickets, conversation articles, binary attachments,
@@ -38,7 +45,13 @@ import java.util.Optional;
  */
 public final class ZammadDocumentBuilder {
 
-    /** Resolved context for one ticket across lookup tables (groups, states, priorities, users, organizations). */
+    /**
+     * Resolved context for one ticket across lookup tables (groups, states, priorities, users, organizations).
+     *
+     * <p>{@code customerLabel} and {@code ownerLabel} are already rendered according to the connector's identity
+     * rendering (e-mail, name, id or none, #414); they are used in headers and metadata, never in permissions.
+     * {@code participants} are the display names (and ids) of the customer, the owner and the article authors.
+     */
     public record TicketContext(
             String instanceKey,
             String baseUrl,
@@ -49,18 +62,57 @@ public final class ZammadDocumentBuilder {
             String groupName,
             String stateName,
             String priorityName,
-            String customerEmail,
+            String customerLabel,
             String organizationName,
-            String ownerEmail,
+            String ownerLabel,
             List<String> tags,
             String createdAt,
             String updatedAt,
-            String closeAt
+            String closeAt,
+            List<Participant> participants,
+            ZammadProperties.ParticipantMetadata participantMetadata
     ) {
+        public TicketContext {
+            tags = tags == null ? List.of() : List.copyOf(tags);
+            participants = participants == null ? List.of() : List.copyOf(participants);
+            participantMetadata = participantMetadata == null
+                    ? ZammadProperties.ParticipantMetadata.NONE : participantMetadata;
+        }
+
         public String webUrl() {
             return baseUrl + "/#ticket/zoom/" + ticketId;
         }
+
+        public TicketContext withParticipants(List<Participant> nextParticipants) {
+            return new TicketContext(instanceKey, baseUrl, ticketId, ticketNumber, title, groupId, groupName, stateName,
+                    priorityName, customerLabel, organizationName, ownerLabel, tags, createdAt, updatedAt, closeAt,
+                    nextParticipants, participantMetadata);
+        }
     }
+
+    /** A person taking part in a ticket: Zammad user id ({@code <= 0} when unknown) and display name. */
+    public record Participant(long userId, String displayName) {
+        public String identity() {
+            return userId > 0 ? "zammad-user-" + userId : null;
+        }
+    }
+
+    /**
+     * One ticket article prepared for rendering: its role ({@code customer}, {@code agent}, {@code internal} or
+     * {@code system}), the role label shown in the heading, and the author already rendered per identity settings.
+     */
+    public record ArticleView(JsonNode article, String role, String roleLabel, String author) {
+        public long id() {
+            return article.path("id").asLong();
+        }
+
+        public boolean internal() {
+            return article.path("internal").asBoolean(false);
+        }
+    }
+
+    /** Metadata keys whose value changes without any change visible to readers; left out of content hashes. */
+    private static final Set<String> VOLATILE_METADATA = Set.of("zammad.updatedAt");
 
     /** Metadata for one binary attachment on a Zammad ticket article. */
     public record AttachmentRef(
@@ -102,6 +154,93 @@ public final class ZammadDocumentBuilder {
 
     public static String internalTicketId(String instanceKey, long ticketId) {
         return "zammad://" + instanceKey + "/tickets/" + ticketId + "/internal";
+    }
+
+    /** Ticket-level conversation document ({@code TICKET} granularity, #411). */
+    public static String ticketDocumentId(String instanceKey, long ticketId) {
+        return "zammad://" + instanceKey + "/tickets/" + ticketId;
+    }
+
+    /**
+     * Article role: {@code internal} for internal notes, otherwise {@code customer}, {@code agent} or {@code system}
+     * from the Zammad sender type.
+     */
+    public static String articleRole(JsonNode article) {
+        if (article.path("internal").asBoolean(false)) {
+            return "internal";
+        }
+        String sender = text(article, "sender");
+        if (sender == null) {
+            return "agent";
+        }
+        return switch (sender.toLowerCase(Locale.ROOT)) {
+            case "customer" -> "customer";
+            case "system" -> "system";
+            default -> "agent";
+        };
+    }
+
+    /**
+     * Whether Zammad marked the article as an automatic reply (its auto-response check sets
+     * {@code preferences.is-auto-response} from headers such as {@code Auto-Submitted} or {@code X-Autoreply}), or it
+     * is a delivery failure notice from a mailer daemon (#412).
+     */
+    public static boolean isAutoReply(JsonNode article) {
+        JsonNode prefs = article.path("preferences");
+        JsonNode flag = prefs.path("is-auto-response");
+        if (flag.asBoolean(false) || "true".equalsIgnoreCase(flag.asText(""))) {
+            return true;
+        }
+        String from = text(article, "from");
+        if (from == null) {
+            return false;
+        }
+        String lower = from.toLowerCase(Locale.ROOT);
+        return lower.contains("mailer-daemon@") || lower.contains("postmaster@");
+    }
+
+    /**
+     * Display name in an e-mail style address ({@code "Jane Doe <jane@example.com>"} gives {@code Jane Doe}); {@code null}
+     * when the value is only an address.
+     */
+    public static String displayNameFromAddress(String from) {
+        if (from == null || from.isBlank()) {
+            return null;
+        }
+        String value = from.strip();
+        int lt = value.indexOf('<');
+        String name = lt > 0 ? value.substring(0, lt) : (value.contains("@") ? "" : value);
+        name = name.replace("\"", "").strip();
+        return name.isEmpty() ? null : name;
+    }
+
+    /**
+     * SHA-256 of what a reader of the document sees: content bytes, non-volatile metadata and the flat ACL. Used to
+     * skip re-emitting a rendered document that did not change, for example when only a filtered system article was
+     * added to its ticket (#412). The document's in-memory content stream is reset after reading.
+     */
+    public static String contentHash(RepositoryDocument document) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            InputStream in = document.contentStream();
+            if (in != null) {
+                if (!in.markSupported()) {
+                    return null;
+                }
+                in.mark(Integer.MAX_VALUE);
+                digest.update(in.readAllBytes());
+                in.reset();
+            }
+            Map<String, List<String>> sorted = new TreeMap<>(document.metadata());
+            VOLATILE_METADATA.forEach(sorted::remove);
+            digest.update(sorted.toString().getBytes(StandardCharsets.UTF_8));
+            digest.update(("|acl:" + document.acl()).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     public static String articleDocumentId(String instanceKey, long ticketId, long articleId) {
@@ -157,7 +296,7 @@ public final class ZammadDocumentBuilder {
      */
     public static RepositoryDocument buildTicketThread(
             TicketContext ctx,
-            List<JsonNode> articles,
+            List<ArticleView> articles,
             boolean internal,
             ZammadSecurityMapper.Mapped security
     ) {
@@ -172,7 +311,8 @@ public final class ZammadDocumentBuilder {
                 : ctx.ticketNumber();
         String path = "/Tickets/" + groupSegment + "/" + numberSegment + "_" + suffix + ".html";
 
-        String html = renderTicketThreadHtml(ctx, articles, internal, displayTitle);
+        String html = renderTicketThreadHtml(ctx, articles, internal,
+                internal ? "Internal Agent Notes" : "Public Customer Thread", displayTitle);
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
 
         Map<String, List<String>> metadata = baseTicketMetadata(ctx, internal);
@@ -203,9 +343,10 @@ public final class ZammadDocumentBuilder {
      */
     public static RepositoryDocument buildArticleDocument(
             TicketContext ctx,
-            JsonNode article,
+            ArticleView view,
             ZammadSecurityMapper.Mapped security
     ) {
+        JsonNode article = view.article();
         long articleId = article.path("id").asLong();
         boolean internal = article.path("internal").asBoolean(false);
         String docId = articleDocumentId(ctx.instanceKey(), ctx.ticketId(), articleId);
@@ -217,7 +358,8 @@ public final class ZammadDocumentBuilder {
                 : ctx.ticketNumber();
         String path = "/Tickets/" + groupSegment + "/" + numberSegment + "/articles/" + articleId + ".html";
 
-        String html = renderTicketThreadHtml(ctx, List.of(article), internal, displayTitle);
+        String html = renderTicketThreadHtml(ctx, List.of(view), internal,
+                internal ? "Internal Agent Note" : "Public Article", displayTitle);
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
 
         Map<String, List<String>> metadata = baseTicketMetadata(ctx, internal);
@@ -229,12 +371,59 @@ public final class ZammadDocumentBuilder {
         metadata.put("zammad.articleId", List.of(Long.toString(articleId)));
         metadata.put("zammad.title", List.of(displayTitle));
         put(metadata, "zammad.sender", text(article, "sender"));
+        put(metadata, "zammad.articleRole", view.role());
         put(metadata, "zammad.articleType", text(article, "type"));
-        put(metadata, "zammad.from", text(article, "from"));
+        put(metadata, "zammad.from", view.author());
         addSecurityMetadata(metadata, security);
 
         Instant lastModified = parseInstant(firstNonBlank(text(article, "updated_at"), text(article, "created_at"), ctx.updatedAt()))
                 .orElseGet(Instant::now);
+        return new RepositoryDocument(
+                docId,
+                docId,
+                new ByteArrayInputStream(bytes),
+                metadata,
+                security.acl(),
+                security.security(),
+                lastModified,
+                DocumentAction.UPSERT
+        );
+    }
+
+    /**
+     * Builds the ticket-level conversation document ({@code TICKET} granularity, #411): every given article in
+     * chronological order, public replies and internal notes alike, each marked with its role. The security must be
+     * the group-only security of internal notes, because internal content is included.
+     */
+    public static RepositoryDocument buildTicketConversation(
+            TicketContext ctx,
+            List<ArticleView> articles,
+            ZammadSecurityMapper.Mapped security
+    ) {
+        String docId = ticketDocumentId(ctx.instanceKey(), ctx.ticketId());
+        String groupSegment = sanitizePathSegment(ctx.groupName(), "Unassigned");
+        String numberSegment = (ctx.ticketNumber() == null || ctx.ticketNumber().isBlank())
+                ? Long.toString(ctx.ticketId())
+                : ctx.ticketNumber();
+        String path = "/Tickets/" + groupSegment + "/" + numberSegment + "_conversation.html";
+        boolean hasInternal = articles.stream().anyMatch(ArticleView::internal);
+
+        String html = renderTicketThreadHtml(ctx, articles, false, "Full Conversation", ctx.title());
+        byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+
+        Map<String, List<String>> metadata = baseTicketMetadata(ctx, false);
+        metadata.put("zammad.internal", List.of(Boolean.toString(hasInternal)));
+        metadata.put("name", List.of(numberSegment + "_conversation.html"));
+        metadata.put("title", List.of(ctx.title()));
+        metadata.put("mimeType", List.of("text/html"));
+        metadata.put("path", List.of(path));
+        metadata.put("zammad.entityType", List.of("ticket_conversation"));
+        metadata.put("zammad.title", List.of(ctx.title()));
+        metadata.put("zammad.articleCount", List.of(Integer.toString(articles.size())));
+        metadata.put("zammad.hasInternalNotes", List.of(Boolean.toString(hasInternal)));
+        addSecurityMetadata(metadata, security);
+
+        Instant lastModified = parseInstant(ctx.updatedAt()).orElseGet(Instant::now);
         return new RepositoryDocument(
                 docId,
                 docId,
@@ -404,10 +593,10 @@ public final class ZammadDocumentBuilder {
         put(metadata, "zammad.state", ctx.stateName());
         put(metadata, "zammad.priority", ctx.priorityName());
         if (!internal) {
-            put(metadata, "zammad.customer", ctx.customerEmail());
+            put(metadata, "zammad.customer", ctx.customerLabel());
             put(metadata, "zammad.organization", ctx.organizationName());
         }
-        put(metadata, "zammad.owner", ctx.ownerEmail());
+        put(metadata, "zammad.owner", ctx.ownerLabel());
         if (ctx.tags() != null && !ctx.tags().isEmpty()) {
             metadata.put("zammad.tags", List.of(String.join(",", ctx.tags())));
         }
@@ -416,7 +605,33 @@ public final class ZammadDocumentBuilder {
         put(metadata, "zammad.updatedAt", ctx.updatedAt());
         put(metadata, "zammad.closeAt", ctx.closeAt());
         metadata.put("zammad.webUrl", List.of(ctx.webUrl()));
+        addParticipantMetadata(metadata, ctx);
         return metadata;
+    }
+
+    /** {@code zammad.participants} (display names) and, when asked, {@code zammad.participantIds} (#414). */
+    private static void addParticipantMetadata(Map<String, List<String>> metadata, TicketContext ctx) {
+        if (ctx.participantMetadata() == ZammadProperties.ParticipantMetadata.NONE || ctx.participants().isEmpty()) {
+            return;
+        }
+        List<String> names = ctx.participants().stream()
+                .map(Participant::displayName)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .toList();
+        if (!names.isEmpty()) {
+            metadata.put("zammad.participants", names);
+        }
+        if (ctx.participantMetadata() == ZammadProperties.ParticipantMetadata.NAMES_AND_IDS) {
+            List<String> ids = ctx.participants().stream()
+                    .map(Participant::identity)
+                    .filter(id -> id != null)
+                    .distinct()
+                    .toList();
+            if (!ids.isEmpty()) {
+                metadata.put("zammad.participantIds", ids);
+            }
+        }
     }
 
     private static void addSecurityMetadata(Map<String, List<String>> metadata, ZammadSecurityMapper.Mapped security) {
@@ -430,8 +645,9 @@ public final class ZammadDocumentBuilder {
 
     private static String renderTicketThreadHtml(
             TicketContext ctx,
-            List<JsonNode> articles,
+            List<ArticleView> articles,
             boolean internal,
+            String visibilityLabel,
             String displayTitle
     ) {
         StringBuilder sb = new StringBuilder();
@@ -451,33 +667,51 @@ public final class ZammadDocumentBuilder {
         if (ctx.priorityName() != null) {
             sb.append("<li><strong>Priority:</strong> ").append(escapeHtml(ctx.priorityName())).append("</li>");
         }
-        if (!internal && ctx.customerEmail() != null) {
-            sb.append("<li><strong>Customer:</strong> ").append(escapeHtml(ctx.customerEmail())).append("</li>");
+        if (!internal && ctx.customerLabel() != null) {
+            sb.append("<li><strong>Customer:</strong> ").append(escapeHtml(ctx.customerLabel())).append("</li>");
         }
         if (!internal && ctx.organizationName() != null) {
             sb.append("<li><strong>Organization:</strong> ").append(escapeHtml(ctx.organizationName())).append("</li>");
         }
-        if (ctx.ownerEmail() != null) {
-            sb.append("<li><strong>Owner:</strong> ").append(escapeHtml(ctx.ownerEmail())).append("</li>");
+        if (ctx.ownerLabel() != null) {
+            sb.append("<li><strong>Owner:</strong> ").append(escapeHtml(ctx.ownerLabel())).append("</li>");
         }
         if (ctx.tags() != null && !ctx.tags().isEmpty()) {
             sb.append("<li><strong>Tags:</strong> ").append(escapeHtml(String.join(", ", ctx.tags()))).append("</li>");
         }
-        sb.append("<li><strong>Visibility:</strong> ").append(internal ? "Internal Agent Notes" : "Public Customer Thread").append("</li>");
+        sb.append("<li><strong>Visibility:</strong> ").append(escapeHtml(visibilityLabel)).append("</li>");
         sb.append("</ul></header><hr/>");
 
-        for (JsonNode article : articles) {
+        for (ArticleView view : articles) {
+            JsonNode article = view.article();
             long articleId = article.path("id").asLong();
             String sender = textOrDefault(article, "sender", "Agent");
-            String from = textOrDefault(article, "from", textOrDefault(article, "created_by", "unknown"));
+            String author = view.author();
             String subject = text(article, "subject");
             String createdAt = textOrDefault(article, "created_at", "");
             String contentType = textOrDefault(article, "content_type", "text/plain");
             String body = textOrDefault(article, "body", "");
 
             sb.append("<section data-article-id=\"").append(articleId)
-                    .append("\" data-internal=\"").append(article.path("internal").asBoolean(false)).append("\">");
-            sb.append("<h2>[").append(escapeHtml(sender)).append("] ").append(escapeHtml(from));
+                    .append("\" data-internal=\"").append(view.internal())
+                    .append("\" data-role=\"").append(escapeHtml(view.role()))
+                    .append("\" data-visibility=\"").append(view.internal() ? "internal" : "public")
+                    .append("\" data-sender=\"").append(escapeHtml(sender)).append("\"");
+            String type = text(article, "type");
+            if (type != null) {
+                sb.append(" data-type=\"").append(escapeHtml(type)).append("\"");
+            }
+            if (author != null && !author.isBlank()) {
+                sb.append(" data-author=\"").append(escapeHtml(author)).append("\"");
+            }
+            if (!createdAt.isEmpty()) {
+                sb.append(" data-created=\"").append(escapeHtml(createdAt)).append("\"");
+            }
+            sb.append(">");
+            sb.append("<h2>[").append(escapeHtml(view.roleLabel())).append("]");
+            if (author != null && !author.isBlank()) {
+                sb.append(" ").append(escapeHtml(author));
+            }
             if (!createdAt.isEmpty()) {
                 sb.append(" (").append(escapeHtml(createdAt)).append(")");
             }

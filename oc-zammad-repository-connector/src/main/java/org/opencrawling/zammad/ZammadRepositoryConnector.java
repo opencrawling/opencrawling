@@ -31,10 +31,15 @@ import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
+import org.opencrawling.zammad.ZammadDocumentBuilder.ArticleView;
 import org.opencrawling.zammad.ZammadDocumentBuilder.AttachmentRef;
+import org.opencrawling.zammad.ZammadDocumentBuilder.Participant;
 import org.opencrawling.zammad.ZammadDocumentBuilder.TicketContext;
 import org.opencrawling.zammad.ZammadProperties.ArticleGranularity;
 import org.opencrawling.zammad.ZammadProperties.CrawlMode;
+import org.opencrawling.zammad.ZammadProperties.CustomerIdentity;
+import org.opencrawling.zammad.ZammadProperties.IdentityRendering;
+import org.opencrawling.zammad.ZammadProperties.ParticipantMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +59,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -84,14 +90,23 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     private static final Logger log = LoggerFactory.getLogger(ZammadRepositoryConnector.class);
 
     private static final Pattern TICKET_URI_PATTERN =
-            Pattern.compile("^zammad://[^/]+/tickets/(\\d+)/(public|internal|articles/(\\d+)(?:/attachments/(\\d+))?)$");
+            Pattern.compile("^zammad://[^/]+/tickets/(\\d+)(?:/(public|internal|articles/(\\d+)(?:/attachments/(\\d+))?))?$");
     private static final Pattern SHORT_TICKET_ID_PATTERN =
             Pattern.compile("^(?:ticket:)?(\\d+)(?::(public|internal))?$");
 
     private record OrgInfo(String name, boolean shared) {
     }
 
+    /** A Zammad user as far as the connector needs it: id ({@code <= 0} when unknown), e-mail or login, display name. */
+    private record UserInfo(long id, String email, String name) {
+    }
+
+    /** A ticket's context plus the identity used for its customer in permission rules. */
+    private record ResolvedTicket(TicketContext ctx, String customerPrincipal) {
+    }
+
     private final ZammadProperties settings;
+    private final List<Pattern> titlePatterns;
     private final boolean ownsClient;
     private ZammadClient client;
     private ZammadSecurityMapper securityMapper;
@@ -100,7 +115,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     private final Map<Long, String> statesById = new ConcurrentHashMap<>();
     private final Map<Long, String> prioritiesById = new ConcurrentHashMap<>();
     private final Map<Long, String> rolesById = new ConcurrentHashMap<>();
-    private final Map<Long, String> userEmailsById = new ConcurrentHashMap<>();
+    private final Map<Long, UserInfo> usersById = new ConcurrentHashMap<>();
     private final Map<Long, OrgInfo> orgsById = new ConcurrentHashMap<>();
     private volatile boolean connected;
 
@@ -116,12 +131,14 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
     public ZammadRepositoryConnector(ZammadProperties settings) {
         this.settings = settings;
+        this.titlePatterns = settings.compiledTitlePatterns();
         this.ownsClient = true;
         this.securityMapper = new ZammadSecurityMapper(settings);
     }
 
     public ZammadRepositoryConnector(ZammadProperties settings, ZammadClient client) {
         this.settings = settings;
+        this.titlePatterns = settings.compiledTitlePatterns();
         this.ownsClient = (client == null);
         this.client = client;
         this.securityMapper = new ZammadSecurityMapper(settings);
@@ -193,7 +210,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
         // Clear per-scan user/organization lookup caches so reused connector instances do not leak memory
         // or serve stale organization.shared ACL flags across runs.
-        userEmailsById.clear();
+        usersById.clear();
         orgsById.clear();
 
         connected = true;
@@ -229,6 +246,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         final AtomicLong documents = new AtomicLong();
         final AtomicLong tombstones = new AtomicLong();
         final AtomicLong unchanged = new AtomicLong();
+        final AtomicLong unchangedDocuments = new AtomicLong();
         final AtomicLong skipped = new AtomicLong();
         final AtomicLong failed = new AtomicLong();
         final AtomicBoolean cancelled = new AtomicBoolean();
@@ -254,8 +272,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             sink.onCancel(() -> crawl.cancelled.set(true));
             try {
                 connect();
-                Path statePath = ZammadCrawlState.file(settings);
-                ZammadCrawlState.State previousState = ZammadCrawlState.load(statePath);
+                ZammadCrawlState.State previousState = ZammadCrawlState.load(settings);
                 crawl.previousTickets = previousState.tickets();
                 crawl.previousKb = previousState.kbAnswers();
 
@@ -266,11 +283,24 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                         && !"default".equalsIgnoreCase(trimmedPath)
                         && !"/".equals(trimmedPath);
 
+                // #415: an incremental job enumerates every ticket once per full-scan interval, inside the window.
+                boolean scheduledFullScan = !hasOverride
+                        && settings.crawlMode() == CrawlMode.SEARCH_DELTA
+                        && previousState.watermark() != null
+                        && settings.fullScanDue(
+                                ZammadDocumentBuilder.parseInstant(previousState.lastFullScanAt()).orElse(null),
+                                watermarkAnchor);
+                boolean fullEnumeration = !hasOverride && (settings.crawlMode() == CrawlMode.FULL
+                        || previousState.watermark() == null
+                        || scheduledFullScan);
+                boolean ticketsCrawled = false;
+
                 if (!crawl.isStopRequested(sink)
                         && settings.includeTickets()
                         && !trimmedPath.startsWith("kb-category:")
                         && !trimmedPath.startsWith("/KnowledgeBase")) {
-                    crawlTickets(trimmedPath, hasOverride, previousState.watermark(), crawl, sink);
+                    crawlTickets(trimmedPath, hasOverride, previousState.watermark(), fullEnumeration, crawl, sink);
+                    ticketsCrawled = true;
                 }
 
                 if (!crawl.isStopRequested(sink)
@@ -301,11 +331,18 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     String nextWatermark = crawl.failed.get() == 0
                             ? watermarkAnchor.minusSeconds(60).truncatedTo(ChronoUnit.SECONDS).toString()
                             : previousState.watermark();
-                    ZammadCrawlState.save(statePath, new ZammadCrawlState.State(nextWatermark, mergedTickets, mergedKb));
+                    String nextFullScanAt = ticketsCrawled && fullEnumeration && crawl.failed.get() == 0
+                            ? watermarkAnchor.truncatedTo(ChronoUnit.SECONDS).toString()
+                            : previousState.lastFullScanAt();
+                    ZammadCrawlState.save(settings,
+                            new ZammadCrawlState.State(nextWatermark, mergedTickets, mergedKb, nextFullScanAt));
                 }
 
-                log.info("Zammad scan of {} completed: {} documents, {} unchanged, {} tombstones, {} skipped, {} failed.",
-                        settings.baseUrl(), crawl.documents.get(), crawl.unchanged.get(),
+                log.info("Zammad scan of {} completed ({} ticket enumeration{}): {} documents, {} unchanged tickets, "
+                                + "{} unchanged documents, {} tombstones, {} skipped, {} failed.",
+                        settings.baseUrl(), fullEnumeration ? "full" : "incremental",
+                        scheduledFullScan ? ", periodic full scan" : "",
+                        crawl.documents.get(), crawl.unchanged.get(), crawl.unchangedDocuments.get(),
                         crawl.tombstones.get(), crawl.skipped.get(), crawl.failed.get());
                 sink.complete();
             } catch (Exception e) {
@@ -328,11 +365,11 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             String overridePath,
             boolean hasOverride,
             String watermark,
+            boolean fullEnumeration,
             CrawlSession crawl,
             FluxSink<RepositoryDocument> sink
     ) throws IOException, InterruptedException {
-        String searchQuery = resolveTicketSearchQuery(overridePath, hasOverride, watermark);
-        boolean fullEnumeration = !hasOverride && (settings.crawlMode() == CrawlMode.FULL || watermark == null);
+        String searchQuery = resolveTicketSearchQuery(overridePath, hasOverride, watermark, fullEnumeration);
 
         int page = 1;
         int effectivePageSize = (searchQuery != null)
@@ -363,6 +400,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
 
         if (fullEnumeration && !crawl.isStopRequested(sink) && !crawl.previousTickets.isEmpty()) {
+            if (crawl.seenTicketIds.isEmpty()) {
+                // An empty listing more likely means revoked permissions or a search-index problem than an empty
+                // helpdesk: deleting every indexed ticket would be worse than keeping them until the next full scan.
+                log.warn("Zammad full ticket enumeration of {} returned no tickets while {} are indexed; "
+                        + "no tombstones emitted for vanished tickets.", settings.baseUrl(), crawl.previousTickets.size());
+                return;
+            }
             for (Map.Entry<String, ZammadCrawlState.Entry> prev : crawl.previousTickets.entrySet()) {
                 if (crawl.isStopRequested(sink)) {
                     return;
@@ -376,7 +420,8 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
     }
 
-    private String resolveTicketSearchQuery(String overridePath, boolean hasOverride, String watermark) {
+    private String resolveTicketSearchQuery(String overridePath, boolean hasOverride, String watermark,
+                                            boolean fullEnumeration) {
         if (hasOverride) {
             if (overridePath.startsWith("group:")) {
                 long groupId = parseLong(overridePath.substring("group:".length()), -1L);
@@ -389,10 +434,14 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             }
             return overridePath;
         }
-        if (settings.crawlMode() == CrawlMode.SEARCH_DELTA && watermark != null && !watermark.isBlank()) {
-            return "updated_at:[" + watermark + " TO *]";
+        String baseQuery = settings.baseQuery();
+        if (!fullEnumeration && watermark != null && !watermark.isBlank()) {
+            String delta = "updated_at:[" + watermark + " TO *]";
+            return baseQuery == null ? delta : "(" + baseQuery + ") AND " + delta;
         }
-        return null;
+        // A full enumeration lists every ticket through the index endpoint; with a base query it has to use the
+        // search endpoint, and tickets that stop matching the query are tombstoned as vanished (#413).
+        return baseQuery;
     }
 
     @SuppressWarnings("preview")
@@ -450,8 +499,17 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         String groupName = resolveGroupName(ticketNode);
         String stateName = resolveStateName(ticketNode);
 
-        if (!settings.acceptsGroup(groupName) || !settings.acceptsTicketState(stateName)) {
+        String exclusion = exclusionReason(ticketNode, groupName, stateName);
+        List<String> tags = null;
+        if (exclusion == null && (settings.includeTags() || settings.filtersByTags())) {
+            tags = client.getTicketTags(ticketId);
+            if (!settings.acceptsTags(tags)) {
+                exclusion = "tags";
+            }
+        }
+        if (exclusion != null) {
             if (known != null) {
+                log.debug("Zammad ticket {} left the crawl scope ({}); tombstoning its documents.", ticketId, exclusion);
                 emitTombstones(known.ids(), key, "ticket", crawl, sink);
                 crawl.removedTickets.add(key);
             } else {
@@ -460,12 +518,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             return;
         }
 
-        TicketContext ctx = buildTicketContext(ticketNode, groupName, stateName);
+        ResolvedTicket resolved = buildTicketContext(ticketNode, groupName, stateName, tags);
+        TicketContext ctx = resolved.ctx();
         OrgInfo orgInfo = resolveOrganizationInfo(ticketNode);
 
         ZammadSecurityMapper.Mapped publicSecurity = securityMapper.forTicket(
                 ctx.groupName(),
-                ctx.customerEmail(),
+                resolved.customerPrincipal(),
                 orgInfo.name(),
                 orgInfo.shared(),
                 List.of(),
@@ -473,7 +532,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         );
         ZammadSecurityMapper.Mapped internalSecurity = securityMapper.forTicket(
                 ctx.groupName(),
-                ctx.customerEmail(),
+                resolved.customerPrincipal(),
                 orgInfo.name(),
                 orgInfo.shared(),
                 List.of(),
@@ -481,8 +540,10 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         );
 
         String aclFingerprint = publicSecurity.fingerprint() + "||" + internalSecurity.fingerprint();
+        String renderSignature = settings.renderSignature();
         if (known != null && ctx.updatedAt() != null && ctx.updatedAt().equals(known.updatedAt())
-                && aclFingerprint.equals(known.aclFingerprint())) {
+                && aclFingerprint.equals(known.aclFingerprint())
+                && renderSignature.equals(known.renderSignature())) {
             crawl.unchanged.incrementAndGet();
             crawl.nextTickets.put(key, known);
             return;
@@ -490,51 +551,74 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
         List<JsonNode> articles = new ArrayList<>(client.getTicketArticles(ticketId));
         articles.sort(Comparator.comparingLong(a -> a.path("id").asLong(0L)));
+        List<ArticleView> views = articleViews(articles);
+        ctx = ctx.withParticipants(participants(ctx, resolved, views));
 
+        // Attachments are immutable in Zammad: ones already indexed under the same permissions and rendering are kept
+        // without downloading them again.
+        Set<String> reusable = known != null && aclFingerprint.equals(known.aclFingerprint())
+                && renderSignature.equals(known.renderSignature())
+                ? Set.copyOf(known.ids())
+                : Set.of();
         List<String> emittedIds = new ArrayList<>();
+        Map<String, String> hashes = new HashMap<>();
 
-        if (settings.articleGranularity() == ArticleGranularity.PER_ARTICLE) {
-            for (JsonNode article : articles) {
+        if (settings.articleGranularity() == ArticleGranularity.TICKET) {
+            List<ArticleView> included = views.stream()
+                    .filter(v -> !v.internal() || settings.includeInternalArticles())
+                    .toList();
+            if (!included.isEmpty() && !crawl.isStopRequested(sink)) {
+                RepositoryDocument ticketDoc = ZammadDocumentBuilder.buildTicketConversation(ctx, included, internalSecurity);
+                emitIfChanged(ticketDoc, known, hashes, emittedIds, crawl, sink);
+                if (settings.includeAttachments()) {
+                    for (ArticleView view : included) {
+                        if (crawl.isStopRequested(sink)) {
+                            return;
+                        }
+                        emitArticleAttachments(ctx, view.article(), ticketDoc.id(), internalSecurity, reusable,
+                                emittedIds, crawl, sink);
+                    }
+                }
+            }
+        } else if (settings.articleGranularity() == ArticleGranularity.PER_ARTICLE) {
+            for (ArticleView view : views) {
                 if (crawl.isStopRequested(sink)) {
                     return;
                 }
-                boolean isInternal = article.path("internal").asBoolean(false);
+                boolean isInternal = view.internal();
                 if (isInternal && !settings.includeInternalArticles()) {
                     continue;
                 }
                 ZammadSecurityMapper.Mapped sec = isInternal ? internalSecurity : publicSecurity;
-                RepositoryDocument articleDoc = ZammadDocumentBuilder.buildArticleDocument(ctx, article, sec);
-                emit(sink, articleDoc);
-                emittedIds.add(articleDoc.id());
-                crawl.documents.incrementAndGet();
+                RepositoryDocument articleDoc = ZammadDocumentBuilder.buildArticleDocument(ctx, view, sec);
+                emitIfChanged(articleDoc, known, hashes, emittedIds, crawl, sink);
 
                 if (settings.includeAttachments()) {
-                    emitArticleAttachments(ctx, article, articleDoc.id(), sec, emittedIds, crawl, sink);
+                    emitArticleAttachments(ctx, view.article(), articleDoc.id(), sec, reusable, emittedIds, crawl, sink);
                 }
             }
         } else {
-            List<JsonNode> publicArticles = new ArrayList<>();
-            List<JsonNode> internalArticles = new ArrayList<>();
-            for (JsonNode article : articles) {
-                if (article.path("internal").asBoolean(false)) {
-                    internalArticles.add(article);
+            List<ArticleView> publicArticles = new ArrayList<>();
+            List<ArticleView> internalArticles = new ArrayList<>();
+            for (ArticleView view : views) {
+                if (view.internal()) {
+                    internalArticles.add(view);
                 } else {
-                    publicArticles.add(article);
+                    publicArticles.add(view);
                 }
             }
 
             if (!publicArticles.isEmpty() && !crawl.isStopRequested(sink)) {
                 RepositoryDocument publicDoc = ZammadDocumentBuilder.buildTicketThread(ctx, publicArticles, false, publicSecurity);
-                emit(sink, publicDoc);
-                emittedIds.add(publicDoc.id());
-                crawl.documents.incrementAndGet();
+                emitIfChanged(publicDoc, known, hashes, emittedIds, crawl, sink);
 
                 if (settings.includeAttachments()) {
-                    for (JsonNode article : publicArticles) {
+                    for (ArticleView view : publicArticles) {
                         if (crawl.isStopRequested(sink)) {
                             return;
                         }
-                        emitArticleAttachments(ctx, article, publicDoc.id(), publicSecurity, emittedIds, crawl, sink);
+                        emitArticleAttachments(ctx, view.article(), publicDoc.id(), publicSecurity, reusable,
+                                emittedIds, crawl, sink);
                     }
                 }
             }
@@ -544,16 +628,15 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     && !internalArticles.isEmpty()
                     && !crawl.isStopRequested(sink)) {
                 RepositoryDocument internalDoc = ZammadDocumentBuilder.buildTicketThread(ctx, internalArticles, true, internalSecurity);
-                emit(sink, internalDoc);
-                emittedIds.add(internalDoc.id());
-                crawl.documents.incrementAndGet();
+                emitIfChanged(internalDoc, known, hashes, emittedIds, crawl, sink);
 
                 if (settings.includeAttachments()) {
-                    for (JsonNode article : internalArticles) {
+                    for (ArticleView view : internalArticles) {
                         if (crawl.isStopRequested(sink)) {
                             return;
                         }
-                        emitArticleAttachments(ctx, article, internalDoc.id(), internalSecurity, emittedIds, crawl, sink);
+                        emitArticleAttachments(ctx, view.article(), internalDoc.id(), internalSecurity, reusable,
+                                emittedIds, crawl, sink);
                     }
                 }
             }
@@ -569,7 +652,156 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             emitTombstones(stale, key, "ticket", crawl, sink);
         }
 
-        crawl.nextTickets.put(key, new ZammadCrawlState.Entry(ctx.updatedAt(), aclFingerprint, List.copyOf(emittedIds)));
+        crawl.nextTickets.put(key, new ZammadCrawlState.Entry(
+                ctx.updatedAt(), aclFingerprint, List.copyOf(emittedIds), renderSignature, hashes));
+    }
+
+    /**
+     * Emits a rendered (non-attachment) document unless the previous run indexed exactly the same content, metadata and
+     * permissions under the same id (#412): a ticket touched only by a filtered system article is not re-indexed.
+     */
+    private void emitIfChanged(
+            RepositoryDocument document,
+            ZammadCrawlState.Entry known,
+            Map<String, String> hashes,
+            List<String> emittedIds,
+            CrawlSession crawl,
+            FluxSink<RepositoryDocument> sink
+    ) {
+        String hash = ZammadDocumentBuilder.contentHash(document);
+        emittedIds.add(document.id());
+        if (hash != null) {
+            hashes.put(document.id(), hash);
+        }
+        if (known != null && hash != null && hash.equals(known.hashes().get(document.id()))) {
+            crawl.unchangedDocuments.incrementAndGet();
+            return;
+        }
+        emit(sink, document);
+        crawl.documents.incrementAndGet();
+    }
+
+    /** The articles to render, in order, without excluded senders, types and automatic replies (#412). */
+    private List<ArticleView> articleViews(List<JsonNode> articles) throws IOException, InterruptedException {
+        List<ArticleView> views = new ArrayList<>();
+        for (JsonNode article : articles) {
+            if (!includesArticle(article)) {
+                continue;
+            }
+            String role = ZammadDocumentBuilder.articleRole(article);
+            views.add(new ArticleView(article, role, settings.roleLabel(role), renderArticleAuthor(article)));
+        }
+        return List.copyOf(views);
+    }
+
+    private boolean includesArticle(JsonNode article) {
+        if (settings.excludesSender(ZammadDocumentBuilder.text(article, "sender"))) {
+            return false;
+        }
+        if (settings.excludesArticleType(ZammadDocumentBuilder.text(article, "type"))) {
+            return false;
+        }
+        return !(settings.skipAutoReplies() && ZammadDocumentBuilder.isAutoReply(article));
+    }
+
+    /** The Zammad user who wrote an article: {@code origin_by_id} when an agent wrote on a customer's behalf. */
+    private static long articleAuthorId(JsonNode article) {
+        long origin = article.path("origin_by_id").asLong(-1L);
+        return origin > 1 ? origin : article.path("created_by_id").asLong(-1L);
+    }
+
+    private String renderArticleAuthor(JsonNode article) throws IOException, InterruptedException {
+        IdentityRendering rendering = settings.identityRendering();
+        if (rendering == IdentityRendering.NONE) {
+            return null;
+        }
+        if (rendering == IdentityRendering.EMAIL) {
+            return ZammadDocumentBuilder.textOrDefault(article, "from",
+                    ZammadDocumentBuilder.textOrDefault(article, "created_by", "unknown"));
+        }
+        long authorId = articleAuthorId(article);
+        if (rendering == IdentityRendering.ID) {
+            return authorId > 1 ? "zammad-user-" + authorId : null;
+        }
+        UserInfo author = authorId > 1 ? lookupUser(authorId) : null;
+        if (author != null && author.name() != null) {
+            return author.name();
+        }
+        String fromName = ZammadDocumentBuilder.displayNameFromAddress(ZammadDocumentBuilder.text(article, "from"));
+        if (fromName != null) {
+            return fromName;
+        }
+        return authorId > 1 ? "zammad-user-" + authorId : null;
+    }
+
+    /** Customer, owner and article authors, for {@code zammad.participants} (#414). */
+    private List<Participant> participants(TicketContext ctx, ResolvedTicket resolved, List<ArticleView> views)
+            throws IOException, InterruptedException {
+        if (settings.participantMetadata() == ParticipantMetadata.NONE) {
+            return List.of();
+        }
+        Map<String, Participant> unique = new LinkedHashMap<>();
+        for (Participant p : ctx.participants()) {
+            addParticipant(unique, p);
+        }
+        for (ArticleView view : views) {
+            long authorId = articleAuthorId(view.article());
+            UserInfo author = authorId > 1 ? lookupUser(authorId) : null;
+            String name = author != null && author.name() != null
+                    ? author.name()
+                    : ZammadDocumentBuilder.displayNameFromAddress(ZammadDocumentBuilder.text(view.article(), "from"));
+            addParticipant(unique, new Participant(authorId > 1 ? authorId : -1L, name));
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private static void addParticipant(Map<String, Participant> unique, Participant participant) {
+        if (participant == null || ((participant.displayName() == null || participant.displayName().isBlank())
+                && participant.userId() <= 0)) {
+            return;
+        }
+        String key = participant.userId() > 0 ? "id:" + participant.userId() : "name:" + participant.displayName();
+        unique.merge(key, participant, (a, b) -> a.displayName() != null ? a : b);
+    }
+
+    /**
+     * Why a ticket is outside the crawl scope (group, state, creation date, priority, organization, title), or
+     * {@code null} when it is in scope. Tag filters are checked separately because they need an extra call (#413).
+     */
+    private String exclusionReason(JsonNode ticket, String groupName, String stateName)
+            throws IOException, InterruptedException {
+        if (!settings.acceptsGroup(groupName)) {
+            return "group";
+        }
+        if (!settings.acceptsTicketState(stateName)) {
+            return "state";
+        }
+        Optional<Instant> createdAfter = settings.createdAfterInstant(Instant.now());
+        if (createdAfter.isPresent()) {
+            Optional<Instant> created = ZammadDocumentBuilder.parseInstant(ZammadDocumentBuilder.text(ticket, "created_at"));
+            if (created.isPresent() && created.get().isBefore(createdAfter.get())) {
+                return "created-before";
+            }
+        }
+        if (!settings.priorities().isEmpty() && !settings.acceptsPriority(resolvePriorityName(ticket))) {
+            return "priority";
+        }
+        if (!settings.organizations().isEmpty() && !settings.acceptsOrganization(resolveOrganizationInfo(ticket).name())) {
+            return "organization";
+        }
+        String title = ZammadDocumentBuilder.text(ticket, "title");
+        if (title != null && titlePatterns.stream().anyMatch(p -> p.matcher(title).find())) {
+            return "title";
+        }
+        return null;
+    }
+
+    /** {@link #exclusionReason} plus tag filters, for discovery and fetching. */
+    private boolean inScope(JsonNode ticket, String groupName, String stateName) throws IOException, InterruptedException {
+        if (exclusionReason(ticket, groupName, stateName) != null) {
+            return false;
+        }
+        return !settings.filtersByTags() || settings.acceptsTags(client.getTicketTags(ticket.path("id").asLong()));
     }
 
     private void emitArticleAttachments(
@@ -577,6 +809,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             JsonNode article,
             String parentDocId,
             ZammadSecurityMapper.Mapped security,
+            Set<String> reusable,
             List<String> emittedIds,
             CrawlSession crawl,
             FluxSink<RepositoryDocument> sink
@@ -584,6 +817,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         for (AttachmentRef att : ZammadDocumentBuilder.attachments(article)) {
             if (crawl.isStopRequested(sink)) {
                 return;
+            }
+            String attachmentId = ZammadDocumentBuilder.attachmentDocumentId(
+                    ctx.instanceKey(), ctx.ticketId(), att.articleId(), att.attachmentId());
+            if (reusable.contains(attachmentId)) {
+                emittedIds.add(attachmentId);
+                crawl.unchangedDocuments.incrementAndGet();
+                continue;
             }
             if (settings.maxAttachmentSizeBytes() > 0 && att.sizeBytes() > settings.maxAttachmentSizeBytes()) {
                 log.info("Skipping Zammad attachment {} on ticket {} ({} bytes exceeds max-attachment-size-bytes).",
@@ -1114,7 +1354,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                     newTickets++;
                     String groupName = resolveGroupName(ticket);
                     String stateName = resolveStateName(ticket);
-                    if (!settings.acceptsGroup(groupName) || !settings.acceptsTicketState(stateName)) {
+                    if (!inScope(ticket, groupName, stateName)) {
                         continue;
                     }
                     pageNodes.addAll(ticketDiscoveryNodes(ticket, groupName, stateName, "group:" + ticket.path("group_id").asLong(0L), 1));
@@ -1163,28 +1403,36 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         }
         String trimmed = documentId.strip();
         long ticketId;
-        boolean internal = false;
+        String part;
 
         Matcher uriMatcher = TICKET_URI_PATTERN.matcher(trimmed);
         if (uriMatcher.matches()) {
             ticketId = Long.parseLong(uriMatcher.group(1));
-            internal = "internal".equals(uriMatcher.group(2));
+            part = uriMatcher.group(2);
         } else {
             Matcher shortMatcher = SHORT_TICKET_ID_PATTERN.matcher(trimmed);
             if (!shortMatcher.matches()) {
                 throw new IllegalArgumentException("No Zammad document '" + documentId + "' in this connector's scope.");
             }
             ticketId = Long.parseLong(shortMatcher.group(1));
-            internal = "internal".equalsIgnoreCase(shortMatcher.group(2));
+            part = shortMatcher.group(2) != null ? shortMatcher.group(2).toLowerCase(Locale.ROOT) : null;
         }
 
+        boolean ticketLevel = settings.articleGranularity() == ArticleGranularity.TICKET;
+        if (ticketLevel && part != null || !ticketLevel && part == null && uriMatcher.matches()) {
+            // ids of another granularity than the configured one are not produced by this connector
+            throw new IllegalArgumentException("No Zammad document '" + documentId + "' in this connector's scope.");
+        }
+        boolean internal = "internal".equals(part);
         if (internal && (!settings.includeInternalArticles() || settings.articleGranularity() == ArticleGranularity.PUBLIC_ONLY)) {
             throw new IllegalArgumentException("No Zammad document '" + documentId + "' in this connector's scope.");
         }
 
-        String canonicalId = internal
-                ? ZammadDocumentBuilder.internalTicketId(settings.instanceKey(), ticketId)
-                : ZammadDocumentBuilder.publicTicketId(settings.instanceKey(), ticketId);
+        String canonicalId = ticketLevel
+                ? ZammadDocumentBuilder.ticketDocumentId(settings.instanceKey(), ticketId)
+                : internal
+                        ? ZammadDocumentBuilder.internalTicketId(settings.instanceKey(), ticketId)
+                        : ZammadDocumentBuilder.publicTicketId(settings.instanceKey(), ticketId);
 
         try {
             Optional<JsonNode> ticketOpt = client.getTicket(ticketId);
@@ -1194,18 +1442,22 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             JsonNode ticket = ticketOpt.get();
             String groupName = resolveGroupName(ticket);
             String stateName = resolveStateName(ticket);
-            if (!settings.acceptsGroup(groupName) || !settings.acceptsTicketState(stateName)) {
+            if (!inScope(ticket, groupName, stateName)) {
                 throw new IllegalArgumentException("No Zammad document '" + documentId + "' in this connector's scope.");
             }
 
-            TicketContext ctx = buildTicketContext(ticket, groupName, stateName);
+            ResolvedTicket resolved = buildTicketContext(ticket, groupName, stateName, null);
+            TicketContext ctx = resolved.ctx();
             OrgInfo orgInfo = resolveOrganizationInfo(ticket);
+            // The ticket-level conversation includes internal notes: group-only, like internal notes.
             ZammadSecurityMapper.Mapped security = securityMapper.forTicket(
-                    ctx.groupName(), ctx.customerEmail(), orgInfo.name(), orgInfo.shared(), List.of(), internal);
+                    ctx.groupName(), resolved.customerPrincipal(), orgInfo.name(), orgInfo.shared(), List.of(),
+                    internal || ticketLevel);
 
             String displayTitle = internal ? ctx.title() + " [Internal Notes]" : ctx.title();
+            String suffix = ticketLevel ? "conversation" : internal ? "internal" : "public";
             String path = "/Tickets/" + ZammadDocumentBuilder.sanitizePathSegment(ctx.groupName(), "Unassigned")
-                    + "/" + ctx.ticketNumber() + "_" + (internal ? "internal" : "public") + ".html";
+                    + "/" + ctx.ticketNumber() + "_" + suffix + ".html";
             DiscoveryNode node = new DiscoveryNode(
                     canonicalId,
                     canonicalId,
@@ -1225,16 +1477,20 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 throw new IllegalArgumentException("No Zammad document '" + documentId + "' in this connector's scope.");
             }
 
+            List<JsonNode> allArticles = new ArrayList<>(client.getTicketArticles(ticketId));
+            allArticles.sort(Comparator.comparingLong(a -> a.path("id").asLong(0L)));
+            List<ArticleView> views = articleViews(allArticles);
+            ctx = ctx.withParticipants(participants(ctx, resolved, views));
             final boolean targetInternal = internal;
-            List<JsonNode> allArticles = client.getTicketArticles(ticketId);
-            List<JsonNode> filteredArticles = allArticles.stream()
-                    .filter(a -> a.path("internal").asBoolean(false) == targetInternal)
-                    .sorted(Comparator.comparingLong(a -> a.path("id").asLong(0L)))
+            List<ArticleView> selected = views.stream()
+                    .filter(v -> ticketLevel ? (!v.internal() || settings.includeInternalArticles()) : v.internal() == targetInternal)
                     .toList();
-            if (filteredArticles.isEmpty()) {
+            if (selected.isEmpty()) {
                 return new FetchedDocument.Gone(canonicalId);
             }
-            RepositoryDocument doc = ZammadDocumentBuilder.buildTicketThread(ctx, filteredArticles, internal, security);
+            RepositoryDocument doc = ticketLevel
+                    ? ZammadDocumentBuilder.buildTicketConversation(ctx, selected, security)
+                    : ZammadDocumentBuilder.buildTicketThread(ctx, selected, internal, security);
             return new FetchedDocument.Found(node, doc);
         } catch (IOException e) {
             throw new DiscoveryException("Zammad document fetch failed: " + e.getMessage(), e);
@@ -1331,7 +1587,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             for (JsonNode ticket : tickets) {
                 String tGroup = resolveGroupName(ticket);
                 String tState = resolveStateName(ticket);
-                if (!settings.acceptsGroup(tGroup) || !settings.acceptsTicketState(tState)) {
+                if (!inScope(ticket, tGroup, tState)) {
                     continue;
                 }
                 children.addAll(ticketDiscoveryNodes(ticket, tGroup, tState, folder.sourceId(), nextDepth));
@@ -1347,15 +1603,36 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
             String parentSourceId,
             int depth
     ) throws IOException, InterruptedException {
-        TicketContext ctx = buildTicketContext(ticket, groupName, stateName);
+        ResolvedTicket resolved = buildTicketContext(ticket, groupName, stateName, null);
+        TicketContext ctx = resolved.ctx();
         OrgInfo orgInfo = resolveOrganizationInfo(ticket);
-        ZammadSecurityMapper.Mapped publicSec = securityMapper.forTicket(
-                ctx.groupName(), ctx.customerEmail(), orgInfo.name(), orgInfo.shared(), List.of(), false);
-        String publicId = ZammadDocumentBuilder.publicTicketId(settings.instanceKey(), ctx.ticketId());
         String groupSeg = ZammadDocumentBuilder.sanitizePathSegment(ctx.groupName(), "Unassigned");
         Instant modified = ZammadDocumentBuilder.parseInstant(ctx.updatedAt()).orElse(null);
 
         List<DiscoveryNode> nodes = new ArrayList<>();
+        if (settings.articleGranularity() == ArticleGranularity.TICKET) {
+            ZammadSecurityMapper.Mapped groupOnly = securityMapper.forTicket(
+                    ctx.groupName(), resolved.customerPrincipal(), orgInfo.name(), orgInfo.shared(), List.of(), true);
+            String ticketDocId = ZammadDocumentBuilder.ticketDocumentId(settings.instanceKey(), ctx.ticketId());
+            nodes.add(new DiscoveryNode(
+                    ticketDocId,
+                    ticketDocId,
+                    parentSourceId,
+                    ctx.title(),
+                    "/Tickets/" + groupSeg + "/" + ctx.ticketNumber() + "_conversation.html",
+                    DiscoveryNode.NodeType.DOCUMENT,
+                    depth,
+                    "text/html",
+                    null,
+                    modified,
+                    null,
+                    groupOnly.security()
+            ));
+            return nodes;
+        }
+        ZammadSecurityMapper.Mapped publicSec = securityMapper.forTicket(
+                ctx.groupName(), resolved.customerPrincipal(), orgInfo.name(), orgInfo.shared(), List.of(), false);
+        String publicId = ZammadDocumentBuilder.publicTicketId(settings.instanceKey(), ctx.ticketId());
         nodes.add(new DiscoveryNode(
                 publicId,
                 publicId,
@@ -1374,7 +1651,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         if (settings.includeInternalArticles()
                 && settings.articleGranularity() == ArticleGranularity.SPLIT_PUBLIC_AND_INTERNAL) {
             ZammadSecurityMapper.Mapped internalSec = securityMapper.forTicket(
-                    ctx.groupName(), ctx.customerEmail(), orgInfo.name(), orgInfo.shared(), List.of(), true);
+                    ctx.groupName(), resolved.customerPrincipal(), orgInfo.name(), orgInfo.shared(), List.of(), true);
             String internalId = ZammadDocumentBuilder.internalTicketId(settings.instanceKey(), ctx.ticketId());
             nodes.add(new DiscoveryNode(
                     internalId,
@@ -1396,22 +1673,34 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
 
     // ------------------------------------------------------------------ Entity Resolution Helpers
 
-    private TicketContext buildTicketContext(JsonNode ticketNode, String groupName, String stateName)
+    /**
+     * Resolves the ticket's lookups and renders customer and owner per identity settings (#414). {@code tags} are the
+     * tags already read for the tag filters, or {@code null} to read them here when they are indexed.
+     */
+    private ResolvedTicket buildTicketContext(JsonNode ticketNode, String groupName, String stateName, List<String> tags)
             throws IOException, InterruptedException {
         long ticketId = ticketNode.path("id").asLong();
         String number = ZammadDocumentBuilder.textOrDefault(ticketNode, "number", Long.toString(ticketId));
         String title = ZammadDocumentBuilder.textOrDefault(ticketNode, "title", "Ticket #" + number);
         String groupId = ticketNode.has("group_id") ? ticketNode.path("group_id").asText() : null;
         String priorityName = resolvePriorityName(ticketNode);
-        String customerEmail = resolveUserEmail(ticketNode, "customer", "customer_id");
+        UserInfo customer = resolveUser(ticketNode, "customer", "customer_id");
         OrgInfo orgInfo = resolveOrganizationInfo(ticketNode);
-        String ownerEmail = resolveUserEmail(ticketNode, "owner", "owner_id");
-        List<String> tags = settings.includeTags() ? client.getTicketTags(ticketId) : List.of();
+        UserInfo owner = resolveUser(ticketNode, "owner", "owner_id");
+        List<String> ticketTags = !settings.includeTags() ? List.of()
+                : tags != null ? tags : client.getTicketTags(ticketId);
         String createdAt = ZammadDocumentBuilder.text(ticketNode, "created_at");
         String updatedAt = ZammadDocumentBuilder.text(ticketNode, "updated_at");
         String closeAt = ZammadDocumentBuilder.text(ticketNode, "close_at");
 
-        return new TicketContext(
+        List<Participant> participants = new ArrayList<>();
+        for (UserInfo user : new UserInfo[] {customer, owner}) {
+            if (user != null && (user.name() != null || user.id() > 1)) {
+                participants.add(new Participant(user.id() > 1 ? user.id() : -1L, user.name()));
+            }
+        }
+
+        TicketContext ctx = new TicketContext(
                 settings.instanceKey(),
                 settings.baseUrl(),
                 ticketId,
@@ -1421,14 +1710,48 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 groupName,
                 stateName,
                 priorityName,
-                customerEmail,
+                renderIdentity(customer),
                 orgInfo.name(),
-                ownerEmail,
-                tags,
+                renderIdentity(owner),
+                ticketTags,
                 createdAt,
                 updatedAt,
-                closeAt
+                closeAt,
+                participants,
+                settings.participantMetadata()
         );
+        return new ResolvedTicket(ctx, customerPrincipal(customer));
+    }
+
+    /** How a person appears in headers and metadata (#414); never falls back to an e-mail unless asked for e-mails. */
+    private String renderIdentity(UserInfo user) {
+        if (user == null) {
+            return null;
+        }
+        String id = user.id() > 1 ? "zammad-user-" + user.id() : null;
+        return switch (settings.identityRendering()) {
+            case EMAIL -> user.email() != null ? user.email() : user.name();
+            case NAME -> user.name() != null ? user.name() : id;
+            case ID -> id;
+            case NONE -> null;
+        };
+    }
+
+    /** The customer's identity in permission rules: e-mail or login, or {@code zammad-user-<id>} (#414). */
+    private String customerPrincipal(UserInfo customer) {
+        if (customer == null) {
+            return null;
+        }
+        if (settings.customerIdentity() == CustomerIdentity.ID) {
+            return customer.id() > 1 ? "zammad-user-" + customer.id() : null;
+        }
+        return customer.email();
+    }
+
+    /** Whether display names are needed, so that users are looked up even when the ticket carries their e-mail. */
+    private boolean needsNames() {
+        return settings.identityRendering() == IdentityRendering.NAME
+                || settings.participantMetadata() != ParticipantMetadata.NONE;
     }
 
     private String resolveGroupName(JsonNode ticketNode) {
@@ -1476,35 +1799,54 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
         return prioId > 0 ? prioritiesById.get(prioId) : null;
     }
 
-    private String resolveUserEmail(JsonNode ticketNode, String expandedField, String idField)
+    private UserInfo resolveUser(JsonNode ticketNode, String expandedField, String idField)
             throws IOException, InterruptedException {
+        long userId = ticketNode.path(idField).asLong(-1L);
         JsonNode expanded = ticketNode.path(expandedField);
+        String expandedEmail = null;
+        String expandedName = null;
         if (expanded.isTextual() && !expanded.asText().isBlank()) {
-            return expanded.asText().strip();
-        }
-        if (expanded.isObject()) {
-            String email = firstNonBlank(
+            expandedEmail = expanded.asText().strip();
+        } else if (expanded.isObject()) {
+            expandedEmail = firstNonBlank(
                     ZammadDocumentBuilder.text(expanded, "email"),
                     ZammadDocumentBuilder.text(expanded, "login"));
-            if (email != null) {
-                return email;
-            }
+            expandedName = fullName(expanded);
         }
-        long userId = ticketNode.path(idField).asLong(-1L);
-        if (userId <= 1) {
+        boolean complete = expandedEmail != null && (expandedName != null || !needsNames());
+        if (complete || userId <= 1) {
             // In Zammad, user_id == 1 is the '-' unassigned system placeholder
-            return null;
+            return expandedEmail == null && expandedName == null
+                    ? null
+                    : new UserInfo(userId > 1 ? userId : -1L, expandedEmail, expandedName);
         }
-        String cached = userEmailsById.get(userId);
+        UserInfo looked = lookupUser(userId);
+        String email = expandedEmail != null ? expandedEmail : looked.email();
+        String name = expandedName != null ? expandedName : looked.name();
+        return email == null && name == null ? null : new UserInfo(userId, email, name);
+    }
+
+    /** {@code GET /api/v1/users/{id}}, cached for the run; a missing user resolves to an empty entry. */
+    private UserInfo lookupUser(long userId) throws IOException, InterruptedException {
+        UserInfo cached = usersById.get(userId);
         if (cached != null) {
-            return cached.isEmpty() ? null : cached;
+            return cached;
         }
         Optional<JsonNode> userOpt = client.getUser(userId);
-        String resolved = userOpt
-                .map(u -> firstNonBlank(ZammadDocumentBuilder.text(u, "email"), ZammadDocumentBuilder.text(u, "login")))
-                .orElse("");
-        userEmailsById.put(userId, resolved);
-        return resolved.isEmpty() ? null : resolved;
+        UserInfo resolved = userOpt
+                .map(u -> new UserInfo(userId,
+                        firstNonBlank(ZammadDocumentBuilder.text(u, "email"), ZammadDocumentBuilder.text(u, "login")),
+                        fullName(u)))
+                .orElse(new UserInfo(userId, null, null));
+        usersById.put(userId, resolved);
+        return resolved;
+    }
+
+    private static String fullName(JsonNode user) {
+        String first = ZammadDocumentBuilder.text(user, "firstname");
+        String last = ZammadDocumentBuilder.text(user, "lastname");
+        String joined = ((first == null ? "" : first) + " " + (last == null ? "" : last)).strip();
+        return joined.isEmpty() ? null : joined;
     }
 
     private OrgInfo resolveOrganizationInfo(JsonNode ticketNode) throws IOException, InterruptedException {
@@ -1592,7 +1934,7 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
     @Override
     public ConnectorSchema getSchema(String basePath) {
         return new ConnectorSchema(List.of(
-                new ConnectorSchema.SchemaField("zammad.entityType", "STRING", "Entity type: ticket, ticket_internal, ticket_article, ticket_attachment, or kb_answer"),
+                new ConnectorSchema.SchemaField("zammad.entityType", "STRING", "Entity type: ticket, ticket_internal, ticket_conversation, ticket_article, ticket_attachment, or kb_answer"),
                 new ConnectorSchema.SchemaField("zammad.ticketId", "LONG", "Zammad numeric ticket ID"),
                 new ConnectorSchema.SchemaField("zammad.ticketNumber", "STRING", "Zammad human-readable ticket number"),
                 new ConnectorSchema.SchemaField("zammad.title", "STRING", "Ticket or Knowledge Base answer title"),
@@ -1600,9 +1942,13 @@ public class ZammadRepositoryConnector implements DocumentFetchingRepositoryConn
                 new ConnectorSchema.SchemaField("zammad.groupId", "LONG", "Assigned Zammad support group ID"),
                 new ConnectorSchema.SchemaField("zammad.state", "STRING", "Ticket state (new, open, pending reminder, closed, etc.)"),
                 new ConnectorSchema.SchemaField("zammad.priority", "STRING", "Ticket priority (1 low, 2 normal, 3 high)"),
-                new ConnectorSchema.SchemaField("zammad.customer", "STRING", "Customer email or login (omitted on internal notes)"),
+                new ConnectorSchema.SchemaField("zammad.customer", "STRING", "Customer, rendered per identity-rendering (omitted on internal notes)"),
                 new ConnectorSchema.SchemaField("zammad.organization", "STRING", "Customer organization name (omitted on internal notes)"),
-                new ConnectorSchema.SchemaField("zammad.owner", "STRING", "Assigned agent email or login"),
+                new ConnectorSchema.SchemaField("zammad.owner", "STRING", "Assigned agent, rendered per identity-rendering"),
+                new ConnectorSchema.SchemaField("zammad.participants", "STRING", "Display names of the customer, the owner and the article authors (multi-valued)"),
+                new ConnectorSchema.SchemaField("zammad.participantIds", "STRING", "Zammad user ids of the participants, zammad-user-<id> (multi-valued)"),
+                new ConnectorSchema.SchemaField("zammad.hasInternalNotes", "BOOLEAN", "Whether a ticket conversation document includes internal notes"),
+                new ConnectorSchema.SchemaField("zammad.articleRole", "STRING", "Article role: customer, agent, internal or system"),
                 new ConnectorSchema.SchemaField("zammad.tags", "STRING", "Comma-separated ticket tags"),
                 new ConnectorSchema.SchemaField("zammad.internal", "BOOLEAN", "Whether the document contains internal agent-only notes or internal KB content"),
                 new ConnectorSchema.SchemaField("zammad.articleCount", "INTEGER", "Number of articles in the ticket thread view"),
