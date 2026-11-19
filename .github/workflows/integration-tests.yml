@@ -165,6 +165,10 @@ jobs:
             script: "test-vespa-connector.sh"
           - name: "Vespa Decoupled Pipeline Test Suite"
             script: "test-vespa-decoupled.sh"
+          - name: "Zammad Connector Test Suite"
+            script: "test-zammad-connector.sh"
+          - name: "Zammad Decoupled Pipeline Test Suite"
+            script: "test-zammad-decoupled.sh"
 
     steps:
       - name: Checkout repository

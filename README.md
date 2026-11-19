@@ -88,6 +88,7 @@ graph TD
         MFiles_Repo_Conn[M-Files Vault - oc-mfiles-repository-connector]
         FileNet_Repo_Conn[IBM FileNet P8 Object Store - oc-filenet-repository-connector]
         Documentum_Repo_Conn[OpenText Documentum Repository - oc-documentum-repository-connector]
+        Zammad_Repo_Conn[Zammad Helpdesk & Knowledge Base - oc-zammad-repository-connector]
         OpenArch_Repo_Conn[Hyland OpenArch Repository - oc-openarch-repository-connector]
         Iceberg_Conn[Iceberg Repository - oc-iceberg-repository-connector]
         Flowable_Conn[Flowable Repository - oc-flowable-repository-connector]

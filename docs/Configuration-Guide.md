@@ -54,6 +54,7 @@ OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, yo
 *   **Filesystem Connector**: Scans local or mounted directories recursively.
 *   **S3 Connector**: Pulls document objects from AWS S3 or MinIO buckets.
 *   **SharePoint Connector**: Utilizes Microsoft Graph delta queries to scan directories incrementally while extracting Active Directory SIDs.
+*   **Zammad Connector (`spring.opencrawling.connector.type=zammad`)**: Crawls Zammad Helpdesk & ITSM tickets, public customer replies and confidential internal agent notes (`SPLIT_PUBLIC_AND_INTERNAL`, `PER_ARTICLE`, `PUBLIC_ONLY`), binary ticket attachments, tags, and Knowledge Base answers via the Zammad REST API v1 (`/api/v1/...`), mapping group permissions (`zammad-group-<group>`), customer emails, and shared organizations (`organization.shared`) into OIS `SecurityConfig`.
 *   **gRPC Push Connector**: High-throughput streaming gRPC push ingestion gateway (Port 9096) supporting unary, streaming, and bi-directional OIS document ingestion with automatic claim-check offload. See [gRPC Push Connector](gRPC-Push-Connector).
 
 ### 2. Output Connectors (Destinations)

@@ -421,6 +421,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           placeholder: 'e.g. default, or /Regulatory/Submissions',
           description: 'Use default for the connector configuration. A cabinet or folder path runs a one-off (non-incremental) crawl of it and its subfolders.'
         };
+      case 'org.opencrawling.zammad.ZammadRepositoryConnector':
+        return {
+          label: 'Group Path or Search Query',
+          placeholder: 'e.g. default, /Groups/Tier-2-Identity-Security, or state.name:open',
+          description: 'Use default for the connector configuration. Provide /Groups/<GroupName>, group:<id>, or a Zammad search query for a scoped crawl.'
+        };
       case 'org.opencrawling.iceberg.IcebergRepositoryConnector':
         return {
           label: 'Iceberg Table Name',

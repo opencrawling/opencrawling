@@ -178,6 +178,11 @@ public class ConnectorCheckerService {
                 return checkDocumentumRepository(config);
             }
 
+            // --- Zammad Helpdesk & ITSM Repository Connector ---
+            if (className.contains("ZammadRepositoryConnector") || className.contains("Zammad") || className.contains("zammad")) {
+                return checkZammadRepository(config);
+            }
+
             // --- CMIS Repository Connector ---
             if (className.contains("CmisRepositoryConnector") || className.contains("Cmis") || className.contains("cmis")) {
                 return checkCmis(config);
@@ -921,6 +926,45 @@ public class ConnectorCheckerService {
             }
             return new ConnectionCheckResult(false, "Failed to connect to Documentum at " + settings.url() + ": "
                     + e.getMessage() + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkZammadRepository(Map<String, String> config) {
+        org.opencrawling.zammad.ZammadProperties settings =
+                org.opencrawling.zammad.ZammadProperties.fromConfiguration(withNoRetries(config));
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false,
+                    "Zammad repository connector is not configured: " + String.join(" ", problems), null);
+        }
+        try (org.opencrawling.zammad.ZammadClient client = new org.opencrawling.zammad.ZammadClient(settings)) {
+            JsonNode me = client.getCurrentUser();
+            String user = me.path("email").asText(me.path("login").asText("authenticated user"));
+            com.fasterxml.jackson.databind.node.ObjectNode summary =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            if (me.has("id")) {
+                summary.put("id", me.path("id").asLong());
+            }
+            if (me.hasNonNull("login")) {
+                summary.put("login", me.path("login").asText());
+            }
+            if (me.hasNonNull("email")) {
+                summary.put("email", me.path("email").asText());
+            }
+            if (me.has("active")) {
+                summary.put("active", me.path("active").asBoolean());
+            }
+            return new ConnectionCheckResult(true,
+                    "Successfully authenticated to Zammad REST API v1 at " + settings.baseUrl()
+                            + " as '" + user + "'.",
+                    summary.toString());
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false,
+                    "Failed to connect to Zammad at " + settings.baseUrl() + ": " + e.getMessage(),
+                    e.toString());
         }
     }
 

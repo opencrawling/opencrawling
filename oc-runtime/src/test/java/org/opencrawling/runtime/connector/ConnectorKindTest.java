@@ -39,6 +39,7 @@ class ConnectorKindTest {
             "org.opencrawling.mfiles.MFilesRepositoryConnector, MFILES",
             "org.opencrawling.filenet.FileNetRepositoryConnector, FILENET",
             "org.opencrawling.documentum.DocumentumRepositoryConnector, DOCUMENTUM",
+            "org.opencrawling.zammad.ZammadRepositoryConnector, ZAMMAD",
             "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector, HYLAND_CIC",
             "org.opencrawling.jdbc.JdbcRepositoryConnector, JDBC",
             "org.opencrawling.push.grpc.GrpcPushRepositoryConnector, GRPC_PUSH",
