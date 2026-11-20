@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+    Copyright © 2026 textercabaceira (luis.cabaceira@texter.ai)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
     <version>1.0.5-SNAPSHOT</version>
     <packaging>jar</packaging>
 
+    <inceptionYear>2026</inceptionYear>
     <name>OpenCrawling - ManifoldCF Migrator</name>
     <description>Standalone CLI that migrates an Apache ManifoldCF crawler configuration (repository/output/transformation
         connections and jobs) into OpenCrawling, skipping and clearly reporting anything with no direct connector-level
@@ -181,15 +182,20 @@
                 <groupId>com.mycila</groupId>
                 <artifactId>license-maven-plugin</artifactId>
                 <version>4.3</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.mycila</groupId>
+                        <artifactId>license-maven-plugin-git</artifactId>
+                        <version>4.3</version>
+                    </dependency>
+                </dependencies>
                 <configuration>
                     <properties>
-                        <owner>the original author or authors</owner>
-                        <email>piergiorgio@apache.org</email>
                         <year>2026</year>
                     </properties>
                     <licenseSets>
                         <licenseSet>
-                            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+                            <header>${maven.multiModuleProjectDirectory}/.license-header</header>
                             <excludes>
                                 <exclude>**/README.md</exclude>
                                 <exclude>**/LICENSE</exclude>

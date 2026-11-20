@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+# Copyright © 2026 Piergiorgio Lucidi (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -130,6 +130,7 @@ REQUIRED_COMMANDS=(
     "test:local-dev"
     "ui:dev"
     "ui:build"
+    "license:check"
     "license:format"
     "format"
     "clean"
@@ -305,7 +306,7 @@ log_pass "All Docker Stack Lifecycle commands dispatch accurately"
 # ------------------------------------------------------------------------------
 # STEP 6: Developer Convenience & Productivity Commands Verification
 # ------------------------------------------------------------------------------
-log_step "6" "Verifying Developer Convenience commands (status, logs, test:*, ui:*, license:format, clean)..."
+log_step "6" "Verifying Developer Convenience commands (status, logs, test:*, ui:*, license:check, license:format, clean)..."
 
 : > "$MOCK_LOG"
 PATH="$MOCK_BIN:$PATH" "$PROJECT_ROOT/run.sh" status >/dev/null
@@ -343,6 +344,11 @@ grep -q "npm run build" "$MOCK_LOG" \
 PATH="$MOCK_BIN:$PATH" "$PROJECT_ROOT/run.sh" license:format >/dev/null
 grep -q "^mvn license:format$" "$MOCK_LOG" \
     || log_fail "'./run.sh license:format' failed dispatch check"
+
+: > "$MOCK_LOG"
+PATH="$MOCK_BIN:$PATH" "$PROJECT_ROOT/run.sh" license:check >/dev/null
+grep -q "^mvn license:check$" "$MOCK_LOG" \
+    || log_fail "'./run.sh license:check' failed dispatch check"
 
 : > "$MOCK_LOG"
 PATH="$MOCK_BIN:$PATH" "$PROJECT_ROOT/run.sh" clean --prune >/dev/null

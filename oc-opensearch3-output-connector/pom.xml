@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+    Copyright © 2026 Piergiorgio Lucidi (piergiorgio@apache.org)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
     <artifactId>oc-opensearch3-output-connector</artifactId>
     <packaging>jar</packaging>
 
+    <inceptionYear>2026</inceptionYear>
     <name>OpenCrawling - OpenSearch 3.x Output Connector</name>
 
     <properties>

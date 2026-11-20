@@ -602,10 +602,13 @@ run.bat down
 | | `test:it [filter...]` | Run integration tests with local BuildKit cache overlay |
 | | `test:local-dev` | Run dedicated local Docker build acceleration test suite |
 | | `ui:dev` / `ui:build` | Start Vite dev server (`:5173`) or build React Admin UI bundle |
+| | `license:check` | Check headers while preserving other authors' Git emails; normalize Piergiorgio's legacy email |
 | | `license:format` / `format` | Apply Apache 2.0 license headers across project files |
 | | `clean [--prune]` | Clean Maven `target/` folders (and optionally prune Docker build cache) |
 
 ---
+
+Run license commands through `./run.sh` or `run.bat` so the legacy email exception is applied. Direct Maven license goals do not run the per-author normalization step.
 
 ### Step-by-Step Setup
 
