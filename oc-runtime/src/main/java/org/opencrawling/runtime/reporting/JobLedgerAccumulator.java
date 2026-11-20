@@ -172,8 +172,24 @@ public class JobLedgerAccumulator {
         log.info("Emitting JobExecutionCompletedEvent for Job '{}' [Exec: {}, Total Docs: {}, Success: {}, Failed: {}]",
                 context.jobName, executionId, total, successful, failed);
 
-        eventPublisher.publishEvent(event);
+        publishUninterrupted(event);
         return event;
+    }
+
+    /**
+     * Publishes the completion with the thread's interrupt cleared, then restores it (#428). A stopped run ends on its
+     * own thread, which the stop interrupted; the listeners write the run's reports, and interruptible I/O on an
+     * interrupted thread fails at once, so a stopped run lost its reports.
+     */
+    private void publishUninterrupted(JobExecutionCompletedEvent event) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            eventPublisher.publishEvent(event);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     public JobExecutionCompletedEvent getCompletedEvent(String executionId) {
