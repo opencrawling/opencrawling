@@ -156,6 +156,7 @@ ${BOLD}3. DEVELOPER CONVENIENCE & PRODUCTIVITY COMMANDS:${NC}
   ${GREEN}test:local-dev${NC}             Run dedicated local Docker build acceleration test suite
   ${GREEN}ui:dev${NC}                     Start React Admin UI Vite dev server on http://localhost:5173
   ${GREEN}ui:build${NC}                   Compile and build React Admin UI production bundle
+  ${GREEN}license:check${NC}               Check headers and normalize Piergiorgio's legacy email
   ${GREEN}license:format${NC}, ${GREEN}format${NC}     Apply Apache 2.0 license headers across project files
   ${GREEN}clean${NC}                      Clean Maven target directories (pass ${CYAN}--prune${NC} to also prune Docker build cache)
   ${GREEN}help${NC}, ${GREEN}-h${NC}, ${GREEN}--help${NC}           Display this help guide
@@ -379,7 +380,24 @@ case "$COMMAND" in
       check_docker
       docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn license:format "$@"
     fi
+    python3 scripts/normalize-license-author-email.py normalize
     log_ok "License headers formatted."
+    ;;
+
+  license:check)
+    python3 scripts/normalize-license-author-email.py restore
+    LICENSE_CHECK_STATUS=0
+    if command -v mvn >/dev/null 2>&1; then
+      if mvn license:check "$@"; then :; else LICENSE_CHECK_STATUS=$?; fi
+    else
+      check_docker
+      if docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn license:check "$@"; then :; else LICENSE_CHECK_STATUS=$?; fi
+    fi
+    python3 scripts/normalize-license-author-email.py normalize
+    if [ "$LICENSE_CHECK_STATUS" -ne 0 ]; then
+      exit "$LICENSE_CHECK_STATUS"
+    fi
+    log_ok "License headers checked."
     ;;
 
   clean)

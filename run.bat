@@ -82,6 +82,7 @@ if /I "%COMMAND%"=="test:local-dev" goto cmd_test_local_dev
 if /I "%COMMAND%"=="ui:dev" goto cmd_ui_dev
 if /I "%COMMAND%"=="ui:build" goto cmd_ui_build
 if /I "%COMMAND%"=="license:format" goto cmd_license_format
+if /I "%COMMAND%"=="license:check" goto cmd_license_check
 if /I "%COMMAND%"=="format" goto cmd_license_format
 if /I "%COMMAND%"=="clean" goto cmd_clean
 
@@ -129,6 +130,7 @@ echo   test:it [filter...]       Run integration tests with local BuildKit cache
 echo   test:local-dev            Run dedicated local Docker build acceleration test suite (requires bash)
 echo   ui:dev                    Start React Admin UI Vite dev server on http://localhost:5173
 echo   ui:build                  Compile and build React Admin UI production bundle
+echo   license:check             Check headers and normalize Piergiorgio's legacy email
 echo   license:format, format    Apply Apache 2.0 license headers across project files
 echo   clean                     Clean Maven target directories (pass --prune to also prune Docker build cache)
 echo   help, -h, --help          Display this help guide
@@ -417,7 +419,28 @@ if %ERRORLEVEL% equ 0 (
     docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn license:format%PASS_ARGS%
     if errorlevel 1 (popd & exit /b 1)
 )
+py -3 scripts\normalize-license-author-email.py normalize
+if errorlevel 1 (popd & exit /b 1)
 echo [OK] License headers formatted.
+popd
+exit /b 0
+
+:cmd_license_check
+py -3 scripts\normalize-license-author-email.py restore
+if errorlevel 1 (popd & exit /b 1)
+where mvn >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    call mvn license:check%PASS_ARGS%
+    set "LICENSE_STATUS=!ERRORLEVEL!"
+) else (
+    call :check_docker || (popd & exit /b 1)
+    docker compose -f docker-compose-maven-builder.yml run --rm oc-maven-builder mvn license:check%PASS_ARGS%
+    set "LICENSE_STATUS=!ERRORLEVEL!"
+)
+py -3 scripts\normalize-license-author-email.py normalize
+if errorlevel 1 (popd & exit /b 1)
+if not "!LICENSE_STATUS!"=="0" (popd & exit /b !LICENSE_STATUS!)
+echo [OK] License headers checked.
 popd
 exit /b 0
 

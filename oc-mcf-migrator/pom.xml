@@ -192,7 +192,6 @@
                 <configuration>
                     <properties>
                         <year>2026</year>
-                        <email>piergiorgio@apache.org</email>
                     </properties>
                     <licenseSets>
                         <licenseSet>
