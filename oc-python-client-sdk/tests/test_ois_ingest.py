@@ -331,3 +331,76 @@ def test_query_result_to_dicts_and_optional_dataframe_import_error(monkeypatch: 
     for method in (qr.to_pyarrow, qr.to_pandas, qr.to_polars):
         with pytest.raises(ImportError, match="opencrawling-sdk\\[dataframe\\]"):
             method()
+
+
+def test_grpc_metadata_normalization_language_neutral_and_validation() -> None:
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+
+    from opencrawling import normalize_grpc_metadata
+
+    raw_meta: dict[str, Any] = {
+        "title": "Q4 Earnings",
+        "published": True,
+        "archived": False,
+        "page_count": 42,
+        "score": 0.95,
+        "amount": Decimal("1234.50"),
+        "published_date": date(2026, 4, 15),
+        "updated_at": datetime(2026, 4, 15, 10, 30, 0, tzinfo=UTC),
+        "tags": ["finance", "q4", "public"],
+        "flags": (True, False),
+        "counts": [1, 2, 3],
+        "empty_list": [],
+        "omitted": None,
+        "bracket_literal": "[DRAFT] Q4 Report",
+    }
+
+    normalized = normalize_grpc_metadata(raw_meta)
+    assert normalized == {
+        "title": "Q4 Earnings",
+        "published": "true",
+        "archived": "false",
+        "page_count": "42",
+        "score": "0.95",
+        "amount": "1234.50",
+        "published_date": "2026-04-15",
+        "updated_at": "2026-04-15T10:30:00Z",
+        "tags": '["finance","q4","public"]',
+        "flags": "[true,false]",
+        "counts": "[1,2,3]",
+        "empty_list": "[]",
+        "bracket_literal": "[DRAFT] Q4 Report",
+    }
+    assert "omitted" not in normalized
+
+    # Works identically via GrpcPushDocument.from_ois and direct GrpcPushDocument construction
+    ois_doc = OisDocument.upsert(
+        id="doc-meta-1",
+        content=OisContent.plain("hello"),
+        metadata={"tags": ["alpha", "beta"], "published": True, "skip": None},
+        security=SecurityConfig.none(),
+    )
+    from_ois = GrpcPushDocument.from_ois(ois_doc)
+    assert from_ois.metadata == {"tags": '["alpha","beta"]', "published": "true"}
+
+    direct = GrpcPushDocument(
+        id="doc-meta-2",
+        text_content="hello",
+        metadata={"tags": ["alpha", "beta"], "published": False},
+    )
+    assert direct.metadata == {"tags": '["alpha","beta"]', "published": "false"}
+
+    # Rejects non-finite floats/Decimals and unsupported container/object types
+    with pytest.raises(ValueError, match="Non-finite float"):
+        normalize_grpc_metadata({"bad": float("nan")})
+    with pytest.raises(ValueError, match="Non-finite float"):
+        normalize_grpc_metadata({"bad": float("inf")})
+    with pytest.raises(ValueError, match="Non-finite Decimal"):
+        normalize_grpc_metadata({"bad": Decimal("NaN")})
+    with pytest.raises(TypeError, match="Unsupported gRPC metadata value type"):
+        normalize_grpc_metadata({"nested": {"a": 1}})
+    with pytest.raises(TypeError, match="Unsupported gRPC metadata value type"):
+        normalize_grpc_metadata({"raw": b"bytes"})
+    with pytest.raises(TypeError, match="Unsupported element type"):
+        normalize_grpc_metadata({"nested_list": [["a"]]})

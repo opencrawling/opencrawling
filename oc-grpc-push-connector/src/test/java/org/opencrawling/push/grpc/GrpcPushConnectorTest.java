@@ -93,6 +93,35 @@ class GrpcPushConnectorTest {
     }
 
     @Test
+    void testTranslateMetadataJsonScalarArrayExpansionAndLiteralFallback() throws Exception {
+        OisDocumentPayload payload = OisDocumentPayload.newBuilder()
+                .setId("doc-meta-json")
+                .setAction(org.opencrawling.push.v1.DocumentAction.UPSERT)
+                .setMimeType("text/plain")
+                .setTextContent("Metadata test")
+                .putMetadata("tags", "[\"alpha\",\"beta\",\"gamma\"]")
+                .putMetadata("flags", "[true,false]")
+                .putMetadata("counts", "[1,2,3.5]")
+                .putMetadata("empty", "[]")
+                .putMetadata("escaped", "[\"a\\\"b\",\"c\\\\d\",\"line\\nbreak\"]")
+                .putMetadata("published", "true")
+                .putMetadata("bracket_literal", "[DRAFT] Quarterly Report")
+                .putMetadata("malformed_json", "[\"unclosed")
+                .build();
+
+        RepositoryDocument doc = OisDocumentTranslator.translate(payload, null, claimCheckStore, 512);
+
+        assertEquals(List.of("alpha", "beta", "gamma"), doc.metadata().get("tags"));
+        assertEquals(List.of("true", "false"), doc.metadata().get("flags"));
+        assertEquals(List.of("1", "2", "3.5"), doc.metadata().get("counts"));
+        assertEquals(List.of(), doc.metadata().get("empty"));
+        assertEquals(List.of("a\"b", "c\\d", "line\nbreak"), doc.metadata().get("escaped"));
+        assertEquals(List.of("true"), doc.metadata().get("published"));
+        assertEquals(List.of("[DRAFT] Quarterly Report"), doc.metadata().get("bracket_literal"));
+        assertEquals(List.of("[\"unclosed"), doc.metadata().get("malformed_json"));
+    }
+
+    @Test
     void testTranslateUpsertWithPreUploadedClaimCheckUri() throws Exception {
         OisDocumentPayload payload = OisDocumentPayload.newBuilder()
                 .setId("doc-pdf-456")

@@ -25,6 +25,10 @@ Official Python 3.11+ client SDK for the **OpenCrawling Platform API v1 (`/api/v
 - **OIS Direct Ingestion & Optional gRPC Push (`opencrawling.ingest`)**:
   - Typed `OisDocument.upsert(...)` / `.delete(...)` builders with fail-closed `SecurityConfig` and `PermissionRule` helpers targeting `POST /api/v1/ingest/ois/{jobId}`.
   - Optional `GrpcPushClient` / `AsyncGrpcPushClient` (`opencrawling-sdk[grpc]`) supporting Unary, Client-Streaming, and Bi-Directional Streaming against `oc-grpc-push-connector`.
+- **Governance & Enrichment Hook Services (`opencrawling.hooks`, `opencrawling-sdk[hooks]`)**:
+  - Constant-time HMAC-SHA256 signature verification (`verify_signature`, `sign_payload`) matching `oc-runtime` `HttpGovernanceHook` (`X-OpenCrawling-Timestamp` + `X-OpenCrawling-Signature`), typed `GovernanceRequest` / `Decision` (`approve`, `sanitize`, `reject`) models enforcing `GovernanceGate` protected metadata keys, FastAPI/Starlette `@governance_endpoint` decorator, and `SignedHookTestClient`.
+- **W3C Trace Context & OpenTelemetry (`opencrawling-sdk[otel]`)**:
+  - Automatic W3C `traceparent` / `tracestate` propagation on sync/async HTTP and gRPC Push calls when an OpenTelemetry span is active, explicit `RequestOptions(traceparent=..., tracestate=...)`, and optional `enable_tracing=True` client spans.
 - **Lakehouse & Data Science Ergonomics (`opencrawling-sdk[dataframe]`)**:
   - Constant-memory streaming export (`client.executions.export_to(...)`) for Parquet, CSV, Avro, and JSON reports.
   - DuckDB analytical queries (`client.executions.query(...)`) with `.to_dicts()`, `.to_pyarrow()`, `.to_pandas()`, and `.to_polars()`.
@@ -43,6 +47,8 @@ Optional extras:
 pip install "opencrawling-sdk[http2]"      # HTTP/2 support via h2
 pip install "opencrawling-sdk[grpc]"       # High-throughput gRPC Push streaming
 pip install "opencrawling-sdk[dataframe]"  # PyArrow, Pandas, and Polars conversions
+pip install "opencrawling-sdk[hooks]"      # Starlette/FastAPI governance & enrichment hook helpers
+pip install "opencrawling-sdk[otel]"       # OpenTelemetry W3C traceparent propagation & client spans
 ```
 
 ---
@@ -144,12 +150,52 @@ with OpenCrawlingClient("http://localhost:8080", bearer_token="ois-ingest-secret
     print(f"Accepted={receipt.is_accepted} ({receipt.status}) for {receipt.document_id}")
 ```
 
+### Governance Hook Service (`opencrawling.hooks`)
+
+```python
+from opencrawling.hooks import Decision, GovernanceRequest, create_governance_app
+
+SECRET = "a-shared-secret-at-least-32-characters-long"
+
+async def redact_pii(req: GovernanceRequest) -> Decision:
+    if req.text and "SSN:" in req.text:
+        return Decision.sanitize(
+            text=req.text.replace("SSN:", "[REDACTED]:"),
+            metadata={"pii_redacted": "true"},
+            audit={"rule": "ssn-mask"},
+        )
+    return Decision.approve()
+
+app = create_governance_app(redact_pii, secret=SECRET, path="/governance")
+```
+
+### Distributed Tracing (`opencrawling-sdk[otel]`)
+
+```python
+from opencrawling import OpenCrawlingClient, RequestOptions
+
+# Automatically injects W3C traceparent/tracestate from the active OpenTelemetry span,
+# and optionally emits CLIENT spans when enable_tracing=True:
+with OpenCrawlingClient("http://localhost:8080", enable_tracing=True) as client:
+    version = client.version()
+
+# Or supply an explicit W3C traceparent without installing OpenTelemetry:
+opts = RequestOptions(traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+```
+
+---
+
+## Versioning & Changelog
+
+- [CHANGELOG.md](CHANGELOG.md) — Keep a Changelog history of all SDK releases.
+- [VERSIONING.md](VERSIONING.md) — SemVer stability guarantees, deprecation policy, and compatibility matrix.
+
 ---
 
 ## Development & Quality Gates
 
 ```bash
-pip install -e ".[dev,http2]"
+pip install -e ".[dev,http2,hooks,otel]"
 ruff check src tests
 mypy --strict src/opencrawling
 pytest

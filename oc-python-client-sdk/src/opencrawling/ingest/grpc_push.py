@@ -24,12 +24,17 @@ Streaming, and Ping RPCs.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Mapping
+import json
+import math
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
 from enum import IntEnum
 from importlib import import_module
 from typing import Any
 
+from opencrawling._tracing import inject_grpc_metadata, record_span_error, start_client_span
 from opencrawling.ingest.ois import OisDocument
 
 SERVICE_NAME = "opencrawling.push.v1.OisPushService"
@@ -37,6 +42,86 @@ METHOD_PUSH_DOCUMENT = f"/{SERVICE_NAME}/PushDocument"
 METHOD_STREAM_DOCUMENTS = f"/{SERVICE_NAME}/StreamDocuments"
 METHOD_BIDI_STREAM = f"/{SERVICE_NAME}/BiDirectionalStream"
 METHOD_PING = f"/{SERVICE_NAME}/Ping"
+
+
+def _format_iso_temporal(value: date | datetime) -> str:
+    iso = value.isoformat()
+    if isinstance(value, datetime) and iso.endswith("+00:00"):
+        return f"{iso[:-6]}Z"
+    return iso
+
+
+def _normalize_grpc_sequence_item(key: str, item: Any) -> str | int | float | bool:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, bool):
+        return item
+    if isinstance(item, int):
+        return item
+    if isinstance(item, float):
+        if math.isnan(item) or math.isinf(item):
+            raise ValueError(f"Non-finite float in gRPC metadata sequence for key {key!r}: {item!r}")
+        return item
+    if isinstance(item, Decimal):
+        if not item.is_finite():
+            raise ValueError(f"Non-finite Decimal in gRPC metadata sequence for key {key!r}: {item!r}")
+        return str(item)
+    if isinstance(item, (datetime, date)):
+        return _format_iso_temporal(item)
+    raise TypeError(
+        f"Unsupported element type {type(item).__name__} in gRPC metadata sequence for key {key!r}; "
+        "expected str, bool, int, float, Decimal, date, or datetime"
+    )
+
+
+def normalize_grpc_metadata(metadata: Mapping[str, Any] | None) -> dict[str, str]:
+    """Convert rich Python metadata values into language-neutral ``map<string, string>`` entries.
+
+    Conversion rules (aligned with ``oc-grpc-push-connector`` ``OisDocumentTranslator``):
+    - ``None`` values are omitted.
+    - ``str`` values are preserved verbatim.
+    - ``bool`` values become lowercase ``"true"`` / ``"false"``.
+    - Finite ``int``, ``float``, and ``Decimal`` values become canonical decimal strings
+      (``NaN`` / ``Inf`` raise ``ValueError``).
+    - ``datetime`` and ``date`` values become ISO-8601 strings (UTC ``+00:00`` normalized to ``Z``).
+    - Homogeneous or mixed scalar ``Sequence`` values (``list``, ``tuple``) are encoded as compact
+      RFC 8259 JSON arrays (e.g. ``'["alpha","beta"]'``), which ``OisDocumentTranslator`` expands
+      into multi-valued metadata lists.
+    - Unsupported types (``dict``, ``bytes``, ``set``, nested sequences, arbitrary objects) raise
+      ``TypeError`` rather than falling back to ``str()``.
+    """
+    if not metadata:
+        return {}
+    normalized: dict[str, str] = {}
+    for raw_key, value in metadata.items():
+        if value is None:
+            continue
+        key = str(raw_key)
+        if isinstance(value, str):
+            normalized[key] = value
+        elif isinstance(value, bool):
+            normalized[key] = "true" if value else "false"
+        elif isinstance(value, int):
+            normalized[key] = str(value)
+        elif isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                raise ValueError(f"Non-finite float in gRPC metadata for key {key!r}: {value!r}")
+            normalized[key] = str(value)
+        elif isinstance(value, Decimal):
+            if not value.is_finite():
+                raise ValueError(f"Non-finite Decimal in gRPC metadata for key {key!r}: {value!r}")
+            normalized[key] = str(value)
+        elif isinstance(value, (datetime, date)):
+            normalized[key] = _format_iso_temporal(value)
+        elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, memoryview)):
+            items = [_normalize_grpc_sequence_item(key, item) for item in value]
+            normalized[key] = json.dumps(items, separators=(",", ":"), ensure_ascii=False)
+        else:
+            raise TypeError(
+                f"Unsupported gRPC metadata value type {type(value).__name__} for key {key!r}; "
+                "expected str, bool, int, float, Decimal, date, datetime, or a sequence of scalars"
+            )
+    return normalized
 
 
 class GrpcDocumentAction(IntEnum):
@@ -94,7 +179,7 @@ class GrpcPushDocument:
     raw_bytes: bytes | None = None
     claim_check_uri: str | None = None
     text_content: str | None = None
-    metadata: Mapping[str, str] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     security: GrpcSecurityConfig | None = None
     checksum_sha256: str = ""
 
@@ -106,6 +191,7 @@ class GrpcPushDocument:
             raise ValueError(
                 "Only one of raw_bytes, claim_check_uri, or text_content may be set"
             )
+        object.__setattr__(self, "metadata", normalize_grpc_metadata(self.metadata))
 
     @classmethod
     def from_ois(
@@ -123,11 +209,7 @@ class GrpcPushDocument:
         )
         mime_type = document.content.mime_type if document.content else "text/plain"
         text_content = document.content.text if document.content else None
-        metadata = (
-            {str(k): str(v) for k, v in document.metadata.items() if v is not None}
-            if document.metadata
-            else {}
-        )
+        metadata = normalize_grpc_metadata(document.metadata)
         security: GrpcSecurityConfig | None = None
         if document.security is not None:
             allow_sids: list[str] = []
@@ -508,11 +590,17 @@ class GrpcPushClient:
         tls: bool = False,
         root_certificates: bytes | None = None,
         timeout: float = 30.0,
+        enable_tracing: bool = False,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
         channel: Any | None = None,
     ) -> None:
         self._target = target
         self._bearer_token = bearer_token.strip() if bearer_token and bearer_token.strip() else None
         self._timeout = timeout
+        self._enable_tracing = enable_tracing
+        self._traceparent = traceparent.strip() if traceparent and traceparent.strip() else None
+        self._tracestate = tracestate.strip() if tracestate and tracestate.strip() else None
         if channel is not None:
             self._channel = channel
             self._owns_channel = False
@@ -525,19 +613,54 @@ class GrpcPushClient:
                 self._channel = grpc.insecure_channel(target)
             self._owns_channel = True
 
-    def _metadata(self) -> tuple[tuple[str, str], ...]:
-        if self._bearer_token:
-            return (("authorization", f"Bearer {self._bearer_token}"),)
-        return ()
-
-    def ping(self, client_id: str = "opencrawling-python-sdk") -> GrpcPingResponse:
-        rpc = self._channel.unary_unary(
-            METHOD_PING,
-            request_serializer=encode_ping_request,
-            response_deserializer=decode_ping_response,
+    def _metadata(
+        self,
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> tuple[tuple[str, str], ...]:
+        base: tuple[tuple[str, str], ...] = (
+            (("authorization", f"Bearer {self._bearer_token}"),) if self._bearer_token else ()
         )
-        result: GrpcPingResponse = rpc(client_id, timeout=self._timeout)
-        return result
+        return inject_grpc_metadata(
+            base,
+            traceparent=traceparent if traceparent is not None else self._traceparent,
+            tracestate=tracestate if tracestate is not None else self._tracestate,
+        )
+
+    def ping(
+        self,
+        client_id: str = "opencrawling-python-sdk",
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> GrpcPingResponse:
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/Ping",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "Ping",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.unary_unary(
+                METHOD_PING,
+                request_serializer=encode_ping_request,
+                response_deserializer=decode_ping_response,
+            )
+            try:
+                meta = self._metadata(traceparent=traceparent, tracestate=tracestate)
+                result: GrpcPingResponse = (
+                    rpc(client_id, timeout=self._timeout, metadata=meta)
+                    if meta
+                    else rpc(client_id, timeout=self._timeout)
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     def push_document(
         self,
@@ -545,43 +668,105 @@ class GrpcPushClient:
         document: GrpcPushDocument | OisDocument,
         *,
         options: GrpcPushOptions | None = None,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> GrpcPushResponse:
         grpc_doc = GrpcPushDocument.from_ois(document) if isinstance(document, OisDocument) else document
         req = GrpcPushRequest(job_id=job_id, document=grpc_doc, options=options)
-        rpc = self._channel.unary_unary(
-            METHOD_PUSH_DOCUMENT,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_push_response,
-        )
-        result: GrpcPushResponse = rpc(req, timeout=self._timeout, metadata=self._metadata())
-        return result
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/PushDocument",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "PushDocument",
+                "server.address": self._target,
+                "opencrawling.job_id": job_id,
+            },
+        ) as span:
+            rpc = self._channel.unary_unary(
+                METHOD_PUSH_DOCUMENT,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_push_response,
+            )
+            try:
+                result: GrpcPushResponse = rpc(
+                    req,
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
-    def stream_documents(self, requests: Iterable[GrpcPushRequest]) -> GrpcStreamSummary:
+    def stream_documents(
+        self,
+        requests: Iterable[GrpcPushRequest],
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> GrpcStreamSummary:
         """Client-Streaming RPC: stream many ``GrpcPushRequest`` messages and receive a summary."""
-        rpc = self._channel.stream_unary(
-            METHOD_STREAM_DOCUMENTS,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_stream_summary,
-        )
-        result: GrpcStreamSummary = rpc(iter(requests), timeout=self._timeout, metadata=self._metadata())
-        return result
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/StreamDocuments",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "StreamDocuments",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.stream_unary(
+                METHOD_STREAM_DOCUMENTS,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_stream_summary,
+            )
+            try:
+                result: GrpcStreamSummary = rpc(
+                    iter(requests),
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     def bi_directional_stream(
         self,
         requests: Iterable[GrpcPushRequest],
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> Iterator[GrpcIngestionAck]:
         """Bi-Directional Streaming RPC: stream requests and yield per-document ``GrpcIngestionAck``s."""
-        rpc = self._channel.stream_stream(
-            METHOD_BIDI_STREAM,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_ingestion_ack,
-        )
-        responses: Iterator[GrpcIngestionAck] = rpc(
-            iter(requests),
-            timeout=self._timeout,
-            metadata=self._metadata(),
-        )
-        yield from responses
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/BiDirectionalStream",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "BiDirectionalStream",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.stream_stream(
+                METHOD_BIDI_STREAM,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_ingestion_ack,
+            )
+            try:
+                responses: Iterator[GrpcIngestionAck] = rpc(
+                    iter(requests),
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                yield from responses
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     def close(self) -> None:
         if self._owns_channel:
@@ -608,11 +793,17 @@ class AsyncGrpcPushClient:
         tls: bool = False,
         root_certificates: bytes | None = None,
         timeout: float = 30.0,
+        enable_tracing: bool = False,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
         channel: Any | None = None,
     ) -> None:
         self._target = target
         self._bearer_token = bearer_token.strip() if bearer_token and bearer_token.strip() else None
         self._timeout = timeout
+        self._enable_tracing = enable_tracing
+        self._traceparent = traceparent.strip() if traceparent and traceparent.strip() else None
+        self._tracestate = tracestate.strip() if tracestate and tracestate.strip() else None
         if channel is not None:
             self._channel = channel
             self._owns_channel = False
@@ -625,19 +816,54 @@ class AsyncGrpcPushClient:
                 self._channel = grpc.aio.insecure_channel(target)
             self._owns_channel = True
 
-    def _metadata(self) -> tuple[tuple[str, str], ...]:
-        if self._bearer_token:
-            return (("authorization", f"Bearer {self._bearer_token}"),)
-        return ()
-
-    async def ping(self, client_id: str = "opencrawling-python-sdk") -> GrpcPingResponse:
-        rpc = self._channel.unary_unary(
-            METHOD_PING,
-            request_serializer=encode_ping_request,
-            response_deserializer=decode_ping_response,
+    def _metadata(
+        self,
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> tuple[tuple[str, str], ...]:
+        base: tuple[tuple[str, str], ...] = (
+            (("authorization", f"Bearer {self._bearer_token}"),) if self._bearer_token else ()
         )
-        result: GrpcPingResponse = await rpc(client_id, timeout=self._timeout)
-        return result
+        return inject_grpc_metadata(
+            base,
+            traceparent=traceparent if traceparent is not None else self._traceparent,
+            tracestate=tracestate if tracestate is not None else self._tracestate,
+        )
+
+    async def ping(
+        self,
+        client_id: str = "opencrawling-python-sdk",
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> GrpcPingResponse:
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/Ping",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "Ping",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.unary_unary(
+                METHOD_PING,
+                request_serializer=encode_ping_request,
+                response_deserializer=decode_ping_response,
+            )
+            try:
+                meta = self._metadata(traceparent=traceparent, tracestate=tracestate)
+                result: GrpcPingResponse = (
+                    await rpc(client_id, timeout=self._timeout, metadata=meta)
+                    if meta
+                    else await rpc(client_id, timeout=self._timeout)
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     async def push_document(
         self,
@@ -645,41 +871,104 @@ class AsyncGrpcPushClient:
         document: GrpcPushDocument | OisDocument,
         *,
         options: GrpcPushOptions | None = None,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> GrpcPushResponse:
         grpc_doc = GrpcPushDocument.from_ois(document) if isinstance(document, OisDocument) else document
         req = GrpcPushRequest(job_id=job_id, document=grpc_doc, options=options)
-        rpc = self._channel.unary_unary(
-            METHOD_PUSH_DOCUMENT,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_push_response,
-        )
-        result: GrpcPushResponse = await rpc(req, timeout=self._timeout, metadata=self._metadata())
-        return result
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/PushDocument",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "PushDocument",
+                "server.address": self._target,
+                "opencrawling.job_id": job_id,
+            },
+        ) as span:
+            rpc = self._channel.unary_unary(
+                METHOD_PUSH_DOCUMENT,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_push_response,
+            )
+            try:
+                result: GrpcPushResponse = await rpc(
+                    req,
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     async def stream_documents(
         self,
         requests: Iterable[GrpcPushRequest] | AsyncIterable[GrpcPushRequest],
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> GrpcStreamSummary:
-        rpc = self._channel.stream_unary(
-            METHOD_STREAM_DOCUMENTS,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_stream_summary,
-        )
-        result: GrpcStreamSummary = await rpc(requests, timeout=self._timeout, metadata=self._metadata())
-        return result
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/StreamDocuments",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "StreamDocuments",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.stream_unary(
+                METHOD_STREAM_DOCUMENTS,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_stream_summary,
+            )
+            try:
+                result: GrpcStreamSummary = await rpc(
+                    requests,
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                return result
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     async def bi_directional_stream(
         self,
         requests: Iterable[GrpcPushRequest] | AsyncIterable[GrpcPushRequest],
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> AsyncIterator[GrpcIngestionAck]:
-        rpc = self._channel.stream_stream(
-            METHOD_BIDI_STREAM,
-            request_serializer=encode_push_request,
-            response_deserializer=decode_ingestion_ack,
-        )
-        call = rpc(requests, timeout=self._timeout, metadata=self._metadata())
-        async for ack in call:
-            yield ack
+        with start_client_span(
+            self._enable_tracing,
+            f"{SERVICE_NAME}/BiDirectionalStream",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": SERVICE_NAME,
+                "rpc.method": "BiDirectionalStream",
+                "server.address": self._target,
+            },
+        ) as span:
+            rpc = self._channel.stream_stream(
+                METHOD_BIDI_STREAM,
+                request_serializer=encode_push_request,
+                response_deserializer=decode_ingestion_ack,
+            )
+            try:
+                call = rpc(
+                    requests,
+                    timeout=self._timeout,
+                    metadata=self._metadata(traceparent=traceparent, tracestate=tracestate),
+                )
+                async for ack in call:
+                    yield ack
+            except Exception as exc:
+                record_span_error(span, exc)
+                raise
 
     async def aclose(self) -> None:
         if self._owns_channel:
