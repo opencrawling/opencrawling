@@ -26,17 +26,22 @@
 #   embedding-consumer, writer-consumer, and mcp-server).
 #
 # Pipeline Lifecycle Tested:
-#   1. Spin up decoupled infrastructure via Docker Compose
-#   2. Healthcheck validation (Alfresco, pgvector, Redis, Ollama, Kafka)
-#   3. Provision test repository structure and text document stream in Alfresco
-#   4. Execute oc-crawler against Alfresco repository via REST API
-#   5. Store document stream in Claim Check store and publish metadata to Kafka
-#   6. oc-ingestion-consumer resolves claim check, extracts text with Tika & chunks
-#   7. oc-embedding-consumer vectorizes chunks with Ollama (mxbai-embed-large)
-#   8. oc-writer-consumer persists dense vector embeddings into PostgreSQL pgvector
-#   9. Verify record persistence and metadata accuracy in pgvector database
+#   1. Verify system prerequisites and dependencies
+#   2. Clean up previous containers and stale Alfresco crawl state volume
+#   3. Build OpenCrawling decoupled microservice images
+#   4. Start Alfresco + decoupled infrastructure and wait for health checks
+#   5. Provision rich test fixture in Alfresco (versioned docs, tags, comments,
+#      exact-vs-substring folder exclusion tree, regex-excluded lock file)
+#   6. Execute initial oc-crawler scan using Ticket auth, incremental state,
+#      selection filters, tags, comments, and web app URLs
+#   7. Verify Kafka -> Tika -> Ollama -> pgvector persistence, 1024d vectors,
+#      rich #425 metadata, and exact folder + regex exclusion filters
+#   8. Verify incremental no-op skip, live content/version update, ACL-only
+#      update, tag scope-exclusion tombstone, and real Trashcan deletion purge
+#   9. Verify multi-version indexing (versionMode=all) and version-mode switch
+#      tombstone cleanup (all -> current) in pgvector
 #  10. Verify OpenCrawling MCP Server endpoint readiness
-#  11. Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE action
+#  11. Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE test
 #  12. Clean up test artifacts in Alfresco and teardown containers cleanly
 # ==============================================================================
 
@@ -100,7 +105,9 @@ ALFRESCO_URL="${ALFRESCO_URL:-http://${ALFRESCO_HOST}:${ALFRESCO_PORT}/alfresco/
 COMPOSE_FILE="oc-alfresco-repository-connector/docker/docker-compose-decoupled-with-alfresco.yml"
 LOCAL_OVERLAY="${LOCAL_OVERLAY:-${COMPOSE_FILE%.yml}.local.yml}"
 TIMEOUT="${TIMEOUT:-300}"
+INGEST_TIMEOUT="${INGEST_TIMEOUT:-120}"
 MCP_PORT="${MCP_PORT:-8080}"
+PG_CONTAINER="postgres-vector-decoupled-alfresco"
 
 # Formatting
 RED='\033[0;31m'
@@ -112,7 +119,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PASSED_COUNT=0
-TOTAL_STEPS=10
+TOTAL_STEPS=12
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -153,8 +160,77 @@ AUTH_HEADER="Basic $(printf "%s:%s" "${ALFRESCO_USERNAME}" "${ALFRESCO_PASSWORD}
 ROOT_URL="${ALFRESCO_URL}/nodes/-root-"
 PROBE_URL="${ALFRESCO_URL}/probes/-ready-"
 
+# SQL & crawler helpers
+sql() {
+  docker exec -i "${PG_CONTAINER}" psql -U opencrawling -d opencrawling -t -A -P pager=off -c "$1" 2>/dev/null | tr -d '[:space:]'
+}
+
+wait_for_vector_count() {
+  local description="$1" where_clause="$2" comparison="$3" elapsed=0 count=0
+  while true; do
+    count=$(sql "SELECT (
+       CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
+         (SELECT count(*) FROM vector_store_1024 WHERE ${where_clause})
+       ELSE 0 END +
+       CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
+         (SELECT count(*) FROM vector_store WHERE ${where_clause})
+       ELSE 0 END
+     );" || echo "0")
+    [ -z "$count" ] && count=0
+    # shellcheck disable=SC2086
+    if [ "$count" $comparison ]; then
+      log_success "${description} (${count})."
+      return 0
+    fi
+    if [ "$elapsed" -ge "${INGEST_TIMEOUT}" ]; then
+      log_error "${description}: condition '${comparison}' not met after ${INGEST_TIMEOUT}s (got ${count})."
+      compose logs oc-ingestion-consumer --tail 30 || true
+      compose logs oc-embedding-consumer --tail 30 || true
+      compose logs oc-writer-consumer --tail 30 || true
+      exit 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+SCAN_SUMMARY=""
+run_crawler() {
+  local label="$1"
+  log_info "Launching oc-crawler (${label})..."
+  compose up -d --no-build --force-recreate oc-crawler
+
+  local elapsed=0
+  until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-alfresco 2>/dev/null || echo 'false')" == "false" ]; do
+    if [ "$elapsed" -ge "${TIMEOUT}" ]; then
+      log_error "Timeout waiting for oc-crawler-service-alfresco (${label}) to complete."
+      compose logs oc-crawler --tail 60 || true
+      exit 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  local exit_code
+  exit_code=$(docker inspect -f '{{.State.ExitCode}}' oc-crawler-service-alfresco 2>/dev/null || echo "1")
+  if [ "${exit_code}" -ne 0 ]; then
+    log_error "oc-crawler-service-alfresco (${label}) failed with exit code ${exit_code}."
+    compose logs oc-crawler --tail 80 || true
+    exit 1
+  fi
+
+  SCAN_SUMMARY=$(docker logs oc-crawler-service-alfresco 2>&1 | grep "Alfresco scan of" | tail -1 || true)
+  log_success "oc-crawler (${label}) completed cleanly: ${SCAN_SUMMARY#*-- }"
+  if [ -n "${SCAN_SUMMARY}" ] && ! echo "${SCAN_SUMMARY}" | grep -q "0 failed"; then
+    log_error "oc-crawler (${label}) reported failures: ${SCAN_SUMMARY}"
+    compose logs oc-crawler --tail 80 || true
+    exit 1
+  fi
+}
+
 # State variables for cleanup
-CREATED_DOC_IDS=()
+TEST_FOLDER_ID=""
+TRASHED_DOC_IDS=()
 
 cleanup() {
   local exit_code=$?
@@ -162,15 +238,19 @@ cleanup() {
     log_error "Test execution interrupted or failed with exit code $exit_code."
   fi
 
-  if [ "${#CREATED_DOC_IDS[@]}" -gt 0 ]; then
-    for doc_id in ${CREATED_DOC_IDS[@]+"${CREATED_DOC_IDS[@]}"}; do
+  if [ -n "${TEST_FOLDER_ID}" ]; then
+    log_info "Attempting to cleanup Alfresco test folder '${TEST_FOLDER_ID}'..."
+    curl -s -o /dev/null -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${TEST_FOLDER_ID}?permanent=true" 2>/dev/null || true
+    TEST_FOLDER_ID=""
+  fi
+  if [ "${#TRASHED_DOC_IDS[@]}" -gt 0 ]; then
+    for doc_id in "${TRASHED_DOC_IDS[@]}"; do
       if [ -n "${doc_id}" ]; then
-        log_info "Attempting to cleanup Alfresco test repository document '${doc_id}'..."
-        curl -s -o /dev/null -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${doc_id}" 2>/dev/null || true
+        curl -s -o /dev/null -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/deleted-nodes/${doc_id}" 2>/dev/null || true
       fi
     done
+    TRASHED_DOC_IDS=()
   fi
-  CREATED_DOC_IDS=()
 
   if [ "${KEEP_CONTAINERS}" = false ]; then
     log_info "Tearing down Decoupled Alfresco Docker Compose environment..."
@@ -189,18 +269,20 @@ trap cleanup EXIT
 log_step 1 "Verifying system prerequisites and dependencies..."
 command -v docker >/dev/null 2>&1 || { log_error "docker is required but not installed."; exit 1; }
 docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 || { log_error "docker compose is required."; exit 1; }
-command -v curl >/dev/null 2>&1 || { log_error "curl is required."; exit 1; }
-command -v jq >/dev/null 2>&1 || { log_error "jq is required."; exit 1; }
-command -v mvn >/dev/null 2>&1 || { log_error "mvn is required."; exit 1; }
+command -v curl >/dev/null 2>&1 || { log_error "curl is required but not installed."; exit 1; }
+command -v jq >/dev/null 2>&1 || { log_error "jq is required but not installed."; exit 1; }
+command -v mvn >/dev/null 2>&1 || { log_error "mvn is required but not installed."; exit 1; }
 log_pass "Prerequisites verified successfully."
 
 # ------------------------------------------------------------------------------
-# STEP 2: Clean up previous decoupled Alfresco containers
+# STEP 2: Clean up previous decoupled Alfresco containers & crawl state
 # ------------------------------------------------------------------------------
-log_step 2 "Cleaning up any existing decoupled Alfresco containers..."
+log_step 2 "Cleaning up any existing decoupled Alfresco containers and stale crawl state..."
 compose down --remove-orphans || true
 docker compose -f oc-alfresco-repository-connector/alfresco-community-compose.yml down --remove-orphans || true
 docker rm -f postgres-alfresco >/dev/null 2>&1 || true
+# Clear previous Alfresco incremental state so tests start cleanly (keep shared Ollama models volume)
+docker volume rm opencrawling-alfrescostate >/dev/null 2>&1 || true
 
 # Free common ports if lingering containers from previous runs are still binding them
 for p in 8080 8081 9092 5432 5433 6379 11434; do
@@ -210,7 +292,7 @@ for p in 8080 8081 9092 5432 5433 6379 11434; do
     docker rm -f $c_ids >/dev/null 2>&1 || true
   fi
 done
-log_pass "Existing containers and port bindings cleaned up."
+log_pass "Existing containers, stale crawl state, and port bindings cleaned up."
 
 # ------------------------------------------------------------------------------
 # STEP 3: Build OpenCrawling decoupled microservice images
@@ -265,9 +347,9 @@ log_success "Alfresco Content Services is ready and authenticated!"
 # 4b. Wait for PostgreSQL pgvector
 log_info "Waiting for PostgreSQL pgvector database to become healthy..."
 ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Health.Status}}' postgres-vector-decoupled-alfresco 2>/dev/null || echo 'starting')" == "healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' "${PG_CONTAINER}" 2>/dev/null || echo 'starting')" == "healthy" ]; do
   if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for postgres-vector-decoupled-alfresco."
+    log_error "Timeout waiting for ${PG_CONTAINER}."
     compose logs postgres-vector
     exit 1
   fi
@@ -333,330 +415,285 @@ log_success "Ollama embedding models pulled successfully!"
 log_pass "All decoupled infrastructure services are healthy and ready."
 
 # ------------------------------------------------------------------------------
-# STEP 5: Provision Test Documents in Alfresco Repository
+# STEP 5: Provision Rich Test Fixture in Alfresco Repository
 # ------------------------------------------------------------------------------
-log_step 5 "Provisioning test contents and content streams directly in Alfresco repository..."
+log_step 5 "Provisioning versioned documents, tags, comments, and folder-filter fixture in Alfresco..."
 
-# Document 1: Specification Document
-DOC1_NAME="opencrawling-alfresco-specification.txt"
-log_info "Creating test document '${DOC1_NAME}' directly under Alfresco repository root (-root-)..."
-
-CREATE_DOC1_PAYLOAD=$(cat <<EOF
-{
-  "name": "${DOC1_NAME}",
-  "nodeType": "cm:content",
-  "properties": {
-    "cm:title": "OpenCrawling Alfresco Decoupled Specification",
-    "cm:description": "Integration test payload verifying complete OpenCrawling decoupled processing pipeline"
-  }
-}
-EOF
-)
-
-DOC1_RES=$(curl -s -w "\n%{http_code}" -X POST "${ALFRESCO_URL}/nodes/-root-/children" \
-  -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d "${CREATE_DOC1_PAYLOAD}")
-
-DOC1_CODE=$(echo "${DOC1_RES}" | tail -n 1)
-DOC1_BODY=$(echo "${DOC1_RES}" | sed '$d')
-
-if [ "${DOC1_CODE}" != "201" ]; then
-  log_error "Failed to create document 1 in Alfresco: ${DOC1_BODY} (HTTP ${DOC1_CODE})"
+TEST_FOLDER_NAME="opencrawling-decoupled-$(date +%s)"
+FOLDER_RES=$(curl -s -w "\n%{http_code}" -X POST "${ALFRESCO_URL}/nodes/-root-/children" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" -H "Accept: application/json" \
+  -d "$(jq -nc --arg n "${TEST_FOLDER_NAME}" '{name:$n, nodeType:"cm:folder"}')")
+FOLDER_CODE=$(echo "${FOLDER_RES}" | tail -n 1)
+FOLDER_BODY=$(echo "${FOLDER_RES}" | sed '$d')
+if [ "${FOLDER_CODE}" != "201" ]; then
+  log_error "Failed to create test root folder in Alfresco: ${FOLDER_BODY} (HTTP ${FOLDER_CODE})"
   exit 1
 fi
+TEST_FOLDER_ID=$(echo "${FOLDER_BODY}" | jq -r '.entry.id')
+log_success "Created scoped Alfresco test folder '${TEST_FOLDER_NAME}' (ID: ${TEST_FOLDER_ID})."
 
-DOC1_ID=$(echo "${DOC1_BODY}" | jq -r '.entry.id')
-CREATED_DOC_IDS+=("${DOC1_ID}")
-log_success "Document node 1 created successfully with ID: ${DOC1_ID}"
-
-# Upload document 1 text stream
-DOC1_CONTENT="OpenCrawling decoupled architecture provides high-throughput distributed crawling for Alfresco Content Services repositories. Document content streams are claim-checked, parsed via Apache Tika, tokenized into semantic chunks, vectorized via Ollama, and persisted into PostgreSQL pgvector for AI agent retrieval."
-log_info "Uploading content stream to document node 1 '${DOC1_ID}'..."
-
-UPLOAD1_RES=$(curl -s -w "\n%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC1_ID}/content" \
-  -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: text/plain" \
-  --data-binary "${DOC1_CONTENT}")
-
-UPLOAD1_CODE=$(echo "${UPLOAD1_RES}" | tail -n 1)
-UPLOAD1_BODY=$(echo "${UPLOAD1_RES}" | sed '$d')
-
-if [ "${UPLOAD1_CODE}" != "200" ]; then
-  log_error "Failed to upload document 1 content: ${UPLOAD1_BODY} (HTTP ${UPLOAD1_CODE})"
-  exit 1
-fi
-log_success "Document 1 content stream uploaded to Alfresco repository."
-
-# Document 2: Architecture Document
-DOC2_NAME="opencrawling-alfresco-architecture.txt"
-log_info "Creating test document '${DOC2_NAME}' directly under Alfresco repository root (-root-)..."
-
-CREATE_DOC2_PAYLOAD=$(cat <<EOF
-{
-  "name": "${DOC2_NAME}",
-  "nodeType": "cm:content",
-  "properties": {
-    "cm:title": "OpenCrawling Alfresco Architecture Overview",
-    "cm:description": "Architecture guide for decoupled Alfresco indexing, Kafka messaging, and MCP discovery"
-  }
-}
-EOF
-)
-
-DOC2_RES=$(curl -s -w "\n%{http_code}" -X POST "${ALFRESCO_URL}/nodes/-root-/children" \
-  -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d "${CREATE_DOC2_PAYLOAD}")
-
-DOC2_CODE=$(echo "${DOC2_RES}" | tail -n 1)
-DOC2_BODY=$(echo "${DOC2_RES}" | sed '$d')
-
-if [ "${DOC2_CODE}" != "201" ]; then
-  log_error "Failed to create document 2 in Alfresco: ${DOC2_BODY} (HTTP ${DOC2_CODE})"
-  exit 1
-fi
-
-DOC2_ID=$(echo "${DOC2_BODY}" | jq -r '.entry.id')
-CREATED_DOC_IDS+=("${DOC2_ID}")
-log_success "Document node 2 created successfully with ID: ${DOC2_ID}"
-
-# Upload document 2 text stream
-DOC2_CONTENT="The Alfresco repository connector scans Company Home root nodes using Java 25 HttpClient and structured concurrency. Content binaries are persisted to the shared Claim Check store while metadata messages traverse Apache Kafka. Downstream microservices process ingestion, tokenization, embeddings with Ollama, and store vectors in PostgreSQL pgvector."
-log_info "Uploading content stream to document node 2 '${DOC2_ID}'..."
-
-UPLOAD2_RES=$(curl -s -w "\n%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC2_ID}/content" \
-  -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: text/plain" \
-  --data-binary "${DOC2_CONTENT}")
-
-UPLOAD2_CODE=$(echo "${UPLOAD2_RES}" | tail -n 1)
-UPLOAD2_BODY=$(echo "${UPLOAD2_RES}" | sed '$d')
-
-if [ "${UPLOAD2_CODE}" != "200" ]; then
-  log_error "Failed to upload document 2 content: ${UPLOAD2_BODY} (HTTP ${UPLOAD2_CODE})"
-  exit 1
-fi
-log_success "Document 2 content stream uploaded to Alfresco repository."
-
-# Verify document content stream download directly from repository
-DOWNLOADED1_CONTENT=$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC1_ID}/content")
-if [ "${DOWNLOADED1_CONTENT}" != "${DOC1_CONTENT}" ]; then
-  log_error "Downloaded content did not match uploaded content for document 1 in Alfresco!"
-  exit 1
-fi
-
-DOWNLOADED2_CONTENT=$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC2_ID}/content")
-if [ "${DOWNLOADED2_CONTENT}" != "${DOC2_CONTENT}" ]; then
-  log_error "Downloaded content did not match uploaded content for document 2 in Alfresco!"
-  exit 1
-fi
-log_success "Alfresco repository document contents verified successfully."
-
-log_pass "Alfresco test repository contents provisioned and verified."
-
-# ------------------------------------------------------------------------------
-# STEP 6: Execute oc-crawler against the Alfresco Repository
-# ------------------------------------------------------------------------------
-log_step 6 "Executing oc-crawler scan against Alfresco repository root (-root-)..."
-
-export SPRING_OPENCRAWLING_SCAN_PATH="-root-"
-
-log_info "Launching oc-crawler container with target repository scan path: ${SPRING_OPENCRAWLING_SCAN_PATH}..."
-SPRING_OPENCRAWLING_SCAN_PATH="-root-" compose up -d --build --force-recreate oc-crawler
-
-log_info "Waiting for oc-crawler service to finish repository crawl..."
-ELAPSED=0
-until [ "$(docker inspect -f '{{.State.Running}}' oc-crawler-service-alfresco 2>/dev/null || echo 'false')" == "false" ]; do
-  if [ $ELAPSED -ge $TIMEOUT ]; then
-    log_error "Timeout waiting for oc-crawler-service-alfresco to complete."
-    compose logs oc-crawler
+create_alfresco_doc() {
+  local parent_id="$1" name="$2" title="$3" desc="$4" content="$5" query="${6:-}"
+  local res code body id up_res up_code
+  res=$(curl -s -w "\n%{http_code}" -X POST "${ALFRESCO_URL}/nodes/${parent_id}/children" \
+    -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" -H "Accept: application/json" \
+    -d "$(jq -nc --arg n "$name" --arg t "$title" --arg d "$desc" \
+      '{name:$n, nodeType:"cm:content", properties:{"cm:title":$t, "cm:description":$d}}')")
+  code=$(echo "${res}" | tail -n 1)
+  body=$(echo "${res}" | sed '$d')
+  if [ "${code}" != "201" ]; then
+    log_error "Failed to create document '${name}': ${body} (HTTP ${code})"
     exit 1
   fi
-  sleep 2
-  ELAPSED=$((ELAPSED + 2))
-done
+  id=$(echo "${body}" | jq -r '.entry.id')
 
-CRAWLER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' oc-crawler-service-alfresco 2>/dev/null || echo "1")
-if [ "$CRAWLER_EXIT_CODE" -ne 0 ]; then
-  log_error "oc-crawler-service-alfresco failed with exit code ${CRAWLER_EXIT_CODE}."
-  compose logs oc-crawler
+  up_res=$(curl -s -w "\n%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${id}/content${query}" \
+    -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: text/plain" \
+    --data-binary "${content}")
+  up_code=$(echo "${up_res}" | tail -n 1)
+  if [ "${up_code}" != "200" ]; then
+    log_error "Failed to upload content for '${name}': $(echo "${up_res}" | sed '$d') (HTTP ${up_code})"
+    exit 1
+  fi
+  echo "${id}"
+}
+
+# Document 1: Specification Document (versioned + tagged + commented + explicit ACL for later ACL-only update)
+DOC1_NAME="opencrawling-alfresco-specification.txt"
+DOC1_CONTENT="OpenCrawling decoupled architecture provides high-throughput distributed crawling for Alfresco Content Services repositories. ALFRESCO-SPEC-V1-MARKER. Document content streams are claim-checked, parsed via Apache Tika, tokenized into semantic chunks, vectorized via Ollama, and persisted into PostgreSQL pgvector for AI agent retrieval."
+DOC1_ID=$(create_alfresco_doc "${TEST_FOLDER_ID}" "${DOC1_NAME}" \
+  "OpenCrawling Alfresco Decoupled Specification" \
+  "Integration test payload verifying complete OpenCrawling decoupled processing pipeline" \
+  "${DOC1_CONTENT}" "?majorVersion=true&comment=Initial+Release")
+log_success "Document 1 created (ID: ${DOC1_ID})."
+
+# Restrict Doc 1 initially to admin only so we can test ACL-only change detection later
+ACL1_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC1_ID}" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d '{"permissions":{"isInheritanceEnabled":false,"locallySet":[{"authorityId":"admin","name":"Coordinator","accessStatus":"ALLOWED"}]}}')
+[ "${ACL1_CODE}" = "200" ] || { log_error "Failed to set initial ACL on Doc 1 (HTTP ${ACL1_CODE})"; exit 1; }
+
+DOC1_TAG="opencrawling-verified"
+DOC1_COMMENT="Reviewed for OpenCrawling v1.0.5"
+curl -sf -X POST "${ALFRESCO_URL}/nodes/${DOC1_ID}/tags" -H "Authorization: ${AUTH_HEADER}" \
+  -H "Content-Type: application/json" -d "$(jq -nc --arg t "${DOC1_TAG}" '{tag:$t}')" >/dev/null
+curl -sf -X POST "${ALFRESCO_URL}/nodes/${DOC1_ID}/comments" -H "Authorization: ${AUTH_HEADER}" \
+  -H "Content-Type: application/json" -d "$(jq -nc --arg c "${DOC1_COMMENT}" '{content:$c}')" >/dev/null
+log_success "Tagged Doc 1 with '${DOC1_TAG}', added comment, and set explicit ACL."
+
+# Document 2: Architecture Document (later deleted to test real Trashcan + tombstone purge)
+DOC2_NAME="opencrawling-alfresco-architecture.txt"
+DOC2_CONTENT="The Alfresco repository connector scans Company Home nodes using Java 25 HttpClient and structured concurrency. Content binaries are persisted to the shared Claim Check store while metadata messages traverse Apache Kafka. Downstream microservices process ingestion, tokenization, embeddings with Ollama, and store vectors in PostgreSQL pgvector."
+DOC2_ID=$(create_alfresco_doc "${TEST_FOLDER_ID}" "${DOC2_NAME}" \
+  "OpenCrawling Alfresco Architecture Overview" \
+  "Architecture guide for decoupled Alfresco indexing, Kafka messaging, and MCP discovery" \
+  "${DOC2_CONTENT}")
+log_success "Document 2 created (ID: ${DOC2_ID})."
+
+# Lock file excluded by excludedNamePatterns (^~\$.*)
+LOCK_NAME='~$temporary-lock.txt'
+LOCK_ID=$(create_alfresco_doc "${TEST_FOLDER_ID}" "${LOCK_NAME}" "Lock File" "Must be filtered by excludedNamePatterns" \
+  "LOCK-FILE-MUST-NOT-BE-INDEXED transient office lock bytes.")
+log_info "Created regex-excluded lock file '${LOCK_NAME}' (ID: ${LOCK_ID})."
+
+# Folder exclusion fixture: 'Templates' MUST be indexed while 'temp' MUST be excluded
+TEMPLATES_ID=$(curl -sf -X POST "${ALFRESCO_URL}/nodes/${TEST_FOLDER_ID}/children" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d '{"name":"Templates","nodeType":"cm:folder"}' | jq -r '.entry.id')
+TEMP_ID=$(curl -sf -X POST "${ALFRESCO_URL}/nodes/${TEST_FOLDER_ID}/children" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d '{"name":"temp","nodeType":"cm:folder"}' | jq -r '.entry.id')
+
+TEMPLATE_DOC_NAME="opencrawling-template-note.txt"
+TEMPLATE_DOC_ID=$(create_alfresco_doc "${TEMPLATES_ID}" "${TEMPLATE_DOC_NAME}" \
+  "Alfresco Template Guide" "Verifies Templates is NOT matched by excludedFolders=temp" \
+  "ALFRESCO-TEMPLATES-INCLUDED-MARKER standard operating template stored inside Templates folder.")
+TEMP_DOC_NAME="opencrawling-temp-scratch.txt"
+TEMP_DOC_ID=$(create_alfresco_doc "${TEMP_ID}" "${TEMP_DOC_NAME}" \
+  "Alfresco Temp Scratch" "Verifies temp folder IS excluded" \
+  "ALFRESCO-TEMP-EXCLUDED-MARKER ephemeral file inside excluded temp folder.")
+log_success "Provisioned Templates/${TEMPLATE_DOC_NAME} (${TEMPLATE_DOC_ID}) and temp/${TEMP_DOC_NAME} (${TEMP_DOC_ID})."
+
+# Verify direct downloads match uploads
+[ "$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC1_ID}/content")" = "${DOC1_CONTENT}" ] \
+  || { log_error "Downloaded content did not match uploaded content for document 1!"; exit 1; }
+[ "$(curl -s -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC2_ID}/content")" = "${DOC2_CONTENT}" ] \
+  || { log_error "Downloaded content did not match uploaded content for document 2!"; exit 1; }
+log_pass "Alfresco test fixture provisioned and verified."
+
+# ------------------------------------------------------------------------------
+# STEP 6: Execute Initial oc-crawler Scan (Ticket Auth + Incremental + Filters)
+# ------------------------------------------------------------------------------
+log_step 6 "Executing initial oc-crawler scan with Ticket auth, incremental state, and selection filters..."
+
+export SPRING_OPENCRAWLING_SCAN_PATH="-root-"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_AUTH_TYPE="ticket"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_CRAWL_MODE="folder"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_ROOT_FOLDER_ID="${TEST_FOLDER_ID}"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCREMENTAL_ENABLED="true"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_DELETION_TRACKING="reconcile"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_VERSION_MODE="current"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_FOLDERS="Data Dictionary,temp"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_NAME_PATTERNS='^~\$.*'
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_TAGS="archived"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCLUDE_TAGS="true"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCLUDE_COMMENTS="true"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_WEB_APP_URL="http://localhost:8081/workspace"
+
+run_crawler "initial ticket-auth full scan"
+
+docker logs oc-crawler-service-alfresco 2>&1 | grep -q "auth: TICKET" \
+  || { log_error "Expected oc-crawler to authenticate with auth: TICKET"; compose logs oc-crawler --tail 40; exit 1; }
+echo "${SCAN_SUMMARY}" | grep -q "3 documents, 0 unchanged, 0 tombstones" \
+  || { log_error "Expected 3 documents (Doc1, Doc2, Templates/note) on initial scan, got: ${SCAN_SUMMARY}"; exit 1; }
+
+log_pass "Initial Alfresco repository scan completed with Ticket auth (3 documents, 0 unchanged, 0 failed)."
+
+# ------------------------------------------------------------------------------
+# STEP 7: Verify Kafka Ingestion, Embedding, PgVector Persistence, #425 Metadata & Filters
+# ------------------------------------------------------------------------------
+log_step 7 "Verifying pgvector persistence, rich #425 metadata, embeddings, and selection filters..."
+
+wait_for_vector_count "Doc 1 ('${DOC1_NAME}') vectors persisted" \
+  "metadata->>'documentId' = '${DOC1_ID}' AND content ILIKE '%Alfresco Content Services%'" "-gt 0"
+wait_for_vector_count "Doc 2 ('${DOC2_NAME}') vectors persisted" \
+  "metadata->>'documentId' = '${DOC2_ID}' AND content ILIKE '%structured concurrency%'" "-gt 0"
+wait_for_vector_count "Templates doc ('${TEMPLATE_DOC_NAME}') persisted (not falsely excluded by 'temp')" \
+  "metadata->>'documentId' = '${TEMPLATE_DOC_ID}' AND content LIKE '%ALFRESCO-TEMPLATES-INCLUDED-MARKER%'" "-gt 0"
+
+# 1. Verify Alfresco Metadata Properties (cm:title, nodeType, alfresco_node_id, alfresco_node_type)
+ALFRESCO_META_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' IN ('${DOC1_ID}', '${DOC2_ID}') AND metadata::text LIKE '%cm:content%' AND metadata::text LIKE '%alfresco_node_id%' AND metadata::text LIKE '%alfresco_node_type%' AND (metadata::text LIKE '%OpenCrawling Alfresco Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling Alfresco Architecture Overview%');")
+[ "${ALFRESCO_META_COUNT:-0}" -ge 2 ] \
+  || { log_error "Core Alfresco metadata check failed (found ${ALFRESCO_META_COUNT:-0}, expected >= 2)."; exit 1; }
+log_success "Core Alfresco provenance metadata confirmed (${ALFRESCO_META_COUNT} chunks)."
+
+# 2. Verify new #425 enriched metadata on Doc 1 (path, tags, comments, web_url, version_label)
+ENRICHED_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = '${DOC1_ID}'
+  AND metadata->>'alfresco_path' LIKE '%${TEST_FOLDER_NAME}%'
+  AND metadata->>'alfresco_tags' LIKE '%${DOC1_TAG}%'
+  AND metadata->>'alfresco_comments' LIKE '%${DOC1_COMMENT}%'
+  AND metadata->>'alfresco_web_url' LIKE '%http://localhost:8081/workspace/#/libraries/viewer/${DOC1_ID}%'
+  AND metadata->'alfresco_version_label'->>0 IS NOT NULL;")
+[ "${ENRICHED_COUNT:-0}" -gt 0 ] \
+  || { log_error "Enriched #425 metadata check failed on Doc 1 (path/tags/comments/web_url/version_label)."; exit 1; }
+log_success "Enriched #425 metadata verified on Doc 1 (path, tags, comments, web_url, version_label)."
+
+# 3. Verify excluded lock file and excluded 'temp' folder were NOT indexed
+FILTERED_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' IN ('${LOCK_ID}', '${TEMP_DOC_ID}') OR content LIKE '%LOCK-FILE-MUST-NOT-BE-INDEXED%' OR content LIKE '%ALFRESCO-TEMP-EXCLUDED-MARKER%';")
+[ "${FILTERED_COUNT:-0}" -eq 0 ] \
+  || { log_error "Excluded lock file or temp/ file leaked into pgvector (${FILTERED_COUNT} chunks)!"; exit 1; }
+log_success "Selection filters verified: '~\$temporary-lock.txt' and 'temp/' excluded while 'Templates/' indexed."
+
+# 4. Verify 1024d embeddings
+DIMS_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE embedding IS NOT NULL AND vector_dims(embedding) = 1024 AND metadata->>'documentId' IN ('${DOC1_ID}', '${DOC2_ID}', '${TEMPLATE_DOC_ID}');")
+[ "${DIMS_COUNT:-0}" -ge 3 ] \
+  || { log_error "Vector dimension check failed! Expected >= 3 records with 1024d embeddings, found: ${DIMS_COUNT:-0}"; exit 1; }
+log_success "Vector dimension check passed (${DIMS_COUNT} 1024d records)."
+
+log_pass "End-to-end vector pipeline, #425 metadata, and selection filters verified."
+
+# ------------------------------------------------------------------------------
+# STEP 8: Incremental Skip, Version/Content Update, ACL Update, Tag Scope Exclusion & Trashcan Tombstone
+# ------------------------------------------------------------------------------
+log_step 8 "Verifying incremental no-op skip, live mutations, ACL-only updates, and real deletion tombstones..."
+
+# 8a. Re-run with no repository changes -> must skip all 3 documents
+run_crawler "incremental no-op check"
+echo "${SCAN_SUMMARY}" | grep -q "0 documents, 3 unchanged, 0 tombstones" \
+  || { log_error "Expected 0 documents and 3 unchanged on no-op incremental run, got: ${SCAN_SUMMARY}"; exit 1; }
+log_success "Incremental no-op verified (0 documents re-crawled, 3 unchanged)."
+
+# 8b. Live mutation 1: ACL-only update on Doc 1 (no content change!) -> must trigger re-index via aclFingerprint
+ACL2_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${DOC1_ID}" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d '{"permissions":{"isInheritanceEnabled":false,"locallySet":[{"authorityId":"admin","name":"Coordinator","accessStatus":"ALLOWED"},{"authorityId":"GROUP_ALFRESCO_ADMINISTRATORS","name":"Consumer","accessStatus":"ALLOWED"}]}}')
+[ "${ACL2_CODE}" = "200" ] || { log_error "Failed to update ACL on Doc 1 (HTTP ${ACL2_CODE})"; exit 1; }
+
+run_crawler "incremental ACL-only change detection"
+echo "${SCAN_SUMMARY}" | grep -q "1 documents, 2 unchanged, 0 tombstones" \
+  || { log_error "Expected 1 re-indexed doc on ACL-only change, got: ${SCAN_SUMMARY}"; exit 1; }
+wait_for_vector_count "Doc 1 ACL updated in pgvector with GROUP_ALFRESCO_ADMINISTRATORS" \
+  "metadata->>'documentId' = '${DOC1_ID}' AND metadata::text LIKE '%GROUP_ALFRESCO_ADMINISTRATORS%'" "-gt 0"
+
+# 8c. Live mutations 2, 3 & 4:
+#   - Update Doc 1 to Major Release v2.0
+#   - Tag Templates doc as 'archived' (leaves excludedTags scope -> tombstone)
+#   - Delete Doc 2 to Alfresco Trashcan (vanishes from folder -> tombstone)
+DOC1_V2_CONTENT="OpenCrawling Alfresco Specification Major Release Version 2. ALFRESCO-INCR-V2-UPDATED. Incremental updates replace stale chunks atomically."
+V2_UP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+  "${ALFRESCO_URL}/nodes/${DOC1_ID}/content?majorVersion=true&comment=Major+Release+2.0" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: text/plain" --data-binary "${DOC1_V2_CONTENT}")
+[ "${V2_UP_CODE}" = "200" ] || { log_error "Failed to upload Doc 1 v2.0 (HTTP ${V2_UP_CODE})"; exit 1; }
+
+curl -sf -X POST "${ALFRESCO_URL}/nodes/${TEMPLATE_DOC_ID}/tags" -H "Authorization: ${AUTH_HEADER}" \
+  -H "Content-Type: application/json" -d '{"tag":"archived"}' >/dev/null
+
+DEL2_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC2_ID}")
+[ "${DEL2_CODE}" = "204" ] || { log_error "Failed to delete Doc 2 (HTTP ${DEL2_CODE})"; exit 1; }
+TRASHED_DOC_IDS+=("${DOC2_ID}")
+
+# Confirm Doc 2 appears in Alfresco /deleted-nodes Trashcan
+TRASH_CHECK=$(curl -sf -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/deleted-nodes?maxItems=50" \
+  | jq -r --arg id "${DOC2_ID}" '.list.entries[].entry | select(.id == $id) | .id // empty')
+[ "${TRASH_CHECK}" = "${DOC2_ID}" ] || { log_error "Deleted Doc 2 '${DOC2_ID}' did not appear in Alfresco /deleted-nodes!"; exit 1; }
+log_success "Confirmed Doc 2 is archived in Alfresco Trashcan (/deleted-nodes)."
+
+run_crawler "incremental update + scope exclusion + deletion tombstones"
+echo "${SCAN_SUMMARY}" | grep -q "1 documents, 0 unchanged, 2 tombstones" \
+  || { log_error "Expected 1 updated doc and 2 tombstones (Doc 2 deleted + Template doc archived), got: ${SCAN_SUMMARY}"; exit 1; }
+
+wait_for_vector_count "Doc 1 updated to v2 content in pgvector" \
+  "metadata->>'documentId' = '${DOC1_ID}' AND content LIKE '%ALFRESCO-INCR-V2-UPDATED%'" "-gt 0"
+wait_for_vector_count "Doc 1 stale v1 content replaced in pgvector" \
+  "metadata->>'documentId' = '${DOC1_ID}' AND content LIKE '%ALFRESCO-SPEC-V1-MARKER%'" "-eq 0"
+wait_for_vector_count "Deleted Doc 2 purged from pgvector via Kafka DELETE tombstone" \
+  "metadata->>'documentId' = '${DOC2_ID}'" "-eq 0"
+wait_for_vector_count "Archived Templates doc purged from pgvector via scope-exclusion tombstone" \
+  "metadata->>'documentId' = '${TEMPLATE_DOC_ID}'" "-eq 0"
+
+log_pass "Incremental skip, ACL-only re-index, v2 update, tag exclusion, and real deletion tombstones verified."
+
+# ------------------------------------------------------------------------------
+# STEP 9: Multi-Version Indexing (versionMode=all) & Version-Mode Switch Cleanup
+# ------------------------------------------------------------------------------
+log_step 9 "Verifying multi-version indexing (versionMode=all) and version-mode switch tombstones..."
+
+VERSIONS_JSON=$(curl -sf -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC1_ID}/versions?include=properties")
+NON_EMPTY_VERSIONS=$(echo "${VERSIONS_JSON}" | jq -r '.list.entries[].entry | select((.content.sizeInBytes // 0) > 0) | .id')
+VERSION_V2=$(echo "${NON_EMPTY_VERSIONS}" | sed -n '1p')
+VERSION_V1=$(echo "${NON_EMPTY_VERSIONS}" | sed -n '2p')
+if [ -z "${VERSION_V2}" ] || [ -z "${VERSION_V1}" ]; then
+  log_error "Expected at least 2 non-empty versions on Doc 1, got: ${VERSIONS_JSON}"
   exit 1
 fi
+log_info "Detected non-empty Alfresco versions on Doc 1: latest='${VERSION_V2}', previous='${VERSION_V1}'."
 
-log_success "oc-crawler completed repository scan with clean exit code 0."
-log_info "Crawler output summary:"
-docker logs --tail 20 oc-crawler-service-alfresco || true
+# Switch to versionMode=all on the same incremental state file
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_VERSION_MODE="all"
+run_crawler "versionMode=all multi-version indexing"
 
-log_pass "Alfresco repository scan completed successfully."
+wait_for_vector_count "Doc 1 latest version (${DOC1_ID};v=${VERSION_V2}) indexed" \
+  "metadata->>'documentId' = '${DOC1_ID};v=${VERSION_V2}' AND content LIKE '%ALFRESCO-INCR-V2-UPDATED%'" "-gt 0"
+wait_for_vector_count "Doc 1 historical version (${DOC1_ID};v=${VERSION_V1}) indexed" \
+  "metadata->>'documentId' = '${DOC1_ID};v=${VERSION_V1}' AND content LIKE '%ALFRESCO-SPEC-V1-MARKER%'" "-gt 0"
+wait_for_vector_count "Previous unversioned Doc 1 (${DOC1_ID}) tombstoned on switch to versionMode=all" \
+  "metadata->>'documentId' = '${DOC1_ID}'" "-eq 0"
 
-# ------------------------------------------------------------------------------
-# STEP 7: Verify Kafka Ingestion, Embedding, and PgVector Persistence
-# ------------------------------------------------------------------------------
-log_step 7 "Waiting for Kafka messaging pipeline to process and persist vector embeddings in PgVector..."
+# Switch back to versionMode=current on the same incremental state file -> tombstones all ;v=... entries
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_VERSION_MODE="current"
+run_crawler "versionMode=current tombstone cleanup"
 
-DOC1_COUNT=0
-DOC2_COUNT=0
-TOTAL_VECTOR_COUNT=0
-ELAPSED=0
-INGEST_TIMEOUT=120
+wait_for_vector_count "Unversioned Doc 1 (${DOC1_ID}) restored in pgvector" \
+  "metadata->>'documentId' = '${DOC1_ID}' AND content LIKE '%ALFRESCO-INCR-V2-UPDATED%'" "-gt 0"
+wait_for_vector_count "Historical versioned IDs (${DOC1_ID};v=*) tombstoned on switch back to current" \
+  "metadata->>'documentId' LIKE '${DOC1_ID};v=%'" "-eq 0"
 
-log_info "Waiting for vectors corresponding specifically to Alfresco repository test documents to appear in pgvector..."
-
-until ([ "$DOC1_COUNT" -gt 0 ] 2>/dev/null && [ "$DOC2_COUNT" -gt 0 ] 2>/dev/null) || [ $ELAPSED -ge $INGEST_TIMEOUT ]; do
-  sleep 2
-  ELAPSED=$((ELAPSED + 2))
-
-  # Query vector count specifically related to Alfresco Document 1
-  DOC1_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-    "SELECT (
-       CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%Alfresco Content Services%')
-       ELSE 0 END +
-       CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%') AND content ILIKE '%Alfresco Content Services%')
-       ELSE 0 END
-     );" 2>/dev/null || echo "0")
-  DOC1_COUNT=$(echo "$DOC1_COUNT" | tr -d '[:space:]')
-  [ -z "$DOC1_COUNT" ] && DOC1_COUNT=0
-
-  # Query vector count specifically related to Alfresco Document 2
-  DOC2_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-    "SELECT (
-       CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC2_ID}%') AND content ILIKE '%structured concurrency%')
-       ELSE 0 END +
-       CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-         (SELECT count(*) FROM vector_store WHERE (metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC2_ID}%') AND content ILIKE '%structured concurrency%')
-       ELSE 0 END
-     );" 2>/dev/null || echo "0")
-  DOC2_COUNT=$(echo "$DOC2_COUNT" | tr -d '[:space:]')
-  [ -z "$DOC2_COUNT" ] && DOC2_COUNT=0
-
-  printf "  Elapsed: %ds | Doc 1 (%s) vectors: %s | Doc 2 (%s) vectors: %s\r" \
-    "$ELAPSED" "${DOC1_NAME}" "$DOC1_COUNT" "${DOC2_NAME}" "$DOC2_COUNT"
-done
-echo ""
-
-# Check for timeout or missing vectors
-if [ "$DOC1_COUNT" -eq 0 ] || [ "$DOC2_COUNT" -eq 0 ]; then
-  log_error "Decoupled pipeline verification failed: vectors matching Alfresco repository documents were not found in pgvector!"
-  log_error "  - Doc 1 ('${DOC1_NAME}', ID: ${DOC1_ID}): ${DOC1_COUNT} vector(s)"
-  log_error "  - Doc 2 ('${DOC2_NAME}', ID: ${DOC2_ID}): ${DOC2_COUNT} vector(s)"
-  log_warn "Displaying consumer service logs for diagnosis:"
-  compose logs oc-ingestion-consumer --tail 30 || true
-  compose logs oc-embedding-consumer --tail 30 || true
-  compose logs oc-writer-consumer --tail 30 || true
-  exit 1
-fi
-
-log_success "Discovered vector records matching Alfresco repository documents!"
-log_info "  - Doc 1 ('${DOC1_NAME}', ID: ${DOC1_ID}): ${DOC1_COUNT} vector record(s)"
-log_info "  - Doc 2 ('${DOC2_NAME}', ID: ${DOC2_ID}): ${DOC2_COUNT} vector record(s)"
+log_pass "Multi-version indexing (ALL) and version-mode switch tombstone cleanup verified."
 
 # ------------------------------------------------------------------------------
-# STEP 7a: Detailed Validation of Alfresco Repository Provenance in PgVector
+# STEP 10: Verify OpenCrawling MCP Server Endpoint
 # ------------------------------------------------------------------------------
-log_info "Executing specific provenance checks on vectors stored in pgvector..."
-
-# 1. Verify Alfresco Content Streams in Stored Vector Records
-log_info "Check 1: Verifying vector content text matches uploaded Alfresco repository streams..."
-CONTENT_MATCH_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-  "SELECT (
-     CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE (content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
-     ELSE 0 END +
-     CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE (content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
-     ELSE 0 END
-   );" 2>/dev/null || echo "0")
-CONTENT_MATCH_COUNT=$(echo "$CONTENT_MATCH_COUNT" | tr -d '[:space:]')
-[ -z "$CONTENT_MATCH_COUNT" ] && CONTENT_MATCH_COUNT=0
-
-if [ "$CONTENT_MATCH_COUNT" -lt 2 ]; then
-  log_error "Content check failed: Vector text does not match uploaded Alfresco repository streams! Found: ${CONTENT_MATCH_COUNT} (expected >= 2)"
-  exit 1
-fi
-log_success "Content check passed: Stored vectors contain exact text from Alfresco repository documents (${CONTENT_MATCH_COUNT} chunks)."
-
-# 2. Verify Alfresco Metadata Properties (cm:title, nodeType, documentId)
-log_info "Check 2: Verifying Alfresco-specific metadata (nodeType: cm:content, cm:title) in pgvector JSONB..."
-ALFRESCO_META_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-  "SELECT (
-     CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE metadata::text LIKE '%cm:content%' AND (metadata::text LIKE '%OpenCrawling Alfresco Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling Alfresco Architecture Overview%'))
-     ELSE 0 END +
-     CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE metadata::text LIKE '%cm:content%' AND (metadata::text LIKE '%OpenCrawling Alfresco Decoupled Specification%' OR metadata::text LIKE '%OpenCrawling Alfresco Architecture Overview%'))
-     ELSE 0 END
-   );" 2>/dev/null || echo "0")
-ALFRESCO_META_COUNT=$(echo "$ALFRESCO_META_COUNT" | tr -d '[:space:]')
-[ -z "$ALFRESCO_META_COUNT" ] && ALFRESCO_META_COUNT=0
-
-if [ "$ALFRESCO_META_COUNT" -lt 2 ]; then
-  log_error "Metadata check failed: Alfresco metadata attributes (nodeType, cm:title) not found in pgvector! Found: ${ALFRESCO_META_COUNT} (expected >= 2)"
-  exit 1
-fi
-log_success "Metadata check passed: Alfresco repository metadata attributes confirmed in pgvector JSONB (${ALFRESCO_META_COUNT} records)."
-
-# 2b. Verify Collocated Entity & Zero-Trust Metadata (alfresco_node_id, alfresco_node_type)
-log_info "Check 2b: Verifying Alfresco zero-trust & collocated metadata (alfresco_node_id, alfresco_node_type) in pgvector JSONB..."
-COLLOCATED_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-  "SELECT (
-     CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE metadata::text LIKE '%alfresco_node_id%' AND metadata::text LIKE '%alfresco_node_type%')
-     ELSE 0 END +
-     CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE metadata::text LIKE '%alfresco_node_id%' AND metadata::text LIKE '%alfresco_node_type%')
-     ELSE 0 END
-   );" 2>/dev/null || echo "0")
-COLLOCATED_COUNT=$(echo "$COLLOCATED_COUNT" | tr -d '[:space:]')
-[ -z "$COLLOCATED_COUNT" ] && COLLOCATED_COUNT=0
-
-if [ "$COLLOCATED_COUNT" -ge 2 ]; then
-  log_success "Zero-trust & collocated metadata check passed: alfresco_node_id and alfresco_node_type confirmed in pgvector (${COLLOCATED_COUNT} records)."
-else
-  log_warn "Collocated metadata check returned ${COLLOCATED_COUNT} records (expected >= 2)."
-fi
-
-# 3. Preview Stored Alfresco Vectors Table
-log_info "Preview of indexed Alfresco repository document records in pgvector:"
-docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -P pager=off -c \
-  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store_1024 WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || \
-docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -P pager=off -c \
-  "SELECT id, metadata->'name' AS doc_name, metadata->'cm:title' AS title, vector_dims(embedding) AS dims, left(content, 60) AS content_preview FROM vector_store WHERE (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%');" 2>/dev/null || true
-
-# 4. Verify Vector Embedding Dimensions (1024d)
-log_info "Check 3: Verifying vector embedding dimensions (1024d) in pgvector..."
-DIMS_COUNT=$(docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -t -A -P pager=off -c \
-  "SELECT (
-     CASE WHEN to_regclass('public.vector_store_1024') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store_1024 WHERE embedding IS NOT NULL AND vector_dims(embedding) = 1024 AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
-     ELSE 0 END +
-     CASE WHEN to_regclass('public.vector_store') IS NOT NULL THEN
-       (SELECT count(*) FROM vector_store WHERE embedding IS NOT NULL AND (vector_dims(embedding) = 1024 OR vector_dims(embedding) = 1536) AND (metadata::text LIKE '%${DOC1_NAME}%' OR metadata::text LIKE '%${DOC2_NAME}%' OR metadata::text LIKE '%${DOC1_ID}%' OR metadata::text LIKE '%${DOC2_ID}%' OR content ILIKE '%Alfresco Content Services%' OR content ILIKE '%structured concurrency%'))
-     ELSE 0 END
-   );" 2>/dev/null || echo "0")
-DIMS_COUNT=$(echo "$DIMS_COUNT" | tr -d '[:space:]')
-[ -z "$DIMS_COUNT" ] && DIMS_COUNT=0
-
-if [ "$DIMS_COUNT" -lt 2 ]; then
-  log_error "Vector dimension check failed! Expected at least 2 records with vector embeddings, found: ${DIMS_COUNT}"
-  log_warn "Diagnostic: Inspecting existing tables and schemas in postgres-vector database..."
-  docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -c "\dt" || true
-  docker exec -i postgres-vector-decoupled-alfresco psql -U opencrawling -d opencrawling -c "SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_name LIKE 'vector_store%';" || true
-  exit 1
-fi
-log_success "Vector dimension check passed: Stored embeddings verified in pgvector (${DIMS_COUNT} records)!"
-
-log_pass "End-to-end vector pipeline execution verified successfully. All stored vectors confirmed to originate from Alfresco repository test content."
-
-# ------------------------------------------------------------------------------
-# STEP 8: Verify OpenCrawling MCP Server Endpoint
-# ------------------------------------------------------------------------------
-log_step 8 "Waiting for OpenCrawling MCP Server endpoint to be ready..."
+log_step 10 "Waiting for OpenCrawling MCP Server endpoint to be ready..."
 
 HTTP_STATUS="000"
 ELAPSED=0
@@ -685,30 +722,40 @@ log_success "OpenCrawling MCP Server is online and reachable (HTTP ${HTTP_STATUS
 log_pass "MCP Server verified successfully."
 
 # ------------------------------------------------------------------------------
-# STEP 9: Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE
+# STEP 11: Verify Open Ingestion Standard (OIS) Document Lifecycle Tombstone DELETE
 # ------------------------------------------------------------------------------
-log_step 9 "Executing OIS Document Lifecycle Tombstone DELETE action test..."
-mvn test -pl oc-runtime -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores
+log_step 11 "Executing OIS Document Lifecycle Tombstone DELETE action test..."
+mvn test -pl oc-alfresco-repository-connector,oc-runtime \
+  -Dtest=VectorStoreWriterConsumerTest#testConsumeDeleteTombstonePurgesTheDocumentChunksFromAllVectorStores \
+  -Dsurefire.failIfNoSpecifiedTests=false
 log_pass "OIS Tombstone DELETE action test passed."
 
 # ------------------------------------------------------------------------------
-# STEP 10: Cleanup Test Content in Alfresco Repository
+# STEP 12: Cleanup Test Content in Alfresco Repository
 # ------------------------------------------------------------------------------
-log_step 10 "Cleaning up test contents from Alfresco repository..."
+log_step 12 "Cleaning up test contents and Trashcan entries from Alfresco repository..."
 
-if [ "${#CREATED_DOC_IDS[@]}" -gt 0 ]; then
-  for doc_id in ${CREATED_DOC_IDS[@]+"${CREATED_DOC_IDS[@]}"}; do
+if [ -n "${TEST_FOLDER_ID}" ]; then
+  DELETE_RES=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${TEST_FOLDER_ID}?permanent=true")
+  if [ "${DELETE_RES}" = "204" ] || [ "${DELETE_RES}" = "200" ]; then
+    log_success "Alfresco test folder '${TEST_FOLDER_ID}' permanently removed."
+    TEST_FOLDER_ID=""
+  else
+    log_warn "Failed to remove test folder '${TEST_FOLDER_ID}'. Status: ${DELETE_RES}"
+  fi
+fi
+
+if [ "${#TRASHED_DOC_IDS[@]}" -gt 0 ]; then
+  for doc_id in "${TRASHED_DOC_IDS[@]}"; do
     if [ -n "${doc_id}" ]; then
-      DELETE_RES=$(curl -s -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${doc_id}")
-      if [ "${DELETE_RES}" = "204" ] || [ "${DELETE_RES}" = "200" ]; then
-        log_success "Alfresco repository document '${doc_id}' removed successfully."
-      else
-        log_warn "Failed to remove repository document '${doc_id}'. Status: ${DELETE_RES}"
+      PURGE_RES=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/deleted-nodes/${doc_id}")
+      if [ "${PURGE_RES}" = "204" ] || [ "${PURGE_RES}" = "200" ]; then
+        log_success "Purged trashed document '${doc_id}' from Alfresco Trashcan."
       fi
     fi
   done
+  TRASHED_DOC_IDS=()
 fi
-CREATED_DOC_IDS=()
 
 log_pass "Alfresco repository cleanup complete."
 
