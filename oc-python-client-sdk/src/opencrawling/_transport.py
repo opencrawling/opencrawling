@@ -32,6 +32,12 @@ from urllib.parse import quote
 
 import httpx
 
+from opencrawling._tracing import (
+    inject_trace_headers,
+    record_span_error,
+    set_span_http_status,
+    start_client_span,
+)
 from opencrawling._version import __version__
 from opencrawling.auth.base import (
     AnyTokenProvider,
@@ -254,6 +260,7 @@ class SyncTransport:
         timeout: float | httpx.Timeout = 30.0,
         http2: bool = False,
         verify: bool | str = True,
+        enable_tracing: bool = False,
         http_client: httpx.Client | None = None,
         owns_client: bool | None = None,
         sleeper: Callable[[float], None] = time.sleep,
@@ -263,6 +270,7 @@ class SyncTransport:
         self._token_provider: TokenProvider = token_provider or StaticTokenProvider(None)
         self.retry_policy = retry_policy if retry_policy is not None else RetryPolicy.defaults()
         self._default_options = default_options.as_defaults() if default_options is not None else RequestOptions.none()
+        self._enable_tracing = enable_tracing
         self._sleeper = sleeper
         if http_client is not None:
             self._client = http_client
@@ -285,6 +293,7 @@ class SyncTransport:
             token_provider=self._token_provider,
             retry_policy=self.retry_policy,
             default_options=merged,
+            enable_tracing=self._enable_tracing,
             http_client=self._client,
             owns_client=False,
             sleeper=self._sleeper,
@@ -297,6 +306,7 @@ class SyncTransport:
             token_provider=token_provider,
             retry_policy=self.retry_policy,
             default_options=self._default_options,
+            enable_tracing=self._enable_tracing,
             http_client=self._client,
             owns_client=False,
             sleeper=self._sleeper,
@@ -322,12 +332,15 @@ class SyncTransport:
         content: bytes | None,
         data: Mapping[str, Any] | None,
         files: Any | None,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> httpx.Response:
         def _execute() -> httpx.Response:
             req_headers = dict(headers)
             token = self._token_provider.access_token()
             if token and token.strip():
                 req_headers["Authorization"] = f"Bearer {token.strip()}"
+            inject_trace_headers(req_headers, traceparent=traceparent, tracestate=tracestate)
             logger.debug("HTTP %s %s", method, url)
             return self._client.request(
                 method,
@@ -392,36 +405,51 @@ class SyncTransport:
         query_params = filter_params(params)
         url = self._build_url(path)
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = self._send_once(
-                    upper,
-                    url,
-                    params=query_params,
-                    headers=headers,
-                    content=raw_content,
-                    data=data,
-                    files=files,
-                )
-            except httpx.HTTPError as exc:
-                if attempt >= max_attempts:
-                    raise NetworkError(
-                        f"Network error while communicating with OpenCrawling endpoint: {url}",
-                        cause=exc,
-                    ) from exc
-                delay = self.retry_policy.compute_delay(attempt, None)
-                if delay is not None and delay > 0:
+        with start_client_span(
+            self._enable_tracing,
+            f"HTTP {upper}",
+            {
+                "http.request.method": upper,
+                "url.full": url,
+                "opencrawling.path": path,
+            },
+        ) as span:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = self._send_once(
+                        upper,
+                        url,
+                        params=query_params,
+                        headers=headers,
+                        content=raw_content,
+                        data=data,
+                        files=files,
+                        traceparent=merged.traceparent,
+                        tracestate=merged.tracestate,
+                    )
+                except httpx.HTTPError as exc:
+                    if attempt >= max_attempts:
+                        err = NetworkError(
+                            f"Network error while communicating with OpenCrawling endpoint: {url}",
+                            cause=exc,
+                        )
+                        record_span_error(span, err)
+                        raise err from exc
+                    delay = self.retry_policy.compute_delay(attempt, None)
+                    if delay is not None and delay > 0:
+                        self._sleeper(delay)
+                    continue
+
+                if attempt >= max_attempts or not _is_retryable_response(response):
+                    set_span_http_status(span, response.status_code, retries=attempt - 1)
+                    return response
+
+                delay = self.retry_policy.compute_delay(attempt, response.headers.get("retry-after"))
+                if delay is None:
+                    set_span_http_status(span, response.status_code, retries=attempt - 1)
+                    return response
+                if delay > 0:
                     self._sleeper(delay)
-                continue
-
-            if attempt >= max_attempts or not _is_retryable_response(response):
-                return response
-
-            delay = self.retry_policy.compute_delay(attempt, response.headers.get("retry-after"))
-            if delay is None:
-                return response
-            if delay > 0:
-                self._sleeper(delay)
 
         raise NetworkError(f"Exhausted retry attempts for {upper} {url}")  # pragma: no cover
 
@@ -464,43 +492,61 @@ class SyncTransport:
         abs_target = target.resolve()
         abs_target.parent.mkdir(parents=True, exist_ok=True)
 
-        def _open_and_write(retried_auth: bool) -> Path:
-            req_headers = dict(headers)
-            token = self._token_provider.access_token()
-            if token and token.strip():
-                req_headers["Authorization"] = f"Bearer {token.strip()}"
-            try:
-                with self._client.stream(
-                    "GET",
-                    url,
-                    params=query_params or None,
-                    headers=req_headers,
-                ) as response:
-                    if response.status_code == 401 and not retried_auth and self._token_provider.invalidate():
-                        return _open_and_write(True)
-                    if response.status_code >= 400:
-                        body_bytes = response.read()
-                        raise parse_problem_error(response, body_bytes=body_bytes)
-                    fd, tmp_name = tempfile.mkstemp(
-                        prefix=f".{abs_target.name}.",
-                        suffix=".part",
-                        dir=str(abs_target.parent),
-                    )
-                    tmp_path = Path(tmp_name)
-                    try:
-                        with os.fdopen(fd, "wb") as out:
-                            for chunk in response.iter_bytes():
-                                if chunk:
-                                    out.write(chunk)
-                        os.replace(tmp_path, abs_target)
-                    except Exception:
-                        tmp_path.unlink(missing_ok=True)
-                        raise
-                    return target
-            except httpx.HTTPError as exc:
-                raise NetworkError(f"Could not stream report to {target}", cause=exc) from exc
+        with start_client_span(
+            self._enable_tracing,
+            "HTTP GET",
+            {
+                "http.request.method": "GET",
+                "url.full": url,
+                "opencrawling.path": path,
+            },
+        ) as span:
 
-        return _open_and_write(False)
+            def _open_and_write(retried_auth: bool) -> Path:
+                req_headers = dict(headers)
+                token = self._token_provider.access_token()
+                if token and token.strip():
+                    req_headers["Authorization"] = f"Bearer {token.strip()}"
+                inject_trace_headers(
+                    req_headers,
+                    traceparent=merged.traceparent,
+                    tracestate=merged.tracestate,
+                )
+                try:
+                    with self._client.stream(
+                        "GET",
+                        url,
+                        params=query_params or None,
+                        headers=req_headers,
+                    ) as response:
+                        if response.status_code == 401 and not retried_auth and self._token_provider.invalidate():
+                            return _open_and_write(True)
+                        set_span_http_status(span, response.status_code)
+                        if response.status_code >= 400:
+                            body_bytes = response.read()
+                            raise parse_problem_error(response, body_bytes=body_bytes)
+                        fd, tmp_name = tempfile.mkstemp(
+                            prefix=f".{abs_target.name}.",
+                            suffix=".part",
+                            dir=str(abs_target.parent),
+                        )
+                        tmp_path = Path(tmp_name)
+                        try:
+                            with os.fdopen(fd, "wb") as out:
+                                for chunk in response.iter_bytes():
+                                    if chunk:
+                                        out.write(chunk)
+                            os.replace(tmp_path, abs_target)
+                        except Exception:
+                            tmp_path.unlink(missing_ok=True)
+                            raise
+                        return target
+                except httpx.HTTPError as exc:
+                    err = NetworkError(f"Could not stream report to {target}", cause=exc)
+                    record_span_error(span, err)
+                    raise err from exc
+
+            return _open_and_write(False)
 
 
 class AsyncTransport:
@@ -517,6 +563,7 @@ class AsyncTransport:
         timeout: float | httpx.Timeout = 30.0,
         http2: bool = False,
         verify: bool | str = True,
+        enable_tracing: bool = False,
         http_client: httpx.AsyncClient | None = None,
         owns_client: bool | None = None,
         asleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -526,6 +573,7 @@ class AsyncTransport:
         self._token_provider: AnyTokenProvider = token_provider or StaticTokenProvider(None)
         self.retry_policy = retry_policy if retry_policy is not None else RetryPolicy.defaults()
         self._default_options = default_options.as_defaults() if default_options is not None else RequestOptions.none()
+        self._enable_tracing = enable_tracing
         self._asleeper = asleeper
         if http_client is not None:
             self._client = http_client
@@ -548,6 +596,7 @@ class AsyncTransport:
             token_provider=self._token_provider,
             retry_policy=self.retry_policy,
             default_options=merged,
+            enable_tracing=self._enable_tracing,
             http_client=self._client,
             owns_client=False,
             asleeper=self._asleeper,
@@ -560,6 +609,7 @@ class AsyncTransport:
             token_provider=token_provider,
             retry_policy=self.retry_policy,
             default_options=self._default_options,
+            enable_tracing=self._enable_tracing,
             http_client=self._client,
             owns_client=False,
             asleeper=self._asleeper,
@@ -585,12 +635,15 @@ class AsyncTransport:
         content: bytes | None,
         data: Mapping[str, Any] | None,
         files: Any | None,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> httpx.Response:
         async def _execute() -> httpx.Response:
             req_headers = dict(headers)
             token = await resolve_async_token(self._token_provider)
             if token and token.strip():
                 req_headers["Authorization"] = f"Bearer {token.strip()}"
+            inject_trace_headers(req_headers, traceparent=traceparent, tracestate=tracestate)
             logger.debug("HTTP %s %s", method, url)
             return await self._client.request(
                 method,
@@ -655,36 +708,51 @@ class AsyncTransport:
         query_params = filter_params(params)
         url = self._build_url(path)
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = await self._send_once(
-                    upper,
-                    url,
-                    params=query_params,
-                    headers=headers,
-                    content=raw_content,
-                    data=data,
-                    files=files,
-                )
-            except httpx.HTTPError as exc:
-                if attempt >= max_attempts:
-                    raise NetworkError(
-                        f"Network error while communicating with OpenCrawling endpoint: {url}",
-                        cause=exc,
-                    ) from exc
-                delay = self.retry_policy.compute_delay(attempt, None)
-                if delay is not None and delay > 0:
+        with start_client_span(
+            self._enable_tracing,
+            f"HTTP {upper}",
+            {
+                "http.request.method": upper,
+                "url.full": url,
+                "opencrawling.path": path,
+            },
+        ) as span:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await self._send_once(
+                        upper,
+                        url,
+                        params=query_params,
+                        headers=headers,
+                        content=raw_content,
+                        data=data,
+                        files=files,
+                        traceparent=merged.traceparent,
+                        tracestate=merged.tracestate,
+                    )
+                except httpx.HTTPError as exc:
+                    if attempt >= max_attempts:
+                        err = NetworkError(
+                            f"Network error while communicating with OpenCrawling endpoint: {url}",
+                            cause=exc,
+                        )
+                        record_span_error(span, err)
+                        raise err from exc
+                    delay = self.retry_policy.compute_delay(attempt, None)
+                    if delay is not None and delay > 0:
+                        await self._asleeper(delay)
+                    continue
+
+                if attempt >= max_attempts or not _is_retryable_response(response):
+                    set_span_http_status(span, response.status_code, retries=attempt - 1)
+                    return response
+
+                delay = self.retry_policy.compute_delay(attempt, response.headers.get("retry-after"))
+                if delay is None:
+                    set_span_http_status(span, response.status_code, retries=attempt - 1)
+                    return response
+                if delay > 0:
                     await self._asleeper(delay)
-                continue
-
-            if attempt >= max_attempts or not _is_retryable_response(response):
-                return response
-
-            delay = self.retry_policy.compute_delay(attempt, response.headers.get("retry-after"))
-            if delay is None:
-                return response
-            if delay > 0:
-                await self._asleeper(delay)
 
         raise NetworkError(f"Exhausted retry attempts for {upper} {url}")  # pragma: no cover
 
@@ -727,44 +795,62 @@ class AsyncTransport:
         abs_target = target.resolve()
         abs_target.parent.mkdir(parents=True, exist_ok=True)
 
-        async def _open_and_write(retried_auth: bool) -> Path:
-            req_headers = dict(headers)
-            token = await resolve_async_token(self._token_provider)
-            if token and token.strip():
-                req_headers["Authorization"] = f"Bearer {token.strip()}"
-            try:
-                async with self._client.stream(
-                    "GET",
-                    url,
-                    params=query_params or None,
-                    headers=req_headers,
-                ) as response:
-                    if (
-                        response.status_code == 401
-                        and not retried_auth
-                        and await invalidate_async_token(self._token_provider)
-                    ):
-                        return await _open_and_write(True)
-                    if response.status_code >= 400:
-                        body_bytes = await response.aread()
-                        raise parse_problem_error(response, body_bytes=body_bytes)
-                    fd, tmp_name = tempfile.mkstemp(
-                        prefix=f".{abs_target.name}.",
-                        suffix=".part",
-                        dir=str(abs_target.parent),
-                    )
-                    tmp_path = Path(tmp_name)
-                    try:
-                        with os.fdopen(fd, "wb") as out:
-                            async for chunk in response.aiter_bytes():
-                                if chunk:
-                                    out.write(chunk)
-                        os.replace(tmp_path, abs_target)
-                    except Exception:
-                        tmp_path.unlink(missing_ok=True)
-                        raise
-                    return target
-            except httpx.HTTPError as exc:
-                raise NetworkError(f"Could not stream report to {target}", cause=exc) from exc
+        with start_client_span(
+            self._enable_tracing,
+            "HTTP GET",
+            {
+                "http.request.method": "GET",
+                "url.full": url,
+                "opencrawling.path": path,
+            },
+        ) as span:
 
-        return await _open_and_write(False)
+            async def _open_and_write(retried_auth: bool) -> Path:
+                req_headers = dict(headers)
+                token = await resolve_async_token(self._token_provider)
+                if token and token.strip():
+                    req_headers["Authorization"] = f"Bearer {token.strip()}"
+                inject_trace_headers(
+                    req_headers,
+                    traceparent=merged.traceparent,
+                    tracestate=merged.tracestate,
+                )
+                try:
+                    async with self._client.stream(
+                        "GET",
+                        url,
+                        params=query_params or None,
+                        headers=req_headers,
+                    ) as response:
+                        if (
+                            response.status_code == 401
+                            and not retried_auth
+                            and await invalidate_async_token(self._token_provider)
+                        ):
+                            return await _open_and_write(True)
+                        set_span_http_status(span, response.status_code)
+                        if response.status_code >= 400:
+                            body_bytes = await response.aread()
+                            raise parse_problem_error(response, body_bytes=body_bytes)
+                        fd, tmp_name = tempfile.mkstemp(
+                            prefix=f".{abs_target.name}.",
+                            suffix=".part",
+                            dir=str(abs_target.parent),
+                        )
+                        tmp_path = Path(tmp_name)
+                        try:
+                            with os.fdopen(fd, "wb") as out:
+                                async for chunk in response.aiter_bytes():
+                                    if chunk:
+                                        out.write(chunk)
+                            os.replace(tmp_path, abs_target)
+                        except Exception:
+                            tmp_path.unlink(missing_ok=True)
+                            raise
+                        return target
+                except httpx.HTTPError as exc:
+                    err = NetworkError(f"Could not stream report to {target}", cause=exc)
+                    record_span_error(span, err)
+                    raise err from exc
+
+            return await _open_and_write(False)

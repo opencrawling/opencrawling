@@ -30,6 +30,7 @@ from opencrawling.ingest.grpc_push import (
     GrpcPushResponse,
     GrpcSecurityConfig,
     GrpcStreamSummary,
+    normalize_grpc_metadata,
 )
 from opencrawling.ingest.ois import (
     AsyncOisIngestClient,
@@ -64,4 +65,5 @@ __all__ = [
     "OisSource",
     "PermissionRule",
     "SecurityConfig",
+    "normalize_grpc_metadata",
 ]

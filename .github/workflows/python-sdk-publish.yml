@@ -102,7 +102,7 @@ jobs:
         working-directory: oc-python-client-sdk
         run: |
           python -m pip install --upgrade pip hatchling build twine
-          pip install -e ".[dev,http2]"
+          pip install -e ".[dev,http2,hooks,otel]"
           ruff check src tests
           mypy --strict src/opencrawling
           pytest -v
@@ -112,6 +112,7 @@ jobs:
         run: |
           rm -rf dist
           python -m build --no-isolation --outdir dist .
+          python -c "import glob, zipfile; whl = glob.glob('dist/*.whl')[0]; z = zipfile.ZipFile(whl); assert 'opencrawling/py.typed' in z.namelist(), f'py.typed missing in {whl}'"
           twine check dist/*
           ls -lh dist/
 

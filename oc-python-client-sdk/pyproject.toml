@@ -24,7 +24,7 @@ keywords = [
     "sdk",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
@@ -32,6 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
@@ -53,17 +54,27 @@ dataframe = [
     "pandas>=2.2.0",
     "polars>=1.0.0",
 ]
+hooks = [
+    "starlette>=0.38.0",
+]
+otel = [
+    "opentelemetry-api>=1.25.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "mypy>=1.11.0",
     "ruff>=0.6.0",
     "build>=1.2.0",
+    "starlette>=0.38.0",
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
 ]
 
 [project.urls]
 Homepage = "https://opencrawling.org"
 Documentation = "https://github.com/opencrawling/opencrawling/wiki/Python-Client-SDK"
+Changelog = "https://github.com/opencrawling/opencrawling/blob/main/oc-python-client-sdk/CHANGELOG.md"
 Repository = "https://github.com/opencrawling/opencrawling"
 Issues = "https://github.com/opencrawling/opencrawling/issues"
 
@@ -74,6 +85,8 @@ packages = ["src/opencrawling"]
 include = [
     "/src",
     "/tests",
+    "/CHANGELOG.md",
+    "/VERSIONING.md",
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",

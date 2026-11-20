@@ -113,6 +113,7 @@ class OpenCrawlingClient:
         timeout: float | httpx.Timeout = 30.0,
         http2: bool = False,
         verify: bool | str = True,
+        enable_tracing: bool = False,
         http_client: httpx.Client | None = None,
         _transport: SyncTransport | None = None,
     ) -> None:
@@ -129,6 +130,7 @@ class OpenCrawlingClient:
                 timeout=timeout,
                 http2=http2,
                 verify=verify,
+                enable_tracing=enable_tracing,
                 http_client=http_client,
             )
 
@@ -211,6 +213,7 @@ class AsyncOpenCrawlingClient:
         timeout: float | httpx.Timeout = 30.0,
         http2: bool = False,
         verify: bool | str = True,
+        enable_tracing: bool = False,
         http_client: httpx.AsyncClient | None = None,
         _transport: AsyncTransport | None = None,
     ) -> None:
@@ -227,6 +230,7 @@ class AsyncOpenCrawlingClient:
                 timeout=timeout,
                 http2=http2,
                 verify=verify,
+                enable_tracing=enable_tracing,
                 http_client=http_client,
             )
 

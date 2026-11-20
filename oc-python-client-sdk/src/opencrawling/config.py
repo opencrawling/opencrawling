@@ -134,6 +134,8 @@ class RequestOptions:
         request_id: Sent as ``X-Request-Id``; echoed in responses and RFC 9457 problem details.
         if_match: Sent as ``If-Match`` for optimistic concurrency (``412`` on mismatch).
         if_none_match: Sent as ``If-None-Match`` for conditional reads (``304 Not Modified``).
+        traceparent: Explicit W3C ``traceparent`` header for distributed tracing without OpenTelemetry.
+        tracestate: Explicit W3C ``tracestate`` header paired with ``traceparent``.
         extra_headers: Additional custom HTTP headers merged onto the request.
     """
 
@@ -142,6 +144,8 @@ class RequestOptions:
     request_id: str | None = None
     if_match: str | None = None
     if_none_match: str | None = None
+    traceparent: str | None = None
+    tracestate: str | None = None
     extra_headers: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -166,6 +170,8 @@ class RequestOptions:
             request_id=self.request_id,
             if_match=self.if_match,
             if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -176,6 +182,8 @@ class RequestOptions:
             request_id=self.request_id,
             if_match=self.if_match,
             if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -186,6 +194,8 @@ class RequestOptions:
             request_id=request_id,
             if_match=self.if_match,
             if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -196,6 +206,8 @@ class RequestOptions:
             request_id=self.request_id,
             if_match=etag,
             if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -206,6 +218,32 @@ class RequestOptions:
             request_id=self.request_id,
             if_match=self.if_match,
             if_none_match=etag,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
+            extra_headers=dict(self.extra_headers),
+        )
+
+    def with_traceparent(self, traceparent: str | None, tracestate: str | None = None) -> RequestOptions:
+        return RequestOptions(
+            idempotency_key=self.idempotency_key,
+            correlation_id=self.correlation_id,
+            request_id=self.request_id,
+            if_match=self.if_match,
+            if_none_match=self.if_none_match,
+            traceparent=traceparent,
+            tracestate=tracestate if tracestate is not None else self.tracestate,
+            extra_headers=dict(self.extra_headers),
+        )
+
+    def with_tracestate(self, tracestate: str | None) -> RequestOptions:
+        return RequestOptions(
+            idempotency_key=self.idempotency_key,
+            correlation_id=self.correlation_id,
+            request_id=self.request_id,
+            if_match=self.if_match,
+            if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -218,6 +256,8 @@ class RequestOptions:
             request_id=self.request_id,
             if_match=self.if_match,
             if_none_match=self.if_none_match,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=merged,
         )
 
@@ -228,6 +268,8 @@ class RequestOptions:
         return RequestOptions(
             correlation_id=self.correlation_id,
             request_id=self.request_id,
+            traceparent=self.traceparent,
+            tracestate=self.tracestate,
             extra_headers=dict(self.extra_headers),
         )
 
@@ -244,5 +286,7 @@ class RequestOptions:
             request_id=o.request_id if o.request_id is not None else b.request_id,
             if_match=o.if_match if o.if_match is not None else b.if_match,
             if_none_match=o.if_none_match if o.if_none_match is not None else b.if_none_match,
+            traceparent=o.traceparent if o.traceparent is not None else b.traceparent,
+            tracestate=o.tracestate if o.tracestate is not None else b.tracestate,
             extra_headers=merged_headers,
         )
