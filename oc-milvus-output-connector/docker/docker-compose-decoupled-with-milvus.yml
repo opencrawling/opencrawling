@@ -1,5 +1,5 @@
 #
-# Copyright © 2026 Piergiorgio Lucidi (plucidi@ziaconsulting.com)
+# Copyright © 2026 Piergiorgio Lucidi (piergiorgio@apache.org)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
