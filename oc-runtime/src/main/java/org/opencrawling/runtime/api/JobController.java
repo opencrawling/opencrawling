@@ -718,6 +718,28 @@ public class JobController {
                 .map(run -> new RunHistory(run, runRegistry.steps(executionId)));
     }
 
+    /**
+     * The runs kept (#316), active and ended, of the jobs the caller may see, newest first; runs of jobs no longer in
+     * the list are listed for admins. Dynamic jobs' runs are left out: they are listed with their dynamic job.
+     */
+    public List<JobRunRegistry.RunInfo> keptRuns(String jobId) {
+        Map<String, JobDTO> byId = jobs().stream().filter(job -> job.id() != null)
+                .collect(java.util.stream.Collectors.toMap(job -> job.id().trim(), job -> job, (a, b) -> a));
+        return runRegistry.list(jobId).stream()
+                .filter(run -> !org.opencrawling.runtime.dynamicjob.DynamicJobService.isDynamicJob(run.jobId()))
+                .filter(run -> {
+                    JobDTO job = run.jobId() == null ? null : byId.get(run.jobId().trim());
+                    return job != null ? allowed(job, JobAction.READ) : !authorizationOn() || authorization.isAdmin();
+                })
+                .toList();
+    }
+
+    /** The job's name, or {@code null} when it is not in the list. */
+    public String jobName(String jobId) {
+        JobDTO job = findJob(jobId);
+        return job != null ? job.name() : null;
+    }
+
     /** A run and its history. */
     public record RunHistory(JobRunRegistry.RunInfo run, List<org.opencrawling.runtime.orchestrator.RunStore.RunStep> steps) {}
 

@@ -50,6 +50,7 @@ final class ApiV1Documentation {
             Map.entry("Jobs", "Pipeline jobs: their definitions and state, and starting, stopping and pausing their runs."),
             Map.entry("Schedules", "Recurring cron job schedules, upcoming timeline and dispatch audit history."),
             Map.entry("Job runs", "Runs in progress in this runtime. A finished run becomes an execution, with its report."),
+            Map.entry("Runs", "Every run, whatever started it: job runs and dynamic jobs, listed, followed, paused and stopped through one API."),
             Map.entry("Executions", "Finished runs: reports, document ledgers, report files, and SQL analytics over the audit lake."),
             Map.entry("Connectors", "Configured repository, output, transformation and authority connectors, with live connectivity checks."),
             Map.entry("Settings", "Runtime-wide settings: crawling and extraction defaults, and the internal transport. Admins only."),
@@ -64,6 +65,9 @@ final class ApiV1Documentation {
             Map.entry("id", "The job's id, as returned when it was created"),
             Map.entry("jobId", "The job's id (for dynamic jobs, the dynamic job's id)"),
             Map.entry("executionId", "The execution id of a run, for example exec-1a2b3c4d"),
+            Map.entry("runId", "The run's id, its execution id, for example exec-1a2b3c4d"),
+            Map.entry("kind", "Only runs of this kind: JOB, DYNAMIC_FOLDER or DYNAMIC_DOCUMENT"),
+            Map.entry("state", "Only runs in this state, such as RUNNING, PAUSED or PENDING_APPROVAL"),
             Map.entry("name", "The connector's name; percent-encode spaces"),
             Map.entry("connector", "The name of a registered connector"),
             Map.entry("If-Match", "Apply only if the resource still has this ETag (412 otherwise); from a previous GET"),
@@ -142,7 +146,7 @@ final class ApiV1Documentation {
 
     /** Example values for path variables and required query parameters in the code samples. */
     private static final Map<String, String> SAMPLE_VALUES = Map.of(
-            "id", "1763038591234", "executionId", "exec-1a2b3c4d", "name", "FileSystem_Local",
+            "id", "1763038591234", "executionId", "exec-1a2b3c4d", "runId", "exec-1a2b3c4d", "name", "FileSystem_Local",
             "connector", "Alfresco_Content_Services", "endpoint", "http://vespa:8080");
 
     private static final Pattern VARIABLE = Pattern.compile("\\{([A-Za-z]+)}");

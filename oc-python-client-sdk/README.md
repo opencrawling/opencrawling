@@ -10,7 +10,7 @@ Official Python 3.11+ client SDK for the **OpenCrawling Platform API v1 (`/api/v
 
 ## Features
 
-- **100% Platform API v1 (`/api/v1`) Parity**: Both synchronous (`OpenCrawlingClient`) and asynchronous (`AsyncOpenCrawlingClient`) clients over `httpx`, covering all 65 operations across `jobs`, `job_runs`, `executions`, `connectors`, `settings`, `operations`, `migrations`, `vespa`, `narrativization`, `dynamic_jobs`, `discovery`, and `sidecars`.
+- **100% Platform API v1 (`/api/v1`) Parity**: Both synchronous (`OpenCrawlingClient`) and asynchronous (`AsyncOpenCrawlingClient`) clients over `httpx`, covering all 80 operations across `jobs`, `schedules`, `job_runs`, `runs` (job runs and dynamic jobs together), `executions`, `connectors`, `settings`, `operations`, `migrations`, `vespa`, `narrativization`, `dynamic_jobs`, `discovery`, and `sidecars`.
 - **Built-In REST Guarantees**:
   - `Versioned[T]` wrappers exposing HTTP `ETag` and `Location` headers for safe optimistic concurrency (`RequestOptions(if_match=...)`) and conditional reads (`If-None-Match` -> `304 Not Modified`).
   - Automatic UUIDv4 `Idempotency-Key` generation on every `POST` (excluding multipart uploads).

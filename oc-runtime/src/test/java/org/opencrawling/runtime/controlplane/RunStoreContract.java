@@ -85,6 +85,19 @@ abstract class RunStoreContract {
     }
 
     @Test
+    void theRunsKeptAreListedNewestFirstEndedOnesIncluded() {
+        a.claim("job-1", "exec-1", null, "rt-a", T0, 0, 0);
+        a.finish("exec-1", RunState.COMPLETED, "rt-a", T0.plusSeconds(5), null);
+        a.claim("job-2", "exec-2", null, "rt-a", T0.plusSeconds(10), 0, 0);
+        a.claim("job-1", "exec-3", null, "rt-a", T0.plusSeconds(20), 0, 0);
+
+        assertThat(a.list(null)).extracting(RunRecord::executionId).containsExactly("exec-3", "exec-2", "exec-1");
+        assertThat(a.list("job-1")).extracting(RunRecord::executionId).containsExactly("exec-3", "exec-1");
+        assertThat(a.list("job-1").get(1).state()).isEqualTo(RunState.COMPLETED);
+        assertThat(a.list("job-9")).isEmpty();
+    }
+
+    @Test
     void everyChangeOfStateIsRecordedInOrder() {
         a.claim("job-1", "exec-1", null, "rt-a", T0, 0, 0);
         assertThat(a.pause("exec-1", "rt-b", T0.plusSeconds(1))).isTrue();

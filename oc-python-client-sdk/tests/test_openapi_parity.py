@@ -195,6 +195,17 @@ def _mock_response_for(request: httpx.Request) -> httpx.Response:
     if path == "/api/v1/job-runs/exec-1/history":
         return httpx.Response(200, headers=headers, json={"executionId": "exec-1", "jobId": "job-1", "state": "COMPLETED", "steps": [{"seq": 1, "event": "STARTED"}]})
 
+    # Runs (every kind)
+    run_payload = {"runId": "exec-1", "kind": "JOB", "jobId": "job-1", "name": "HR Docs", "state": "RUNNING", "stopRequested": False, "runtimeId": "rt-1", "links": {"self": "/api/v1/runs/exec-1"}}
+    if path == "/api/v1/runs" and method == "GET":
+        return httpx.Response(200, headers=headers, json={"items": [run_payload], "page": {"limit": 50, "nextCursor": None, "totalItems": 1}})
+    if path == "/api/v1/runs/exec-1" and method == "GET":
+        return httpx.Response(200, headers=headers, json=run_payload)
+    if path in {"/api/v1/runs/exec-1:stop", "/api/v1/runs/exec-1:pause", "/api/v1/runs/exec-1:resume"} and method == "POST":
+        return httpx.Response(200, headers=headers, json=run_payload)
+    if path == "/api/v1/runs/exec-1/history":
+        return httpx.Response(200, headers=headers, json={"run": {**run_payload, "state": "STOPPED", "endedAt": "2026-11-20T10:00:00Z"}, "steps": [{"seq": 1, "event": "STARTED"}, {"seq": 2, "event": "STOPPED"}]})
+
     # Executions
     exec_summary = {"jobId": "job-1", "executionId": "exec-1", "status": "SUCCESS", "durationMs": 42, "totalDocuments": 1}
     if path in {"/api/v1/executions", "/api/v1/jobs/job-1/executions"} and method == "GET":
@@ -312,7 +323,7 @@ def test_template_matching_rules() -> None:
 
 def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> None:
     expected_operations = load_v1_operations()
-    assert len(expected_operations) == 74, f"Expected 74 Platform API v1 operations, found {len(expected_operations)}"
+    assert len(expected_operations) == 80, f"Expected 80 Platform API v1 operations, found {len(expected_operations)}"
 
     recorded: list[str] = []
 
@@ -356,6 +367,16 @@ def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> N
         client.job_runs.pause("exec-1")
         client.job_runs.resume("exec-1")
         assert client.job_runs.history("exec-1").is_terminal
+
+        # Runs, every kind (6)
+        runs = client.runs.list(kind="JOB", state="RUNNING", job_id="job-1")
+        assert runs.items[0].run_id == "exec-1" and runs.items[0].kind == "JOB"
+        assert client.runs.get("exec-1").runtime_id == "rt-1"
+        assert client.runs.pause("exec-1").state == "RUNNING"
+        client.runs.resume("exec-1")
+        client.runs.stop("exec-1")
+        history = client.runs.history("exec-1")
+        assert history.is_terminal and [step.event for step in history.steps] == ["STARTED", "STOPPED"]
 
         # Executions (6)
         assert len(client.executions.list(ExecutionFilter(job_id="job-1"))) == 1
@@ -441,7 +462,7 @@ def test_sync_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> N
 
 async def test_async_client_covers_every_platform_api_v1_operation(tmp_path: Path) -> None:
     expected_operations = load_v1_operations()
-    assert len(expected_operations) == 74
+    assert len(expected_operations) == 80
 
     recorded: list[str] = []
 
@@ -483,6 +504,14 @@ async def test_async_client_covers_every_platform_api_v1_operation(tmp_path: Pat
         await client.job_runs.pause("exec-1")
         await client.job_runs.resume("exec-1")
         await client.job_runs.history("exec-1")
+
+        # Runs, every kind (6)
+        await client.runs.list(kind="DYNAMIC_FOLDER")
+        await client.runs.get("exec-1")
+        await client.runs.stop("exec-1")
+        await client.runs.pause("exec-1")
+        await client.runs.resume("exec-1")
+        assert (await client.runs.history("exec-1")).is_terminal
 
         # Executions (6)
         await client.executions.list()

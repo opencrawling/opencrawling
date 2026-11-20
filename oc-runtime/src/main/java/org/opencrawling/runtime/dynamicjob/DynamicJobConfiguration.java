@@ -16,6 +16,7 @@
 package org.opencrawling.runtime.dynamicjob;
 
 import org.opencrawling.runtime.controlplane.ControlPlaneStore;
+import org.opencrawling.runtime.controlplane.JdbcControlPlaneStore;
 import org.opencrawling.core.event.JobExecutionCompletedEvent;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
@@ -29,6 +30,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Clock;
 import java.util.List;
@@ -48,7 +50,8 @@ public class DynamicJobConfiguration {
                                                JobOrchestrator orchestrator,
                                                ObjectProvider<JobLedgerAccumulator> ledger,
                                                DynamicJobProperties properties,
-                                               ObjectProvider<ControlPlaneStore> controlPlaneStore) {
+                                               ObjectProvider<ControlPlaneStore> controlPlaneStore,
+                                               ObjectProvider<JdbcTemplate> jdbc) {
         DynamicJobService.CrawlRunner runner = crawlRunner(orchestrator, properties);
         return new DynamicJobService(
                 () -> controlPlaneStore.getIfAvailable(ControlPlaneStore::files).loadList("connectors.json", ConnectorDTO.class, List.of()),
@@ -58,7 +61,17 @@ public class DynamicJobConfiguration {
                     JobExecutionCompletedEvent event = accumulator != null ? accumulator.getCompletedEvent(executionId) : null;
                     return event != null ? event.totalDocuments() : null;
                 },
-                properties, Clock.systemUTC());
+                properties, Clock.systemUTC(), store(controlPlaneStore.getIfAvailable(ControlPlaneStore::files), jdbc));
+    }
+
+    /**
+     * Where the jobs' records are kept: in the control-plane database with the {@code jdbc} control-plane store, shared
+     * by every runtime on it (#316); otherwise in this runtime's memory.
+     */
+    static DynamicJobStore store(ControlPlaneStore controlPlaneStore, ObjectProvider<JdbcTemplate> jdbc) {
+        return controlPlaneStore instanceof JdbcControlPlaneStore
+                ? new JdbcDynamicJobStore(jdbc.getObject(), controlPlaneStore)
+                : new InMemoryDynamicJobStore();
     }
 
     /**
