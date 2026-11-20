@@ -18,13 +18,26 @@ package org.opencrawling.zammad;
 import org.springframework.core.env.PropertyResolver;
 
 import java.net.URI;
+import java.time.DateTimeException;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.Period;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Configuration settings for the Zammad repository connector (issue #342).
@@ -59,7 +72,25 @@ public record ZammadProperties(
         int parallelism,
         int maxRetries,
         long initialBackoffMs,
-        Duration timeout
+        Duration timeout,
+        List<String> excludedArticleSenders,
+        List<String> excludedArticleTypes,
+        boolean skipAutoReplies,
+        String createdAfter,
+        List<String> includedTags,
+        List<String> excludedTags,
+        List<String> excludedTitlePatterns,
+        List<String> priorities,
+        List<String> organizations,
+        String baseQuery,
+        PrivacyProfile privacyProfile,
+        ParticipantMetadata participantMetadata,
+        IdentityRendering identityRendering,
+        CustomerIdentity customerIdentity,
+        Map<String, String> articleRoleLabels,
+        Duration fullScanInterval,
+        String fullScanWindow,
+        ZoneId fullScanTimezone
 ) {
 
     public enum AuthType {
@@ -81,8 +112,61 @@ public record ZammadProperties(
         /** Emits one OIS document per ticket article ({@code zammad://<instance>/tickets/<id>/articles/<articleId>}). */
         PER_ARTICLE,
         /** Emits only public customer-visible articles ({@code zammad://<instance>/tickets/<id>/public}). */
-        PUBLIC_ONLY
+        PUBLIC_ONLY,
+        /**
+         * Emits one OIS document per ticket ({@code zammad://<instance>/tickets/<id>}) with every article in
+         * chronological order and its role (customer, agent, internal, system); readable by the ticket's group only,
+         * because internal notes are included (#411).
+         */
+        TICKET
     }
+
+    /** Shortcut for privacy-related defaults (#414). */
+    public enum PrivacyProfile {
+        /** Settings apply as configured. */
+        STANDARD,
+        /**
+         * No e-mail address in rendered headers, metadata or permission fields: identities rendered by name, customer
+         * identities by Zammad user id, and no customer or shared-organization principals on public threads.
+         */
+        STRICT
+    }
+
+    /** Participant information written to {@code zammad.participants} for downstream governance hooks (#414). */
+    public enum ParticipantMetadata {
+        NONE,
+        /** Display names of the customer, the owner and every article author. */
+        NAMES,
+        /** Display names plus Zammad user ids ({@code zammad.participantIds}, {@code zammad-user-<id>}). */
+        NAMES_AND_IDS
+    }
+
+    /** How people are shown in rendered ticket headers, article headings and identity metadata (#414). */
+    public enum IdentityRendering {
+        EMAIL,
+        NAME,
+        /** {@code zammad-user-<id>}. */
+        ID,
+        NONE
+    }
+
+    /** Identity used for the ticket customer in permission rules (#414). */
+    public enum CustomerIdentity {
+        /** The customer's e-mail or login. */
+        EMAIL,
+        /** {@code zammad-user-<id>}, so no e-mail address ends up in permission fields. */
+        ID
+    }
+
+    /** Default labels of the article roles in rendered conversations (#411); localizable via {@code articleRoleLabels}. */
+    public static final Map<String, String> DEFAULT_ROLE_LABELS = Map.of(
+            "customer", "Customer",
+            "agent", "Agent",
+            "internal", "Internal note",
+            "system", "System");
+
+    /** Bumped whenever rendering changes, so that indexed tickets are rendered again once (see {@link #renderSignature()}). */
+    static final int RENDER_VERSION = 2;
 
     public enum CrawlMode {
         /** Incremental ticket search by {@code updated_at:[<watermark> TO *]} with persistent {@link ZammadCrawlState}. */
@@ -100,7 +184,11 @@ public record ZammadProperties(
             "articleGranularity", "includeAttachments", "includeKnowledgeBase", "includeTags",
             "crawlMode", "stateFile", "maxAttachmentSizeBytes", "includeAcls",
             "includeCustomerInPublicAcl", "includeSharedOrganizationInPublicAcl", "allowPublicKb",
-            "pageSize", "parallelism", "maxRetries", "initialBackoffMs", "timeoutSeconds"
+            "pageSize", "parallelism", "maxRetries", "initialBackoffMs", "timeoutSeconds",
+            "excludedArticleSenders", "excludedArticleTypes", "skipAutoReplies",
+            "createdAfter", "includedTags", "excludedTags", "excludedTitlePatterns", "priorities", "organizations",
+            "baseQuery", "privacyProfile", "participantMetadata", "identityRendering", "customerIdentity",
+            "articleRoleLabels", "fullScanInterval", "fullScanWindow", "fullScanTimezone"
     );
 
     public static ZammadProperties fromConfiguration(Map<String, String> config) {
@@ -125,8 +213,10 @@ public record ZammadProperties(
         String stateFile = value(c, "stateFile", "");
         long maxAttachmentSizeBytes = Math.max(0L, longValue(c, "maxAttachmentSizeBytes", 52_428_800L));
         boolean includeAcls = bool(c, "includeAcls", true);
-        boolean includeCustomer = bool(c, "includeCustomerInPublicAcl", true);
-        boolean includeSharedOrg = bool(c, "includeSharedOrganizationInPublicAcl", true);
+        PrivacyProfile privacyProfile = parseEnum(value(c, "privacyProfile", null), PrivacyProfile.class, PrivacyProfile.STANDARD);
+        boolean strict = privacyProfile == PrivacyProfile.STRICT;
+        boolean includeCustomer = !strict && bool(c, "includeCustomerInPublicAcl", true);
+        boolean includeSharedOrg = !strict && bool(c, "includeSharedOrganizationInPublicAcl", true);
         boolean allowPublicKb = bool(c, "allowPublicKb", false);
         int pageSize = Math.max(1, Math.min(ZammadClient.MAX_TICKETS_SEARCH_PAGE_SIZE, integer(c, "pageSize", 50)));
         int parallelism = Math.max(1, integer(c, "parallelism", 4));
@@ -134,13 +224,46 @@ public record ZammadProperties(
         long initialBackoffMs = Math.max(10L, longValue(c, "initialBackoffMs", 1000L));
         Duration timeout = Duration.ofSeconds(Math.max(1, integer(c, "timeoutSeconds", 30)));
 
+        List<String> excludedSenders = c.containsKey("excludedArticleSenders")
+                ? list(c.get("excludedArticleSenders"))
+                : List.of("System");
+        List<String> excludedTypes = list(value(c, "excludedArticleTypes", ""));
+        boolean skipAutoReplies = bool(c, "skipAutoReplies", true);
+        String createdAfter = value(c, "createdAfter", null);
+        List<String> includedTags = list(value(c, "includedTags", ""));
+        List<String> excludedTags = list(value(c, "excludedTags", ""));
+        List<String> excludedTitlePatterns = patternList(value(c, "excludedTitlePatterns", ""));
+        List<String> priorities = list(value(c, "priorities", ""));
+        List<String> organizations = list(value(c, "organizations", ""));
+        String baseQuery = value(c, "baseQuery", null);
+        ParticipantMetadata participantMetadata = parseEnum(
+                value(c, "participantMetadata", null), ParticipantMetadata.class, ParticipantMetadata.NAMES);
+        IdentityRendering identityRendering = parseEnum(
+                value(c, "identityRendering", null), IdentityRendering.class, IdentityRendering.EMAIL);
+        CustomerIdentity customerIdentity = parseEnum(
+                value(c, "customerIdentity", null), CustomerIdentity.class, CustomerIdentity.EMAIL);
+        if (strict) {
+            if (identityRendering == IdentityRendering.EMAIL) {
+                identityRendering = IdentityRendering.NAME;
+            }
+            customerIdentity = CustomerIdentity.ID;
+        }
+        Map<String, String> roleLabels = roleLabels(value(c, "articleRoleLabels", ""));
+        Duration fullScanInterval = parseDuration(value(c, "fullScanInterval", null));
+        String fullScanWindow = value(c, "fullScanWindow", null);
+        ZoneId fullScanTimezone = parseZone(value(c, "fullScanTimezone", "UTC"));
+
         return new ZammadProperties(
                 baseUrl, authType, accessToken, username, password, onBehalfOf,
                 groupNames, ticketStates, includeTickets, includeInternal,
                 granularity, includeAttachments, includeKb, includeTags,
                 crawlMode, stateFile, maxAttachmentSizeBytes, includeAcls,
                 includeCustomer, includeSharedOrg, allowPublicKb,
-                pageSize, parallelism, maxRetries, initialBackoffMs, timeout
+                pageSize, parallelism, maxRetries, initialBackoffMs, timeout,
+                excludedSenders, excludedTypes, skipAutoReplies,
+                createdAfter, includedTags, excludedTags, excludedTitlePatterns, priorities, organizations, baseQuery,
+                privacyProfile, participantMetadata, identityRendering, customerIdentity, roleLabels,
+                fullScanInterval, fullScanWindow, fullScanTimezone
         );
     }
 
@@ -190,7 +313,190 @@ public record ZammadProperties(
         if (!includeTickets && !includeKnowledgeBase) {
             problems.add("At least one of include-tickets or include-knowledge-base must be true.");
         }
+        if (createdAfter != null && createdAfterInstant(Instant.now()).isEmpty()) {
+            problems.add("created-after must be a date (2024-01-01), an instant (2024-01-01T00:00:00Z) or a period (P2Y, P90D).");
+        }
+        for (String pattern : excludedTitlePatterns) {
+            try {
+                Pattern.compile(pattern);
+            } catch (PatternSyntaxException e) {
+                problems.add("excluded-title-patterns contains an invalid regular expression '" + pattern + "': "
+                        + e.getDescription() + ".");
+            }
+        }
+        if (fullScanWindow != null && parseWindow(fullScanWindow) == null) {
+            problems.add("full-scan-window must look like 01:00-05:00 (24-hour clock; it may wrap past midnight).");
+        }
+        if (fullScanTimezone == null) {
+            problems.add("full-scan-timezone must be an IANA timezone such as Europe/Berlin.");
+        }
         return problems;
+    }
+
+    // ------------------------------------------------------------------ Selection filters (#413)
+
+    /** Lower bound for ticket {@code created_at}, resolved against {@code now} for relative periods. */
+    public Optional<Instant> createdAfterInstant(Instant now) {
+        if (createdAfter == null || createdAfter.isBlank()) {
+            return Optional.empty();
+        }
+        String v = createdAfter.strip();
+        try {
+            if (v.startsWith("P") || v.startsWith("p")) {
+                String upper = v.toUpperCase(Locale.ROOT);
+                if (upper.contains("T")) {
+                    return Optional.of(now.minus(Duration.parse(upper)));
+                }
+                Period period = Period.parse(upper);
+                return Optional.of(ZonedDateTime.ofInstant(now, ZoneOffset.UTC).minus(period).toInstant());
+            }
+            if (v.length() == 10) {
+                return Optional.of(LocalDate.parse(v).atStartOfDay(ZoneOffset.UTC).toInstant());
+            }
+            return Optional.of(Instant.parse(v));
+        } catch (DateTimeParseException | ArithmeticException e) {
+            return Optional.empty();
+        }
+    }
+
+    public boolean acceptsPriority(String priorityName) {
+        return matchesAny(priorities, priorityName);
+    }
+
+    public boolean acceptsOrganization(String organizationName) {
+        return matchesAny(organizations, organizationName);
+    }
+
+    /** Whether the tags allowed by {@code includedTags} / {@code excludedTags} let the ticket in. */
+    public boolean acceptsTags(List<String> tags) {
+        List<String> present = tags == null ? List.of() : tags;
+        for (String excluded : excludedTags) {
+            if (present.stream().anyMatch(t -> t.equalsIgnoreCase(excluded))) {
+                return false;
+            }
+        }
+        if (includedTags.isEmpty()) {
+            return true;
+        }
+        return includedTags.stream().anyMatch(inc -> present.stream().anyMatch(t -> t.equalsIgnoreCase(inc)));
+    }
+
+    /** Whether the tag filters are configured, so that tags must be read even when {@code includeTags} is off. */
+    public boolean filtersByTags() {
+        return !includedTags.isEmpty() || !excludedTags.isEmpty();
+    }
+
+    /** Compiles {@code excludedTitlePatterns}; invalid expressions are reported by {@link #validate()} and ignored here. */
+    public List<Pattern> compiledTitlePatterns() {
+        List<Pattern> compiled = new ArrayList<>();
+        for (String pattern : excludedTitlePatterns) {
+            try {
+                compiled.add(Pattern.compile(pattern));
+            } catch (PatternSyntaxException e) {
+                // reported by validate()
+            }
+        }
+        return List.copyOf(compiled);
+    }
+
+    private static boolean matchesAny(List<String> allowed, String value) {
+        if (allowed == null || allowed.isEmpty()) {
+            return true;
+        }
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        return allowed.stream().anyMatch(a -> a.equalsIgnoreCase(value.strip()));
+    }
+
+    // ------------------------------------------------------------------ Article filters (#412)
+
+    public boolean excludesSender(String sender) {
+        return sender != null && excludedArticleSenders.stream().anyMatch(s -> s.equalsIgnoreCase(sender.strip()));
+    }
+
+    public boolean excludesArticleType(String type) {
+        return type != null && excludedArticleTypes.stream().anyMatch(t -> t.equalsIgnoreCase(type.strip()));
+    }
+
+    /** Label shown for an article role (customer, agent, internal, system) in rendered conversations. */
+    public String roleLabel(String role) {
+        String label = articleRoleLabels.get(role);
+        return label != null ? label : DEFAULT_ROLE_LABELS.getOrDefault(role, role);
+    }
+
+    // ------------------------------------------------------------------ Periodic full scan (#415)
+
+    /**
+     * Whether an incremental run should enumerate every ticket this time: the interval since the last full scan has
+     * elapsed (or no full scan was recorded yet) and {@code now} falls in the optional window.
+     */
+    public boolean fullScanDue(Instant lastFullScanAt, Instant now) {
+        if (fullScanInterval == null || fullScanInterval.isZero() || fullScanInterval.isNegative()) {
+            return false;
+        }
+        if (lastFullScanAt != null && Duration.between(lastFullScanAt, now).compareTo(fullScanInterval) < 0) {
+            return false;
+        }
+        return inFullScanWindow(now);
+    }
+
+    boolean inFullScanWindow(Instant now) {
+        if (fullScanWindow == null) {
+            return true;
+        }
+        LocalTime[] window = parseWindow(fullScanWindow);
+        if (window == null) {
+            return true;
+        }
+        LocalTime local = ZonedDateTime.ofInstant(now, fullScanTimezone != null ? fullScanTimezone : ZoneOffset.UTC).toLocalTime();
+        LocalTime start = window[0];
+        LocalTime end = window[1];
+        if (start.isBefore(end)) {
+            return !local.isBefore(start) && local.isBefore(end);
+        }
+        return !local.isBefore(start) || local.isBefore(end);
+    }
+
+    static LocalTime[] parseWindow(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String[] parts = raw.strip().split("\\s*-\\s*");
+        if (parts.length != 2) {
+            return null;
+        }
+        try {
+            LocalTime start = LocalTime.parse(parts[0].length() == 4 ? "0" + parts[0] : parts[0]);
+            LocalTime end = LocalTime.parse(parts[1].length() == 4 ? "0" + parts[1] : parts[1]);
+            return start.equals(end) ? null : new LocalTime[] {start, end};
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ Crawl-state identity
+
+    /**
+     * Options that change how documents are rendered, but not which tickets belong to the crawl. A change re-renders
+     * every ticket once and tombstones ids that are no longer produced, under the same crawl state (#411, #412, #414).
+     */
+    public String renderSignature() {
+        return "v" + RENDER_VERSION
+                + "|g:" + articleGranularity
+                + "|int:" + includeInternalArticles
+                + "|att:" + includeAttachments
+                + "|tags:" + includeTags
+                + "|xs:" + lower(excludedArticleSenders)
+                + "|xt:" + lower(excludedArticleTypes)
+                + "|auto:" + skipAutoReplies
+                + "|pm:" + participantMetadata
+                + "|ir:" + identityRendering
+                + "|rl:" + new java.util.TreeMap<>(articleRoleLabels);
+    }
+
+    private static String lower(List<String> values) {
+        return values.stream().map(v -> v.toLowerCase(Locale.ROOT)).sorted().toList().toString();
     }
 
     /**
@@ -283,8 +589,66 @@ public record ZammadProperties(
         return switch (value.strip().toUpperCase(Locale.ROOT).replace('-', '_')) {
             case "PER_ARTICLE", "ARTICLE" -> ArticleGranularity.PER_ARTICLE;
             case "PUBLIC_ONLY", "PUBLIC" -> ArticleGranularity.PUBLIC_ONLY;
+            case "TICKET", "CONVERSATION" -> ArticleGranularity.TICKET;
             default -> ArticleGranularity.SPLIT_PUBLIC_AND_INTERNAL;
         };
+    }
+
+    private static <E extends Enum<E>> E parseEnum(String value, Class<E> type, E fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String normalized = value.strip().toUpperCase(Locale.ROOT).replace('-', '_');
+        for (E constant : type.getEnumConstants()) {
+            if (constant.name().equals(normalized)) {
+                return constant;
+            }
+        }
+        return fallback;
+    }
+
+    private static Duration parseDuration(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            Duration d = Duration.parse(value.strip().toUpperCase(Locale.ROOT));
+            return d.isZero() || d.isNegative() ? null : d;
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    private static ZoneId parseZone(String value) {
+        try {
+            return ZoneId.of(value == null || value.isBlank() ? "UTC" : value.strip());
+        } catch (DateTimeException e) {
+            return null;
+        }
+    }
+
+    /** {@code customer=Kunde,agent=Agent,internal=Interne Notiz,system=System}: role labels, unknown roles ignored. */
+    private static Map<String, String> roleLabels(String value) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (String entry : list(value)) {
+            int eq = entry.indexOf('=');
+            if (eq > 0 && eq < entry.length() - 1) {
+                String role = entry.substring(0, eq).strip().toLowerCase(Locale.ROOT);
+                if (DEFAULT_ROLE_LABELS.containsKey(role)) {
+                    labels.put(role, entry.substring(eq + 1).strip());
+                }
+            }
+        }
+        return Map.copyOf(labels);
+    }
+
+    /** Regular expressions, one per line, or comma-separated when the value has no line breaks. */
+    private static List<String> patternList(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        String[] parts = value.contains("\n") ? value.split("\\R") : value.split(",");
+        return Arrays.stream(parts).map(String::strip).filter(s -> !s.isEmpty()).toList();
     }
 
     private static CrawlMode parseCrawlMode(String value) {
@@ -367,6 +731,8 @@ public record ZammadProperties(
                 + ", includeAttachments=" + includeAttachments
                 + ", includeKnowledgeBase=" + includeKnowledgeBase
                 + ", crawlMode=" + crawlMode
+                + ", fullScanInterval=" + fullScanInterval
+                + ", privacyProfile=" + privacyProfile
                 + ", includeAcls=" + includeAcls
                 + ", pageSize=" + pageSize
                 + ", parallelism=" + parallelism + "]";

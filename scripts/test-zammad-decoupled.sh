@@ -44,7 +44,13 @@
 #      Shared Org Teammate, KB Security Auditor, and Outsider
 #   8. Real Zammad mutations via REST API v1 + Rails + incremental search_delta
 #      (Elasticsearch updated_at:[... TO *]) + full reconciliation tombstones
-#   9. Summary & clean environment teardown
+#   9. Same job and state file switched to ticket-level conversations
+#      (article-granularity TICKET): split documents tombstoned, system
+#      articles, automatic replies and spam-tagged tickets left out, strict
+#      privacy profile (names instead of e-mails, group-only ACLs), base query
+#      combined with the search_delta watermark, and periodic full scans that
+#      remove tickets leaving the scope or deleted in Zammad
+#  10. Summary & clean environment teardown
 # ==============================================================================
 
 set -euo pipefail
@@ -120,7 +126,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PASSED_COUNT=0
-TOTAL_STEPS=9
+TOTAL_STEPS=10
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -695,10 +701,15 @@ mcp_call() {
     -H 'Accept: application/json, text/event-stream' ${MCP_SESSION:+-H "Mcp-Session-Id: ${MCP_SESSION}"} -d "$1" \
     | sed -n 's/^data: *//p; /^{/p' | grep '"jsonrpc"' | tail -1
 }
-INIT=$(mcp_call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-zammad-decoupled","version":"1.0"}}}')
-MCP_SESSION=$(grep -i '^mcp-session-id:' "$MCP_HEADERS" | awk '{print $2}' | tr -d '\r')
-[ -n "$(echo "$INIT" | jq -r '.result.serverInfo.name // empty')" ] || { log_error "MCP initialize failed: ${INIT}"; exit 1; }
-mcp_call '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null || true
+mcp_init() {
+  local init
+  MCP_SESSION=""
+  init=$(mcp_call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-zammad-decoupled","version":"1.0"}}}')
+  MCP_SESSION=$(grep -i '^mcp-session-id:' "$MCP_HEADERS" | awk '{print $2}' | tr -d '\r')
+  [ -n "$(echo "$init" | jq -r '.result.serverInfo.name // empty')" ] || { log_error "MCP initialize failed: ${init}"; exit 1; }
+  mcp_call '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null || true
+}
+mcp_init
 
 SEARCH_ID=10
 search_as() { # <principal> <roles>: distinct zammad:// document URIs returned by secureVectorSearch
@@ -852,11 +863,202 @@ wait_for "Hard-deleted ticket ${T3_ID} is purged by full reconciliation" "metada
 log_pass "Incremental search_delta and full reconciliation tombstones brought pgvector up to date."
 
 # ------------------------------------------------------------------------------
-# STEP 9: Summary
+# STEP 9: Ticket-level conversations, article/ticket filters, strict privacy, periodic full scan
 # ------------------------------------------------------------------------------
-log_step 9 "Summary"
+log_step 9 "Switching the same job to ticket-level conversations with filters, strict privacy and periodic full scans..."
+
+# 9a. Content the connector must leave out (a system article and an automatic reply on ticket 2, a Tier-2 ticket
+#     tagged spam) and a regular Tier-2 ticket that is hard-deleted later
+STEP9_OUT=$(docker exec -i "${ZAMMAD_RAILS}" bundle exec rails r - <<RUBY
+crawler = User.find_by!(email: 'crawler@acme.com')
+claire = User.find_by!(email: 'claire.dupont@clientcorp.eu')
+lukas = User.find_by!(email: 'lukas.meyer@privatebank.ch')
+UserInfo.current_user_id = crawler.id
+tier2 = Group.find_by!(name: 'Tier-2-Identity-Security')
+state_open = Ticket::State.find_by!(name: 'open')
+prio_normal = Ticket::Priority.find_by!(name: '2 normal')
+type_web = Ticket::Article::Type.find_by!(name: 'web')
+type_note = Ticket::Article::Type.find_by!(name: 'note')
+type_email = Ticket::Article::Type.find_by!(name: 'email')
+sender_customer = Ticket::Article::Sender.find_by!(name: 'Customer')
+sender_system = Ticket::Article::Sender.find_by!(name: 'System')
+
+t2 = Ticket.find(${T2_ID})
+Ticket::Article.create!(
+  ticket: t2, from: 'Zammad Helpdesk', subject: 'Escalation notice',
+  body: 'Ticket escalated by the SLA trigger. Reference ZMD-T2-SYS.',
+  content_type: 'text/plain', type: type_note, sender: sender_system, internal: false
+)
+Ticket::Article.create!(
+  ticket: t2, from: lukas.email, subject: 'Automatic reply: Hardware token reset',
+  body: 'I am out of the office until Monday. Reference ZMD-T2-AUTO.',
+  content_type: 'text/plain', type: type_email, sender: sender_customer, internal: false,
+  preferences: { 'is-auto-response' => true }
+)
+
+t5 = Ticket.create!(
+  title: 'Unsolicited investment offer',
+  group: tier2, customer: claire, organization: claire.organization, owner: crawler,
+  state: state_open, priority: prio_normal
+)
+Ticket::Article.create!(
+  ticket: t5, from: claire.email, subject: 'Offer',
+  body: 'Bulk unsolicited message. Reference ZMD-T5-SPAM.',
+  content_type: 'text/plain', type: type_web, sender: sender_customer, internal: false
+)
+t5.tag_add('spam', sourceable: nil)
+
+t6 = Ticket.create!(
+  title: 'VPN client certificate renewal',
+  group: tier2, customer: claire, organization: claire.organization, owner: crawler,
+  state: state_open, priority: prio_normal
+)
+Ticket::Article.create!(
+  ticket: t6, from: claire.email, subject: 'VPN certificate',
+  body: 'The VPN client certificate expires next week. Reference ZMD-T6-PUB.',
+  content_type: 'text/plain', type: type_web, sender: sender_customer, internal: false
+)
+
+t2.touch
+[t2, t5, t6].each { |t| t.reload.search_index_update_backend }
+puts "STEP9_JSON:" + JSON.generate({ t5_id: t5.id, t6_id: t6.id })
+RUBY
+)
+STEP9_JSON=$(echo "${STEP9_OUT}" | sed -n 's/^STEP9_JSON://p' | tail -1)
+[ -n "${STEP9_JSON}" ] || { log_error "Failed to seed the step 9 tickets:\n${STEP9_OUT}"; exit 1; }
+T5_ID=$(echo "${STEP9_JSON}" | jq -r '.t5_id')
+T6_ID=$(echo "${STEP9_JSON}" | jq -r '.t6_id')
+docker exec zammad-elasticsearch-decoupled-zammad curl -sf -X POST "http://127.0.0.1:9200/_refresh" >/dev/null
+log_info "Added a system article and an automatic reply to ticket ${T2_ID}, spam-tagged ticket ${T5_ID} and ticket ${T6_ID}."
+
+# 9b. Same job and state file with new options. The granularity change re-renders every ticket and tombstones the
+#     split documents; the full-scan interval makes this incremental run enumerate every ticket of the base query.
+export ZAMMAD_ARTICLE_GRANULARITY=TICKET
+export ZAMMAD_PRIVACY_PROFILE=strict
+export ZAMMAD_EXCLUDED_TAGS=spam
+export ZAMMAD_BASE_QUERY='group.name:"Tier-2-Identity-Security"'
+export ZAMMAD_FULL_SCAN_INTERVAL=PT1S
+sleep 2
+run_crawler search_delta
+echo "${SCAN_SUMMARY}" | grep -q "full ticket enumeration, periodic full scan" \
+  || { log_error "The incremental job should have run its periodic full scan: ${SCAN_SUMMARY}"; exit 1; }
+
+URI_T1=$(zammad_uri "/tickets/${T1_ID}")
+URI_T2=$(zammad_uri "/tickets/${T2_ID}")
+URI_T4=$(zammad_uri "/tickets/${T4_ID}")
+URI_T5=$(zammad_uri "/tickets/${T5_ID}")
+URI_T6=$(zammad_uri "/tickets/${T6_ID}")
+TICKET_DOCS="metadata->>'documentId' ~ '^zammad://${INSTANCE_KEY}/tickets/[0-9]+\$'"
+
+wait_for "Ticket ${T1_ID} is indexed as one conversation" "metadata->>'documentId' = '${URI_T1}' AND content LIKE '%ZMD-T1-V2%'" "-gt 0"
+wait_for "Ticket ${T2_ID} conversation holds public replies and internal notes" \
+  "metadata->>'documentId' = '${URI_T2}' AND content LIKE '%ZMD-T2-INT%'" "-gt 0"
+wait_for "Ticket ${T4_ID} is indexed as one conversation" "metadata->>'documentId' = '${URI_T4}' AND content LIKE '%ZMD-T4-INCR-INT%'" "-gt 0"
+wait_for "New ticket ${T6_ID} is indexed as one conversation" "metadata->>'documentId' = '${URI_T6}' AND content LIKE '%ZMD-T6-PUB%'" "-gt 0"
+wait_for "Split public/internal ticket documents are tombstoned" \
+  "(metadata->>'documentId' LIKE 'zammad://${INSTANCE_KEY}/tickets/%/public' OR metadata->>'documentId' LIKE 'zammad://${INSTANCE_KEY}/tickets/%/internal')" "-eq 0"
+wait_for "Unchanged KB Answer ${ANS_PUB_ID} remains indexed" "metadata->>'documentId' = '${URI_KB_PUB}'" "-gt 0"
+
+FILTERED=$(sql "SELECT count(*) FROM vector_store_1024 WHERE content LIKE '%ZMD-T2-SYS%' OR content LIKE '%ZMD-T2-AUTO%'
+  OR content LIKE '%ZMD-T5-SPAM%' OR metadata->>'documentId' = '${URI_T5}';")
+[ "$FILTERED" -eq 0 ] || { log_error "System articles, automatic replies and spam-tagged tickets must not be indexed (${FILTERED} chunks)."; exit 1; }
+log_success "System article, automatic reply and spam-tagged ticket ${T5_ID} were left out."
+
+CONV_META_OK=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = '${URI_T2}'
+  AND metadata->'zammad.entityType'->>0 = 'ticket_conversation'
+  AND metadata->'zammad.articleCount'->>0 = '2'
+  AND metadata->'zammad.hasInternalNotes'->>0 = 'true'
+  AND metadata->'zammad.customer'->>0 = 'Lukas Meyer'
+  AND metadata->>'zammad.participants' LIKE '%Lukas Meyer%';")
+[ "$CONV_META_OK" -gt 0 ] || { log_error "Ticket ${T2_ID} conversation metadata check failed (entity type, article count, customer name, participants)."; exit 1; }
+ROLE_LABELS=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = '${URI_T2}' AND content LIKE '%[Internal note]%';")
+[ "$ROLE_LABELS" -gt 0 ] || { log_error "Ticket ${T2_ID} conversation must label internal notes with [Internal note]."; exit 1; }
+
+EMAILS=$(sql "SELECT count(*) FROM vector_store_1024 WHERE ${TICKET_DOCS} AND (content LIKE '%@%'
+  OR COALESCE(metadata->>'zammad.customer', '') LIKE '%@%' OR COALESCE(metadata->>'zammad.owner', '') LIKE '%@%'
+  OR COALESCE(metadata->>'zammad.participants', '') LIKE '%@%');")
+[ "$EMAILS" -eq 0 ] || { log_error "The strict privacy profile must keep e-mail addresses out of ticket conversations (${EMAILS} chunks)."; exit 1; }
+
+SEC_T2=$(docker exec -i "${PG}" psql -U opencrawling -d opencrawling -t -A -c \
+  "SELECT metadata->'security' FROM vector_store_1024 WHERE metadata->>'documentId' = '${URI_T2}' LIMIT 1;")
+echo "$SEC_T2" | jq -e '(.permissions | length) == 1 and .permissions[0].identity == "zammad-group-Tier-2-Identity-Security"' >/dev/null \
+  || { log_error "Ticket conversations include internal notes and must grant ONLY group agents: ${SEC_T2}"; exit 1; }
+log_success "Conversation metadata, role labels, e-mail-free rendering and group-only ACLs verified."
+
+MCP_HEADERS=$(mktemp)
+mcp_init
+AGENT_HITS=$(search_as "marcus.weber@acme.com" "zammad-group-Tier-2-Identity-Security")
+CUSTOMER_HITS=$(search_as "claire.dupont@clientcorp.eu" "")
+CUSTOMER_T1_CONTENT=$(tool_text 40 getDocumentContent "$(jq -nc --arg u "${URI_T1}" '{documentUri:$u, userPrincipal:"claire.dupont@clientcorp.eu", userRoles:"", dimensions:1024}')")
+rm -f "$MCP_HEADERS"
+for expected in "${URI_T1}" "${URI_T2}"; do
+  echo "$AGENT_HITS" | grep -qx "$expected" || { log_error "Tier-2 agent must find the ${expected} conversation."; exit 1; }
+done
+if echo "$CUSTOMER_HITS" | grep -q "/tickets/"; then
+  log_error "Customer Claire must not find group-only ticket conversations: ${CUSTOMER_HITS}"
+  exit 1
+fi
+if echo "$CUSTOMER_T1_CONTENT" | grep -q "ZMD-T1-V2"; then
+  log_error "getDocumentContent returned a group-only ticket conversation to customer Claire!"
+  exit 1
+fi
+log_success "MCP returns ticket conversations to Tier-2 agents only."
+
+# 9c. Ticket 4 is tagged spam (it leaves the scope) and ticket 6 is hard-deleted: the next periodic full scan of the
+#     same incremental job tombstones both. The stack runs no Zammad scheduler, so the index is synced by hand.
+zammad_api DELETE "/api/v1/tickets/${T6_ID}" >/dev/null
+docker exec -i "${ZAMMAD_RAILS}" bundle exec rails r - <<RUBY >/dev/null
+UserInfo.current_user_id = User.find_by!(email: 'crawler@acme.com').id
+t4 = Ticket.find(${T4_ID})
+t4.tag_add('spam', sourceable: nil)
+t4.touch
+t4.reload.search_index_update_backend
+RUBY
+docker exec zammad-elasticsearch-decoupled-zammad curl -sf -X POST "http://127.0.0.1:9200/_refresh" >/dev/null
+log_info "Tagged ticket ${T4_ID} as spam and hard-deleted ticket ${T6_ID}."
+sleep 2
+run_crawler search_delta
+echo "${SCAN_SUMMARY}" | grep -q "periodic full scan" \
+  || { log_error "The incremental job should have run its periodic full scan again: ${SCAN_SUMMARY}"; exit 1; }
+wait_for "Spam-tagged ticket ${T4_ID} is purged" "metadata->>'documentId' = '${URI_T4}'" "-eq 0"
+wait_for "Hard-deleted ticket ${T6_ID} is purged by the periodic full scan" "metadata->>'documentId' = '${URI_T6}'" "-eq 0"
+wait_for "Ticket ${T1_ID} conversation remains indexed" "metadata->>'documentId' = '${URI_T1}'" "-gt 0"
+wait_for "Ticket ${T2_ID} conversation remains indexed" "metadata->>'documentId' = '${URI_T2}'" "-gt 0"
+
+# 9d. With a daily interval the next run is incremental again: the base query is combined with the watermark
+#     ((<base-query>) AND updated_at:[... TO *]) on Zammad's Elasticsearch
+export ZAMMAD_FULL_SCAN_INTERVAL=P1D
+T2_REPLY=$(zammad_api POST /api/v1/ticket_articles -H "Content-Type: application/json" -d "$(jq -nc --argjson tid "${T2_ID}" '{
+  ticket_id: $tid,
+  subject: "Token replaced",
+  body: "Hardware token replaced and MFA enrolment completed. Reference ZMD-T2-V2.",
+  type: "note",
+  internal: false
+}')")
+[ -n "$(echo "${T2_REPLY}" | jq -r '.id // empty')" ] || { log_error "Failed to add a reply to ticket ${T2_ID}: ${T2_REPLY}"; exit 1; }
+docker exec -i "${ZAMMAD_RAILS}" bundle exec rails r - <<RUBY >/dev/null
+UserInfo.current_user_id = User.find_by!(email: 'crawler@acme.com').id
+t2 = Ticket.find(${T2_ID})
+t2.touch
+t2.reload.search_index_update_backend
+RUBY
+docker exec zammad-elasticsearch-decoupled-zammad curl -sf -X POST "http://127.0.0.1:9200/_refresh" >/dev/null
+sleep 2
+run_crawler search_delta
+echo "${SCAN_SUMMARY}" | grep -q "incremental ticket enumeration)" \
+  || { log_error "With a daily full-scan interval the run must be incremental: ${SCAN_SUMMARY}"; exit 1; }
+wait_for "Ticket ${T2_ID} conversation picks up the new reply (ZMD-T2-V2)" \
+  "metadata->>'documentId' = '${URI_T2}' AND content LIKE '%ZMD-T2-V2%'" "-gt 0"
+
+unset ZAMMAD_ARTICLE_GRANULARITY ZAMMAD_PRIVACY_PROFILE ZAMMAD_EXCLUDED_TAGS ZAMMAD_BASE_QUERY ZAMMAD_FULL_SCAN_INTERVAL
+log_pass "Ticket-level conversations, filters, strict privacy and periodic full scans verified against real Zammad."
+
+# ------------------------------------------------------------------------------
+# STEP 10: Summary
+# ------------------------------------------------------------------------------
+log_step 10 "Summary"
 LIVE_TICKETS=$(zammad_api GET "/api/v1/tickets?page=1&per_page=50" | jq 'length')
-log_info "Remaining live tickets in real Zammad: ${LIVE_TICKETS} (tickets ${T1_ID}, ${T2_ID}, ${T4_ID})."
+log_info "Remaining live tickets in real Zammad: ${LIVE_TICKETS} (tickets ${T1_ID}, ${T2_ID}, ${T4_ID}, ${T5_ID})."
 log_pass "Zammad decoupled integration test against real Zammad 7.2 + Elasticsearch complete."
 
 echo -e "\n${BOLD}${GREEN}================================================================================${NC}"

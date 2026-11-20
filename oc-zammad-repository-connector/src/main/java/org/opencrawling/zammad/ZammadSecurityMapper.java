@@ -31,8 +31,8 @@ import java.util.Set;
  * agent notes ({@code internal: true}):
  * <ul>
  *   <li><b>Public ticket thread / public article &amp; its attachments</b>: grants read to the owning Zammad group
- *       ({@code zammad-group-<groupName>}), the ticket customer ({@code user:<customerEmail>}, when
- *       {@code includeCustomerInPublicAcl} is true), and the shared organization
+ *       ({@code zammad-group-<groupName>}), the ticket customer (its e-mail or login, or {@code zammad-user-<id>}
+ *       with {@code customerIdentity: id}, when {@code includeCustomerInPublicAcl} is true), and the shared organization
  *       ({@code zammad-org-<orgName>}, only when {@code includeSharedOrganizationInPublicAcl} is true and
  *       {@code organization.shared == true}).</li>
  *   <li><b>Internal agent notes / internal article &amp; its attachments</b>: grants read <em>exclusively</em> to the
@@ -67,7 +67,7 @@ public class ZammadSecurityMapper {
      * Computes effective OIS security for a ticket conversation view, article, or attachment.
      *
      * @param groupName          the Zammad group name owning the ticket
-     * @param customerEmail      the ticket customer's email/login (may be {@code null})
+     * @param customerPrincipal  the ticket customer's identity: e-mail or login, or {@code zammad-user-<id>} (may be {@code null})
      * @param organizationName   the ticket customer's organization name (may be {@code null})
      * @param organizationShared whether the organization has {@code shared: true} in Zammad
      * @param orgMemberEmails    optional resolved member emails of a shared organization
@@ -75,7 +75,7 @@ public class ZammadSecurityMapper {
      */
     public Mapped forTicket(
             String groupName,
-            String customerEmail,
+            String customerPrincipal,
             String organizationName,
             boolean organizationShared,
             List<String> orgMemberEmails,
@@ -98,8 +98,8 @@ public class ZammadSecurityMapper {
         groups.add(groupIdentity);
 
         if (!internal) {
-            if (settings.includeCustomerInPublicAcl() && customerEmail != null && !customerEmail.isBlank()) {
-                String cleanCustomer = customerEmail.strip();
+            if (settings.includeCustomerInPublicAcl() && customerPrincipal != null && !customerPrincipal.isBlank()) {
+                String cleanCustomer = customerPrincipal.strip();
                 rules.add(new PermissionRule(cleanCustomer, "user", cleanCustomer, "read"));
                 users.add(cleanCustomer);
             }

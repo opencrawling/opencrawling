@@ -313,6 +313,30 @@ class IngestionConsumerGovernanceTest {
         assertThat(chunks()).singleElement().satisfies(chunk -> assertThat(chunk.action()).isEqualTo(DocumentAction.DELETE));
     }
 
+    @Test
+    void transientKeysAreSeenByTheHooksButNeverStored() {
+        consumer.setTransientMetadataKeys("owner, acl, security_allowed_read");
+        gate(OnRejectedUpdate.PURGE, hook("names", GovernanceDecision.approve()));
+
+        consumer.consume(message(DocumentAction.UPSERT));
+
+        assertThat(seen).singleElement().satisfies(subject ->
+                assertThat(subject.metadata()).containsEntry("owner", List.of("alice@example.com")));
+        Map<String, Object> stored = chunks().getFirst().metadata();
+        assertThat(stored).doesNotContainKey("owner");
+        // protected keys cannot be dropped
+        assertThat(stored).containsKeys("acl", "security_allowed_read");
+    }
+
+    @Test
+    void transientKeysAreDroppedWithoutAGateToo() {
+        consumer.setTransientMetadataKeys("owner");
+
+        consumer.consume(message(DocumentAction.UPSERT));
+
+        assertThat(chunks().getFirst().metadata()).doesNotContainKey("owner");
+    }
+
     private static IngestionMessage message(DocumentAction action) {
         return new IngestionMessage("doc", "file:///claims/doc", Map.of("owner", List.of("alice@example.com")),
                 "finance-acl", FINANCE, "2026-01-01T00:00:00Z", null, null, Map.of(), action, null, null);

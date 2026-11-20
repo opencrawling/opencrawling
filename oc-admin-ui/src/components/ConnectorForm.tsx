@@ -3355,6 +3355,7 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
                         >
                           <option value="SPLIT_PUBLIC_AND_INTERNAL">Split Public Thread & Internal Agent Notes</option>
+                          <option value="TICKET">One Document per Ticket (Full Conversation, Group-Only)</option>
                           <option value="PER_ARTICLE">One Document per Article</option>
                           <option value="PUBLIC_ONLY">Public Customer Articles Only</option>
                         </select>
@@ -3433,6 +3434,212 @@ export default function ConnectorForm() {
                         <label htmlFor="includeAclsZammad" className="text-sm font-medium cursor-pointer">
                           Include Group, Customer & Shared Organization ACLs
                         </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeCustomerInPublicAclZammad"
+                          {...register('configuration.includeCustomerInPublicAcl')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomerInPublicAclZammad" className="text-sm font-medium cursor-pointer">
+                          Let the Ticket Customer Read the Public Thread (Customer Identity in ACL)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeSharedOrganizationInPublicAclZammad"
+                          {...register('configuration.includeSharedOrganizationInPublicAcl')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSharedOrganizationInPublicAclZammad" className="text-sm font-medium cursor-pointer">
+                          Let Shared Organization Members Read the Public Thread
+                        </label>
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Articles</p>
+                        <p className="text-xs text-muted-foreground">System articles and automatic replies add noise to embeddings and summaries.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Article Senders (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.excludedArticleSenders')}
+                          placeholder="System (empty = keep all)"
+                          defaultValue="System"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Article Types (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.excludedArticleTypes')}
+                          placeholder="sms, twitter status"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="skipAutoRepliesZammad"
+                          {...register('configuration.skipAutoReplies')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="skipAutoRepliesZammad" className="text-sm font-medium cursor-pointer">
+                          Skip Automatic Replies (Out-of-Office, Bounces)
+                        </label>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Article Role Labels (Optional)</label>
+                        <input
+                          {...register('configuration.articleRoleLabels')}
+                          placeholder="customer=Customer,agent=Agent,internal=Internal note,system=System"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Ticket Selection</p>
+                        <p className="text-xs text-muted-foreground">Tickets that stop matching are removed from the index; filters keep incremental state and tombstones.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Created After (Date or Period)</label>
+                        <input
+                          {...register('configuration.createdAfter')}
+                          placeholder="2024-01-01 or P2Y"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Tags (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.excludedTags')}
+                          placeholder="spam, test, duplicate"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Included Tags (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.includedTags')}
+                          placeholder="kb, faq (empty = all)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Priorities (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.priorities')}
+                          placeholder="2 normal, 3 high (empty = all)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Organizations (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.organizations')}
+                          placeholder="Example Org (empty = all)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Base Search Query (Optional)</label>
+                        <input
+                          {...register('configuration.baseQuery')}
+                          placeholder='group.name:"Support" AND NOT tags:spam'
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Excluded Title Patterns (Regular Expressions, One per Line)</label>
+                        <textarea
+                          {...register('configuration.excludedTitlePatterns')}
+                          placeholder="^\[ALERT\]"
+                          rows={2}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Privacy</p>
+                        <p className="text-xs text-muted-foreground">Strict keeps e-mail addresses out of rendered text, metadata and permission fields.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Privacy Profile</label>
+                        <select
+                          {...register('configuration.privacyProfile')}
+                          defaultValue="standard"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="standard">Standard (settings as configured)</option>
+                          <option value="strict">Strict (no e-mails anywhere)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Show People As</label>
+                        <select
+                          {...register('configuration.identityRendering')}
+                          defaultValue="name"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="name">Display Name</option>
+                          <option value="email">E-Mail Address</option>
+                          <option value="id">Zammad User ID</option>
+                          <option value="none">Hidden</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Customer Identity in ACL</label>
+                        <select
+                          {...register('configuration.customerIdentity')}
+                          defaultValue="id"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="id">Zammad User ID (zammad-user-&lt;id&gt;)</option>
+                          <option value="email">E-Mail or Login</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Participant Metadata (for Anonymization Hooks)</label>
+                        <select
+                          {...register('configuration.participantMetadata')}
+                          defaultValue="names"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="names">Display Names</option>
+                          <option value="names-and-ids">Display Names and User IDs</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Periodic Full Scan</p>
+                        <p className="text-xs text-muted-foreground">Deleted tickets are only detected by a full enumeration: run one periodically inside the incremental job.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Full Scan Interval (ISO-8601, Optional)</label>
+                        <input
+                          {...register('configuration.fullScanInterval')}
+                          placeholder="P1D"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Full Scan Window (Optional)</label>
+                        <input
+                          {...register('configuration.fullScanWindow')}
+                          placeholder="01:00-05:00"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Full Scan Window Timezone</label>
+                        <input
+                          {...register('configuration.fullScanTimezone')}
+                          placeholder="Europe/Berlin"
+                          defaultValue="UTC"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
                       </div>
                     </div>
                   )}

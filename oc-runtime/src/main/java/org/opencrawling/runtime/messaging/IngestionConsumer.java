@@ -46,6 +46,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -74,6 +75,13 @@ public class IngestionConsumer {
     @org.springframework.beans.factory.annotation.Value("${opencrawling.ingestion.max-extract-bytes:536870912}")
     private long maxExtractBytes = 536870912L;
 
+    /**
+     * Metadata keys that governance hooks may read but that are never stored: they are removed after the gate (or, with
+     * no gate, before chunking), for example the participant names a connector provides only for anonymization.
+     * Protected keys ({@link GovernanceGate#isProtectedKey}) cannot be dropped.
+     */
+    private Set<String> transientMetadataKeys = Set.of();
+
     public IngestionConsumer(
             KafkaTemplate<String, Object> kafkaTemplate,
             @Qualifier("claimCheckStore") ClaimCheckStore claimCheckStore,
@@ -86,6 +94,34 @@ public class IngestionConsumer {
         this.traceStore = traceStore;
         this.textSplitter = TokenTextSplitter.builder().build();
         this.textExtractionService = textExtractionService != null ? textExtractionService : TextExtractionService.noop();
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${opencrawling.governance.drop-metadata-after-gate:}")
+    void setTransientMetadataKeys(String keys) {
+        Set<String> parsed = new java.util.LinkedHashSet<>();
+        if (keys != null) {
+            for (String key : keys.split(",")) {
+                String trimmed = key.strip();
+                if (trimmed.isEmpty()) {
+                    continue;
+                }
+                if (GovernanceGate.isProtectedKey(trimmed)) {
+                    log.warn("Ignoring '{}' in opencrawling.governance.drop-metadata-after-gate: protected keys are always kept.", trimmed);
+                    continue;
+                }
+                parsed.add(trimmed);
+            }
+        }
+        this.transientMetadataKeys = Set.copyOf(parsed);
+    }
+
+    private Map<String, List<String>> withoutTransientKeys(Map<String, List<String>> metadata) {
+        if (transientMetadataKeys.isEmpty() || metadata == null) {
+            return metadata;
+        }
+        Map<String, List<String>> kept = new HashMap<>(metadata);
+        transientMetadataKeys.forEach(kept::remove);
+        return kept;
     }
 
     /**
@@ -235,7 +271,7 @@ public class IngestionConsumer {
                         desc.append("\n\nType: ").append(mime);
                         if (!title.isBlank()) desc.append("\nTitle: ").append(title);
                         desc.append("\n\nAttributes:\n");
-                        message.metadata().forEach((k, vals) -> {
+                        withoutTransientKeys(message.metadata()).forEach((k, vals) -> {
                             if (!k.startsWith("tk:") && !k.equals("documentId") && !k.equals("uri") && !k.equals("acl") && !k.equals("security") && !k.equals("is_blob") && !k.equals("has_blob")) {
                                 desc.append("- **").append(k).append("**: ").append(String.join("; ", vals)).append("\n");
                             }
@@ -271,6 +307,7 @@ public class IngestionConsumer {
                     text = governed.text();
                     sourceMetadata = governanceRecord(governed, governed.metadata());
                 }
+                sourceMetadata = withoutTransientKeys(sourceMetadata);
 
                 // Map repository metadata to Vector Document metadata
                 Map<String, Object> metadata = new HashMap<>();
