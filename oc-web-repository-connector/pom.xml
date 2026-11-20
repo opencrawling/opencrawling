@@ -33,7 +33,7 @@
     <name>OpenCrawling - Web Connector</name>
 
     <properties>
-        <crawler-commons.version>1.5</crawler-commons.version>
+        <crawler-commons.version>1.6</crawler-commons.version>
         <re2j.version>1.8</re2j.version>
     </properties>
 
