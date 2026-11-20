@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+    Copyright © 2026 textercabaceira (luis.cabaceira@texter.ai)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
     <artifactId>oc-doxis-repository-connector</artifactId>
     <packaging>jar</packaging>
 
+    <inceptionYear>2026</inceptionYear>
     <name>OpenCrawling - Doxis Repository Connector</name>
     <description>Crawls Doxis 4 CSB repositories (documents, descriptors, e-file ACLs) through the CSB REST API.</description>
 

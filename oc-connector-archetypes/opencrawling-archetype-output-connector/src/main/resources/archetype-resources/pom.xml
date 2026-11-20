@@ -32,6 +32,7 @@
     <version>${version}</version>
     <packaging>jar</packaging>
 
+    <inceptionYear>2026</inceptionYear>
     <name>${artifactId}</name>
     <description>OpenCrawling Output Connector - ${connectorName}</description>
 

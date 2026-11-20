@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+    Copyright © 2026 Piergiorgio Lucidi (plucidi@ziaconsulting.com)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
     <version>1.0.5-SNAPSHOT</version>
     <packaging>jar</packaging>
 
+    <inceptionYear>2026</inceptionYear>
     <name>OpenCrawling - Java Client SDK</name>
     <description>Strongly typed Java Client SDK for the OpenCrawling REST API and Open Ingestion Standard (OIS) models.</description>
 
@@ -217,15 +218,20 @@
                 <groupId>com.mycila</groupId>
                 <artifactId>license-maven-plugin</artifactId>
                 <version>4.3</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.mycila</groupId>
+                        <artifactId>license-maven-plugin-git</artifactId>
+                        <version>4.3</version>
+                    </dependency>
+                </dependencies>
                 <configuration>
                     <properties>
-                        <owner>the original author or authors</owner>
-                        <email>piergiorgio@apache.org</email>
                         <year>2026</year>
                     </properties>
                     <licenseSets>
                         <licenseSet>
-                            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+                            <header>${maven.multiModuleProjectDirectory}/.license-header</header>
                             <excludes>
                                 <exclude>**/README.md</exclude>
                                 <exclude>**/LICENSE</exclude>

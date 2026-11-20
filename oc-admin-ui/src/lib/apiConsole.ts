@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 the original author or authors (piergiorgio@apache.org)
+ * Copyright © 2026 textercabaceira (luis.cabaceira@texter.ai)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,9 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/** Logic of the API console: reading the OpenAPI description and building, describing and remembering requests. */
-
 export type ParamLocation = 'path' | 'query' | 'header'
 
 export interface OperationParam {
