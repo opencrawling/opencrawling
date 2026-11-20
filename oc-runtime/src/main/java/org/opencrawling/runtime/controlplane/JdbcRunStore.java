@@ -23,12 +23,15 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
- * Runs kept in the control-plane database ({@code oc_run}, {@code oc_run_step}, migration V3), shared by every
- * runtime on it.
+ * Runs kept in the control-plane database ({@code oc_run}, {@code oc_run_step}; migrations V3 and V7), shared by every
+ * runtime on it: job runs from their start, and the runs a caller asks for (dynamic jobs) from their request, each one
+ * row from beginning to end.
  *
  * <p>Every change of a run's state runs under {@link ControlPlaneStore#locked}, the lock the runtimes already take for
  * definitions, so the rules that depend on the other runs (one run per job, the caps) hold across runtimes, and a
@@ -37,9 +40,11 @@ import java.util.Optional;
  */
 public class JdbcRunStore implements RunStore {
 
-    private static final String COLUMNS =
-            "execution_id, job_id, caller, runtime_id, state, stop_requested, started_at, heartbeat_at, ended_at";
-    private static final String ACTIVE = "ended_at IS NULL";
+    private static final String COLUMNS = "execution_id, job_id, caller, runtime_id, state, stop_requested, started_at,"
+            + " heartbeat_at, ended_at, kind, owner, created_at, body";
+    private static final String ACTIVE = "state IN ('" + RunState.RUNNING + "', '" + RunState.PAUSED + "')";
+    private static final String WAITING = "state IN ('" + RunState.QUEUED + "', '" + RunState.PENDING_APPROVAL + "')";
+    private static final String REQUESTED = "kind <> '" + RunKind.JOB + "'";
     private static final int MAX_DETAIL = 1024;
     private static final int IN_BATCH = 500;
 
@@ -47,7 +52,8 @@ public class JdbcRunStore implements RunStore {
             rs.getString("execution_id"), rs.getString("job_id"), rs.getString("caller"), rs.getString("runtime_id"),
             RunState.valueOf(rs.getString("state")), rs.getBoolean("stop_requested"),
             instant(rs.getTimestamp("started_at")), instant(rs.getTimestamp("heartbeat_at")),
-            instant(rs.getTimestamp("ended_at")));
+            instant(rs.getTimestamp("ended_at")), RunKind.valueOf(rs.getString("kind")), rs.getString("owner"),
+            instant(rs.getTimestamp("created_at")), rs.getString("body"));
 
     private static final RowMapper<RunStep> STEP = (rs, row) -> new RunStep(
             rs.getString("execution_id"), rs.getInt("seq"), RunEvent.valueOf(rs.getString("event")),
@@ -67,6 +73,11 @@ public class JdbcRunStore implements RunStore {
     }
 
     @Override
+    public <T> T locked(Supplier<T> work) {
+        return store.locked(work);
+    }
+
+    @Override
     public Claim claim(String jobId, String executionId, String caller, String runtimeId, Instant now,
                        int maxRuns, int maxRunsPerCaller) {
         return store.locked(() -> {
@@ -81,18 +92,35 @@ public class JdbcRunStore implements RunStore {
                     && count("SELECT COUNT(*) FROM oc_run WHERE " + ACTIVE + " AND caller = ?", caller) >= maxRunsPerCaller) {
                 return new CallerFull(caller, maxRunsPerCaller);
             }
-            jdbc.update("INSERT INTO oc_run (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-                    executionId, jobId, caller, runtimeId, RunState.RUNNING.name(), false, ts(now), ts(now));
+            // A run asked for earlier starts in place; otherwise a new run is stored.
+            if (jdbc.update("UPDATE oc_run SET caller = ?, runtime_id = ?, state = ?, stop_requested = ?, started_at = ?,"
+                            + " heartbeat_at = ? WHERE execution_id = ? AND job_id = ? AND " + WAITING,
+                    caller, runtimeId, RunState.RUNNING.name(), false, ts(now), ts(now), executionId, jobId) == 0) {
+                jdbc.update("INSERT INTO oc_run (" + COLUMNS + ", position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?)",
+                        executionId, jobId, caller, runtimeId, RunState.RUNNING.name(), false, ts(now), ts(now),
+                        RunKind.JOB.name(), ts(now), nextPosition());
+            }
             record(executionId, RunEvent.STARTED, now, runtimeId, null);
-            return new Claimed(new RunRecord(executionId, jobId, caller, runtimeId, RunState.RUNNING, false, now, now, null));
+            return new Claimed(get(executionId).orElseThrow());
         });
     }
 
     @Override
     public void release(String executionId) {
         store.locked(() -> {
-            jdbc.update("DELETE FROM oc_run_step WHERE execution_id = ?", executionId);
-            jdbc.update("DELETE FROM oc_run WHERE execution_id = ?", executionId);
+            RunRecord run = get(executionId).orElse(null);
+            if (run == null) {
+                return null;
+            }
+            if (run.kind() == RunKind.JOB) {
+                delete(executionId);
+                return null;
+            }
+            // A run that had waited goes back to waiting, without the start it never made.
+            jdbc.update("UPDATE oc_run SET runtime_id = NULL, state = ?, stop_requested = ?, started_at = NULL,"
+                    + " heartbeat_at = NULL WHERE execution_id = ?", RunState.QUEUED.name(), false, executionId);
+            jdbc.update("DELETE FROM oc_run_step WHERE execution_id = ? AND event = ? AND seq = (SELECT MAX(seq)"
+                    + " FROM oc_run_step WHERE execution_id = ?)", executionId, RunEvent.STARTED.name(), executionId);
             return null;
         });
     }
@@ -140,7 +168,7 @@ public class JdbcRunStore implements RunStore {
         List<String> ids = List.copyOf(executionIds);
         for (int from = 0; from < ids.size(); from += IN_BATCH) {
             List<String> batch = ids.subList(from, Math.min(ids.size(), from + IN_BATCH));
-            String in = String.join(", ", java.util.Collections.nCopies(batch.size(), "?"));
+            String in = String.join(", ", Collections.nCopies(batch.size(), "?"));
             List<Object> args = new ArrayList<>(List.of(ts(now), runtimeId));
             args.addAll(batch);
             jdbc.update("UPDATE oc_run SET heartbeat_at = ? WHERE runtime_id = ? AND " + ACTIVE
@@ -189,8 +217,8 @@ public class JdbcRunStore implements RunStore {
     @Override
     public List<RunRecord> list(String jobId) {
         return jobId == null
-                ? jdbc.query("SELECT " + COLUMNS + " FROM oc_run ORDER BY started_at DESC, execution_id", RUN)
-                : jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE job_id = ? ORDER BY started_at DESC, execution_id", RUN, jobId);
+                ? jdbc.query("SELECT " + COLUMNS + " FROM oc_run ORDER BY created_at DESC, execution_id", RUN)
+                : jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE job_id = ? ORDER BY created_at DESC, execution_id", RUN, jobId);
     }
 
     @Override
@@ -206,6 +234,110 @@ public class JdbcRunStore implements RunStore {
                     + " WHERE ended_at IS NOT NULL AND ended_at < ?)", ts(cutoff));
             return jdbc.update("DELETE FROM oc_run WHERE ended_at IS NOT NULL AND ended_at < ?", ts(cutoff));
         });
+    }
+
+    // ---- Runs a caller asks for ----
+
+    @Override
+    public void request(RunRecord run, String runtimeId, String detail) {
+        if (!run.state().waiting()) {
+            throw new IllegalArgumentException(run.state() + " is not a waiting state");
+        }
+        store.locked(() -> {
+            jdbc.update("INSERT INTO oc_run (" + COLUMNS + ", position) VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)",
+                    run.executionId(), run.jobId(), run.caller(), run.state().name(), false, run.kind().name(),
+                    run.owner(), ts(run.createdAt()), run.body(), nextPosition());
+            record(run.executionId(), RunEvent.waiting(run.state()), run.createdAt(), runtimeId, detail);
+            return null;
+        });
+    }
+
+    @Override
+    public void updateBody(String executionId, String body) {
+        jdbc.update("UPDATE oc_run SET body = ? WHERE execution_id = ?", body, executionId);
+    }
+
+    @Override
+    public boolean settle(String executionId, RunState state, String runtimeId, Instant now, String detail) {
+        RunEvent event = RunEvent.ended(state);
+        return store.locked(() -> {
+            if (jdbc.update("UPDATE oc_run SET state = ?, ended_at = ? WHERE execution_id = ? AND " + WAITING,
+                    state.name(), ts(now), executionId) == 0) {
+                return false;
+            }
+            record(executionId, event, now, runtimeId, detail);
+            return true;
+        });
+    }
+
+    @Override
+    public void record(String executionId, RunEvent event, String runtimeId, Instant now, String detail) {
+        store.locked(() -> {
+            if (get(executionId).isPresent()) {
+                record(executionId, event, now, runtimeId, detail);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void delete(String executionId) {
+        store.locked(() -> {
+            jdbc.update("DELETE FROM oc_run_step WHERE execution_id = ?", executionId);
+            jdbc.update("DELETE FROM oc_run WHERE execution_id = ?", executionId);
+            return null;
+        });
+    }
+
+    @Override
+    public List<RunRecord> requested(String owner) {
+        return owner == null
+                ? jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE " + REQUESTED + " ORDER BY created_at DESC, position", RUN)
+                : jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE " + REQUESTED + " AND owner = ?"
+                        + " ORDER BY created_at DESC, position", RUN, owner);
+    }
+
+    @Override
+    public int countRequested(String owner, Collection<RunState> states) {
+        if (states.isEmpty()) {
+            return 0;
+        }
+        List<Object> args = new ArrayList<>();
+        args.add(owner);
+        states.forEach(state -> args.add(state.name()));
+        return (int) count("SELECT COUNT(*) FROM oc_run WHERE " + REQUESTED + " AND owner = ? AND state IN ("
+                + String.join(", ", Collections.nCopies(states.size(), "?")) + ")", args.toArray());
+    }
+
+    @Override
+    public List<RunRecord> requestedBefore(RunState state, Instant cutoff) {
+        return jdbc.query("SELECT " + COLUMNS + " FROM oc_run WHERE " + REQUESTED + " AND state = ? AND created_at < ?"
+                + " ORDER BY position", RUN, state.name(), ts(cutoff));
+    }
+
+    @Override
+    public List<String> forgetEndedRequested(Instant cutoff, int keep) {
+        return store.locked(() -> {
+            List<String[]> old = jdbc.query("SELECT execution_id, job_id FROM oc_run WHERE " + REQUESTED
+                    + " AND ended_at IS NOT NULL AND ended_at < ?", (rs, n) -> new String[]{rs.getString(1), rs.getString(2)},
+                    ts(cutoff));
+            List<String[]> ended = jdbc.query("SELECT execution_id, job_id FROM oc_run WHERE " + REQUESTED
+                    + " AND ended_at IS NOT NULL AND NOT ended_at < ? ORDER BY position",
+                    (rs, n) -> new String[]{rs.getString(1), rs.getString(2)}, ts(cutoff));
+            List<String[]> forget = new ArrayList<>(old);
+            forget.addAll(ended.subList(0, Math.max(0, ended.size() - keep)));
+            List<String> jobIds = new ArrayList<>();
+            for (String[] run : forget) {
+                delete(run[0]);
+                jobIds.add(run[1]);
+            }
+            return jobIds;
+        });
+    }
+
+    @Override
+    public List<String> requestedJobIds() {
+        return jdbc.queryForList("SELECT job_id FROM oc_run WHERE " + REQUESTED + " ORDER BY position", String.class);
     }
 
     private boolean change(String executionId, RunState from, RunState to, RunEvent event, String runtimeId, Instant now) {
@@ -226,6 +358,12 @@ public class JdbcRunStore implements RunStore {
         return get(executionId).filter(run -> run.state().active());
     }
 
+    /** Called under the lock, so a number is never taken twice. */
+    private long nextPosition() {
+        Long last = jdbc.queryForObject("SELECT MAX(position) FROM oc_run", Long.class);
+        return last == null ? 1 : last + 1;
+    }
+
     /** Called under the lock, so the next number is never taken twice. */
     private void record(String executionId, RunEvent event, Instant at, String runtimeId, String detail) {
         Integer last = jdbc.queryForObject("SELECT MAX(seq) FROM oc_run_step WHERE execution_id = ?", Integer.class, executionId);
@@ -244,7 +382,7 @@ public class JdbcRunStore implements RunStore {
     }
 
     private static Timestamp ts(Instant instant) {
-        return Timestamp.from(instant);
+        return instant == null ? null : Timestamp.from(instant);
     }
 
     private static Instant instant(Timestamp timestamp) {

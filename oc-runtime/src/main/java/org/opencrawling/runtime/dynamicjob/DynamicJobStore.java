@@ -27,9 +27,10 @@ import java.util.function.Supplier;
  * Where dynamic jobs are kept (#316): their record (who asked, what, its state, a pending request waiting for approval)
  * and the idempotency keys that started them. The run itself is kept by the run store, like every job run.
  *
- * <p>{@link InMemoryDynamicJobStore} keeps them in this runtime (the {@code file} control-plane store);
- * {@link JdbcDynamicJobStore} keeps them in the control-plane database, where every runtime on it sees the same jobs,
- * after a restart too. A change that depends on what is stored (count, check, then save) runs inside {@link #locked}.
+ * <p>{@link RunDynamicJobStore} keeps each job as one run in the run registry's store, from its request to its end:
+ * in this runtime's memory with the {@code file} control-plane store, in the control-plane database with {@code jdbc},
+ * where every runtime on it sees the same jobs, after a restart too. A change that depends on what is stored (count,
+ * check, then save) runs inside {@link #locked}.
  */
 interface DynamicJobStore {
 

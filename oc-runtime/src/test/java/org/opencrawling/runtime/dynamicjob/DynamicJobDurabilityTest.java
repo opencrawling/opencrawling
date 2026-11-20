@@ -18,16 +18,14 @@ package org.opencrawling.runtime.dynamicjob;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.opencrawling.runtime.controlplane.ControlPlaneStore;
 import org.opencrawling.runtime.controlplane.JdbcControlPlaneStore;
 import org.opencrawling.runtime.controlplane.JdbcRunStore;
 import org.opencrawling.runtime.dynamicjob.DynamicJobService.State;
 import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -55,13 +53,12 @@ class DynamicJobDurabilityTest {
     record Runtime(JobRunRegistry registry, DynamicJobService service) {}
 
     Runtime runtime(String runtimeId) {
-        JdbcControlPlaneStore controlPlane = new JdbcControlPlaneStore(jdbc,
-                new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource())), Path.of("target", "no-data"));
+        JdbcControlPlaneStore controlPlane = DynamicJobServiceJdbcTest.controlPlane(jdbc);
         JobRunRegistry registry = new JobRunRegistry(0, 0, new JdbcRunStore(jdbc, controlPlane), runtimeId,
                 Duration.ofSeconds(60), fakes.clock);
         DynamicJobService service = new DynamicJobService(() -> List.of(FAKE, UNLISTED, FILES), dto -> fakes.builder.apply(dto),
                 registry, fakes.runner, fakes.documentCounts::get, fakes.properties, fakes.clock,
-                new JdbcDynamicJobStore(jdbc, controlPlane));
+                DynamicJobServiceJdbcTest.runtimeStore(jdbc, registry, fakes.clock));
         return new Runtime(registry, service);
     }
 
@@ -96,7 +93,7 @@ class DynamicJobDurabilityTest {
         assertThat(awaitEnd(after.service(), filed.jobId()).state()).isEqualTo(State.COMPLETED);
         assertThat(fakes.runner.provenances).as("it ran for alice, the identity kept with the pending request")
                 .anySatisfy(provenance -> assertThat(provenance.triggeredBy()).isEqualTo("alice"));
-        assertThat(jdbc.queryForObject("SELECT body FROM " + JdbcDynamicJobStore.JOBS + " WHERE job_id = ?", String.class,
+        assertThat(jdbc.queryForObject("SELECT body FROM oc_run WHERE job_id = ?", String.class,
                 filed.jobId())).as("the requester's identity is dropped once it is approved").doesNotContain("scopes");
     }
 
@@ -174,16 +171,30 @@ class DynamicJobDurabilityTest {
     }
 
     @Test
-    void theStoreFollowsTheControlPlaneStore() {
-        JdbcControlPlaneStore controlPlane = new JdbcControlPlaneStore(jdbc,
-                new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource())), Path.of("target", "no-data"));
+    void theJobsAreKeptInTheRegistrysRunStoreAndTheirKeysFollowTheControlPlaneStore() {
+        JdbcControlPlaneStore controlPlane = DynamicJobServiceJdbcTest.controlPlane(jdbc);
         @SuppressWarnings("unchecked")
         org.springframework.beans.factory.ObjectProvider<JdbcTemplate> provider =
                 org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
         org.mockito.Mockito.when(provider.getObject()).thenReturn(jdbc);
-        assertThat(DynamicJobConfiguration.store(controlPlane, provider)).isInstanceOf(JdbcDynamicJobStore.class);
-        assertThat(DynamicJobConfiguration.store(org.opencrawling.runtime.controlplane.ControlPlaneStore.files(), provider))
-                .isInstanceOf(InMemoryDynamicJobStore.class);
+        JobRunRegistry registry = runtime("runtime-a").registry();
+
+        DynamicJobService service = new DynamicJobService(() -> List.of(FAKE, UNLISTED, FILES), dto -> fakes.builder.apply(dto),
+                registry, fakes.runner, fakes.documentCounts::get, fakes.properties, fakes.clock,
+                DynamicJobConfiguration.store(registry, controlPlane, provider, fakes.clock));
+        String jobId = service.start(caller("alice"), request(null), "key-1", "api", null).jobId();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM oc_dynamic_job_key", Integer.class))
+                .as("with jdbc, the keys are in the database").isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT kind FROM oc_run WHERE job_id = ?", String.class, jobId))
+                .as("and the job is a run").isEqualTo("DYNAMIC_FOLDER");
+        verifyNoKeysWithoutJdbc(registry);
+    }
+
+    private void verifyNoKeysWithoutJdbc(JobRunRegistry registry) {
+        DynamicJobStore inMemory = DynamicJobConfiguration.store(registry, ControlPlaneStore.files(), null, fakes.clock);
+        inMemory.saveKey("someone", "key-2", new DynamicJobStore.Keyed("dyn-x", request(null)));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM oc_dynamic_job_key", Integer.class))
+                .as("with the file store, keys stay in memory").isEqualTo(1);
     }
 
     private DynamicJobService.JobStatus awaitEnd(DynamicJobService service, String jobId) {

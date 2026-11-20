@@ -59,8 +59,9 @@ import java.util.Set;
 public class RunsV1Controller {
 
     static final Set<String> KINDS = Set.of(RunResource.JOB, RunResource.DYNAMIC_FOLDER, RunResource.DYNAMIC_DOCUMENT);
-    static final Set<String> STATES = Set.of("RUNNING", "PAUSED", "COMPLETED", "STOPPED", "FAILED", "INTERRUPTED",
-            "PENDING_APPROVAL", "REJECTED", "EXPIRED");
+    /** The states of the one run state machine ({@link org.opencrawling.runtime.orchestrator.RunStore.RunState}). */
+    static final Set<String> STATES = java.util.Arrays.stream(org.opencrawling.runtime.orchestrator.RunStore.RunState.values())
+            .map(Enum::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
 
     private final JobController jobs;
     private final ObjectProvider<DynamicJobService> dynamicJobs;

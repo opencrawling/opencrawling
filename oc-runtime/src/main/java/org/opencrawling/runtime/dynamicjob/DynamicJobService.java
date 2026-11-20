@@ -71,11 +71,11 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p>A job's status is visible to the user who started it (whichever agent acted for them) and to members of the
- * admin groups; to anyone else it does not exist. A job's record is kept for the retention period after it ends, in
- * a {@link DynamicJobStore}: in this runtime's memory with the {@code file} control-plane store (lost on restart), in
- * the control-plane database with {@code jdbc} (#316), where every runtime on it sees the same jobs, approves them
- * and stops them, after a restart too. Its run is kept by the run registry like every job run, so a running job can
- * also be paused and resumed, and one whose runtime died is marked {@code INTERRUPTED}.
+ * admin groups; to anyone else it does not exist. A job is one run in the run registry's store from the moment it is
+ * asked for (#316, {@link RunDynamicJobStore}): in this runtime's memory with the {@code file} control-plane store
+ * (lost on restart), in the control-plane database with {@code jdbc}, where every runtime on it sees the same jobs,
+ * approves them and stops them, after a restart too. It is kept for the retention period after it ends. Like every
+ * run it can be paused and resumed, and one whose runtime died is marked {@code INTERRUPTED}.
  */
 public class DynamicJobService {
 
@@ -193,10 +193,11 @@ public class DynamicJobService {
     public DynamicJobService(Supplier<List<ConnectorDTO>> connectors, Function<ConnectorDTO, RepositoryConnector> builder,
                              JobRunRegistry registry, CrawlRunner runner, Function<String, Long> documentCount,
                              DynamicJobProperties properties, Clock clock) {
-        this(connectors, builder, registry, runner, documentCount, properties, clock, new InMemoryDynamicJobStore());
+        this(connectors, builder, registry, runner, documentCount, properties, clock,
+                new RunDynamicJobStore(registry.store(), RunDynamicJobStore.Keys.inMemory(), registry::runtimeId, clock));
     }
 
-    /** @param store where the jobs' records are kept: in memory, or in the control-plane database */
+    /** @param store where the jobs are kept: as runs in the run registry's store ({@link RunDynamicJobStore}) */
     DynamicJobService(Supplier<List<ConnectorDTO>> connectors, Function<ConnectorDTO, RepositoryConnector> builder,
                       JobRunRegistry registry, CrawlRunner runner, Function<String, Long> documentCount,
                       DynamicJobProperties properties, Clock clock, DynamicJobStore store) {
@@ -706,8 +707,8 @@ public class DynamicJobService {
     }
 
     /**
-     * The history of the job's run, from the run registry (#316): empty while it waits for approval, and once its run
-     * is past the run retention.
+     * The job's history (#316): the job is one run from its request, so this starts with why it waited
+     * ({@code QUEUED} or {@code APPROVAL_REQUESTED}), then its approval, start, pauses, stop and end.
      */
     public List<org.opencrawling.runtime.orchestrator.RunStore.RunStep> history(Caller caller, String jobId) {
         requireCaller(caller, properties.getRequiredScope(), properties.getDocumentScope());
@@ -784,10 +785,17 @@ public class DynamicJobService {
         if (run.jobId() == null || !run.jobId().startsWith(JOB_ID_PREFIX)) {
             return;
         }
-        Entry ended = update(run.jobId(), job -> job.state().active() && job.executionId().equals(run.executionId())
-                ? job.withNote("Interrupted: the runtime running it stopped.").finished(State.INTERRUPTED, null, clock.instant())
-                : job);
-        if (ended != null && ended.state() == State.INTERRUPTED) {
+        // The job is its run, which the registry has already marked INTERRUPTED: the job adds why, once.
+        java.util.concurrent.atomic.AtomicBoolean noted = new java.util.concurrent.atomic.AtomicBoolean();
+        update(run.jobId(), job -> {
+            if (!job.executionId().equals(run.executionId())
+                    || !(job.state().active() || job.state() == State.INTERRUPTED && job.note() == null)) {
+                return job;
+            }
+            noted.set(true);
+            return job.withNote("Interrupted: the runtime running it stopped.").finished(State.INTERRUPTED, null, clock.instant());
+        });
+        if (noted.get()) {
             log.warn("Dynamic job {} [Exec ID: {}] interrupted: its runtime stopped.", run.jobId(), run.executionId());
         }
     }

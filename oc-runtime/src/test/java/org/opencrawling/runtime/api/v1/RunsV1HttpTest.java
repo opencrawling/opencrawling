@@ -166,7 +166,8 @@ class RunsV1HttpTest {
         assertThat(history.get("run").get("state").asText()).isEqualTo("STOPPED");
         List<String> events = new ArrayList<>();
         history.get("steps").forEach(step -> events.add(step.get("event").asText()));
-        assertThat(events).containsExactly("STARTED", "PAUSED", "RESUMED", "STOP_REQUESTED", "STOPPED");
+        // one run from its request (#316): queued, then started in place
+        assertThat(events).containsExactly("QUEUED", "STARTED", "PAUSED", "RESUMED", "STOP_REQUESTED", "STOPPED");
 
         HttpResponse<String> late = send("POST", "/api/v1/runs/" + runId + ":pause", alice);
         assertThat(late.statusCode()).isEqualTo(409);

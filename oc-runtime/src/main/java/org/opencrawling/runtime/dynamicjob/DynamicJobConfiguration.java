@@ -61,17 +61,21 @@ public class DynamicJobConfiguration {
                     JobExecutionCompletedEvent event = accumulator != null ? accumulator.getCompletedEvent(executionId) : null;
                     return event != null ? event.totalDocuments() : null;
                 },
-                properties, Clock.systemUTC(), store(controlPlaneStore.getIfAvailable(ControlPlaneStore::files), jdbc));
+                properties, Clock.systemUTC(),
+                store(runRegistry, controlPlaneStore.getIfAvailable(ControlPlaneStore::files), jdbc, Clock.systemUTC()));
     }
 
     /**
-     * Where the jobs' records are kept: in the control-plane database with the {@code jdbc} control-plane store, shared
-     * by every runtime on it (#316); otherwise in this runtime's memory.
+     * Where the jobs are kept: as runs in the run registry's store (#316), so in the control-plane database with the
+     * {@code jdbc} control-plane store, shared by every runtime on it, and otherwise in this runtime's memory. Their
+     * idempotency keys follow the same choice.
      */
-    static DynamicJobStore store(ControlPlaneStore controlPlaneStore, ObjectProvider<JdbcTemplate> jdbc) {
-        return controlPlaneStore instanceof JdbcControlPlaneStore
-                ? new JdbcDynamicJobStore(jdbc.getObject(), controlPlaneStore)
-                : new InMemoryDynamicJobStore();
+    static DynamicJobStore store(JobRunRegistry registry, ControlPlaneStore controlPlaneStore,
+                                 ObjectProvider<JdbcTemplate> jdbc, Clock clock) {
+        RunDynamicJobStore.Keys keys = controlPlaneStore instanceof JdbcControlPlaneStore
+                ? RunDynamicJobStore.Keys.jdbc(jdbc.getObject())
+                : RunDynamicJobStore.Keys.inMemory();
+        return new RunDynamicJobStore(registry.store(), keys, registry::runtimeId, clock);
     }
 
     /**

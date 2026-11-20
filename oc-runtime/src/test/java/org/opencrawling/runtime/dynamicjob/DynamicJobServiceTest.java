@@ -100,7 +100,12 @@ class DynamicJobServiceTest {
     final DynamicJobProperties properties = new DynamicJobProperties();
     final Map<String, Long> documentCounts = new java.util.concurrent.ConcurrentHashMap<>();
     final MutableClock clock = new MutableClock();
-    JobRunRegistry registry = new JobRunRegistry(0);
+    JobRunRegistry registry;
+
+    /** The run registry the service starts its jobs through; its store is where the jobs are kept (#316). */
+    JobRunRegistry newRegistry(int maxConcurrentRuns) {
+        return new JobRunRegistry(maxConcurrentRuns);
+    }
     DynamicJobService service;
 
     static Caller caller(String principal, String... groups) {
@@ -133,6 +138,7 @@ class DynamicJobServiceTest {
     void setUp() {
         properties.setConnectors(List.of("fake_repo", "Files"));
         properties.setAdminGroups(List.of("oc-admins"));
+        registry = newRegistry(0);
         service();
     }
 
@@ -803,7 +809,7 @@ class DynamicJobServiceTest {
     @Test
     void theRuntimesCapsApplyAndARefusedJobLeavesNoTrace() {
         runner.hold = new CountDownLatch(1);
-        registry = new JobRunRegistry(1);
+        registry = newRegistry(1);
         service();
         service.start(caller("alice"), request(null), null, "api", null);
 
