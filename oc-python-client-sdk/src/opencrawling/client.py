@@ -38,6 +38,7 @@ from opencrawling.v1.migrations import AsyncMigrationsClient, MigrationsClient
 from opencrawling.v1.models import ApiIndex, CallerInfo, Health, VersionInfo
 from opencrawling.v1.narrativization import AsyncNarrativizationClient, NarrativizationClient
 from opencrawling.v1.operations import AsyncOperationsClient, OperationsClient
+from opencrawling.v1.runs import AsyncRunsClient, RunsClient
 from opencrawling.v1.schedules import AsyncSchedulesClient, SchedulesClient
 from opencrawling.v1.settings import AsyncSettingsClient, SettingsClient
 from opencrawling.v1.sidecars import AsyncSidecarsClient, SidecarsClient
@@ -135,6 +136,7 @@ class OpenCrawlingClient:
         self.jobs = JobsClient(self._transport)
         self.schedules = SchedulesClient(self._transport)
         self.job_runs = JobRunsClient(self._transport)
+        self.runs = RunsClient(self._transport)
         self.executions = ExecutionsClient(self._transport)
         self.connectors = ConnectorsClient(self._transport)
         self.settings = SettingsClient(self._transport)
@@ -233,6 +235,7 @@ class AsyncOpenCrawlingClient:
         self.jobs = AsyncJobsClient(self._transport)
         self.schedules = AsyncSchedulesClient(self._transport)
         self.job_runs = AsyncJobRunsClient(self._transport)
+        self.runs = AsyncRunsClient(self._transport)
         self.executions = AsyncExecutionsClient(self._transport)
         self.connectors = AsyncConnectorsClient(self._transport)
         self.settings = AsyncSettingsClient(self._transport)

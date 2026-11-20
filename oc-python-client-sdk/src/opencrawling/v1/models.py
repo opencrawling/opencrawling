@@ -377,6 +377,39 @@ class JobRunHistory(OpenCrawlingModel):
         return self.ended_at is not None or (self.state in TERMINAL_RUN_STATES)
 
 
+class Run(OpenCrawlingModel):
+    """A run of any kind (``/api/v1/runs``): a job run, or a dynamic job (a folder or one document).
+
+    ``kind`` is ``JOB``, ``DYNAMIC_FOLDER`` or ``DYNAMIC_DOCUMENT``. ``state`` is ``RUNNING``, ``PAUSED``,
+    ``COMPLETED``, ``STOPPED``, ``FAILED`` or ``INTERRUPTED``; dynamic jobs may also be ``PENDING_APPROVAL``,
+    ``REJECTED`` or ``EXPIRED``. ``run_id`` is the run's execution id.
+    """
+
+    run_id: str
+    kind: str | None = None
+    job_id: str | None = None
+    name: str | None = None
+    state: str | None = None
+    stop_requested: bool = False
+    runtime_id: str | None = None
+    started_by: str | None = None
+    created_at: datetime | None = None
+    ended_at: datetime | None = None
+    note: str | None = None
+    links: dict[str, str] = Field(default_factory=dict)
+
+
+class RunHistory(OpenCrawlingModel):
+    """A run of any kind with the ordered changes of its state (``/api/v1/runs/{runId}/history``)."""
+
+    run: Run
+    steps: list[JobRunStep] = Field(default_factory=list)
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.run.ended_at is not None or (self.run.state in TERMINAL_RUN_STATES)
+
+
 # ---------------------------------------------------------------------------
 # Executions & Lakehouse Audit Reporting
 # ---------------------------------------------------------------------------

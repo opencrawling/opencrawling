@@ -68,6 +68,8 @@ from opencrawling.v1.models import (
     NarrativizationConfig,
     OverlapPolicy,
     QueryResult,
+    Run,
+    RunHistory,
     ScheduleDispatch,
     ScheduleFilter,
     SchedulerOverview,
@@ -83,6 +85,7 @@ from opencrawling.v1.models import (
 )
 from opencrawling.v1.narrativization import AsyncNarrativizationClient, NarrativizationClient
 from opencrawling.v1.operations import AsyncOperationsClient, OperationsClient
+from opencrawling.v1.runs import AsyncRunsClient, RunsClient
 from opencrawling.v1.schedules import AsyncSchedulesClient, SchedulesClient
 from opencrawling.v1.settings import AsyncSettingsClient, SettingsClient
 from opencrawling.v1.sidecars import AsyncSidecarsClient, SidecarsClient
@@ -99,6 +102,7 @@ __all__ = [
     "AsyncMigrationsClient",
     "AsyncNarrativizationClient",
     "AsyncOperationsClient",
+    "AsyncRunsClient",
     "AsyncSchedulesClient",
     "AsyncSettingsClient",
     "AsyncSidecarsClient",
@@ -155,6 +159,9 @@ __all__ = [
     "OperationsClient",
     "OverlapPolicy",
     "QueryResult",
+    "Run",
+    "RunHistory",
+    "RunsClient",
     "ScheduleDispatch",
     "ScheduleFilter",
     "SchedulerOverview",
