@@ -728,9 +728,34 @@ export default function ConnectorForm() {
                         />
                       </div>
                       <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="basic"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="basic">HTTP Basic</option>
+                          <option value="ticket">Alfresco Ticket (Session Auth)</option>
+                          <option value="bearer">Static Bearer Token</option>
+                          <option value="oauth2">OAuth2 / OIDC (Keycloak / Identity Service)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="folder"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="folder">Folder Tree Traversal (Incremental Skip + Reconcile)</option>
+                          <option value="search_delta">Incremental Search Delta (cm:modified + Trashcan / Periodic Full)</option>
+                          <option value="query">Search API Query (AFTS / CMIS SQL / Lucene)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm font-medium">Username</label>
                         <input 
-                          {...register('configuration.username', { required: true })}
+                          {...register('configuration.username')}
                           placeholder="admin"
                           defaultValue="admin"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
@@ -740,22 +765,62 @@ export default function ConnectorForm() {
                         <label className="text-sm font-medium">Password</label>
                         <input 
                           type="password"
-                          {...register('configuration.password', { required: true })}
+                          {...register('configuration.password')}
                           placeholder="admin"
                           defaultValue="admin"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Crawl Mode</label>
-                        <select 
-                          {...register('configuration.crawlMode')}
-                          defaultValue="folder"
-                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
-                        >
-                          <option value="folder">Folder Tree Traversal</option>
-                          <option value="query">Search API Query (AFTS / CMIS SQL / Lucene)</option>
-                        </select>
+                        <label className="text-sm font-medium">OAuth2 Token URL (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2TokenUrl')}
+                          placeholder="https://idp.example.com/realms/alfresco/protocol/openid-connect/token"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client ID (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2ClientId')}
+                          placeholder="opencrawling-acs"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Client Secret (Optional)</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2ClientSecret')}
+                          placeholder="client-secret"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 / Bearer Access Token (Optional)</label>
+                        <input
+                          type="password"
+                          {...register('configuration.oauth2AccessToken')}
+                          placeholder="eyJ..."
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Scope (Optional)</label>
+                        <input
+                          {...register('configuration.oauth2Scope')}
+                          placeholder="openid"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Pre-Issued Alfresco Ticket (Optional)</label>
+                        <input
+                          type="password"
+                          {...register('configuration.ticket')}
+                          placeholder="TICKET_..."
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Query Language (For Query Mode)</label>
@@ -769,8 +834,20 @@ export default function ConnectorForm() {
                           <option value="lucene">Lucene</option>
                         </select>
                       </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Version Mode</label>
+                        <select
+                          {...register('configuration.versionMode')}
+                          defaultValue="current"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="current">Current Tip Version Only</option>
+                          <option value="latest_major">Latest Major Version (n.0)</option>
+                          <option value="all">All Versions (nodeId;v=label)</option>
+                        </select>
+                      </div>
                       <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">Search Query (For Query Mode)</label>
+                        <label className="text-sm font-medium">Search Query (For Query / Search Delta Mode)</label>
                         <input 
                           {...register('configuration.searchQuery')}
                           placeholder="TYPE:'cm:content' AND PATH:'/app:company_home/st:sites/cm:finance//*'"
@@ -796,10 +873,10 @@ export default function ConnectorForm() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Site ID (Optional Scope)</label>
+                        <label className="text-sm font-medium">Site ID(s) (Optional, Comma-Separated)</label>
                         <input 
-                          {...register('configuration.siteId')}
-                          placeholder="e.g. finance or marketing"
+                          {...register('configuration.siteIds')}
+                          placeholder="e.g. finance, marketing"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
@@ -830,7 +907,116 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
-                      <div className="space-y-2 col-span-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Prefer Rendition (Optional)</label>
+                        <input
+                          {...register('configuration.preferRendition')}
+                          placeholder="e.g. pdf (empty = primary content)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallelism / Max Retries</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="number"
+                            {...register('configuration.parallelism', { valueAsNumber: true })}
+                            defaultValue={4}
+                            placeholder="Parallelism"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <input
+                            type="number"
+                            {...register('configuration.maxRetries', { valueAsNumber: true })}
+                            defaultValue={3}
+                            placeholder="Retries"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Incremental Crawling &amp; Deletion Tracking</p>
+                        <p className="text-xs text-muted-foreground">Skip unchanged nodes, tombstone deleted/out-of-scope nodes, and run periodic full scans to catch ACL-only changes.</p>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="incrementalEnabledAlfresco"
+                          {...register('configuration.incrementalEnabled')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="incrementalEnabledAlfresco" className="text-sm font-medium cursor-pointer">
+                          Enable Incremental Crawl State
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Deletion Tracking</label>
+                        <select
+                          {...register('configuration.deletionTracking')}
+                          defaultValue="reconcile"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="reconcile">Reconcile + Trashcan (Recommended)</option>
+                          <option value="trashcan">Trashcan (/deleted-nodes) Only</option>
+                          <option value="audit">Alfresco Audit API (Deletes + ACL Changes)</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl State Path</label>
+                        <input
+                          {...register('configuration.stateFile')}
+                          placeholder="data/alfresco-state"
+                          defaultValue="data/alfresco-state"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Clock Skew Margin (Seconds)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.clockSkewSeconds', { valueAsNumber: true })}
+                          defaultValue={300}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Full Scan Interval (ISO-8601, Optional)</label>
+                        <input
+                          {...register('configuration.fullScanInterval')}
+                          placeholder="P1D"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Full Scan Window &amp; Timezone (Optional)</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            {...register('configuration.fullScanWindow')}
+                            placeholder="01:00-05:00"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <input
+                            {...register('configuration.fullScanTimezone')}
+                            placeholder="UTC"
+                            defaultValue="UTC"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Selection Filters &amp; Metadata</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Node Types (Comma-Separated, Optional)</label>
+                        <input
+                          {...register('configuration.nodeTypes')}
+                          placeholder="cm:content, my:invoice"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm font-medium">MIME Type Filter (Optional, comma-separated)</label>
                         <input 
                           {...register('configuration.mimeTypeFilter')}
@@ -838,7 +1024,119 @@ export default function ConnectorForm() {
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>
-                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Included Aspects (Optional)</label>
+                        <input
+                          {...register('configuration.includedAspects')}
+                          placeholder="cm:titled, my:publishable"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Aspects (Optional)</label>
+                        <input
+                          {...register('configuration.excludedAspects')}
+                          placeholder="rn:hidden, sys:temporary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Included Tags (Optional)</label>
+                        <input
+                          {...register('configuration.includedTags')}
+                          placeholder="approved, kb"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Excluded Tags (Optional)</label>
+                        <input
+                          {...register('configuration.excludedTags')}
+                          placeholder="draft, archived"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Created After (Date or Period, Optional)</label>
+                        <input
+                          {...register('configuration.createdAfter')}
+                          placeholder="2024-01-01 or P2Y"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Modified After (Date or Period, Optional)</label>
+                        <input
+                          {...register('configuration.modifiedAfter')}
+                          placeholder="2025-01-01 or P90D"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Excluded Name Patterns (Regex, One per Line)</label>
+                        <textarea
+                          {...register('configuration.excludedNamePatterns')}
+                          placeholder="^~\$.*"
+                          rows={2}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Web App URL for Deep Links (Optional)</label>
+                        <input
+                          {...register('configuration.webAppUrl')}
+                          placeholder="https://alfresco.example.com/workspace"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Property Prefix / Max Documents</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            {...register('configuration.propertyPrefix')}
+                            placeholder="Prefix (empty = raw)"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                          <input
+                            type="number"
+                            {...register('configuration.maxDocuments', { valueAsNumber: true })}
+                            defaultValue={0}
+                            placeholder="Max docs (0=all)"
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="col-span-2 pt-2 border-t border-border">
+                        <p className="text-sm font-semibold">Security &amp; Principal Mapping</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Principal Format</label>
+                        <select
+                          {...register('configuration.principalFormat')}
+                          defaultValue="raw"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="raw">Raw Alfresco Authorities (GROUP_FINANCE)</option>
+                          <option value="normalized">Normalized Lowercase (finance)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Everyone Identity (When Everyone Public is Off)</label>
+                        <input
+                          {...register('configuration.everyoneIdentity')}
+                          placeholder="e.g. employees (empty = deny)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Fallback Principals (Optional, Comma-Separated)</label>
+                        <input
+                          {...register('configuration.fallbackPrincipals')}
+                          placeholder="group:alfresco-admins (empty = fail-closed)"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
                         <input 
                           type="checkbox"
                           id="includeSubfoldersAlfresco"
@@ -850,7 +1148,7 @@ export default function ConnectorForm() {
                           Include Subfolders Recursively
                         </label>
                       </div>
-                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
                         <input 
                           type="checkbox"
                           id="includeContentStreamAlfresco"
@@ -862,7 +1160,7 @@ export default function ConnectorForm() {
                           Fetch Binary Content Stream
                         </label>
                       </div>
-                      <div className="space-y-2 flex items-center gap-2 pt-6">
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
                         <input 
                           type="checkbox"
                           id="includeAclsAlfresco"
@@ -871,7 +1169,55 @@ export default function ConnectorForm() {
                           className="rounded border-border text-primary focus:ring-primary/50"
                         />
                         <label htmlFor="includeAclsAlfresco" className="text-sm font-medium cursor-pointer">
-                          Include Access Control Lists (ACLs) & Collocated Security
+                          Include Access Control Lists (ACLs) &amp; Collocated Security
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="everyonePublicAlfresco"
+                          {...register('configuration.everyonePublic')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="everyonePublicAlfresco" className="text-sm font-medium cursor-pointer">
+                          Map GROUP_EVERYONE to Public
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="excludeWorkingCopiesAlfresco"
+                          {...register('configuration.excludeWorkingCopies')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="excludeWorkingCopiesAlfresco" className="text-sm font-medium cursor-pointer">
+                          Exclude Working Copies (cm:workingcopy)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeTagsAlfresco"
+                          {...register('configuration.includeTags')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeTagsAlfresco" className="text-sm font-medium cursor-pointer">
+                          Fetch Node Tags (alfresco_tags)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="includeCommentsAlfresco"
+                          {...register('configuration.includeComments')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCommentsAlfresco" className="text-sm font-medium cursor-pointer">
+                          Fetch Node Comments (alfresco_comments)
                         </label>
                       </div>
 
@@ -1515,7 +1861,7 @@ export default function ConnectorForm() {
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Crawl Mode</label>
-                        <select 
+                        <select
                           {...register('configuration.crawlMode')}
                           defaultValue="folder"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
@@ -1804,7 +2150,7 @@ export default function ConnectorForm() {
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Crawl Mode</label>
-                        <select 
+                        <select
                           {...register('configuration.crawlMode')}
                           defaultValue="search"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"

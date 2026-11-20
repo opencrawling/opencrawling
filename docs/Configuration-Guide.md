@@ -51,6 +51,7 @@ spring:
 OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, you map a **Repository Ingestion Source** to a **Vector Output Destination**.
 
 ### 1. Repository Connectors (Sources)
+*   **Alfresco Content Services Connector (`spring.opencrawling.connector.type=alfresco`)**: Crawls Alfresco Content Services (7.x–26.x) via Core, Search, and Authentication REST APIs v1 (`folder`, `search_delta`, and `query` modes), supporting `basic`, `ticket`, `bearer`, and `oauth2` authentication, incremental skip-unchanged & `DELETE` tombstones (via full reconciliation, Trashcan `/deleted-nodes`, or Audit API with an empty-enumeration guard and periodic `full-scan-interval` / `full-scan-window` for ACL-only changes and hard deletes), version modes (`current`, `latest_major`, `all`), `prefer-rendition` (`pdf`), selection filters (`site-ids`, `node-types`, aspects, tags, `exclude-working-copies`, `created-after` / `modified-after`, `excluded-name-patterns`), multi-valued properties, `alfresco_path` / `alfresco_web_url`, and configurable Zero-Trust security policies (`everyone-public`, `everyone-identity`, `fallback-principals`, `principal-format`).
 *   **Filesystem Connector**: Scans local or mounted directories recursively.
 *   **S3 Connector**: Pulls document objects from AWS S3 or MinIO buckets.
 *   **SharePoint Connector**: Utilizes Microsoft Graph delta queries to scan directories incrementally while extracting Active Directory SIDs.
