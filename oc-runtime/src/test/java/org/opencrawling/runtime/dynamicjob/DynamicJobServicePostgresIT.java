@@ -16,6 +16,7 @@
 package org.opencrawling.runtime.dynamicjob;
 
 import org.flywaydb.core.Flyway;
+import org.opencrawling.runtime.orchestrator.JobRunRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
@@ -24,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 
@@ -51,7 +53,12 @@ class DynamicJobServicePostgresIT extends DynamicJobServiceTest {
     }
 
     @Override
-    void service() {
+    JobRunRegistry newRegistry(int maxConcurrentRuns) {
+        return DynamicJobServiceJdbcTest.runtimeRegistry(database(), maxConcurrentRuns, "runtime-test", Clock.systemUTC());
+    }
+
+    /** One schema per test, migrated by the real Flyway migrations. */
+    private JdbcTemplate database() {
         if (jdbc == null) {
             String schema = "dyn_" + UUID.randomUUID().toString().replace("-", "");
             new JdbcTemplate(dataSource(null)).execute("CREATE SCHEMA " + schema);
@@ -59,7 +66,12 @@ class DynamicJobServicePostgresIT extends DynamicJobServiceTest {
             Flyway.configure().dataSource(dataSource).schemas(schema).load().migrate();
             jdbc = new JdbcTemplate(dataSource);
         }
+        return jdbc;
+    }
+
+    @Override
+    void service() {
         service = new DynamicJobService(() -> List.of(FAKE, UNLISTED, FILES), dto -> builder.apply(dto), registry,
-                runner, documentCounts::get, properties, clock, DynamicJobServiceJdbcTest.runtimeStore(jdbc));
+                runner, documentCounts::get, properties, clock, DynamicJobServiceJdbcTest.runtimeStore(database(), registry, clock));
     }
 }

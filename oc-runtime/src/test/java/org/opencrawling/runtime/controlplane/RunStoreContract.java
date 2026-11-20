@@ -24,6 +24,7 @@ import org.opencrawling.runtime.orchestrator.RunStore.Claim;
 import org.opencrawling.runtime.orchestrator.RunStore.Claimed;
 import org.opencrawling.runtime.orchestrator.RunStore.Full;
 import org.opencrawling.runtime.orchestrator.RunStore.RunEvent;
+import org.opencrawling.runtime.orchestrator.RunStore.RunKind;
 import org.opencrawling.runtime.orchestrator.RunStore.RunRecord;
 import org.opencrawling.runtime.orchestrator.RunStore.RunState;
 import org.opencrawling.runtime.orchestrator.RunStore.RunStep;
@@ -264,6 +265,135 @@ abstract class RunStoreContract {
         for (int i = 1; i < steps.size(); i++) {
             assertThat(steps.get(i).event()).isEqualTo(i % 2 == 1 ? RunEvent.PAUSED : RunEvent.RESUMED);
         }
+    }
+
+    // ---- Runs a caller asks for (#316, part 2) ----
+
+    static RunRecord asked(String executionId, String jobId, RunState state, String owner, Instant at) {
+        return RunRecord.waiting(executionId, jobId, null, state, RunKind.DYNAMIC_FOLDER, owner, at, "{\"n\":\"" + jobId + "\"}");
+    }
+
+    @Test
+    void aRunAskedForWaitsWithoutASlotAndStartsInPlace() {
+        a.request(asked("exec-q", "dyn-1", RunState.QUEUED, "t/alice", T0), "rt-a", null);
+        a.request(asked("exec-p", "dyn-2", RunState.PENDING_APPROVAL, "t/alice", T0), "rt-a", "needs approval");
+
+        assertThat(a.active()).as("waiting runs hold no slot").isEmpty();
+        assertThat(a.claim("job-x", "exec-x", null, "rt-a", T0, 1, 0)).as("nor count towards the cap").isInstanceOf(Claimed.class);
+        a.finish("exec-x", RunState.COMPLETED, "rt-a", T0, null);
+
+        assertThat(a.claim("dyn-1", "exec-q", "alice", "rt-b", T0.plusSeconds(1), 0, 0))
+                .isInstanceOfSatisfying(Claimed.class, claimed -> {
+                    assertThat(claimed.run().state()).isEqualTo(RunState.RUNNING);
+                    assertThat(claimed.run().kind()).as("the same run, started in place").isEqualTo(RunKind.DYNAMIC_FOLDER);
+                    assertThat(claimed.run().owner()).isEqualTo("t/alice");
+                    assertThat(claimed.run().createdAt()).isEqualTo(T0);
+                    assertThat(claimed.run().startedAt()).isEqualTo(T0.plusSeconds(1));
+                    assertThat(claimed.run().body()).isEqualTo("{\"n\":\"dyn-1\"}");
+                });
+        assertThat(a.steps("exec-q")).extracting(RunStep::event).containsExactly(RunEvent.QUEUED, RunEvent.STARTED);
+        assertThat(a.steps("exec-p")).singleElement().satisfies(step -> {
+            assertThat(step.event()).isEqualTo(RunEvent.APPROVAL_REQUESTED);
+            assertThat(step.detail()).isEqualTo("needs approval");
+        });
+        assertThat(a.list(null)).extracting(RunRecord::executionId).as("newest first, by the time asked for")
+                .containsExactly("exec-p", "exec-q", "exec-x");
+    }
+
+    @Test
+    void aReleasedClaimPutsAWaitingRunBackAndForgetsANewOne() {
+        a.request(asked("exec-q", "dyn-1", RunState.QUEUED, "t/alice", T0), "rt-a", null);
+        a.claim("dyn-1", "exec-q", null, "rt-a", T0, 0, 0);
+        a.claim("job-1", "exec-1", null, "rt-a", T0, 0, 0);
+
+        a.release("exec-q");
+        a.release("exec-1");
+
+        assertThat(a.get("exec-1")).as("a new run is forgotten").isEmpty();
+        assertThat(a.get("exec-q")).hasValueSatisfying(run -> {
+            assertThat(run.state()).isEqualTo(RunState.QUEUED);
+            assertThat(run.runtimeId()).isNull();
+            assertThat(run.startedAt()).isNull();
+        });
+        assertThat(a.steps("exec-q")).extracting(RunStep::event).as("without the start it never made")
+                .containsExactly(RunEvent.QUEUED);
+    }
+
+    @Test
+    void aWaitingRunEndsWithoutStartingAndAnApprovalIsRecorded() {
+        a.request(asked("exec-p", "dyn-1", RunState.PENDING_APPROVAL, "t/alice", T0), "rt-a", null);
+        a.record("exec-p", RunEvent.APPROVED, "rt-b", T0.plusSeconds(1), "carol");
+        a.request(asked("exec-r", "dyn-2", RunState.PENDING_APPROVAL, "t/alice", T0), "rt-a", null);
+
+        assertThat(a.settle("exec-r", RunState.REJECTED, "rt-b", T0.plusSeconds(2), "Rejected by carol.")).isTrue();
+        assertThat(a.settle("exec-r", RunState.EXPIRED, "rt-b", T0.plusSeconds(3), null)).as("only once").isFalse();
+        assertThat(a.get("exec-r")).hasValueSatisfying(run -> {
+            assertThat(run.state()).isEqualTo(RunState.REJECTED);
+            assertThat(run.endedAt()).isEqualTo(T0.plusSeconds(2));
+        });
+        assertThat(a.steps("exec-p")).extracting(RunStep::event, RunStep::detail)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(RunEvent.APPROVAL_REQUESTED, null),
+                        org.assertj.core.groups.Tuple.tuple(RunEvent.APPROVED, "carol"));
+        a.claim("dyn-1", "exec-p", null, "rt-a", T0, 0, 0);
+        assertThat(a.settle("exec-p", RunState.REJECTED, "rt-a", T0, null)).as("not once it started").isFalse();
+        a.finish("exec-r", RunState.COMPLETED, "rt-a", T0, null);
+        assertThat(a.get("exec-r").orElseThrow().state()).as("finish leaves a run that is not active alone")
+                .isEqualTo(RunState.REJECTED);
+    }
+
+    @Test
+    void theRunsAskedForAreFoundByOwnerCountedAndForgottenOldestFirst() {
+        a.claim("job-1", "exec-job", null, "rt-a", T0, 0, 0);
+        for (int i = 1; i <= 4; i++) {
+            a.request(asked("exec-" + i, "dyn-" + i, i == 4 ? RunState.PENDING_APPROVAL : RunState.QUEUED,
+                    i == 2 ? "t/bob" : "t/alice", T0), "rt-a", null);
+        }
+        a.updateBody("exec-1", "{\"n\":\"changed\"}");
+
+        assertThat(a.requested("t/alice")).extracting(RunRecord::jobId).as("asked at the same time: stored order")
+                .containsExactly("dyn-1", "dyn-3", "dyn-4");
+        assertThat(a.requested(null)).hasSize(4).noneMatch(run -> run.kind() == RunKind.JOB);
+        assertThat(a.get("exec-1").orElseThrow().body()).isEqualTo("{\"n\":\"changed\"}");
+        assertThat(a.countRequested("t/alice", java.util.Set.of(RunState.QUEUED))).isEqualTo(2);
+        assertThat(a.countRequested("t/alice", java.util.Set.of(RunState.QUEUED, RunState.PENDING_APPROVAL))).isEqualTo(3);
+        assertThat(a.requestedBefore(RunState.PENDING_APPROVAL, T0.plusSeconds(1))).extracting(RunRecord::jobId)
+                .containsExactly("dyn-4");
+        assertThat(a.requestedBefore(RunState.PENDING_APPROVAL, T0)).isEmpty();
+
+        a.settle("exec-1", RunState.STOPPED, "rt-a", T0.plusSeconds(10), null);
+        a.settle("exec-2", RunState.STOPPED, "rt-a", T0.plusSeconds(20), null);
+        a.settle("exec-3", RunState.STOPPED, "rt-a", T0.plusSeconds(30), null);
+        assertThat(a.forgetEndedRequested(T0.plusSeconds(15), 1)).as("ended before the cutoff, then the oldest beyond 1")
+                .containsExactlyInAnyOrder("dyn-1", "dyn-2");
+        assertThat(a.requestedJobIds()).containsExactly("dyn-3", "dyn-4");
+        assertThat(a.get("exec-job")).as("job runs are not touched").isPresent();
+        assertThat(a.steps("exec-1")).isEmpty();
+
+        a.delete("exec-4");
+        assertThat(a.requestedJobIds()).containsExactly("dyn-3");
+    }
+
+    @Test
+    void theRunsAskedForAreListedNewestFirst() {
+        a.request(asked("exec-1", "dyn-1", RunState.QUEUED, "t/alice", T0), "rt-a", null);
+        a.request(asked("exec-2", "dyn-2", RunState.QUEUED, "t/bob", T0.plusSeconds(2)), "rt-a", null);
+        a.request(asked("exec-3", "dyn-3", RunState.QUEUED, "t/alice", T0.plusSeconds(1)), "rt-a", null);
+
+        assertThat(a.requested(null)).extracting(RunRecord::jobId).containsExactly("dyn-2", "dyn-3", "dyn-1");
+        assertThat(a.requested("t/alice")).extracting(RunRecord::jobId).containsExactly("dyn-3", "dyn-1");
+        assertThat(a.requestedJobIds()).as("in the order they were stored in").containsExactly("dyn-1", "dyn-2", "dyn-3");
+    }
+
+    @Test
+    void aRunAskedForOnOneRuntimeIsStartedAndSeenOnAnother() {
+        assumeTrue(b != null, "only shared stores have two runtimes");
+        a.request(asked("exec-p", "dyn-1", RunState.PENDING_APPROVAL, "t/alice", T0), "rt-a", null);
+
+        assertThat(b.requested("t/alice")).extracting(RunRecord::state).containsExactly(RunState.PENDING_APPROVAL);
+        assertThat(b.claim("dyn-1", "exec-p", "alice", "rt-b", T0, 0, 0)).isInstanceOf(Claimed.class);
+        assertThat(a.get("exec-p").orElseThrow().runtimeId()).isEqualTo("rt-b");
+        assertThat(restarted().steps("exec-p")).extracting(RunStep::event)
+                .containsExactly(RunEvent.APPROVAL_REQUESTED, RunEvent.STARTED);
     }
 
     private static <T> List<T> runAtOnce(List<Callable<T>> tasks) throws Exception {

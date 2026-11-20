@@ -24,15 +24,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
-/** Runs kept in this runtime's memory: the {@code file} control-plane store, where one runtime owns the state. */
+/**
+ * Runs kept in this runtime's memory: the {@code file} control-plane store, where one runtime runs everything. Lost on
+ * restart, like the runs themselves.
+ */
 public class InMemoryRunStore implements RunStore {
 
     static final Comparator<RunRecord> OLDEST_FIRST =
             Comparator.comparing(RunRecord::startedAt).thenComparing(RunRecord::executionId);
 
+    /** By execution id, in the order they were stored in. */
     private final Map<String, RunRecord> runs = new LinkedHashMap<>();
     private final Map<String, List<RunStep>> steps = new LinkedHashMap<>();
+
+    @Override
+    public synchronized <T> T locked(Supplier<T> work) {
+        return work.get();
+    }
 
     @Override
     public synchronized Claim claim(String jobId, String executionId, String caller, String runtimeId, Instant now,
@@ -49,7 +59,11 @@ public class InMemoryRunStore implements RunStore {
                 && active.stream().filter(run -> caller.equals(run.caller())).count() >= maxRunsPerCaller) {
             return new CallerFull(caller, maxRunsPerCaller);
         }
-        RunRecord run = new RunRecord(executionId, jobId, caller, runtimeId, RunState.RUNNING, false, now, now, null);
+        RunRecord waiting = runs.get(executionId);
+        RunRecord run = waiting != null && waiting.state().waiting() && waiting.jobId().equals(jobId)
+                ? new RunRecord(executionId, jobId, caller, runtimeId, RunState.RUNNING, false, now, now, null,
+                        waiting.kind(), waiting.owner(), waiting.createdAt(), waiting.body())
+                : new RunRecord(executionId, jobId, caller, runtimeId, RunState.RUNNING, false, now, now, null);
         runs.put(executionId, run);
         record(executionId, RunEvent.STARTED, now, runtimeId, null);
         return new Claimed(run);
@@ -57,8 +71,21 @@ public class InMemoryRunStore implements RunStore {
 
     @Override
     public synchronized void release(String executionId) {
-        runs.remove(executionId);
-        steps.remove(executionId);
+        RunRecord run = runs.get(executionId);
+        if (run == null) {
+            return;
+        }
+        if (run.kind() == RunKind.JOB) {
+            delete(executionId);
+            return;
+        }
+        // A run that had waited goes back to waiting, without the start it never made.
+        runs.put(executionId, new RunRecord(executionId, run.jobId(), run.caller(), null, RunState.QUEUED, false, null,
+                null, null, run.kind(), run.owner(), run.createdAt(), run.body()));
+        List<RunStep> history = steps.get(executionId);
+        if (history != null && !history.isEmpty() && history.getLast().event() == RunEvent.STARTED) {
+            history.removeLast();
+        }
     }
 
     @Override
@@ -101,9 +128,10 @@ public class InMemoryRunStore implements RunStore {
             if (run == null) {
                 continue;
             }
-            if (run.endedAt() == null && run.runtimeId().equals(runtimeId)) {
+            if (run.state().active() && Objects.equals(run.runtimeId(), runtimeId)) {
                 run = new RunRecord(run.executionId(), run.jobId(), run.caller(), run.runtimeId(), run.state(),
-                        run.stopRequested(), run.startedAt(), now, null);
+                        run.stopRequested(), run.startedAt(), now, null, run.kind(), run.owner(), run.createdAt(),
+                        run.body());
                 runs.put(executionId, run);
             }
             current.add(run);
@@ -134,6 +162,13 @@ public class InMemoryRunStore implements RunStore {
     }
 
     @Override
+    public synchronized List<RunRecord> list(String jobId) {
+        return runs.values().stream().filter(run -> jobId == null || run.jobId().equals(jobId))
+                .sorted(Comparator.comparing(RunRecord::createdAt).reversed().thenComparing(RunRecord::executionId))
+                .toList();
+    }
+
+    @Override
     public synchronized List<RunStep> steps(String executionId) {
         return List.copyOf(steps.getOrDefault(executionId, List.of()));
     }
@@ -143,8 +178,101 @@ public class InMemoryRunStore implements RunStore {
         List<String> old = runs.values().stream()
                 .filter(run -> run.endedAt() != null && run.endedAt().isBefore(cutoff))
                 .map(RunRecord::executionId).toList();
-        old.forEach(this::release);
+        old.forEach(this::delete);
         return old.size();
+    }
+
+    // ---- Runs a caller asks for ----
+
+    @Override
+    public synchronized void request(RunRecord run, String runtimeId, String detail) {
+        if (!run.state().waiting()) {
+            throw new IllegalArgumentException(run.state() + " is not a waiting state");
+        }
+        runs.put(run.executionId(), run);
+        record(run.executionId(), RunEvent.waiting(run.state()), run.createdAt(), runtimeId, detail);
+    }
+
+    @Override
+    public synchronized void updateBody(String executionId, String body) {
+        RunRecord run = runs.get(executionId);
+        if (run != null) {
+            runs.put(executionId, new RunRecord(run.executionId(), run.jobId(), run.caller(), run.runtimeId(),
+                    run.state(), run.stopRequested(), run.startedAt(), run.heartbeatAt(), run.endedAt(), run.kind(),
+                    run.owner(), run.createdAt(), body));
+        }
+    }
+
+    @Override
+    public synchronized boolean settle(String executionId, RunState state, String runtimeId, Instant now, String detail) {
+        RunRecord run = runs.get(executionId);
+        if (run == null || !run.state().waiting()) {
+            return false;
+        }
+        put(run, state, run.stopRequested(), now);
+        record(executionId, RunEvent.ended(state), now, runtimeId, detail);
+        return true;
+    }
+
+    @Override
+    public synchronized void record(String executionId, RunEvent event, String runtimeId, Instant now, String detail) {
+        if (runs.containsKey(executionId)) {
+            record(executionId, event, now, runtimeId, detail);
+        }
+    }
+
+    @Override
+    public synchronized void delete(String executionId) {
+        runs.remove(executionId);
+        steps.remove(executionId);
+    }
+
+    @Override
+    public synchronized List<RunRecord> requested(String owner) {
+        List<RunRecord> stored = requestedInOrder().stream()
+                .filter(run -> owner == null || owner.equals(run.owner())).toList();
+        // Newest first; runs asked for at the same time keep the order they were stored in.
+        List<RunRecord> newestFirst = new ArrayList<>(stored);
+        newestFirst.sort(Comparator.comparing(RunRecord::createdAt).reversed());
+        return newestFirst;
+    }
+
+    @Override
+    public synchronized int countRequested(String owner, Collection<RunState> states) {
+        return (int) requestedInOrder().stream()
+                .filter(run -> Objects.equals(owner, run.owner()) && states.contains(run.state())).count();
+    }
+
+    @Override
+    public synchronized List<RunRecord> requestedBefore(RunState state, Instant cutoff) {
+        return requestedInOrder().stream()
+                .filter(run -> run.state() == state && run.createdAt().isBefore(cutoff)).toList();
+    }
+
+    @Override
+    public synchronized List<String> forgetEndedRequested(Instant cutoff, int keep) {
+        List<String> forgotten = new ArrayList<>();
+        for (RunRecord run : requestedInOrder()) {
+            if (run.endedAt() != null && run.endedAt().isBefore(cutoff)) {
+                delete(run.executionId());
+                forgotten.add(run.jobId());
+            }
+        }
+        List<RunRecord> ended = requestedInOrder().stream().filter(run -> run.endedAt() != null).toList();
+        for (RunRecord run : ended.subList(0, Math.max(0, ended.size() - keep))) {
+            delete(run.executionId());
+            forgotten.add(run.jobId());
+        }
+        return forgotten;
+    }
+
+    @Override
+    public synchronized List<String> requestedJobIds() {
+        return requestedInOrder().stream().map(RunRecord::jobId).toList();
+    }
+
+    private List<RunRecord> requestedInOrder() {
+        return runs.values().stream().filter(run -> run.kind() != RunKind.JOB).toList();
     }
 
     static String staleDetail(RunRecord run) {
@@ -170,18 +298,12 @@ public class InMemoryRunStore implements RunStore {
 
     private void put(RunRecord run, RunState state, boolean stopRequested, Instant endedAt) {
         runs.put(run.executionId(), new RunRecord(run.executionId(), run.jobId(), run.caller(), run.runtimeId(), state,
-                stopRequested, run.startedAt(), run.heartbeatAt(), endedAt));
+                stopRequested, run.startedAt(), run.heartbeatAt(), endedAt, run.kind(), run.owner(), run.createdAt(),
+                run.body()));
     }
 
     private void record(String executionId, RunEvent event, Instant at, String runtimeId, String detail) {
         List<RunStep> history = steps.computeIfAbsent(executionId, id -> new ArrayList<>());
         history.add(new RunStep(executionId, history.size() + 1, event, at, Objects.requireNonNull(runtimeId), detail));
-    }
-
-    @Override
-    public synchronized List<RunRecord> list(String jobId) {
-        return runs.values().stream().filter(run -> jobId == null || run.jobId().equals(jobId))
-                .sorted(java.util.Comparator.comparing(RunRecord::startedAt).reversed().thenComparing(RunRecord::executionId))
-                .toList();
     }
 }

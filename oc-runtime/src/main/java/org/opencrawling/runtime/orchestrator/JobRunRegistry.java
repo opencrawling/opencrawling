@@ -165,6 +165,14 @@ public class JobRunRegistry {
     }
 
     /**
+     * Where the runs are kept: also the runs a caller asks for, such as dynamic jobs, which are stored there from their
+     * request and started through {@link #reserve} under their own execution id (#316).
+     */
+    public RunStore store() {
+        return store;
+    }
+
+    /**
      * Calls {@code listener} with each run this runtime marks {@link RunState#INTERRUPTED} because its runtime stopped
      * renewing its heartbeat.
      */

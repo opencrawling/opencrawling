@@ -24,10 +24,12 @@ import java.time.Instant;
 @Schema(description = "A change of a run's state")
 public record JobRunStepResource(
         @Schema(description = "Position in the run's history, from 1", example = "1") int seq,
-        @Schema(description = "STARTED, PAUSED, RESUMED, STOP_REQUESTED, then COMPLETED, STOPPED, FAILED or INTERRUPTED", example = "STARTED") String event,
+        @Schema(description = "STARTED, PAUSED, RESUMED, STOP_REQUESTED, then COMPLETED, STOPPED, FAILED or INTERRUPTED;"
+                + " a run asked for (a dynamic job) starts with QUEUED or APPROVAL_REQUESTED, may be APPROVED, and may end"
+                + " REJECTED or EXPIRED without starting", example = "STARTED") String event,
         @Schema(description = "When it happened") Instant at,
         @Schema(description = "The runtime that recorded it") String runtimeId,
-        @Schema(description = "Why, for FAILED and INTERRUPTED") String detail) {
+        @Schema(description = "Why, for FAILED and INTERRUPTED (and a rejection's or cancellation's note); who, for APPROVED") String detail) {
 
     public static JobRunStepResource of(RunStore.RunStep step) {
         return new JobRunStepResource(step.seq(), step.event().name(), step.at(), step.runtimeId(), step.detail());

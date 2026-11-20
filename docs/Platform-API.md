@@ -223,14 +223,23 @@ A run has a `state`: `RUNNING` or `PAUSED` while in progress. With the `jdbc` co
 |---|---|---|
 | GET | `/api/v1/runs` | Job runs and dynamic jobs the caller may see, active and ended while they are kept, newest first (`kind`, `state`, `jobId`) |
 | GET | `/api/v1/runs/{runId}` | One run of any kind, by its run id (its execution id) |
-| GET | `/api/v1/runs/{runId}/history` | The run with every change of its state; empty while a dynamic job waits for approval |
+| GET | `/api/v1/runs/{runId}/history` | The run with every change of its state, from the moment it was asked for |
 | POST | `/api/v1/runs/{runId}:stop` | Stop the run; a dynamic job waiting for approval is cancelled |
 | POST | `/api/v1/runs/{runId}:pause` | Pause the run: it holds before its next document until `:resume` or `:stop` |
 | POST | `/api/v1/runs/{runId}:resume` | Resume the paused run |
 
 One API for every run, whatever started it ([#316](https://github.com/opencrawling/opencrawling/issues/316)):
 - **Kinds:** `JOB` (a run of a pipeline job), `DYNAMIC_FOLDER` and `DYNAMIC_DOCUMENT` (a dynamic job, when dynamic jobs are on).
-- **States:** `RUNNING`, `PAUSED`, `COMPLETED`, `STOPPED`, `FAILED` and `INTERRUPTED`, the states of `/job-runs`; a dynamic job may also be `PENDING_APPROVAL`, `REJECTED` or `EXPIRED`.
+- **One run record:** a dynamic job is one run from its request to its end, under the run id it gets when it is filed; its history starts with why it waited (`QUEUED` or `APPROVAL_REQUESTED`), then `APPROVED` (with the approver), `STARTED` and the rest.
+- **States:** one state machine for every run.
+
+  | Phase | States | The issue's vocabulary |
+  |---|---|---|
+  | Waiting | `QUEUED` (asked for, waiting for its slot), `PENDING_APPROVAL` | queued, waiting-for-review |
+  | Active | `RUNNING`, `PAUSED` | running, paused |
+  | Ended | `COMPLETED`, `FAILED`, `STOPPED`, `INTERRUPTED`, `REJECTED`, `EXPIRED` | succeeded, failed, cancelled (`STOPPED`), and the outcomes only some runs have |
+
+  Only active runs hold a slot and count towards the caps. A start over a cap is still refused with `429`, never left queued. Job runs are stored when they start, so they are never `QUEUED`; the dynamic-job API (`/dynamic-jobs`, the MCP tools) keeps its own states and shows a queued job as `RUNNING`, as before.
 - **Visibility:** each run as its own API shows it. A job run is visible to those who may read its job; a dynamic job to its owner and the dynamic jobs' `admin-groups`, and only to a caller signed in with the dynamic jobs' scopes.
 - **Links:** `links` points at the run's job (`job`) or dynamic job (`dynamicJob`), its history and, once it ran, its execution.
 - **Starting and approving** stay with each kind's own API: `/jobs/{id}:start`, `/dynamic-jobs`, `/dynamic-jobs/{jobId}:approve`.
