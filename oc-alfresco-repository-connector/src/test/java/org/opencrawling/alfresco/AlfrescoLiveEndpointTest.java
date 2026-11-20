@@ -46,7 +46,7 @@ class AlfrescoLiveEndpointTest {
         String password = System.getProperty("spring.opencrawling.connector.alfresco.password", "admin");
         String folderId = System.getProperty("alfresco.live.folderId");
         String primaryDocId = System.getProperty("alfresco.live.docId", "");
-        String expectedTag = System.getProperty("alfresco.live.tag", "opencrawling-verified");
+        String expectedTag = System.getProperty("alfresco.live.tag", "");
         String expectedComment = System.getProperty("alfresco.live.comment", "Reviewed for OpenCrawling v1.0.5");
         String expectedMajorVersion = System.getProperty("alfresco.live.majorVersion", "");
         String expectedTipVersion = System.getProperty("alfresco.live.tipVersion", "");
@@ -63,7 +63,7 @@ class AlfrescoLiveEndpointTest {
         baseConfig.put("includeSubfolders", "true");
         baseConfig.put("excludedFolders", "Data Dictionary,temp");
         baseConfig.put("excludedNamePatterns", "^~\\$.*");
-        baseConfig.put("includeTags", "true");
+        baseConfig.put("includeTags", String.valueOf(!expectedTag.isBlank()));
         baseConfig.put("includeComments", "true");
         baseConfig.put("webAppUrl", "http://localhost:8081/workspace");
         baseConfig.put("incrementalEnabled", "true");
@@ -86,7 +86,9 @@ class AlfrescoLiveEndpointTest {
                 .orElseThrow();
 
         assertThat(firstMeta(primary, "alfresco_path")).contains("opencrawling-sample.txt");
-        assertThat(primary.metadata().get("alfresco_tags")).contains(expectedTag);
+        if (!expectedTag.isBlank()) {
+            assertThat(primary.metadata().get("alfresco_tags")).contains(expectedTag);
+        }
         assertThat(primary.metadata().get("alfresco_comments")).anyMatch(c -> c.contains(expectedComment));
         assertThat(firstMeta(primary, "alfresco_web_url"))
                 .isEqualTo("http://localhost:8081/workspace/#/libraries/viewer/" + primary.id());
@@ -138,10 +140,14 @@ class AlfrescoLiveEndpointTest {
                 .extracting(RepositoryDocument::id)
                 .anyMatch(id -> id.startsWith(primary.id() + ";v="));
 
-        // 6. Exclude primary doc via excludedTags -> emits DELETE tombstone for node leaving scope
-        Map<String, String> excludeTagCfg = new HashMap<>(baseConfig);
-        excludeTagCfg.put("excludedTags", expectedTag);
-        List<RepositoryDocument> scopeFiltered = runScan(excludeTagCfg);
+        // 6. Exclude primary doc via excludedTags (when Solr tagging is active) or excludedAspects (cm:versionable)
+        Map<String, String> scopeFilterCfg = new HashMap<>(baseConfig);
+        if (!expectedTag.isBlank()) {
+            scopeFilterCfg.put("excludedTags", expectedTag);
+        } else {
+            scopeFilterCfg.put("excludedAspects", "cm:versionable");
+        }
+        List<RepositoryDocument> scopeFiltered = runScan(scopeFilterCfg);
         assertThat(scopeFiltered).filteredOn(d -> d.action() == DocumentAction.DELETE)
                 .extracting(RepositoryDocument::id)
                 .contains(primary.id());

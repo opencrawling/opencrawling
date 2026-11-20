@@ -195,6 +195,7 @@ wait_for_vector_count() {
 }
 
 SCAN_SUMMARY=""
+CRAWLER_LOGS=""
 run_crawler() {
   local label="$1"
   log_info "Launching oc-crawler (${label})..."
@@ -219,9 +220,10 @@ run_crawler() {
     exit 1
   fi
 
-  SCAN_SUMMARY=$(docker logs oc-crawler-service-alfresco 2>&1 | grep "Alfresco scan of" | tail -1 || true)
+  CRAWLER_LOGS=$(docker logs oc-crawler-service-alfresco 2>&1 || true)
+  SCAN_SUMMARY=$(printf '%s\n' "${CRAWLER_LOGS}" | grep "Alfresco scan of" | tail -1 || true)
   log_success "oc-crawler (${label}) completed cleanly: ${SCAN_SUMMARY#*-- }"
-  if [ -n "${SCAN_SUMMARY}" ] && ! echo "${SCAN_SUMMARY}" | grep -q "0 failed"; then
+  if [ -n "${SCAN_SUMMARY}" ] && ! grep -q "0 failed" <<< "${SCAN_SUMMARY}"; then
     log_error "oc-crawler (${label}) reported failures: ${SCAN_SUMMARY}"
     compose logs oc-crawler --tail 80 || true
     exit 1
@@ -475,11 +477,18 @@ ACL1_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${ALFRESCO_URL}/nodes
 
 DOC1_TAG="opencrawling-verified"
 DOC1_COMMENT="Reviewed for OpenCrawling v1.0.5"
-curl -sf -X POST "${ALFRESCO_URL}/nodes/${DOC1_ID}/tags" -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: application/json" -d "$(jq -nc --arg t "${DOC1_TAG}" '{tag:$t}')" >/dev/null
+TAGS_SUPPORTED=false
+TAG1_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${ALFRESCO_URL}/nodes/${DOC1_ID}/tags" -H "Authorization: ${AUTH_HEADER}" \
+  -H "Content-Type: application/json" -d "$(jq -nc --arg t "${DOC1_TAG}" '{tag:$t}')" || echo "000")
+if [ "${TAG1_CODE}" = "201" ]; then
+  TAGS_SUPPORTED=true
+  log_success "Tagged Doc 1 with '${DOC1_TAG}'."
+else
+  log_warn "POST /nodes/${DOC1_ID}/tags returned HTTP ${TAG1_CODE} (ACS tagging requires Solr); testing scope-exclusion via excludedAspects (cm:dublincore) instead."
+fi
 curl -sf -X POST "${ALFRESCO_URL}/nodes/${DOC1_ID}/comments" -H "Authorization: ${AUTH_HEADER}" \
   -H "Content-Type: application/json" -d "$(jq -nc --arg c "${DOC1_COMMENT}" '{content:$c}')" >/dev/null
-log_success "Tagged Doc 1 with '${DOC1_TAG}', added comment, and set explicit ACL."
+log_success "Added comment and set explicit ACL on Doc 1."
 
 # Document 2: Architecture Document (later deleted to test real Trashcan + tombstone purge)
 DOC2_NAME="opencrawling-alfresco-architecture.txt"
@@ -534,17 +543,18 @@ export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCREMENTAL_ENABLED="true"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_DELETION_TRACKING="reconcile"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_VERSION_MODE="current"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_FOLDERS="Data Dictionary,temp"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_ASPECTS="cm:dublincore"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_NAME_PATTERNS='^~\$.*'
-export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_TAGS="archived"
-export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCLUDE_TAGS="true"
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_EXCLUDED_TAGS=""
+export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCLUDE_TAGS="${TAGS_SUPPORTED}"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_INCLUDE_COMMENTS="true"
 export SPRING_OPENCRAWLING_CONNECTOR_ALFRESCO_WEB_APP_URL="http://localhost:8081/workspace"
 
 run_crawler "initial ticket-auth full scan"
 
-docker logs oc-crawler-service-alfresco 2>&1 | grep -q "auth: TICKET" \
+grep -q "auth: TICKET" <<< "${CRAWLER_LOGS}" \
   || { log_error "Expected oc-crawler to authenticate with auth: TICKET"; compose logs oc-crawler --tail 40; exit 1; }
-echo "${SCAN_SUMMARY}" | grep -q "3 documents, 0 unchanged, 0 tombstones" \
+grep -q "3 documents, 0 unchanged, 0 tombstones" <<< "${SCAN_SUMMARY}" \
   || { log_error "Expected 3 documents (Doc1, Doc2, Templates/note) on initial scan, got: ${SCAN_SUMMARY}"; exit 1; }
 
 log_pass "Initial Alfresco repository scan completed with Ticket auth (3 documents, 0 unchanged, 0 failed)."
@@ -567,16 +577,19 @@ ALFRESCO_META_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata
   || { log_error "Core Alfresco metadata check failed (found ${ALFRESCO_META_COUNT:-0}, expected >= 2)."; exit 1; }
 log_success "Core Alfresco provenance metadata confirmed (${ALFRESCO_META_COUNT} chunks)."
 
-# 2. Verify new #425 enriched metadata on Doc 1 (path, tags, comments, web_url, version_label)
+# 2. Verify new #425 enriched metadata on Doc 1 (path, comments, web_url, version_label, plus tags when Solr enabled)
 ENRICHED_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = '${DOC1_ID}'
   AND metadata->>'alfresco_path' LIKE '%${TEST_FOLDER_NAME}%'
-  AND metadata->>'alfresco_tags' LIKE '%${DOC1_TAG}%'
   AND metadata->>'alfresco_comments' LIKE '%${DOC1_COMMENT}%'
   AND metadata->>'alfresco_web_url' LIKE '%http://localhost:8081/workspace/#/libraries/viewer/${DOC1_ID}%'
   AND metadata->'alfresco_version_label'->>0 IS NOT NULL;")
 [ "${ENRICHED_COUNT:-0}" -gt 0 ] \
-  || { log_error "Enriched #425 metadata check failed on Doc 1 (path/tags/comments/web_url/version_label)."; exit 1; }
-log_success "Enriched #425 metadata verified on Doc 1 (path, tags, comments, web_url, version_label)."
+  || { log_error "Enriched #425 metadata check failed on Doc 1 (path/comments/web_url/version_label)."; exit 1; }
+if [ "${TAGS_SUPPORTED}" = true ]; then
+  TAG_META_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' = '${DOC1_ID}' AND metadata->>'alfresco_tags' LIKE '%${DOC1_TAG}%';")
+  [ "${TAG_META_COUNT:-0}" -gt 0 ] || { log_error "Expected alfresco_tags '${DOC1_TAG}' on Doc 1."; exit 1; }
+fi
+log_success "Enriched #425 metadata verified on Doc 1 (path, comments, web_url, version_label)."
 
 # 3. Verify excluded lock file and excluded 'temp' folder were NOT indexed
 FILTERED_COUNT=$(sql "SELECT count(*) FROM vector_store_1024 WHERE metadata->>'documentId' IN ('${LOCK_ID}', '${TEMP_DOC_ID}') OR content LIKE '%LOCK-FILE-MUST-NOT-BE-INDEXED%' OR content LIKE '%ALFRESCO-TEMP-EXCLUDED-MARKER%';")
@@ -599,7 +612,7 @@ log_step 8 "Verifying incremental no-op skip, live mutations, ACL-only updates, 
 
 # 8a. Re-run with no repository changes -> must skip all 3 documents
 run_crawler "incremental no-op check"
-echo "${SCAN_SUMMARY}" | grep -q "0 documents, 3 unchanged, 0 tombstones" \
+grep -q "0 documents, 3 unchanged, 0 tombstones" <<< "${SCAN_SUMMARY}" \
   || { log_error "Expected 0 documents and 3 unchanged on no-op incremental run, got: ${SCAN_SUMMARY}"; exit 1; }
 log_success "Incremental no-op verified (0 documents re-crawled, 3 unchanged)."
 
@@ -610,14 +623,14 @@ ACL2_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${ALFRESCO_URL}/nodes
 [ "${ACL2_CODE}" = "200" ] || { log_error "Failed to update ACL on Doc 1 (HTTP ${ACL2_CODE})"; exit 1; }
 
 run_crawler "incremental ACL-only change detection"
-echo "${SCAN_SUMMARY}" | grep -q "1 documents, 2 unchanged, 0 tombstones" \
+grep -q "1 documents, 2 unchanged, 0 tombstones" <<< "${SCAN_SUMMARY}" \
   || { log_error "Expected 1 re-indexed doc on ACL-only change, got: ${SCAN_SUMMARY}"; exit 1; }
 wait_for_vector_count "Doc 1 ACL updated in pgvector with GROUP_ALFRESCO_ADMINISTRATORS" \
   "metadata->>'documentId' = '${DOC1_ID}' AND metadata::text LIKE '%GROUP_ALFRESCO_ADMINISTRATORS%'" "-gt 0"
 
 # 8c. Live mutations 2, 3 & 4:
 #   - Update Doc 1 to Major Release v2.0
-#   - Tag Templates doc as 'archived' (leaves excludedTags scope -> tombstone)
+#   - Apply excluded aspect 'cm:dublincore' to Templates doc (leaves excludedAspects scope -> tombstone)
 #   - Delete Doc 2 to Alfresco Trashcan (vanishes from folder -> tombstone)
 DOC1_V2_CONTENT="OpenCrawling Alfresco Specification Major Release Version 2. ALFRESCO-INCR-V2-UPDATED. Incremental updates replace stale chunks atomically."
 V2_UP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
@@ -625,8 +638,10 @@ V2_UP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
   -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: text/plain" --data-binary "${DOC1_V2_CONTENT}")
 [ "${V2_UP_CODE}" = "200" ] || { log_error "Failed to upload Doc 1 v2.0 (HTTP ${V2_UP_CODE})"; exit 1; }
 
-curl -sf -X POST "${ALFRESCO_URL}/nodes/${TEMPLATE_DOC_ID}/tags" -H "Authorization: ${AUTH_HEADER}" \
-  -H "Content-Type: application/json" -d '{"tag":"archived"}' >/dev/null
+ASPECT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${ALFRESCO_URL}/nodes/${TEMPLATE_DOC_ID}" \
+  -H "Authorization: ${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d '{"aspectNames":["cm:titled","cm:dublincore"]}')
+[ "${ASPECT_CODE}" = "200" ] || { log_error "Failed to add cm:dublincore aspect to Templates doc (HTTP ${ASPECT_CODE})"; exit 1; }
 
 DEL2_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/nodes/${DOC2_ID}")
 [ "${DEL2_CODE}" = "204" ] || { log_error "Failed to delete Doc 2 (HTTP ${DEL2_CODE})"; exit 1; }
@@ -639,7 +654,7 @@ TRASH_CHECK=$(curl -sf -H "Authorization: ${AUTH_HEADER}" "${ALFRESCO_URL}/delet
 log_success "Confirmed Doc 2 is archived in Alfresco Trashcan (/deleted-nodes)."
 
 run_crawler "incremental update + scope exclusion + deletion tombstones"
-echo "${SCAN_SUMMARY}" | grep -q "1 documents, 0 unchanged, 2 tombstones" \
+grep -q "1 documents, 0 unchanged, 2 tombstones" <<< "${SCAN_SUMMARY}" \
   || { log_error "Expected 1 updated doc and 2 tombstones (Doc 2 deleted + Template doc archived), got: ${SCAN_SUMMARY}"; exit 1; }
 
 wait_for_vector_count "Doc 1 updated to v2 content in pgvector" \
