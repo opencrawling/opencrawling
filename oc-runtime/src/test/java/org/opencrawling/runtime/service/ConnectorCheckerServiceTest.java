@@ -543,6 +543,59 @@ class ConnectorCheckerServiceTest {
     }
 
     @Test
+    void testCheckAlfrescoRepositoryConnector_ticketAndOAuth2() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/alfresco/api/-default-/public/authentication/versions/1/tickets", exchange -> {
+            byte[] json = "{\"entry\":{\"id\":\"TICKET_chk1\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(201, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.createContext("/oauth/token", exchange -> {
+            byte[] json = "{\"access_token\":\"tok-oauth\",\"expires_in\":300}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.createContext("/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if (auth == null || auth.isBlank()) {
+                exchange.sendResponseHeaders(401, -1);
+                exchange.close();
+                return;
+            }
+            byte[] json = "{\"entry\":{\"id\":\"-root-\",\"name\":\"Company Home\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            String url = "http://127.0.0.1:" + port + "/alfresco/api/-default-/public/alfresco/versions/1";
+
+            ConnectorDTO ticketConn = new ConnectorDTO("Alfresco_Ticket", "Test", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", url, "authType", "ticket", "username", "admin", "password", "admin"));
+            ConnectionCheckResult ticketRes = checker.check(ticketConn);
+            assertTrue(ticketRes.success(), ticketRes.message());
+
+            ConnectorDTO oauthConn = new ConnectorDTO("Alfresco_OAuth", "Test", "repository",
+                    "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10,
+                    Map.of("url", url, "authType", "oauth2",
+                            "oauth2TokenUrl", "http://127.0.0.1:" + port + "/oauth/token",
+                            "oauth2ClientId", "oc", "oauth2ClientSecret", "sec"));
+            ConnectionCheckResult oauthRes = checker.check(oauthConn);
+            assertTrue(oauthRes.success(), oauthRes.message());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void testCheckElasticsearchConnectorSuccessWithApiKey() throws Exception {
         List<String> authHeaders = new CopyOnWriteArrayList<>();
         HttpServer es = elasticsearchStub("Elasticsearch", authHeaders);

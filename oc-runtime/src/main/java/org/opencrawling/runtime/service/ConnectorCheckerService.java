@@ -698,10 +698,15 @@ public class ConnectorCheckerService {
     }
 
     private ConnectionCheckResult checkAlfrescoRepository(Map<String, String> config) {
-        String rawUrl = config.getOrDefault("url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1");
-        String user = config.getOrDefault("username", "admin");
-        String pass = config.getOrDefault("password", "admin");
+        org.opencrawling.alfresco.AlfrescoProperties settings =
+                org.opencrawling.alfresco.AlfrescoProperties.fromConfiguration(config);
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false,
+                    "Alfresco configuration invalid: " + String.join(" ", problems), null);
+        }
 
+        String rawUrl = settings.coreApiUrl();
         String cleanUrl = rawUrl.replaceAll("/+$", "");
         String testUrl;
         if (cleanUrl.contains("/nodes/")) {
@@ -712,17 +717,16 @@ public class ConnectorCheckerService {
             testUrl = cleanUrl + "/api/-default-/public/alfresco/versions/1/nodes/-root-";
         }
 
-        try {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
+            String authHeader = resolveAlfrescoAuthHeader(settings, client);
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(testUrl))
                     .timeout(Duration.ofSeconds(5))
                     .header("Accept", "application/json")
                     .GET();
 
-            if (user != null && !user.isBlank()) {
-                String credentials = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
-                reqBuilder.header("Authorization", "Basic " + credentials);
+            if (authHeader != null && !authHeader.isBlank()) {
+                reqBuilder.header("Authorization", authHeader);
             }
 
             HttpResponse<String> response = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
@@ -745,7 +749,8 @@ public class ConnectorCheckerService {
                         String nodeName = entry.path("name").asText("-root-");
                         String nodeId = entry.path("id").asText("-root-");
                         return new ConnectionCheckResult(true,
-                                "Successfully connected to Alfresco Repository at " + cleanUrl + " (root node: '" + nodeName + "', id: '" + nodeId + "').",
+                                "Successfully connected to Alfresco Repository at " + cleanUrl
+                                        + " (auth: " + settings.authType() + ", root node: '" + nodeName + "', id: '" + nodeId + "').",
                                 body);
                     } else {
                         return new ConnectionCheckResult(false,
@@ -765,6 +770,53 @@ public class ConnectorCheckerService {
         } catch (Exception e) {
             return new ConnectionCheckResult(false, "Failed to connect to Alfresco Repository at " + cleanUrl + ": " + e.getMessage(), e.toString());
         }
+    }
+
+    private String resolveAlfrescoAuthHeader(org.opencrawling.alfresco.AlfrescoProperties settings, HttpClient client)
+            throws Exception {
+        return switch (settings.authType()) {
+            case BASIC -> {
+                String user = settings.username();
+                String pass = settings.password() == null ? "" : settings.password();
+                yield (user != null && !user.isBlank())
+                        ? "Basic " + Base64.getEncoder().encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8))
+                        : null;
+            }
+            case BEARER -> "Bearer " + settings.oauth2AccessToken();
+            case OAUTH2 -> {
+                if (settings.oauth2AccessToken() != null) {
+                    yield "Bearer " + settings.oauth2AccessToken();
+                }
+                try (var tokenSource = new org.opencrawling.alfresco.AlfrescoOAuth2TokenSource(
+                        settings.oauth2TokenUrl(), settings.oauth2ClientId(),
+                        settings.oauth2ClientSecret(), settings.oauth2Scope(), Duration.ofSeconds(5))) {
+                    yield "Bearer " + tokenSource.get();
+                }
+            }
+            case TICKET -> {
+                String ticket = settings.ticket();
+                if (ticket == null) {
+                    String payload = OBJECT_MAPPER.writeValueAsString(Map.of(
+                            "userId", settings.username() == null ? "" : settings.username(),
+                            "password", settings.password() == null ? "" : settings.password()));
+                    HttpRequest ticketReq = HttpRequest.newBuilder(URI.create(settings.resolveTicketsUrl()))
+                            .timeout(Duration.ofSeconds(5))
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
+                            .build();
+                    HttpResponse<String> ticketResp = client.send(ticketReq, HttpResponse.BodyHandlers.ofString());
+                    if (ticketResp.statusCode() < 200 || ticketResp.statusCode() >= 300) {
+                        throw new IllegalStateException("Alfresco ticket endpoint returned HTTP " + ticketResp.statusCode());
+                    }
+                    ticket = OBJECT_MAPPER.readTree(ticketResp.body()).path("entry").path("id").asText("");
+                    if (ticket.isBlank()) {
+                        throw new IllegalStateException("Alfresco ticket endpoint returned no ticket id.");
+                    }
+                }
+                yield "Basic " + Base64.getEncoder().encodeToString(ticket.getBytes(StandardCharsets.UTF_8));
+            }
+        };
     }
 
     private ConnectionCheckResult checkDoxisOutput(Map<String, String> config) {

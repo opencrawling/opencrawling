@@ -80,7 +80,13 @@ class ConnectorFactoryTest {
     @Test
     void configurableConnectorsAreBuiltFromTheirSettings() {
         RepositoryConnector alfresco = factory.repository(connector("alf",
-                "org.opencrawling.alfresco.AlfrescoRepositoryConnector", Map.of("url", "http://acs.test/api")));
+                "org.opencrawling.alfresco.AlfrescoRepositoryConnector", Map.of(
+                        "url", "http://acs.test/api",
+                        "crawlMode", "search_delta",
+                        "authType", "bearer",
+                        "oauth2AccessToken", "tok",
+                        "versionMode", "all",
+                        "preferRendition", "pdf")));
         RepositoryConnector cmis = factory.repository(connector("cmis",
                 "org.opencrawling.cmis.CmisRepositoryConnector", Map.of("endpointUrl", "http://cmis.test/browser")));
         RepositoryConnector iceberg = factory.repository(connector("ice",

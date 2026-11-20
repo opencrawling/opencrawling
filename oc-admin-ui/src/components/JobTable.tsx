@@ -419,8 +419,8 @@ export default function JobTable({ setActiveView }: JobTableProps) {
       case 'org.opencrawling.alfresco.AlfrescoRepositoryConnector':
         return {
           label: 'Folder Path / Node ID / AFTS Query',
-          placeholder: "e.g. /Company Home/Sites, -root-, or TYPE:'cm:content' AND PATH:'/app:company_home//*'",
-          description: "Scanning entry point. Provide a folder path, node UUID, or full AFTS search query (e.g. TYPE:'cm:content')."
+          placeholder: "e.g. default, -root-, /Sites/finance/documentLibrary, or TYPE:'cm:content'",
+          description: "Use default (or -root- / /) for the connector configuration (including incremental state). A specific folder path, node UUID, or AFTS query runs a one-off scoped crawl."
         };
       case 'org.opencrawling.sharepoint.SharePointRepositoryConnector':
         return {

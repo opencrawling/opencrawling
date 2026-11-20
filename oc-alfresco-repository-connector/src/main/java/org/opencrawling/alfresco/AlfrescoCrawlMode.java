@@ -15,24 +15,36 @@
  */
 package org.opencrawling.alfresco;
 
+import java.util.Locale;
+
 /**
  * Execution / crawl modes supported by the Alfresco Content Services Repository Connector.
  */
 public enum AlfrescoCrawlMode {
     /**
-     * Hierarchical folder tree traversal starting from root or a specific folder path / node ID.
+     * Hierarchical folder tree traversal starting from root or a specific folder path / node ID / site.
+     * Supports incremental skip-unchanged and orphan reconciliation when {@code incremental-enabled=true}.
      */
     FOLDER,
 
     /**
-     * Query-driven ingestion using Alfresco Search REST API (AFTS, CMISQL, or Lucene).
+     * Query-driven ingestion using the Alfresco Search REST API (AFTS, CMISQL, or Lucene).
      */
-    QUERY;
+    QUERY,
+
+    /**
+     * Incremental Search API delta crawling anchored to {@code cm:modified:[<watermark> TO MAX]}, paired with
+     * Trashcan / Audit deletion polling and optional periodic full scans for ACL-only changes and hard deletes.
+     */
+    SEARCH_DELTA;
 
     public static AlfrescoCrawlMode fromString(String value) {
-        if (value == null) return FOLDER;
-        return switch (value.trim().toLowerCase()) {
+        if (value == null || value.isBlank()) {
+            return FOLDER;
+        }
+        return switch (value.trim().toLowerCase(Locale.ROOT).replace('-', '_')) {
             case "query" -> QUERY;
+            case "search_delta", "delta", "incremental" -> SEARCH_DELTA;
             default -> FOLDER;
         };
     }

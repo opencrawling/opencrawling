@@ -190,50 +190,12 @@ public class ConnectorFactory {
     }
 
     private RepositoryConnector buildAlfresco(String name, Map<String, String> config) {
-        String url = config.getOrDefault("url", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1");
-        String username = config.getOrDefault("username", "admin");
-        String password = config.getOrDefault("password", "admin");
-        int batchSize = 100;
-        try {
-            batchSize = Integer.parseInt(config.getOrDefault("batchSize", "100"));
-        } catch (Exception ignored) {}
-        String crawlModeStr = config.getOrDefault("crawlMode", "folder");
-        String rootFolderPath = config.getOrDefault("rootFolderPath", "/");
-        String rootFolderId = config.getOrDefault("rootFolderId", "");
-        String siteId = config.getOrDefault("siteId", "");
-        boolean includeSubfolders = Boolean.parseBoolean(config.getOrDefault("includeSubfolders", "true"));
-        String excludedFoldersStr = config.getOrDefault("excludedFolders", "Data Dictionary");
-        java.util.Set<String> excludedFolders = java.util.Arrays.stream(excludedFoldersStr.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(java.util.stream.Collectors.toSet());
-        String searchQuery = config.getOrDefault("searchQuery", "TYPE:'cm:content'");
-        String queryLanguage = config.getOrDefault("queryLanguage", "afts");
-        boolean includeAcls = Boolean.parseBoolean(config.getOrDefault("includeAcls", "true"));
-        boolean includeContentStream = Boolean.parseBoolean(config.getOrDefault("includeContentStream", "true"));
-        long maxContentSizeBytes = 52428800L;
-        try {
-            maxContentSizeBytes = Long.parseLong(config.getOrDefault("maxContentSizeBytes", "52428800"));
-        } catch (Exception ignored) {}
-        String mimeTypeFilterStr = config.getOrDefault("mimeTypeFilter", "");
-        java.util.Set<String> mimeTypeFilter = java.util.Arrays.stream(mimeTypeFilterStr.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(java.util.stream.Collectors.toSet());
-        int timeoutSeconds = 30;
-        try {
-            timeoutSeconds = Integer.parseInt(config.getOrDefault("timeoutSeconds", "30"));
-        } catch (Exception ignored) {}
-        return new org.opencrawling.alfresco.AlfrescoRepositoryConnector(
-                url, username, password, batchSize,
-                org.opencrawling.alfresco.AlfrescoCrawlMode.fromString(crawlModeStr),
-                rootFolderPath, rootFolderId, siteId,
-                includeSubfolders, excludedFolders,
-                searchQuery, queryLanguage,
-                includeAcls, includeContentStream,
-                maxContentSizeBytes, mimeTypeFilter,
-                timeoutSeconds
-        );
+        org.opencrawling.alfresco.AlfrescoProperties alfrescoSettings =
+                org.opencrawling.alfresco.AlfrescoProperties.fromConfiguration(config);
+        log.info("Resolving dynamic Alfresco repository connector for '{}' ({} mode, auth {}, incremental={})",
+                alfrescoSettings.coreApiUrl(), alfrescoSettings.crawlMode(),
+                alfrescoSettings.authType(), alfrescoSettings.incrementalEnabled());
+        return new org.opencrawling.alfresco.AlfrescoRepositoryConnector(alfrescoSettings);
     }
 
     private RepositoryConnector buildIceberg(String name, Map<String, String> config) {

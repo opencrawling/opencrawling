@@ -72,15 +72,28 @@ public class ConnectorController {
         // Initial mock data defaults
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
-        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.of(
-            "url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1",
-            "username", "admin",
-            "password", "admin",
-            "batchSize", "100",
-            "crawlMode", "folder",
-            "includeSubfolders", "true",
-            "includeAcls", "true",
-            "includeContentStream", "true"
+        defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.ofEntries(
+            Map.entry("url", "http://localhost:8081/alfresco/api/-default-/public/alfresco/versions/1"),
+            Map.entry("authType", "basic"),
+            Map.entry("username", "admin"),
+            Map.entry("password", "admin"),
+            Map.entry("batchSize", "100"),
+            Map.entry("parallelism", "4"),
+            Map.entry("maxRetries", "3"),
+            Map.entry("crawlMode", "folder"),
+            Map.entry("includeSubfolders", "true"),
+            Map.entry("excludedFolders", "Data Dictionary"),
+            Map.entry("excludeWorkingCopies", "true"),
+            Map.entry("versionMode", "current"),
+            Map.entry("includeAcls", "true"),
+            Map.entry("everyonePublic", "true"),
+            Map.entry("principalFormat", "raw"),
+            Map.entry("includeContentStream", "true"),
+            Map.entry("incrementalEnabled", "true"),
+            Map.entry("stateFile", "data/alfresco-state"),
+            Map.entry("deletionTracking", "reconcile"),
+            Map.entry("clockSkewSeconds", "300"),
+            Map.entry("fullScanTimezone", "UTC")
         )));
         defaults.add(new ConnectorDTO("Apache_Iceberg_Local", "Local Iceberg Warehouse Catalog", "repository", "org.opencrawling.iceberg.IcebergRepositoryConnector", 10, Map.of("catalogType", "in-memory", "warehouse", "tmp/iceberg-warehouse")));
         defaults.add(new ConnectorDTO("Flowable_REST_Engine", "Flowable REST Engine", "repository", "org.opencrawling.flowable.FlowableRepositoryConnector", 10, Map.of("endpoint", "http://localhost:8080/flowable-rest/service", "username", "rest-admin", "password", "test")));

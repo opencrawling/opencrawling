@@ -17,50 +17,50 @@ package org.opencrawling.alfresco;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
-import java.util.Collections;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import org.opencrawling.alfresco.AlfrescoProperties.DeletionTracking;
+import org.opencrawling.alfresco.AlfrescoProperties.VersionMode;
+import org.opencrawling.core.connector.ConnectorSchema;
 import org.opencrawling.core.connector.discovery.CountAccuracy;
-import org.opencrawling.core.connector.discovery.DiscoverableRepositoryConnector;
-import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
-import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.DiscoveryException;
 import org.opencrawling.core.connector.discovery.DiscoveryNode;
 import org.opencrawling.core.connector.discovery.DiscoveryResult;
+import org.opencrawling.core.connector.discovery.DocumentFetchingRepositoryConnector;
 import org.opencrawling.core.connector.discovery.DryRunRequest;
 import org.opencrawling.core.connector.discovery.DryRunResult;
 import org.opencrawling.core.connector.discovery.ExploreRequest;
+import org.opencrawling.core.connector.discovery.FetchedDocument;
 import org.opencrawling.core.connector.discovery.TruncationReason;
 import org.opencrawling.core.connector.discovery.VisibilityFilter;
 import org.opencrawling.core.document.RepositoryDocument;
-import org.opencrawling.core.security.PermissionRule;
 import org.opencrawling.core.security.SecurityConfig;
 import org.opencrawling.observability.concurrency.ObservabilityTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,97 +70,57 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 
 /**
- * High-performance Alfresco Content Services Repository Connector.
- * Supports dual-mode ingestion:
- * 1. Hierarchical folder tree traversal with subfolder filtering, exclusions, and site scoping.
- * 2. Targeted search ingestion using the Alfresco Search REST API (AFTS, CMISQL, and Lucene).
- * Integrates zero-trust ACL mapping, binary payload thresholds, and Java 25 Virtual Threads.
+ * High-performance Alfresco Content Services (ACS) Repository Connector (#425).
+ *
+ * <p>Supports three crawl modes:
+ * <ol>
+ *   <li>{@link AlfrescoCrawlMode#FOLDER}: hierarchical folder traversal with bounded Java 25 Virtual Thread
+ *       parallelism, skip-unchanged incremental state, and orphan reconciliation.</li>
+ *   <li>{@link AlfrescoCrawlMode#SEARCH_DELTA}: incremental Search API delta crawling anchored to
+ *       {@code cm:modified:[<watermark> TO MAX]}, paired with Trashcan/Audit deletion feeds and optional periodic
+ *       full scans ({@code full-scan-interval} / {@code full-scan-window}) for ACL-only changes and hard deletes.</li>
+ *   <li>{@link AlfrescoCrawlMode#QUERY}: full Search API query ingestion (AFTS, CMIS SQL, or Lucene).</li>
+ * </ol>
+ * Integrates fail-closed Zero-Trust ACL mapping, OAuth2/OIDC/Ticket/Bearer/Basic auth, version modes
+ * ({@code CURRENT}, {@code LATEST_MAJOR}, {@code ALL}), rendition selection, rich selection filters, and
+ * pre-crawl discovery / on-demand fetching.
  */
 @Component
 public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryConnector {
 
     private static final Logger log = LoggerFactory.getLogger(AlfrescoRepositoryConnector.class);
 
-    private final String url;
-    private final String username;
-    private final String password;
-    private final int batchSize;
-    private final AlfrescoCrawlMode crawlMode;
-    private final String rootFolderPath;
-    private final String rootFolderId;
-    private final String siteId;
-    private final boolean includeSubfolders;
-    private final Set<String> excludedFolders;
-    private final String searchQuery;
-    private final String queryLanguage;
-    private final boolean includeAcls;
-    private final boolean includeContentStream;
-    private final long maxContentSizeBytes;
-    private final Set<String> mimeTypeFilter;
-    private final int timeoutSeconds;
+    private static final Pattern MAJOR_VERSION = Pattern.compile("^(\\d+)\\.0$");
+    private static final String CRAWL_INCLUDE_BASE = "path,properties,aspectNames";
+    private static final String DISCOVERY_INCLUDE = "path,permissions,properties,aspectNames";
+
+    private final AlfrescoProperties settings;
+    private final AlfrescoCrawlState.StateStore stateStore;
+    private final List<Pattern> excludedNamePatterns;
     private final ObjectMapper objectMapper;
 
-    private HttpClient httpClient;
-    private String authHeader;
+    private volatile AlfrescoClient client;
 
     public AlfrescoRepositoryConnector() {
-        this("http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1",
-             "admin", "admin", 100, AlfrescoCrawlMode.FOLDER,
-             "/", "", "", true, Set.of("Data Dictionary"),
-             "TYPE:'cm:content'", "afts", true, true, 52428800L, Set.of(), 30);
+        this(AlfrescoProperties.forLegacyConstructor(
+                AlfrescoProperties.DEFAULT_URL, "admin", "admin", 100, AlfrescoCrawlMode.FOLDER,
+                "/", "", "", true, Set.of("Data Dictionary"),
+                "TYPE:'cm:content'", "afts", true, true, 52_428_800L, Set.of(), 30));
     }
 
-    public AlfrescoRepositoryConnector(
-            String url,
-            String username,
-            String password,
-            int batchSize) {
-        this(url, username, password, batchSize, AlfrescoCrawlMode.FOLDER,
-             "/", "", "", true, Set.of("Data Dictionary"),
-             "TYPE:'cm:content'", "afts", true, true, 52428800L, Set.of(), 30);
+    public AlfrescoRepositoryConnector(String url, String username, String password, int batchSize) {
+        this(AlfrescoProperties.forLegacyConstructor(
+                url, username, password, batchSize, AlfrescoCrawlMode.FOLDER,
+                "/", "", "", true, Set.of("Data Dictionary"),
+                "TYPE:'cm:content'", "afts", true, true, 52_428_800L, Set.of(), 30));
     }
 
-    public AlfrescoRepositoryConnector(
-            String url,
-            String username,
-            String password,
-            int batchSize,
-            String excludedFoldersConfig) {
-        this(url, username, password, batchSize, AlfrescoCrawlMode.FOLDER,
-             "/", "", "", true, parseDelimitedSet(excludedFoldersConfig, Set.of("Data Dictionary")),
-             "TYPE:'cm:content'", "afts", true, true, 52428800L, Set.of(), 30);
-    }
-
-    @Autowired
-    public AlfrescoRepositoryConnector(
-            @Value("${spring.opencrawling.connector.alfresco.url:http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1}") String url,
-            @Value("${spring.opencrawling.connector.alfresco.username:admin}") String username,
-            @Value("${spring.opencrawling.connector.alfresco.password:admin}") String password,
-            @Value("${spring.opencrawling.connector.alfresco.batch-size:100}") int batchSize,
-            @Value("${spring.opencrawling.connector.alfresco.crawl-mode:folder}") String crawlModeStr,
-            @Value("${spring.opencrawling.connector.alfresco.root-folder-path:/}") String rootFolderPath,
-            @Value("${spring.opencrawling.connector.alfresco.root-folder-id:}") String rootFolderId,
-            @Value("${spring.opencrawling.connector.alfresco.site-id:}") String siteId,
-            @Value("${spring.opencrawling.connector.alfresco.include-subfolders:true}") boolean includeSubfolders,
-            @Value("${spring.opencrawling.connector.alfresco.excluded-folders:Data Dictionary}") String excludedFoldersConfig,
-            @Value("${spring.opencrawling.connector.alfresco.search-query:TYPE:'cm:content'}") String searchQuery,
-            @Value("${spring.opencrawling.connector.alfresco.query-language:afts}") String queryLanguage,
-            @Value("${spring.opencrawling.connector.alfresco.include-acls:true}") boolean includeAcls,
-            @Value("${spring.opencrawling.connector.alfresco.include-content-stream:true}") boolean includeContentStream,
-            @Value("${spring.opencrawling.connector.alfresco.max-content-size-bytes:52428800}") long maxContentSizeBytes,
-            @Value("${spring.opencrawling.connector.alfresco.mimetype-filter:}") String mimeTypeFilterConfig,
-            @Value("${spring.opencrawling.connector.alfresco.timeout-seconds:30}") int timeoutSeconds) {
-
-        this(url, username, password, batchSize,
-             AlfrescoCrawlMode.fromString(crawlModeStr),
-             rootFolderPath, rootFolderId, siteId,
-             includeSubfolders,
-             parseDelimitedSet(excludedFoldersConfig, Set.of("Data Dictionary")),
-             searchQuery, queryLanguage,
-             includeAcls, includeContentStream,
-             maxContentSizeBytes,
-             parseDelimitedSet(mimeTypeFilterConfig, Set.of()),
-             timeoutSeconds);
+    public AlfrescoRepositoryConnector(String url, String username, String password, int batchSize,
+                                       String excludedFoldersConfig) {
+        this(AlfrescoProperties.forLegacyConstructor(
+                url, username, password, batchSize, AlfrescoCrawlMode.FOLDER,
+                "/", "", "", true, parseDelimitedSet(excludedFoldersConfig, Set.of("Data Dictionary")),
+                "TYPE:'cm:content'", "afts", true, true, 52_428_800L, Set.of(), 30));
     }
 
     public AlfrescoRepositoryConnector(
@@ -181,25 +141,30 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
             long maxContentSizeBytes,
             Set<String> mimeTypeFilter,
             int timeoutSeconds) {
+        this(AlfrescoProperties.forLegacyConstructor(
+                url, username, password, batchSize, crawlMode, rootFolderPath, rootFolderId, siteId,
+                includeSubfolders, excludedFolders, searchQuery, queryLanguage,
+                includeAcls, includeContentStream, maxContentSizeBytes, mimeTypeFilter, timeoutSeconds));
+    }
 
-        this.url = (url != null && !url.isBlank()) ? url.trim() : "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1";
-        this.username = username != null ? username : "admin";
-        this.password = password != null ? password : "admin";
-        this.batchSize = batchSize > 0 ? batchSize : 100;
-        this.crawlMode = crawlMode != null ? crawlMode : AlfrescoCrawlMode.FOLDER;
-        this.rootFolderPath = (rootFolderPath != null && !rootFolderPath.isBlank()) ? rootFolderPath.trim() : "/";
-        this.rootFolderId = rootFolderId != null ? rootFolderId.trim() : "";
-        this.siteId = siteId != null ? siteId.trim() : "";
-        this.includeSubfolders = includeSubfolders;
-        this.excludedFolders = excludedFolders != null ? excludedFolders : Set.of("Data Dictionary");
-        this.searchQuery = (searchQuery != null && !searchQuery.isBlank()) ? searchQuery.trim() : "TYPE:'cm:content'";
-        this.queryLanguage = (queryLanguage != null && !queryLanguage.isBlank()) ? queryLanguage.trim() : "afts";
-        this.includeAcls = includeAcls;
-        this.includeContentStream = includeContentStream;
-        this.maxContentSizeBytes = maxContentSizeBytes > 0 ? maxContentSizeBytes : 52428800L;
-        this.mimeTypeFilter = mimeTypeFilter != null ? mimeTypeFilter : Set.of();
-        this.timeoutSeconds = timeoutSeconds > 0 ? timeoutSeconds : 30;
+    @Autowired
+    public AlfrescoRepositoryConnector(Environment environment) {
+        this(AlfrescoProperties.fromEnvironment(environment), AlfrescoCrawlState.LOCAL_FILE_STORE);
+    }
+
+    public AlfrescoRepositoryConnector(AlfrescoProperties settings) {
+        this(settings, AlfrescoCrawlState.LOCAL_FILE_STORE);
+    }
+
+    AlfrescoRepositoryConnector(AlfrescoProperties settings, AlfrescoCrawlState.StateStore stateStore) {
+        this.settings = settings != null ? settings : AlfrescoProperties.fromConfiguration(Map.of());
+        this.stateStore = stateStore != null ? stateStore : AlfrescoCrawlState.LOCAL_FILE_STORE;
+        this.excludedNamePatterns = this.settings.compiledNamePatterns();
         this.objectMapper = new ObjectMapper();
+    }
+
+    public AlfrescoProperties settings() {
+        return settings;
     }
 
     private static Set<String> parseDelimitedSet(String input, Set<String> defaultSet) {
@@ -219,135 +184,930 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
 
     @Override
     public String sourceInstance() {
-        return url;
+        return settings.coreApiUrl();
     }
 
     @Override
-    public void connect() throws Exception {
-        log.info("Connecting to Alfresco Content Services at URL: {}", url);
-        if (this.httpClient == null) {
-            this.httpClient = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(timeoutSeconds))
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .build();
-        }
-
-        String credentials = username + ":" + password;
-        this.authHeader = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
-
-        // Simple connection check by fetching the root node
-        String testUrl = url + "/nodes/-root-";
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(testUrl))
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("Authorization", authHeader)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() == 200) {
-            log.info("Successfully connected to Alfresco Content Services. Session initialized.");
-        } else {
-            throw new IOException("Failed to connect to Alfresco Content Services. Status code: " + response.statusCode() + ", Response: " + response.body());
-        }
+    public boolean supportsConcurrentProcessing() {
+        return true;
     }
 
     @Override
-    public void disconnect() throws Exception {
+    public ConnectorSchema getSchema(String basePath) {
+        return AlfrescoDocumentBuilder.schema();
+    }
+
+    @Override
+    public synchronized void connect() throws Exception {
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException("Invalid Alfresco connector configuration: " + String.join(" ", problems));
+        }
+        log.info("Connecting to Alfresco Content Services at URL: {} (auth: {}, mode: {})",
+                settings.coreApiUrl(), settings.authType(), settings.crawlMode());
+        if (this.client == null) {
+            this.client = new AlfrescoClient(settings);
+        }
+        this.client.checkConnection();
+        log.info("Successfully connected to Alfresco Content Services. Session initialized.");
+    }
+
+    @Override
+    public synchronized void disconnect() throws Exception {
         log.info("Disconnecting from Alfresco Content Services.");
-        this.httpClient = null;
-        this.authHeader = null;
+        AlfrescoClient current = this.client;
+        this.client = null;
+        if (current != null) {
+            current.close();
+        }
     }
 
     void setHttpClient(HttpClient httpClient) {
-        this.httpClient = httpClient;
-        String credentials = username + ":" + password;
-        this.authHeader = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+        this.client = new AlfrescoClient(settings, httpClient, objectMapper);
+    }
+
+    private AlfrescoClient ensureClient() throws Exception {
+        AlfrescoClient current = this.client;
+        if (current == null) {
+            connect();
+            current = this.client;
+        }
+        return current;
+    }
+
+    // ------------------------------------------------------------------ Scan & Incremental Lifecycle
+
+    private static final class CrawlSession {
+        final Map<String, AlfrescoCrawlState.Entry> previousNodes;
+        final Map<String, AlfrescoCrawlState.Entry> nextNodes = new ConcurrentHashMap<>();
+        final Set<String> seenNodeIds = ConcurrentHashMap.newKeySet();
+        final Set<String> removedNodeIds = ConcurrentHashMap.newKeySet();
+        final Semaphore permits;
+        final AtomicLong documents = new AtomicLong();
+        final AtomicLong unchanged = new AtomicLong();
+        final AtomicLong tombstones = new AtomicLong();
+        final AtomicLong skipped = new AtomicLong();
+        final AtomicLong failed = new AtomicLong();
+        final AtomicInteger processedNodes = new AtomicInteger();
+        final AtomicBoolean cancelled;
+        final Instant now;
+        final String renderSignature;
+
+        CrawlSession(Map<String, AlfrescoCrawlState.Entry> previousNodes, int parallelism,
+                     Instant now, String renderSignature, AtomicBoolean cancelled) {
+            this.previousNodes = previousNodes != null ? previousNodes : Map.of();
+            this.permits = new Semaphore(Math.max(1, parallelism));
+            this.now = now;
+            this.renderSignature = renderSignature;
+            this.cancelled = cancelled != null ? cancelled : new AtomicBoolean();
+        }
+
+        boolean stopRequested(FluxSink<RepositoryDocument> sink) {
+            return cancelled.get() || sink.isCancelled() || Thread.currentThread().isInterrupted();
+        }
+
+        boolean limitReached(int maxDocuments) {
+            return maxDocuments > 0 && processedNodes.get() >= maxDocuments;
+        }
     }
 
     @Override
     public Flux<RepositoryDocument> scan(String basePath) {
         return Flux.create(sink -> {
+            AtomicBoolean cancelled = new AtomicBoolean();
+            sink.onCancel(() -> cancelled.set(true));
             try {
-                if (httpClient == null) {
-                    connect();
-                }
+                AlfrescoClient activeClient = ensureClient();
+                Instant serverNow = activeClient.serverTimeOrNow();
 
-                boolean isQuery = crawlMode == AlfrescoCrawlMode.QUERY || isQueryString(basePath);
-                if (isQuery) {
+                boolean hasOverride = isExplicitOverride(basePath);
+                boolean useState = settings.incrementalEnabled() && !hasOverride;
+                AlfrescoCrawlState.State previousState = useState
+                        ? stateStore.load(settings)
+                        : AlfrescoCrawlState.State.empty();
+
+                CrawlSession crawl = new CrawlSession(
+                        previousState.nodes(), settings.parallelism(), serverNow, settings.renderSignature(), cancelled);
+
+                boolean periodicFullScan = useState
+                        && settings.crawlMode() == AlfrescoCrawlMode.SEARCH_DELTA
+                        && previousState.watermark() != null
+                        && settings.fullScanDue(
+                                AlfrescoDocumentBuilder.parseTimestamp(previousState.lastFullScanAt()),
+                                serverNow);
+
+                boolean fullEnumeration = !hasOverride && (settings.crawlMode() == AlfrescoCrawlMode.FOLDER
+                        || settings.crawlMode() == AlfrescoCrawlMode.QUERY
+                        || previousState.watermark() == null
+                        || periodicFullScan);
+
+                if (isQueryString(basePath)) {
                     QueryInfo queryInfo = resolveQueryInfo(basePath);
-                    log.info("Executing Alfresco Search REST API query scan (language: '{}'): {}", queryInfo.language(), queryInfo.query());
-                    scanQuery(queryInfo.query(), queryInfo.language(), sink);
-                } else {
-                    String startNodeId = "-root-";
-                    String relativePath = null;
-
-                    if (basePath != null && !basePath.isBlank() && !basePath.equals("-root-") && !basePath.equals("/")) {
-                        if (basePath.startsWith("/")) {
-                            relativePath = basePath.substring(1);
-                            if (relativePath.isBlank()) {
-                                relativePath = null;
-                            }
-                        } else {
-                            startNodeId = basePath;
-                        }
-                    } else if (rootFolderId != null && !rootFolderId.isBlank()) {
-                        startNodeId = rootFolderId;
-                    } else if (siteId != null && !siteId.isBlank()) {
-                        relativePath = "Sites/" + siteId + "/documentLibrary";
-                    } else if (rootFolderPath != null && !rootFolderPath.isBlank() && !rootFolderPath.equals("-root-") && !rootFolderPath.equals("/")) {
-                        if (rootFolderPath.startsWith("/")) {
-                            relativePath = rootFolderPath.substring(1);
-                            if (relativePath.isBlank()) {
-                                relativePath = null;
-                            }
-                        } else {
-                            startNodeId = rootFolderPath;
-                        }
+                    log.info("Executing Alfresco Search REST API query scan (language: '{}'): {}",
+                            queryInfo.language(), queryInfo.query());
+                    scanQuery(activeClient, queryInfo.query(), queryInfo.language(), false, crawl, sink);
+                } else if (settings.crawlMode() == AlfrescoCrawlMode.QUERY) {
+                    QueryInfo queryInfo = resolveQueryInfo(basePath);
+                    log.info("Executing Alfresco Search REST API query scan (language: '{}'): {}",
+                            queryInfo.language(), queryInfo.query());
+                    scanQuery(activeClient, queryInfo.query(), queryInfo.language(), false, crawl, sink);
+                } else if (settings.crawlMode() == AlfrescoCrawlMode.SEARCH_DELTA) {
+                    String effectiveQuery = buildDeltaBaseQuery(activeClient);
+                    if (!fullEnumeration && previousState.watermark() != null && !previousState.watermark().isBlank()) {
+                        String deltaQuery = "(" + effectiveQuery + ") AND cm:modified:[\""
+                                + previousState.watermark() + "\" TO MAX]";
+                        log.info("Executing Alfresco SEARCH_DELTA incremental scan: {}", deltaQuery);
+                        scanQuery(activeClient, deltaQuery, "afts", true, crawl, sink);
+                        processIncrementalDeletions(activeClient, previousState, crawl, sink);
+                    } else {
+                        log.info("Executing Alfresco SEARCH_DELTA {} full enumeration: {}",
+                                periodicFullScan ? "periodic" : "initial", effectiveQuery);
+                        scanQuery(activeClient, effectiveQuery, "afts", true, crawl, sink);
                     }
-
-                    log.info("Executing Alfresco hierarchical folder scan starting at nodeId='{}', relativePath='{}' (recursive={})",
-                            startNodeId, relativePath, includeSubfolders);
-                    scanFolder(startNodeId, relativePath, sink);
+                } else {
+                    scanConfiguredFolders(activeClient, basePath, hasOverride, crawl, sink);
                 }
+
+                // Orphan reconciliation after a complete, uncancelled, failure-free full enumeration
+                if (useState && fullEnumeration
+                        && settings.deletionTracking() != DeletionTracking.NONE
+                        && !crawl.stopRequested(sink)
+                        && crawl.failed.get() == 0
+                        && !crawl.limitReached(settings.maxDocuments())
+                        && !crawl.previousNodes.isEmpty()) {
+                    reconcileVanishedNodes(crawl, sink);
+                }
+
+                // Persist state atomically only on complete, failure-free, uncancelled runs
+                if (useState && !crawl.stopRequested(sink) && crawl.failed.get() == 0
+                        && !crawl.limitReached(settings.maxDocuments())) {
+                    Map<String, AlfrescoCrawlState.Entry> merged = new LinkedHashMap<>(crawl.previousNodes);
+                    crawl.removedNodeIds.forEach(merged::remove);
+                    merged.putAll(crawl.nextNodes);
+
+                    String nextWatermark = serverNow.minusSeconds(settings.clockSkewSeconds())
+                            .truncatedTo(ChronoUnit.SECONDS).toString();
+                    String nextFullScanAt = fullEnumeration
+                            ? serverNow.truncatedTo(ChronoUnit.SECONDS).toString()
+                            : previousState.lastFullScanAt();
+
+                    stateStore.save(settings, new AlfrescoCrawlState.State(
+                            nextWatermark,
+                            nextWatermark,
+                            nextWatermark,
+                            nextFullScanAt,
+                            merged));
+                }
+
+                log.info("Alfresco scan of {} completed ({} enumeration{}): {} documents, {} unchanged, "
+                                + "{} tombstones, {} skipped, {} failed.",
+                        settings.coreApiUrl(),
+                        fullEnumeration ? "full" : "incremental",
+                        periodicFullScan ? ", periodic full scan" : "",
+                        crawl.documents.get(), crawl.unchanged.get(),
+                        crawl.tombstones.get(), crawl.skipped.get(), crawl.failed.get());
 
                 synchronized (sink) {
-                    sink.complete();
+                    if (!sink.isCancelled()) {
+                        sink.complete();
+                    }
                 }
             } catch (Exception e) {
                 log.error("Alfresco scan failed: {}", e.getMessage(), e);
                 synchronized (sink) {
-                    sink.error(e);
+                    if (!sink.isCancelled()) {
+                        sink.error(e);
+                    }
                 }
             }
         });
     }
 
+    private boolean isExplicitOverride(String basePath) {
+        if (basePath == null || basePath.isBlank()) {
+            return false;
+        }
+        String trimmed = basePath.trim();
+        return !"-root-".equals(trimmed) && !"/".equals(trimmed) && !"default".equalsIgnoreCase(trimmed);
+    }
+
+    private void scanConfiguredFolders(AlfrescoClient activeClient, String basePath, boolean hasOverride,
+                                       CrawlSession crawl, FluxSink<RepositoryDocument> sink) throws InterruptedException {
+        if (hasOverride) {
+            String trimmed = basePath.trim();
+            if (trimmed.startsWith("/")) {
+                String rel = withoutEdgeSlashes(trimmed);
+                log.info("Executing Alfresco scoped folder scan starting at relativePath='{}' (recursive={})",
+                        rel, settings.includeSubfolders());
+                scanFolder(activeClient, "-root-", rel.isEmpty() ? null : rel, crawl, sink);
+            } else {
+                log.info("Executing Alfresco scoped folder scan starting at nodeId='{}' (recursive={})",
+                        trimmed, settings.includeSubfolders());
+                scanFolder(activeClient, trimmed, null, crawl, sink);
+            }
+            return;
+        }
+
+        if (!settings.rootFolderId().isBlank()) {
+            log.info("Executing Alfresco hierarchical folder scan starting at nodeId='{}' (recursive={})",
+                    settings.rootFolderId(), settings.includeSubfolders());
+            scanFolder(activeClient, settings.rootFolderId(), null, crawl, sink);
+            return;
+        }
+
+        if (!settings.siteIds().isEmpty()) {
+            for (String site : settings.siteIds()) {
+                if (crawl.stopRequested(sink) || crawl.limitReached(settings.maxDocuments())) {
+                    break;
+                }
+                String rel = "Sites/" + site + "/documentLibrary";
+                log.info("Executing Alfresco site scan starting at '{}' (recursive={})", rel, settings.includeSubfolders());
+                scanFolder(activeClient, "-root-", rel, crawl, sink);
+            }
+            return;
+        }
+
+        String rootPath = settings.rootFolderPath();
+        if (rootPath != null && !rootPath.isBlank() && !"-root-".equals(rootPath) && !"/".equals(rootPath)) {
+            if (rootPath.startsWith("/")) {
+                String rel = withoutEdgeSlashes(rootPath);
+                log.info("Executing Alfresco hierarchical folder scan starting at relativePath='{}' (recursive={})",
+                        rel, settings.includeSubfolders());
+                scanFolder(activeClient, "-root-", rel.isEmpty() ? null : rel, crawl, sink);
+            } else {
+                log.info("Executing Alfresco hierarchical folder scan starting at nodeId='{}' (recursive={})",
+                        rootPath, settings.includeSubfolders());
+                scanFolder(activeClient, rootPath, null, crawl, sink);
+            }
+        } else {
+            log.info("Executing Alfresco hierarchical folder scan starting at nodeId='-root-' (recursive={})",
+                    settings.includeSubfolders());
+            scanFolder(activeClient, "-root-", null, crawl, sink);
+        }
+    }
+
+    private String buildDeltaBaseQuery(AlfrescoClient activeClient) throws IOException, InterruptedException {
+        String base = settings.searchQuery();
+        if (!settings.nodeTypes().isEmpty() && "TYPE:'cm:content'".equalsIgnoreCase(base.strip())) {
+            base = settings.nodeTypes().stream()
+                    .map(t -> "TYPE:'" + escapeAfts(t) + "'")
+                    .collect(Collectors.joining(" OR ", "(", ")"));
+        }
+        List<String> clauses = new ArrayList<>();
+        clauses.add("(" + base + ")");
+        if (!settings.siteIds().isEmpty()) {
+            String siteClause = settings.siteIds().stream()
+                    .map(s -> "SITE:'" + escapeAfts(s) + "'")
+                    .collect(Collectors.joining(" OR ", "(", ")"));
+            clauses.add(siteClause);
+        } else if (!settings.rootFolderId().isBlank()) {
+            clauses.add("ANCESTOR:'workspace://SpacesStore/" + escapeAfts(settings.rootFolderId()) + "'");
+        } else if (settings.rootFolderPath() != null && !settings.rootFolderPath().isBlank()
+                && !"/".equals(settings.rootFolderPath()) && !"-root-".equals(settings.rootFolderPath())) {
+            String rel = withoutEdgeSlashes(settings.rootFolderPath());
+            Optional<JsonNode> root = settings.rootFolderPath().startsWith("/")
+                    ? activeClient.getNode("-root-", null, rel)
+                    : activeClient.getNode(settings.rootFolderPath(), null, null);
+            if (root.isPresent()) {
+                String id = root.get().path("id").asText("");
+                if (!id.isBlank()) {
+                    clauses.add("ANCESTOR:'workspace://SpacesStore/" + escapeAfts(id) + "'");
+                }
+            }
+        }
+        return String.join(" AND ", clauses);
+    }
+
+    private static String escapeAfts(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private void scanQuery(AlfrescoClient activeClient, String query, String queryLanguage, boolean sortByModified,
+                           CrawlSession crawl, FluxSink<RepositoryDocument> sink)
+            throws IOException, InterruptedException {
+        int skipCount = 0;
+        boolean hasMore = true;
+
+        List<String> includes = new ArrayList<>(List.of("path", "properties", "aspectNames"));
+        if (settings.includeAcls()) {
+            includes.add("permissions");
+        }
+        List<Map<String, Object>> sort = sortByModified
+                ? List.of(Map.of("type", "FIELD", "field", "cm:modified", "ascending", true))
+                : List.of();
+
+        while (hasMore && !crawl.stopRequested(sink) && !crawl.limitReached(settings.maxDocuments())) {
+            JsonNode root = activeClient.search(query, queryLanguage, skipCount, settings.batchSize(), includes, sort);
+            JsonNode listNode = root.path("list");
+            JsonNode entriesNode = listNode.path("entries");
+
+            if (!entriesNode.isArray() || entriesNode.isEmpty()) {
+                break;
+            }
+
+            List<JsonNode> fileEntries = new ArrayList<>();
+            for (JsonNode entryWrapper : entriesNode) {
+                JsonNode entry = entryWrapper.path("entry");
+                if (entry.path("isFile").asBoolean(true)) {
+                    fileEntries.add(entry);
+                }
+            }
+
+            processFileEntriesInParallel(activeClient, fileEntries, crawl, sink);
+
+            JsonNode paginationNode = listNode.path("pagination");
+            hasMore = paginationNode.path("hasMoreItems").asBoolean(false);
+            if (hasMore) {
+                int count = paginationNode.path("count").asInt(entriesNode.size());
+                if (count <= 0) {
+                    break;
+                }
+                skipCount += count;
+            }
+        }
+    }
+
+    @SuppressWarnings("preview")
+    private void scanFolder(AlfrescoClient activeClient, String nodeId, String relativePath,
+                            CrawlSession crawl, FluxSink<RepositoryDocument> sink) throws InterruptedException {
+        if (crawl.stopRequested(sink) || crawl.limitReached(settings.maxDocuments())) {
+            return;
+        }
+        String include = settings.includeAcls() ? CRAWL_INCLUDE_BASE + ",permissions" : CRAWL_INCLUDE_BASE;
+
+        try (var scope = StructuredTaskScope.open()) {
+            int skipCount = 0;
+            boolean hasMore = true;
+
+            while (hasMore && !crawl.stopRequested(sink) && !crawl.limitReached(settings.maxDocuments())) {
+                JsonNode responseNode;
+                try {
+                    responseNode = activeClient.listChildren(nodeId, relativePath, skipCount, settings.batchSize(), include);
+                } catch (Exception e) {
+                    crawl.failed.incrementAndGet();
+                    log.error("Error fetching children page for nodeId={}, relativePath={}, skipCount={}: {}",
+                            nodeId, relativePath, skipCount, e.getMessage());
+                    break;
+                }
+
+                JsonNode listNode = responseNode.path("list");
+                JsonNode entriesNode = listNode.path("entries");
+                if (!entriesNode.isArray() || entriesNode.isEmpty()) {
+                    break;
+                }
+
+                List<JsonNode> fileEntries = new ArrayList<>();
+                for (JsonNode entryWrapper : entriesNode) {
+                    if (crawl.stopRequested(sink) || crawl.limitReached(settings.maxDocuments())) {
+                        break;
+                    }
+                    JsonNode entry = entryWrapper.path("entry");
+                    String childId = entry.path("id").asText();
+                    String childName = entry.path("name").asText();
+                    boolean isFolder = entry.path("isFolder").asBoolean(false);
+                    boolean isFile = entry.path("isFile").asBoolean(false);
+
+                    if (isFolder) {
+                        String folderPath = AlfrescoDocumentBuilder.pathOf(entry);
+                        if (settings.isFolderExcluded(childName, childId, folderPath)) {
+                            log.info("Skipping excluded folder '{}' (id: {})", childName, childId);
+                            continue;
+                        }
+                        if (settings.includeSubfolders()) {
+                            scope.fork(ObservabilityTask.observed(() -> {
+                                scanFolder(activeClient, childId, null, crawl, sink);
+                                return null;
+                            }));
+                        } else {
+                            log.debug("Skipping subfolder '{}' because includeSubfolders is false", childName);
+                        }
+                    } else if (isFile) {
+                        fileEntries.add(entry);
+                    }
+                }
+
+                if (!fileEntries.isEmpty()) {
+                    processFileEntriesInParallel(activeClient, fileEntries, crawl, sink);
+                }
+
+                JsonNode paginationNode = listNode.path("pagination");
+                hasMore = paginationNode.path("hasMoreItems").asBoolean(false);
+                if (hasMore) {
+                    int count = paginationNode.path("count").asInt(entriesNode.size());
+                    if (count <= 0) {
+                        break;
+                    }
+                    skipCount += count;
+                }
+            }
+
+            scope.join();
+        } catch (StructuredTaskScope.FailedException e) {
+            crawl.failed.incrementAndGet();
+            throw new RuntimeException("Folder scan failed for nodeId=" + nodeId
+                    + (relativePath != null ? " (" + relativePath + ")" : ""), e.getCause());
+        }
+    }
+
+    @SuppressWarnings("preview")
+    private void processFileEntriesInParallel(AlfrescoClient activeClient, List<JsonNode> entries,
+                                              CrawlSession crawl, FluxSink<RepositoryDocument> sink)
+            throws InterruptedException {
+        if (entries.isEmpty()) {
+            return;
+        }
+        if (entries.size() == 1 || settings.parallelism() <= 1) {
+            for (JsonNode entry : entries) {
+                if (crawl.stopRequested(sink) || crawl.limitReached(settings.maxDocuments())) {
+                    break;
+                }
+                handleFileEntry(activeClient, entry, crawl, sink);
+            }
+            return;
+        }
+        try (var scope = StructuredTaskScope.open()) {
+            for (JsonNode entry : entries) {
+                if (crawl.stopRequested(sink) || crawl.limitReached(settings.maxDocuments())) {
+                    break;
+                }
+                scope.fork(ObservabilityTask.observed(() -> {
+                    crawl.permits.acquire();
+                    try {
+                        if (!crawl.stopRequested(sink) && !crawl.limitReached(settings.maxDocuments())) {
+                            handleFileEntry(activeClient, entry, crawl, sink);
+                        }
+                    } finally {
+                        crawl.permits.release();
+                    }
+                    return null;
+                }));
+            }
+            scope.join();
+        } catch (StructuredTaskScope.FailedException e) {
+            crawl.failed.incrementAndGet();
+            log.error("Parallel Alfresco file processing error: {}",
+                    e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+        }
+    }
+
+    private void handleFileEntry(AlfrescoClient activeClient, JsonNode entry,
+                                 CrawlSession crawl, FluxSink<RepositoryDocument> sink) {
+        String nodeId = entry.path("id").asText("");
+        String name = entry.path("name").asText("");
+        if (nodeId.isBlank()) {
+            return;
+        }
+        crawl.seenNodeIds.add(nodeId);
+        AlfrescoCrawlState.Entry known = crawl.previousNodes.get(nodeId);
+
+        try {
+            // 1. Check structural, path, MIME, type, aspect, date, and name selection filters
+            String exclusion = exclusionReason(entry, crawl.now);
+            List<String> tags = null;
+            if (exclusion == null && (settings.includeTags() || settings.filtersByTags())) {
+                tags = activeClient.listTags(nodeId);
+                if (!settings.acceptsTags(tags)) {
+                    exclusion = "tags";
+                }
+            }
+            if (exclusion != null) {
+                if (known != null) {
+                    log.debug("Alfresco node {} ('{}') left crawl scope ({}); tombstoning.", nodeId, name, exclusion);
+                    emitTombstones(known.ids(), crawl, sink);
+                    crawl.removedNodeIds.add(nodeId);
+                } else {
+                    crawl.skipped.incrementAndGet();
+                }
+                return;
+            }
+
+            if (settings.maxDocuments() > 0 && crawl.processedNodes.incrementAndGet() > settings.maxDocuments()) {
+                return;
+            }
+
+            // 2. Map security and check incremental skip BEFORE any binary download / version / comment calls
+            AlfrescoSecurityMapper.SecurityResult securityResult = settings.includeAcls()
+                    ? AlfrescoSecurityMapper.mapSecurity(entry.path("permissions"), settings.securityPolicy())
+                    : new AlfrescoSecurityMapper.SecurityResult(SecurityConfig.createPublic(), "public", List.of(), List.of(), true);
+
+            String modifiedAt = entry.path("modifiedAt").asText("");
+            String versionLabel = AlfrescoDocumentBuilder.versionLabel(entry);
+            long sizeInBytes = entry.path("content").path("sizeInBytes").asLong(0L);
+            String aclFingerprint = securityResult.fingerprint();
+            String fullPath = AlfrescoDocumentBuilder.pathOf(entry);
+
+            if (known != null
+                    && !modifiedAt.isEmpty() && modifiedAt.equals(known.modifiedAt())
+                    && versionLabel.equals(known.versionLabel())
+                    && sizeInBytes == known.sizeInBytes()
+                    && aclFingerprint.equals(known.aclFingerprint())
+                    && crawl.renderSignature.equals(known.renderSignature())) {
+                crawl.unchanged.incrementAndGet();
+                crawl.nextNodes.put(nodeId, known);
+                return;
+            }
+
+            List<String> comments = settings.includeComments() ? activeClient.listComments(nodeId) : List.of();
+            List<String> emittedIds = new ArrayList<>();
+
+            // 3. Emit current, latest major, or all versions
+            if (settings.versionMode() == VersionMode.ALL) {
+                List<JsonNode> versions = activeClient.listVersions(nodeId);
+                if (versions.isEmpty()) {
+                    emitSingleNodeDocument(activeClient, entry, null, false, tags, comments, securityResult, emittedIds, crawl, sink);
+                } else {
+                    for (JsonNode ver : versions) {
+                        if (crawl.stopRequested(sink)) {
+                            return;
+                        }
+                        emitSingleNodeDocument(activeClient, entry, ver, true, tags, comments, securityResult, emittedIds, crawl, sink);
+                    }
+                }
+            } else if (settings.versionMode() == VersionMode.LATEST_MAJOR) {
+                List<JsonNode> versions = activeClient.listVersions(nodeId);
+                JsonNode major = findLatestMajorVersion(versions);
+                emitSingleNodeDocument(activeClient, entry, major, false, tags, comments, securityResult, emittedIds, crawl, sink);
+            } else {
+                emitSingleNodeDocument(activeClient, entry, null, false, tags, comments, securityResult, emittedIds, crawl, sink);
+            }
+
+            // 4. Tombstone any previously emitted IDs no longer produced (e.g. version-mode switch or purged version)
+            if (known != null) {
+                Set<String> currentSet = new HashSet<>(emittedIds);
+                List<String> stale = known.ids().stream().filter(id -> !currentSet.contains(id)).toList();
+                if (!stale.isEmpty()) {
+                    emitTombstones(stale, crawl, sink);
+                }
+            }
+
+            crawl.nextNodes.put(nodeId, new AlfrescoCrawlState.Entry(
+                    modifiedAt, versionLabel, sizeInBytes, aclFingerprint, crawl.renderSignature, emittedIds, fullPath));
+        } catch (Exception e) {
+            crawl.failed.incrementAndGet();
+            log.error("Error processing Alfresco nodeId={} (name={}): {}", nodeId, name, e.getMessage());
+        }
+    }
+
+    private void emitSingleNodeDocument(
+            AlfrescoClient activeClient,
+            JsonNode entry,
+            JsonNode versionEntry,
+            boolean multiVersion,
+            List<String> tags,
+            List<String> comments,
+            AlfrescoSecurityMapper.SecurityResult securityResult,
+            List<String> emittedIds,
+            CrawlSession crawl,
+            FluxSink<RepositoryDocument> sink
+    ) throws IOException, InterruptedException {
+        String nodeId = entry.path("id").asText();
+        String versionId = versionEntry != null ? versionEntry.path("id").asText("") : "";
+        boolean isHistoricalVersion = versionEntry != null && !versionId.isBlank()
+                && (multiVersion || !versionId.equals(AlfrescoDocumentBuilder.versionLabel(entry)));
+
+        JsonNode contentNode = versionEntry != null && versionEntry.has("content")
+                ? versionEntry.path("content")
+                : entry.path("content");
+        long sizeInBytes = contentNode != null && !contentNode.isMissingNode()
+                ? contentNode.path("sizeInBytes").asLong(0L)
+                : 0L;
+        String effectiveMime = contentNode != null && !contentNode.isMissingNode()
+                ? contentNode.path("mimeType").asText("")
+                : "";
+        String effectiveRendition = null;
+        InputStream stream = null;
+
+        if (settings.includeContentStream() && contentNode != null && !contentNode.isMissingNode()) {
+            // Try preferred rendition for live content when configured
+            if (!isHistoricalVersion && !settings.preferRendition().isBlank()) {
+                Optional<String> renditionMime = activeClient.renditionMimeTypeIfCreated(nodeId, settings.preferRendition());
+                if (renditionMime.isPresent()) {
+                    try {
+                        stream = activeClient.downloadContent(nodeId, null, settings.preferRendition(), settings.maxContentSizeBytes());
+                        if (stream != null) {
+                            effectiveRendition = settings.preferRendition();
+                            if (!renditionMime.get().isBlank()) {
+                                effectiveMime = renditionMime.get();
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("Rendition '{}' unavailable for node {}, falling back to primary content: {}",
+                                settings.preferRendition(), nodeId, e.getMessage());
+                    }
+                }
+            }
+
+            if (stream == null) {
+                if (settings.maxContentSizeBytes() > 0 && sizeInBytes > settings.maxContentSizeBytes()) {
+                    log.warn("Skipping content stream for Alfresco node '{}' ({} bytes) exceeding maxContentSizeBytes ({} bytes)",
+                            nodeId, sizeInBytes, settings.maxContentSizeBytes());
+                } else {
+                    try {
+                        stream = activeClient.downloadContent(
+                                nodeId,
+                                isHistoricalVersion ? versionId : null,
+                                null,
+                                settings.maxContentSizeBytes());
+                    } catch (Exception e) {
+                        log.warn("Failed to download content stream for node {}: {}", nodeId, e.getMessage());
+                    }
+                }
+            }
+        }
+
+        RepositoryDocument doc = AlfrescoDocumentBuilder.buildDocument(
+                settings, entry, versionEntry, multiVersion,
+                effectiveRendition, effectiveMime, sizeInBytes,
+                tags, comments, securityResult, stream);
+
+        synchronized (sink) {
+            if (!sink.isCancelled()) {
+                sink.next(doc);
+            }
+        }
+        emittedIds.add(doc.id());
+        crawl.documents.incrementAndGet();
+    }
+
+    private JsonNode findLatestMajorVersion(List<JsonNode> versions) {
+        if (versions == null || versions.isEmpty()) {
+            return null;
+        }
+        // Alfresco returns versions newest-first; pick first MAJOR or *.0 version
+        for (JsonNode ver : versions) {
+            String vType = ver.path("properties").path("cm:versionType").asText("");
+            String id = ver.path("id").asText("");
+            if ("MAJOR".equalsIgnoreCase(vType) || MAJOR_VERSION.matcher(id).matches()) {
+                return ver;
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ Deletion Feeds & Reconciliation
+
+    private void processIncrementalDeletions(AlfrescoClient activeClient, AlfrescoCrawlState.State previousState,
+                                             CrawlSession crawl, FluxSink<RepositoryDocument> sink)
+            throws IOException, InterruptedException {
+        if (settings.deletionTracking() == DeletionTracking.NONE || crawl.previousNodes.isEmpty()) {
+            return;
+        }
+        if (settings.deletionTracking() == DeletionTracking.TRASHCAN
+                || settings.deletionTracking() == DeletionTracking.RECONCILE) {
+            pollTrashcan(activeClient, previousState, crawl, sink);
+        } else if (settings.deletionTracking() == DeletionTracking.AUDIT) {
+            pollAuditEntries(activeClient, previousState, crawl, sink);
+        }
+    }
+
+    private void pollTrashcan(AlfrescoClient activeClient, AlfrescoCrawlState.State previousState,
+                              CrawlSession crawl, FluxSink<RepositoryDocument> sink)
+            throws IOException, InterruptedException {
+        String sinceStr = previousState.trashWatermark() != null
+                ? previousState.trashWatermark()
+                : previousState.watermark();
+        Instant cutoff = AlfrescoDocumentBuilder.parseTimestamp(sinceStr);
+
+        int skipCount = 0;
+        boolean hasMore = true;
+        while (hasMore && !crawl.stopRequested(sink)) {
+            Optional<JsonNode> opt = activeClient.listDeletedNodes(skipCount, settings.batchSize());
+            if (opt.isEmpty()) {
+                log.debug("Alfresco /deleted-nodes unavailable (403/404); skipping Trashcan deletion polling.");
+                return;
+            }
+            JsonNode list = opt.get().path("list");
+            JsonNode entries = list.path("entries");
+            if (!entries.isArray() || entries.isEmpty()) {
+                break;
+            }
+            boolean reachedCutoff = false;
+            int count = 0;
+            for (JsonNode wrapper : entries) {
+                count++;
+                JsonNode entry = wrapper.path("entry");
+                Instant archivedAt = AlfrescoDocumentBuilder.parseTimestamp(entry.path("archivedAt").asText(""));
+                if (cutoff != null && archivedAt != null && archivedAt.isBefore(cutoff)) {
+                    reachedCutoff = true;
+                    break;
+                }
+                String deletedId = entry.path("id").asText("");
+                boolean isFolder = entry.path("isFolder").asBoolean(false);
+                if (!deletedId.isBlank() && crawl.previousNodes.containsKey(deletedId)
+                        && crawl.removedNodeIds.add(deletedId)) {
+                    emitTombstones(crawl.previousNodes.get(deletedId).ids(), crawl, sink);
+                }
+                if (isFolder) {
+                    String deletedFolderPath = AlfrescoDocumentBuilder.pathOf(entry);
+                    if (deletedFolderPath != null && !deletedFolderPath.isBlank()) {
+                        String prefix = deletedFolderPath.endsWith("/") ? deletedFolderPath : deletedFolderPath + "/";
+                        for (Map.Entry<String, AlfrescoCrawlState.Entry> tracked : crawl.previousNodes.entrySet()) {
+                            String trackedPath = tracked.getValue().path();
+                            if (trackedPath != null && trackedPath.startsWith(prefix)
+                                    && crawl.removedNodeIds.add(tracked.getKey())) {
+                                emitTombstones(tracked.getValue().ids(), crawl, sink);
+                            }
+                        }
+                    }
+                }
+            }
+            if (reachedCutoff) {
+                break;
+            }
+            hasMore = count > 0 && list.path("pagination").path("hasMoreItems").asBoolean(false);
+            skipCount += count;
+        }
+    }
+
+    private void pollAuditEntries(AlfrescoClient activeClient, AlfrescoCrawlState.State previousState,
+                                  CrawlSession crawl, FluxSink<RepositoryDocument> sink)
+            throws IOException, InterruptedException {
+        String sinceStr = previousState.auditWatermark() != null
+                ? previousState.auditWatermark()
+                : previousState.watermark();
+        Instant cutoff = AlfrescoDocumentBuilder.parseTimestamp(sinceStr);
+
+        int skipCount = 0;
+        boolean hasMore = true;
+        Set<String> recheckNodeIds = new HashSet<>();
+        while (hasMore && !crawl.stopRequested(sink)) {
+            Optional<JsonNode> opt = activeClient.listAuditEntries(
+                    settings.auditApplication(), null, skipCount, settings.batchSize());
+            if (opt.isEmpty()) {
+                log.debug("Alfresco audit application '{}' unavailable; skipping audit polling.", settings.auditApplication());
+                return;
+            }
+            JsonNode list = opt.get().path("list");
+            JsonNode entries = list.path("entries");
+            if (!entries.isArray() || entries.isEmpty()) {
+                break;
+            }
+            int count = 0;
+            for (JsonNode wrapper : entries) {
+                count++;
+                JsonNode entry = wrapper.path("entry");
+                Instant createdAt = AlfrescoDocumentBuilder.parseTimestamp(entry.path("createdAt").asText(""));
+                if (cutoff != null && createdAt != null && createdAt.isBefore(cutoff)) {
+                    continue;
+                }
+                JsonNode values = entry.path("values");
+                String action = values.path("/alfresco-access/transaction/action").asText("").toLowerCase(Locale.ROOT);
+                String nodeRef = values.path("/alfresco-access/transaction/node").asText("");
+                String nodeId = extractUuid(nodeRef);
+                if (nodeId == null || !crawl.previousNodes.containsKey(nodeId)) {
+                    continue;
+                }
+                if (action.contains("delete")) {
+                    if (crawl.removedNodeIds.add(nodeId)) {
+                        emitTombstones(crawl.previousNodes.get(nodeId).ids(), crawl, sink);
+                    }
+                } else if (action.contains("permission") || action.contains("acl") || action.contains("inherit")) {
+                    recheckNodeIds.add(nodeId);
+                }
+            }
+            hasMore = count > 0 && list.path("pagination").path("hasMoreItems").asBoolean(false);
+            skipCount += count;
+        }
+
+        // Re-check nodes whose permissions changed in Audit log (ACL changes don't bump cm:modified in ACS)
+        String include = settings.includeAcls() ? CRAWL_INCLUDE_BASE + ",permissions" : CRAWL_INCLUDE_BASE;
+        for (String nodeId : recheckNodeIds) {
+            if (crawl.stopRequested(sink) || crawl.seenNodeIds.contains(nodeId) || crawl.removedNodeIds.contains(nodeId)) {
+                continue;
+            }
+            Optional<JsonNode> nodeOpt = activeClient.getNode(nodeId, include, null);
+            if (nodeOpt.isEmpty()) {
+                if (crawl.removedNodeIds.add(nodeId)) {
+                    emitTombstones(crawl.previousNodes.get(nodeId).ids(), crawl, sink);
+                }
+            } else {
+                handleFileEntry(activeClient, nodeOpt.get(), crawl, sink);
+            }
+        }
+    }
+
+    private static String extractUuid(String nodeRef) {
+        if (nodeRef == null || nodeRef.isBlank()) {
+            return null;
+        }
+        int slash = nodeRef.lastIndexOf('/');
+        return slash >= 0 && slash < nodeRef.length() - 1 ? nodeRef.substring(slash + 1).strip() : nodeRef.strip();
+    }
+
+    private void reconcileVanishedNodes(CrawlSession crawl, FluxSink<RepositoryDocument> sink) {
+        if (crawl.seenNodeIds.isEmpty()) {
+            // Empty-enumeration guard (#396, #425): never mass-delete on an empty listing
+            log.warn("Alfresco full enumeration of {} returned 0 documents while {} are indexed; "
+                            + "no tombstones emitted for vanished documents.",
+                    settings.coreApiUrl(), crawl.previousNodes.size());
+            return;
+        }
+        for (Map.Entry<String, AlfrescoCrawlState.Entry> prev : crawl.previousNodes.entrySet()) {
+            if (crawl.stopRequested(sink)) {
+                return;
+            }
+            String nodeId = prev.getKey();
+            if (!crawl.seenNodeIds.contains(nodeId) && crawl.removedNodeIds.add(nodeId)) {
+                emitTombstones(prev.getValue().ids(), crawl, sink);
+            }
+        }
+    }
+
+    private void emitTombstones(List<String> docIds, CrawlSession crawl, FluxSink<RepositoryDocument> sink) {
+        if (docIds == null) {
+            return;
+        }
+        for (String docId : docIds) {
+            if (crawl.stopRequested(sink)) {
+                return;
+            }
+            RepositoryDocument tombstone = AlfrescoDocumentBuilder.buildTombstone(settings, docId);
+            synchronized (sink) {
+                if (!sink.isCancelled()) {
+                    sink.next(tombstone);
+                }
+            }
+            crawl.tombstones.incrementAndGet();
+        }
+    }
+
+    // ------------------------------------------------------------------ Selection Filters
+
+    /** Returns a short exclusion reason when {@code entry} is outside configured filters, or {@code null} if accepted. */
+    private String exclusionReason(JsonNode entry, Instant now) {
+        JsonNode contentNode = entry.path("content");
+        if (settings.includeContentStream() && (contentNode == null || contentNode.isMissingNode())) {
+            return "no-content";
+        }
+        String mimeType = (contentNode != null && !contentNode.isMissingNode())
+                ? contentNode.path("mimeType").asText("")
+                : "";
+        if (!settings.matchesMimeType(mimeType)) {
+            return "mime-type";
+        }
+        if (!settings.acceptsNodeType(entry.path("nodeType").asText(""))) {
+            return "node-type";
+        }
+        List<String> aspects = AlfrescoDocumentBuilder.aspectNames(entry);
+        if (!settings.acceptsAspects(aspects)) {
+            return "aspects";
+        }
+        String name = entry.path("name").asText("");
+        if (!name.isEmpty() && excludedNamePatterns.stream().anyMatch(p -> p.matcher(name).find())) {
+            return "name-pattern";
+        }
+        // Check whether any ancestor folder is excluded (important for SEARCH / SEARCH_DELTA results)
+        for (JsonNode ancestor : entry.path("path").path("elements")) {
+            if (settings.isFolderExcluded(ancestor.path("name").asText(""), ancestor.path("id").asText(""), null)) {
+                return "excluded-folder";
+            }
+        }
+        Optional<Instant> createdAfter = settings.createdAfterInstant(now);
+        if (createdAfter.isPresent()) {
+            Instant created = AlfrescoDocumentBuilder.parseTimestamp(entry.path("createdAt").asText(""));
+            if (created != null && created.isBefore(createdAfter.get())) {
+                return "created-before";
+            }
+        }
+        Optional<Instant> modifiedAfter = settings.modifiedAfterInstant(now);
+        if (modifiedAfter.isPresent()) {
+            Instant modified = AlfrescoDocumentBuilder.parseTimestamp(entry.path("modifiedAt").asText(""));
+            if (modified != null && modified.isBefore(modifiedAfter.get())) {
+                return "modified-before";
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ Query Resolution Helpers
+
     private boolean isQueryString(String path) {
-        if (path == null || path.isBlank()) return false;
+        if (path == null || path.isBlank()) {
+            return false;
+        }
         String trimmed = path.trim();
-        String lower = trimmed.toLowerCase();
-        return lower.startsWith("select ") ||
-               lower.startsWith("afts:") ||
-               lower.startsWith("cmis:") ||
-               lower.startsWith("lucene:") ||
-               trimmed.startsWith("TYPE:") ||
-               trimmed.startsWith("PATH:") ||
-               trimmed.startsWith("ASPECT:") ||
-               trimmed.startsWith("TAG:") ||
-               trimmed.startsWith("TEXT:") ||
-               trimmed.startsWith("@");
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        return lower.startsWith("select ")
+                || lower.startsWith("afts:")
+                || lower.startsWith("cmis:")
+                || lower.startsWith("lucene:")
+                || trimmed.startsWith("TYPE:")
+                || trimmed.startsWith("PATH:")
+                || trimmed.startsWith("ASPECT:")
+                || trimmed.startsWith("TAG:")
+                || trimmed.startsWith("TEXT:")
+                || trimmed.startsWith("@");
     }
 
     record QueryInfo(String query, String language) {}
 
     private QueryInfo resolveQueryInfo(String rawQuery) {
-        if (rawQuery == null || rawQuery.isBlank() || rawQuery.equals("-root-") || rawQuery.equals("/")) {
-            return new QueryInfo(this.searchQuery, this.queryLanguage);
+        if (rawQuery == null || rawQuery.isBlank() || "-root-".equals(rawQuery) || "/".equals(rawQuery)
+                || "default".equalsIgnoreCase(rawQuery.trim())) {
+            return new QueryInfo(settings.searchQuery(), settings.queryLanguage());
         }
         String trimmed = rawQuery.trim();
-        String lower = trimmed.toLowerCase();
+        String lower = trimmed.toLowerCase(Locale.ROOT);
         if (lower.startsWith("select ")) {
             return new QueryInfo(trimmed, "cmis");
         }
@@ -360,394 +1120,42 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         if (lower.startsWith("lucene:")) {
             return new QueryInfo(trimmed.substring(7).trim(), "lucene");
         }
-        return new QueryInfo(trimmed, this.queryLanguage != null ? this.queryLanguage : "afts");
+        return new QueryInfo(trimmed, settings.queryLanguage() != null ? settings.queryLanguage() : "afts");
     }
 
-    private String resolveSearchUrl() {
-        if (url.contains("/public/alfresco/versions/1")) {
-            return url.replace("/public/alfresco/versions/1", "/public/search/versions/1/search");
-        } else if (url.endsWith("/")) {
-            return url + "search";
-        } else {
-            return url + "/search";
-        }
-    }
-
-    private void scanQuery(String query, String queryLanguage, FluxSink<RepositoryDocument> sink) throws IOException, InterruptedException {
-        String searchUrl = resolveSearchUrl();
-        int skipCount = 0;
-        boolean hasMore = true;
-
-        while (hasMore) {
-            Map<String, Object> requestBody = new HashMap<>();
-            Map<String, String> queryMap = new HashMap<>();
-            queryMap.put("language", queryLanguage);
-            queryMap.put("query", query);
-            requestBody.put("query", queryMap);
-
-            Map<String, Object> pagingMap = new HashMap<>();
-            pagingMap.put("maxItems", batchSize);
-            pagingMap.put("skipCount", skipCount);
-            requestBody.put("paging", pagingMap);
-
-            List<String> includes = new ArrayList<>(List.of("properties", "aspectNames"));
-            if (includeAcls) {
-                includes.add("permissions");
-            }
-            requestBody.put("include", includes);
-
-            String jsonBody = objectMapper.writeValueAsString(requestBody);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(searchUrl))
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .header("Authorization", authHeader)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new IOException("Alfresco search query failed (status " + response.statusCode() + "): " + response.body());
-            }
-
-            JsonNode root = objectMapper.readTree(response.body());
-            JsonNode listNode = root.path("list");
-            JsonNode entriesNode = listNode.path("entries");
-
-            if (!entriesNode.isArray() || entriesNode.isEmpty()) {
-                break;
-            }
-
-            for (JsonNode entryWrapper : entriesNode) {
-                JsonNode entry = entryWrapper.path("entry");
-                boolean isFile = entry.path("isFile").asBoolean(true);
-                if (isFile) {
-                    JsonNode contentNode = entry.path("content");
-                    String mimeType = (contentNode != null && !contentNode.isMissingNode())
-                            ? contentNode.path("mimeType").asText("")
-                            : "";
-                    if (!matchesMimeType(mimeType)) {
-                        continue;
-                    }
-                    try {
-                        RepositoryDocument doc = createDocument(entry);
-                        if (doc != null) {
-                            synchronized (sink) {
-                                sink.next(doc);
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.error("Error creating document from query result {}: {}", entry.path("id").asText(), e.getMessage());
-                    }
-                }
-            }
-
-            JsonNode paginationNode = listNode.path("pagination");
-            hasMore = paginationNode.path("hasMoreItems").asBoolean(false);
-            if (hasMore) {
-                int count = paginationNode.path("count").asInt(batchSize);
-                skipCount += count > 0 ? count : batchSize;
-            }
-        }
-    }
-
-    @SuppressWarnings("preview")
-    private void scanFolder(String nodeId, String relativePath, FluxSink<RepositoryDocument> sink) throws InterruptedException {
-        try (var scope = StructuredTaskScope.open()) {
-            int skipCount = 0;
-            boolean hasMore = true;
-
-            while (hasMore) {
-                JsonNode responseNode;
-                try {
-                    responseNode = fetchChildrenPage(nodeId, relativePath, skipCount, batchSize);
-                } catch (Exception e) {
-                    log.error("Error fetching children page for nodeId={}, relativePath={}, skipCount={}", nodeId, relativePath, skipCount, e);
-                    break;
-                }
-
-                JsonNode listNode = responseNode.path("list");
-                JsonNode entriesNode = listNode.path("entries");
-
-                if (!entriesNode.isArray() || entriesNode.isEmpty()) {
-                    break;
-                }
-
-                for (JsonNode entryWrapper : entriesNode) {
-                    JsonNode entry = entryWrapper.path("entry");
-                    String childId = entry.path("id").asText();
-                    String childName = entry.path("name").asText();
-                    boolean isFolder = entry.path("isFolder").asBoolean(false);
-                    boolean isFile = entry.path("isFile").asBoolean(false);
-
-                    if (isFolder) {
-                        if (isFolderExcluded(childName, childId)) {
-                            log.info("Skipping excluded folder '{}' (id: {})", childName, childId);
-                            continue;
-                        }
-                        if (includeSubfolders) {
-                            scope.fork(ObservabilityTask.observed(() -> {
-                                scanFolder(childId, null, sink);
-                                return null;
-                            }));
-                        } else {
-                            log.debug("Skipping subfolder '{}' because includeSubfolders is false", childName);
-                        }
-                    } else if (isFile) {
-                        try {
-                            JsonNode contentNode = entry.path("content");
-                            if (includeContentStream && (contentNode == null || contentNode.isMissingNode())) {
-                                log.debug("Skipping file node without content: {} (name: {})", childId, childName);
-                                continue;
-                            }
-
-                            String mimeType = (contentNode != null && !contentNode.isMissingNode())
-                                    ? contentNode.path("mimeType").asText("")
-                                    : "";
-                            if (!matchesMimeType(mimeType)) {
-                                log.debug("Skipping file {} with non-matching MIME type: {}", childName, mimeType);
-                                continue;
-                            }
-
-                            RepositoryDocument doc = createDocument(entry);
-                            if (doc != null) {
-                                synchronized (sink) {
-                                    sink.next(doc);
-                                }
-                            }
-                        } catch (Exception e) {
-                            log.error("Error creating document for nodeId={} (name={}): {}", childId, childName, e.getMessage());
-                        }
-                    }
-                }
-
-                JsonNode paginationNode = listNode.path("pagination");
-                hasMore = paginationNode.path("hasMoreItems").asBoolean(false);
-                if (hasMore) {
-                    int count = paginationNode.path("count").asInt(batchSize);
-                    skipCount += count > 0 ? count : batchSize;
-                }
-            }
-
-            scope.join();
-        } catch (StructuredTaskScope.FailedException e) {
-            throw new RuntimeException("Folder scan failed for nodeId=" + nodeId + (relativePath != null ? " (" + relativePath + ")" : ""), e.getCause());
-        }
-    }
-
-    private boolean isFolderExcluded(String folderName, String folderId) {
-        if (excludedFolders == null || excludedFolders.isEmpty()) return false;
-        return excludedFolders.stream().anyMatch(ex ->
-                ex.equalsIgnoreCase(folderName) ||
-                ex.equalsIgnoreCase(folderId) ||
-                folderName.toLowerCase().contains(ex.toLowerCase()));
-    }
-
-    private boolean matchesMimeType(String mimeType) {
-        if (mimeTypeFilter == null || mimeTypeFilter.isEmpty()) {
-            return true;
-        }
-        if (mimeType == null || mimeType.isBlank()) {
-            return false;
-        }
-        String target = mimeType.trim().toLowerCase();
-        for (String filter : mimeTypeFilter) {
-            String f = filter.trim().toLowerCase();
-            if (f.equals(target)) {
-                return true;
-            }
-            if (f.endsWith("/*")) {
-                String prefix = f.substring(0, f.length() - 1);
-                if (target.startsWith(prefix)) {
-                    return true;
-                }
-            }
-            if (f.startsWith("*") && f.length() > 1 && target.endsWith(f.substring(1))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private JsonNode fetchChildrenPage(String nodeId, String relativePath, int skipCount, int maxItems) throws IOException, InterruptedException {
-        StringBuilder urlBuilder = new StringBuilder(url)
-                .append("/nodes/")
-                .append(nodeId)
-                .append("/children")
-                .append("?skipCount=").append(skipCount)
-                .append("&maxItems=").append(maxItems)
-                .append("&include=properties,aspectNames");
-
-        if (includeAcls) {
-            urlBuilder.append(",permissions");
-        }
-
-        if (relativePath != null && !relativePath.isEmpty()) {
-            urlBuilder.append("&relativePath=").append(URLEncoder.encode(relativePath, StandardCharsets.UTF_8));
-        }
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(urlBuilder.toString()))
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("Authorization", authHeader)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to fetch children for node: " + nodeId + ", relativePath: " + relativePath + ". Status code: " + response.statusCode());
-        }
-
-        return objectMapper.readTree(response.body());
-    }
-
-    private InputStream getDocumentContentStream(String nodeId) throws IOException, InterruptedException {
-        String contentUrl = url + "/nodes/" + nodeId + "/content";
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(contentUrl))
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("Authorization", authHeader)
-                .GET()
-                .build();
-
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to download document content for node: " + nodeId + ", status code: " + response.statusCode());
-        }
-        return response.body();
-    }
-
-    private RepositoryDocument createDocument(JsonNode entry) throws IOException, InterruptedException {
-        String childId = entry.path("id").asText();
-        String name = entry.path("name").asText();
-        String modifiedAtStr = entry.path("modifiedAt").asText();
-        Instant modifiedAt = Instant.now();
-        if (modifiedAtStr != null && !modifiedAtStr.isEmpty()) {
-            try {
-                modifiedAt = Instant.parse(modifiedAtStr);
-            } catch (Exception ignored) {}
-        }
-
-        Map<String, List<String>> metadata = new HashMap<>();
-        metadata.put("name", List.of(name));
-        metadata.put("nodeType", List.of(entry.path("nodeType").asText()));
-        metadata.put("alfresco_node_id", List.of(childId));
-        metadata.put("alfresco_node_type", List.of(entry.path("nodeType").asText()));
-
-        if (entry.has("parentId")) {
-            metadata.put("alfresco_parent_id", List.of(entry.path("parentId").asText()));
-        }
-
-        // Content details & size verification
-        JsonNode contentNode = entry.path("content");
-        long sizeInBytes = 0;
-        if (contentNode != null && !contentNode.isMissingNode()) {
-            String mimeType = contentNode.path("mimeType").asText();
-            sizeInBytes = contentNode.path("sizeInBytes").asLong(0);
-            metadata.put("mimeType", List.of(mimeType));
-            metadata.put("sizeInBytes", List.of(String.valueOf(sizeInBytes)));
-        }
-
-        // Properties mapping
-        JsonNode propertiesNode = entry.path("properties");
-        if (propertiesNode != null && !propertiesNode.isMissingNode()) {
-            propertiesNode.properties().iterator().forEachRemaining(prop -> {
-                String propKey = prop.getKey();
-                String propValue = prop.getValue().asText();
-                if (propValue != null) {
-                    metadata.put(propKey, List.of(propValue));
-                }
-            });
-        }
-
-        // Aspects mapping
-        JsonNode aspectNames = entry.path("aspectNames");
-        if (aspectNames != null && aspectNames.isArray() && !aspectNames.isEmpty()) {
-            List<String> aspects = new ArrayList<>();
-            aspectNames.forEach(a -> aspects.add(a.asText()));
-            metadata.put("alfresco_aspects", aspects);
-        }
-
-        // Security / Zero-Trust ACL mapping
-        AlfrescoSecurityMapper.SecurityResult securityResult = includeAcls
-                ? AlfrescoSecurityMapper.mapSecurity(entry.path("permissions"))
-                : new AlfrescoSecurityMapper.SecurityResult(SecurityConfig.createPublic(), "public", List.of(), List.of(), true);
-
-        metadata.put("alfresco_is_inherited", List.of(String.valueOf(securityResult.isInherited())));
-        if (!securityResult.identityUsers().isEmpty()) {
-            metadata.put("alfresco_identity_users", List.of(String.join(",", securityResult.identityUsers())));
-        }
-        if (!securityResult.identityGroups().isEmpty()) {
-            metadata.put("alfresco_identity_groups", List.of(String.join(",", securityResult.identityGroups())));
-        }
-
-        // Binary Content Streaming
-        String contentUri = url + "/nodes/" + childId + "/content";
-        InputStream contentStream = null;
-        if (includeContentStream && contentNode != null && !contentNode.isMissingNode()) {
-            if (maxContentSizeBytes > 0 && sizeInBytes > maxContentSizeBytes) {
-                log.warn("Skipping content stream for Alfresco node '{}' ({} bytes) exceeding maxContentSizeBytes ({} bytes)",
-                        childId, sizeInBytes, maxContentSizeBytes);
-            } else {
-                try {
-                    contentStream = getDocumentContentStream(childId);
-                } catch (Exception e) {
-                    log.warn("Failed to download content stream for node {}: {}", childId, e.getMessage());
-                }
-            }
-        }
-
-        return new RepositoryDocument(
-            childId,
-            contentUri,
-            contentStream,
-            metadata,
-            securityResult.aclString(),
-            securityResult.securityConfig(),
-            modifiedAt
-        );
-    }
-
-    // ---- Discovery and dry run (#203) ----
+    // ------------------------------------------------------------------ Discovery, Dry Run & Fetch Document (#203)
 
     /** Longest query a dry run accepts. */
     static final int MAX_QUERY_LENGTH = 4000;
     /** A node reference that is not a path: a node id or an alias such as {@code -root-}. */
     private static final Pattern NODE_ID = Pattern.compile("[A-Za-z0-9-]{1,128}");
     private static final Set<String> QUERY_LANGUAGES = Set.of("afts", "cmis", "lucene");
-    private static final Set<String> PUBLIC_AUTHORITIES = Set.of("group_everyone", "guest", "role_anonymous", "everyone");
 
-    private void ensureConnected() {
-        if (httpClient == null) {
-            try {
-                connect();
-            } catch (Exception e) {
-                throw new DiscoveryException("Cannot connect to Alfresco: " + e.getMessage(), e);
-            }
+    static final String NOT_A_FOLDER_CRAWL =
+            "This connector crawls a query, not a folder tree, so a crawl cannot start from a folder.";
+
+    private AlfrescoClient ensureConnectedForDiscovery() {
+        try {
+            return ensureClient();
+        } catch (Exception e) {
+            throw new DiscoveryException("Cannot connect to Alfresco: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Lists the tree below a folder, breadth-first. The folder must be the configured root (folder, site or path)
-     * or below it, and neither it nor a folder between it and the root may be excluded; excluded folders are left
-     * out of the listing, as the crawler leaves them out. Permissions are always requested, whatever
-     * {@code include-acls} says, since the filter decides on them.
-     */
     @Override
     public DiscoveryResult explore(ExploreRequest request, VisibilityFilter filter) {
         long deadline = System.nanoTime() + request.timeout().toNanos();
-        ensureConnected();
+        AlfrescoClient activeClient = ensureConnectedForDiscovery();
         try {
             String startRef = request.start() != null ? request.start() : configuredRootRef();
-            DiscoveryNode startNode = visibleFolder(folderInScope(startRef), startRef, filter);
+            DiscoveryNode startNode = visibleFolder(folderInScope(activeClient, startRef), startRef, filter);
             Deque<DiscoveryNode> folders = new ArrayDeque<>();
             folders.add(startNode);
             List<DiscoveryNode> nodes = new ArrayList<>();
             long hidden = 0;
             TruncationReason truncation = null;
+            Instant now = Instant.now();
+
             while (!folders.isEmpty()) {
                 DiscoveryNode folder = folders.poll();
                 int skipCount = 0;
@@ -756,12 +1164,13 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
                     if (System.nanoTime() - deadline > 0) {
                         return new DiscoveryResult(nodes, hidden, TruncationReason.TIMEOUT);
                     }
-                    JsonNode list = discoveryChildren(folder.sourceId(), skipCount).path("list");
+                    JsonNode list = activeClient.listChildren(
+                            folder.sourceId(), null, skipCount, settings.batchSize(), DISCOVERY_INCLUDE).path("list");
                     List<DiscoveryNode> candidates = new ArrayList<>();
                     int entries = 0;
                     for (JsonNode wrapper : list.path("entries")) {
                         entries++;
-                        DiscoveryNode node = childNode(wrapper.path("entry"), folder.sourceId(), folder.depth() + 1);
+                        DiscoveryNode node = childNode(wrapper.path("entry"), folder.sourceId(), folder.depth() + 1, now);
                         if (node != null && (node.type() == DiscoveryNode.NodeType.FOLDER || request.includeDocuments())) {
                             candidates.add(node);
                         }
@@ -798,28 +1207,21 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
     }
 
-    /**
-     * Counts what a crawl of the scope would pick up that the filter shows, with the crawler's rules: for a folder,
-     * its files (and, with {@code include-subfolders}, its subfolders' files) that pass the MIME type filter,
-     * skipping excluded folders; for a query (AFTS, CMIS or Lucene, as the crawler takes it), every file it
-     * returns. Without a scope, the connector's configured query or root.
-     *
-     * <p>Alfresco returns permissions with search results too, so a query's count is checked item by item, like a
-     * folder's. Subfolders are walked whether or not the filter shows them, since a crawl takes their files too;
-     * samples name no folder.
-     */
     @Override
     public DryRunResult dryRun(DryRunRequest request, VisibilityFilter filter) {
         long deadline = System.nanoTime() + request.timeout().toNanos();
-        ensureConnected();
+        AlfrescoClient activeClient = ensureConnectedForDiscovery();
         String scope = request.scope();
         try {
-            if ((scope == null && crawlMode == AlfrescoCrawlMode.QUERY) || isQueryString(scope)) {
-                QueryInfo query = readOnlyQuery(scope == null ? new QueryInfo(searchQuery, queryLanguage) : resolveQueryInfo(scope));
-                return dryRunQuery(query, request, filter, deadline);
+            if ((scope == null && settings.crawlMode() == AlfrescoCrawlMode.QUERY) || isQueryString(scope)) {
+                QueryInfo query = readOnlyQuery(scope == null
+                        ? new QueryInfo(settings.searchQuery(), settings.queryLanguage())
+                        : resolveQueryInfo(scope));
+                return dryRunQuery(activeClient, query, request, filter, deadline);
             }
             String folderRef = scope != null ? scope : configuredRootRef();
-            return dryRunFolder(visibleFolder(folderInScope(folderRef), folderRef, filter), request, filter, deadline);
+            return dryRunFolder(activeClient, visibleFolder(folderInScope(activeClient, folderRef), folderRef, filter),
+                    request, filter, deadline);
         } catch (IOException e) {
             throw new DiscoveryException("Alfresco dry run failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -828,12 +1230,15 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
     }
 
-    private DryRunResult dryRunFolder(DiscoveryNode start, DryRunRequest request, VisibilityFilter filter, long deadline)
+    private DryRunResult dryRunFolder(AlfrescoClient activeClient, DiscoveryNode start, DryRunRequest request,
+                                      VisibilityFilter filter, long deadline)
             throws IOException, InterruptedException {
         Deque<String> folders = new ArrayDeque<>();
         folders.add(start.sourceId());
         Set<String> visited = new HashSet<>();
         Tally tally = new Tally(request);
+        Instant now = Instant.now();
+
         while (!folders.isEmpty()) {
             String folderId = folders.poll();
             if (!visited.add(folderId)) {
@@ -845,17 +1250,18 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
                 if (System.nanoTime() - deadline > 0) {
                     return tally.result(TruncationReason.TIMEOUT);
                 }
-                JsonNode list = discoveryChildren(folderId, skipCount).path("list");
+                JsonNode list = activeClient.listChildren(
+                        folderId, null, skipCount, settings.batchSize(), DISCOVERY_INCLUDE).path("list");
                 List<DiscoveryNode> documents = new ArrayList<>();
                 int entries = 0;
                 for (JsonNode wrapper : list.path("entries")) {
                     entries++;
-                    DiscoveryNode node = childNode(wrapper.path("entry"), null, 1);
+                    DiscoveryNode node = childNode(wrapper.path("entry"), null, 1, now);
                     if (node == null) {
                         continue;
                     }
                     if (node.type() == DiscoveryNode.NodeType.FOLDER) {
-                        if (includeSubfolders) {
+                        if (settings.includeSubfolders()) {
                             folders.add(node.sourceId());
                         }
                     } else {
@@ -872,7 +1278,8 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         return tally.result(null);
     }
 
-    private DryRunResult dryRunQuery(QueryInfo query, DryRunRequest request, VisibilityFilter filter, long deadline)
+    private DryRunResult dryRunQuery(AlfrescoClient activeClient, QueryInfo query, DryRunRequest request,
+                                     VisibilityFilter filter, long deadline)
             throws IOException, InterruptedException {
         Tally tally = new Tally(request);
         int skipCount = 0;
@@ -881,14 +1288,23 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
             if (System.nanoTime() - deadline > 0) {
                 return tally.result(TruncationReason.TIMEOUT);
             }
-            JsonNode list = discoverySearch(query, skipCount).path("list");
+            JsonNode list;
+            try {
+                list = activeClient.search(query.query(), query.language(), skipCount, settings.batchSize(),
+                        List.of("path", "permissions"), List.of()).path("list");
+            } catch (AlfrescoApiException e) {
+                if (e.statusCode() == 400) {
+                    throw new IllegalArgumentException("Alfresco did not accept the query.");
+                }
+                throw new IOException("Alfresco search returned HTTP " + e.statusCode() + ".");
+            }
             List<DiscoveryNode> documents = new ArrayList<>();
             int entries = 0;
             for (JsonNode wrapper : list.path("entries")) {
                 entries++;
                 JsonNode entry = wrapper.path("entry");
-                // A query crawl takes the files it returns, filtered only by MIME type.
-                if (entry.path("isFile").asBoolean(true) && matchesMimeType(entry.path("content").path("mimeType").asText(""))) {
+                if (entry.path("isFile").asBoolean(true)
+                        && settings.matchesMimeType(entry.path("content").path("mimeType").asText(""))) {
                     DiscoveryNode node = documentNode(entry, null, 1);
                     if (node != null) {
                         documents.add(node);
@@ -904,7 +1320,6 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         return tally.result(null);
     }
 
-    /** Counts a dry run's documents page by page against the filter and the scan limit. */
     private static final class Tally {
         private final DryRunRequest request;
         private final List<DiscoveryNode> samples = new ArrayList<>();
@@ -916,7 +1331,6 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
             this.request = request;
         }
 
-        /** @return false when the scan limit was reached */
         boolean add(List<DiscoveryNode> documents, VisibilityFilter filter) {
             boolean[] visible = VisibilityFilter.decide(filter, documents);
             for (int i = 0; i < visible.length; i++) {
@@ -942,7 +1356,6 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
     }
 
-    /** A query scope in one of the languages the Search API takes, and of bounded length. */
     static QueryInfo readOnlyQuery(QueryInfo query) {
         String language = query.language() == null ? "" : query.language().toLowerCase(Locale.ROOT);
         if (!QUERY_LANGUAGES.contains(language)) {
@@ -957,29 +1370,23 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         return new QueryInfo(query.query(), language);
     }
 
-    /** The configured root as a reference: the root folder id, the site's document library, or the root path. */
     private String configuredRootRef() {
-        if (rootFolderId != null && !rootFolderId.isBlank()) {
-            return rootFolderId;
+        if (!settings.rootFolderId().isBlank()) {
+            return settings.rootFolderId();
         }
-        if (siteId != null && !siteId.isBlank()) {
-            return "/Sites/" + siteId + "/documentLibrary";
+        if (!settings.siteIds().isEmpty()) {
+            return "/Sites/" + settings.siteIds().getFirst() + "/documentLibrary";
         }
-        return rootFolderPath == null || rootFolderPath.isBlank() ? "/" : rootFolderPath;
+        return settings.rootFolderPath() == null || settings.rootFolderPath().isBlank() ? "/" : settings.rootFolderPath();
     }
 
     private static String notFound(String reference) {
         return "No Alfresco folder '" + reference + "' in this connector's scope.";
     }
 
-    /**
-     * Reads a folder and checks that the connector may look into it: it must be the configured root or below it
-     * (by the ids of its ancestors), and neither it nor a folder between it and the root may be excluded. Every
-     * refusal reads the same, so that a caller cannot learn what exists outside its view.
-     */
-    private JsonNode folderInScope(String reference) throws IOException, InterruptedException {
-        JsonNode folder = discoveryNode(reference);
-        JsonNode root = discoveryNode(configuredRootRef());
+    private JsonNode folderInScope(AlfrescoClient activeClient, String reference) throws IOException, InterruptedException {
+        JsonNode folder = discoveryNode(activeClient, reference);
+        JsonNode root = discoveryNode(activeClient, configuredRootRef());
         if (folder == null || root == null || !folder.path("isFolder").asBoolean(false)) {
             throw new IllegalArgumentException(notFound(reference));
         }
@@ -987,35 +1394,30 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         if (!rootId.equals(folder.path("id").asText())) {
             boolean belowRoot = false;
             for (JsonNode ancestor : folder.path("path").path("elements")) {
-                if (belowRoot && isFolderExcluded(ancestor.path("name").asText(""), ancestor.path("id").asText(""))) {
+                if (belowRoot && settings.isFolderExcluded(ancestor.path("name").asText(""), ancestor.path("id").asText(""), null)) {
                     throw new IllegalArgumentException(notFound(reference));
                 }
                 if (rootId.equals(ancestor.path("id").asText())) {
                     belowRoot = true;
                 }
             }
-            if (!belowRoot || isFolderExcluded(folder.path("name").asText(""), folder.path("id").asText(""))) {
+            if (!belowRoot || settings.isFolderExcluded(
+                    folder.path("name").asText(""), folder.path("id").asText(""), AlfrescoDocumentBuilder.pathOf(folder))) {
                 throw new IllegalArgumentException(notFound(reference));
             }
         }
         return folder;
     }
 
-    /**
-     * The folder a crawl from {@code reference} would start at. Only for a connector that crawls a folder tree: one
-     * set up to crawl a query ignores the start folder in {@link #scan(String)}. The node's {@code sourceId} is the
-     * folder's node id as the repository reports it, which {@code scan} reads as a start node.
-     */
     @Override
     public DiscoveryNode crawlStart(String reference, VisibilityFilter filter) {
-        if (crawlMode == AlfrescoCrawlMode.QUERY) {
+        if (settings.crawlMode() == AlfrescoCrawlMode.QUERY) {
             throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
         }
-        ensureConnected();
+        AlfrescoClient activeClient = ensureConnectedForDiscovery();
         String folderRef = reference == null || reference.isBlank() ? configuredRootRef() : reference.strip();
         try {
-            // A query string is not a folder, so it is refused as missing; scan() only ever gets the folder's id.
-            return visibleFolder(folderInScope(folderRef), folderRef, filter);
+            return visibleFolder(folderInScope(activeClient, folderRef), folderRef, filter);
         } catch (IOException e) {
             throw new DiscoveryException("Alfresco folder lookup failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -1024,43 +1426,80 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
     }
 
-    /**
-     * Fetches a document the way a folder crawl would emit it: a file below the configured root (directly in it
-     * without {@code include-subfolders}), with no excluded folder between them, matching the MIME type filter, and
-     * shown by the filter. Only for a connector that crawls a folder tree.
-     */
     @Override
     public FetchedDocument fetchDocument(String documentId, VisibilityFilter filter) {
-        if (crawlMode == AlfrescoCrawlMode.QUERY) {
+        if (settings.crawlMode() == AlfrescoCrawlMode.QUERY) {
             throw new IllegalArgumentException(NOT_A_FOLDER_CRAWL);
         }
         String id = documentId == null ? "" : documentId.strip();
         if (!NODE_ID.matcher(id).matches()) {
             throw new IllegalArgumentException(documentNotFound(documentId));
         }
-        ensureConnected();
+        AlfrescoClient activeClient = ensureConnectedForDiscovery();
         try {
-            HttpResponse<String> response = get(url + "/nodes/" + id + "?include=path,permissions,properties,aspectNames");
-            if (response.statusCode() == 404) {
+            Optional<JsonNode> opt = activeClient.getNode(id, DISCOVERY_INCLUDE, null);
+            if (opt.isEmpty()) {
                 return new FetchedDocument.Gone(id);
             }
-            if (response.statusCode() != 200) {
-                throw new IOException("Alfresco returned HTTP " + response.statusCode() + " for node '" + id + "'.");
-            }
-            JsonNode entry = objectMapper.readTree(response.body()).path("entry");
-            JsonNode root = discoveryNode(configuredRootRef());
-            JsonNode content = entry.path("content");
+            JsonNode entry = opt.get();
+            JsonNode root = discoveryNode(activeClient, configuredRootRef());
             if (root == null || !entry.path("isFile").asBoolean(false) || !id.equals(entry.path("id").asText())
-                    || (includeContentStream && content.isMissingNode())
-                    || !matchesMimeType(content.path("mimeType").asText(""))
-                    || !crawledFrom(entry, root.path("id").asText())) {
+                    || !crawledFrom(entry, root.path("id").asText())
+                    || exclusionReason(entry, Instant.now()) != null) {
                 throw new IllegalArgumentException(documentNotFound(id));
+            }
+            List<String> tags = List.of();
+            if (settings.includeTags() || settings.filtersByTags()) {
+                tags = activeClient.listTags(id);
+                if (!settings.acceptsTags(tags)) {
+                    throw new IllegalArgumentException(documentNotFound(id));
+                }
             }
             DiscoveryNode node = documentNode(entry, entry.path("parentId").asText(null), 1);
             if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
                 throw new IllegalArgumentException(documentNotFound(id));
             }
-            return new FetchedDocument.Found(node, createDocument(entry));
+            AlfrescoSecurityMapper.SecurityResult securityResult = settings.includeAcls()
+                    ? AlfrescoSecurityMapper.mapSecurity(entry.path("permissions"), settings.securityPolicy())
+                    : new AlfrescoSecurityMapper.SecurityResult(SecurityConfig.createPublic(), "public", List.of(), List.of(), true);
+            List<String> comments = settings.includeComments() ? activeClient.listComments(id) : List.of();
+
+            JsonNode contentNode = entry.path("content");
+            long sizeInBytes = contentNode != null && !contentNode.isMissingNode()
+                    ? contentNode.path("sizeInBytes").asLong(0L) : 0L;
+            String mimeType = contentNode != null && !contentNode.isMissingNode()
+                    ? contentNode.path("mimeType").asText("") : "";
+            InputStream stream = null;
+            String effectiveRendition = null;
+            if (settings.includeContentStream() && contentNode != null && !contentNode.isMissingNode()) {
+                if (!settings.preferRendition().isBlank()) {
+                    Optional<String> rMime = activeClient.renditionMimeTypeIfCreated(id, settings.preferRendition());
+                    if (rMime.isPresent()) {
+                        try {
+                            stream = activeClient.downloadContent(id, null, settings.preferRendition(), settings.maxContentSizeBytes());
+                            if (stream != null) {
+                                effectiveRendition = settings.preferRendition();
+                                if (!rMime.get().isBlank()) {
+                                    mimeType = rMime.get();
+                                }
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+                if (stream == null && (settings.maxContentSizeBytes() == 0 || sizeInBytes <= settings.maxContentSizeBytes())) {
+                    try {
+                        stream = activeClient.downloadContent(id, null, null, settings.maxContentSizeBytes());
+                    } catch (Exception e) {
+                        log.warn("Failed to download content stream for node {}: {}", id, e.getMessage());
+                    }
+                }
+            }
+
+            RepositoryDocument doc = AlfrescoDocumentBuilder.buildDocument(
+                    settings, entry, null, false, effectiveRendition, mimeType, sizeInBytes,
+                    tags, comments, securityResult, stream);
+            return new FetchedDocument.Found(node, doc);
         } catch (IOException e) {
             throw new DiscoveryException("Alfresco document lookup failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -1069,16 +1508,12 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
     }
 
-    /**
-     * Whether a folder crawl from the root would reach the node: the root is among its ancestors, no folder below
-     * the root is excluded, and without {@code include-subfolders} its parent is the root itself.
-     */
     private boolean crawledFrom(JsonNode entry, String rootId) {
         boolean belowRoot = false;
         String parentId = null;
         for (JsonNode ancestor : entry.path("path").path("elements")) {
             String ancestorId = ancestor.path("id").asText("");
-            if (belowRoot && isFolderExcluded(ancestor.path("name").asText(""), ancestorId)) {
+            if (belowRoot && settings.isFolderExcluded(ancestor.path("name").asText(""), ancestorId, null)) {
                 return false;
             }
             if (rootId.equals(ancestorId)) {
@@ -1086,17 +1521,13 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
             }
             parentId = ancestorId;
         }
-        return belowRoot && (includeSubfolders || rootId.equals(parentId));
+        return belowRoot && (settings.includeSubfolders() || rootId.equals(parentId));
     }
 
     private static String documentNotFound(String reference) {
         return "No Alfresco document '" + reference + "' in this connector's scope.";
     }
 
-    static final String NOT_A_FOLDER_CRAWL =
-            "This connector crawls a query, not a folder tree, so a crawl cannot start from a folder.";
-
-    /** The starting folder as a node, refused as not found when the filter hides it. */
     private DiscoveryNode visibleFolder(JsonNode folder, String reference, VisibilityFilter filter) {
         DiscoveryNode node = folderNode(folder, null, 0);
         if (node == null || !VisibilityFilter.decide(filter, List.of(node))[0]) {
@@ -1118,87 +1549,30 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         return path.substring(start, end);
     }
 
-    /** A node by id or by path from the repository root, with its path and permissions; {@code null} when absent. */
-    private JsonNode discoveryNode(String reference) throws IOException, InterruptedException {
+    private JsonNode discoveryNode(AlfrescoClient activeClient, String reference) throws IOException, InterruptedException {
         String ref = reference == null ? "/" : reference.strip();
-        StringBuilder uri = new StringBuilder(url).append("/nodes/");
         if (ref.startsWith("/")) {
-            uri.append("-root-?include=path,permissions");
             String relative = withoutEdgeSlashes(ref);
-            if (!relative.isEmpty()) {
-                uri.append("&relativePath=").append(URLEncoder.encode(relative, StandardCharsets.UTF_8));
-            }
-        } else if (NODE_ID.matcher(ref).matches()) {
-            uri.append(ref).append("?include=path,permissions");
-        } else {
-            return null;
+            return activeClient.getNode("-root-", "path,permissions", relative.isEmpty() ? null : relative).orElse(null);
         }
-        HttpResponse<String> response = get(uri.toString());
-        if (response.statusCode() == 404) {
-            return null;
+        if (NODE_ID.matcher(ref).matches()) {
+            return activeClient.getNode(ref, "path,permissions", null).orElse(null);
         }
-        if (response.statusCode() != 200) {
-            throw new IOException("Alfresco returned HTTP " + response.statusCode() + " for node '" + ref + "'.");
-        }
-        return objectMapper.readTree(response.body()).path("entry");
+        return null;
     }
 
-    private JsonNode discoveryChildren(String nodeId, int skipCount) throws IOException, InterruptedException {
-        String uri = url + "/nodes/" + URLEncoder.encode(nodeId, StandardCharsets.UTF_8) + "/children?skipCount=" + skipCount
-                + "&maxItems=" + batchSize + "&include=path,permissions";
-        HttpResponse<String> response = get(uri);
-        if (response.statusCode() != 200) {
-            throw new IOException("Alfresco returned HTTP " + response.statusCode() + " listing node '" + nodeId + "'.");
-        }
-        return objectMapper.readTree(response.body());
-    }
-
-    private JsonNode discoverySearch(QueryInfo query, int skipCount) throws IOException, InterruptedException {
-        Map<String, Object> body = Map.of(
-                "query", Map.of("language", query.language(), "query", query.query()),
-                "paging", Map.of("maxItems", batchSize, "skipCount", skipCount),
-                "include", List.of("path", "permissions"));
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(resolveSearchUrl()))
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("Authorization", authHeader)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() == 400) {
-            throw new IllegalArgumentException("Alfresco did not accept the query.");
-        }
-        if (response.statusCode() != 200) {
-            throw new IOException("Alfresco search returned HTTP " + response.statusCode() + ".");
-        }
-        return objectMapper.readTree(response.body());
-    }
-
-    private HttpResponse<String> get(String uri) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(uri))
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("Authorization", authHeader)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    }
-
-    /** A child as a node, or {@code null} when the crawler would not take it. */
-    private DiscoveryNode childNode(JsonNode entry, String parentId, int depth) {
+    private DiscoveryNode childNode(JsonNode entry, String parentId, int depth, Instant now) {
         if (entry.path("isFolder").asBoolean(false)) {
-            return isFolderExcluded(entry.path("name").asText(""), entry.path("id").asText("")) ? null
+            String folderPath = AlfrescoDocumentBuilder.pathOf(entry);
+            return settings.isFolderExcluded(entry.path("name").asText(""), entry.path("id").asText(""), folderPath)
+                    ? null
                     : folderNode(entry, parentId, depth);
         }
         if (entry.path("isFile").asBoolean(false)) {
-            JsonNode content = entry.path("content");
-            if (includeContentStream && content.isMissingNode()) {
+            if (exclusionReason(entry, now) != null) {
                 return null;
             }
-            return matchesMimeType(content.path("mimeType").asText("")) ? documentNode(entry, parentId, depth) : null;
+            return documentNode(entry, parentId, depth);
         }
         return null;
     }
@@ -1208,9 +1582,10 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         if (id.isBlank()) {
             return null;
         }
-        return new DiscoveryNode("alfresco-folder:" + id, id, parentId, entry.path("name").asText(id), pathOf(entry),
+        return new DiscoveryNode("alfresco-folder:" + id, id, parentId, entry.path("name").asText(id),
+                AlfrescoDocumentBuilder.pathOf(entry),
                 DiscoveryNode.NodeType.FOLDER, depth, null, null, modifiedAt(entry), null,
-                discoverySecurity(entry.path("permissions")));
+                discoverySecurity(entry.path("permissions"), settings.securityPolicy()));
     }
 
     private DiscoveryNode documentNode(JsonNode entry, String parentId, int depth) {
@@ -1220,87 +1595,27 @@ public class AlfrescoRepositoryConnector implements DocumentFetchingRepositoryCo
         }
         JsonNode content = entry.path("content");
         String mimeType = content.path("mimeType").asText("");
-        // The crawler indexes a file under its node id.
-        return new DiscoveryNode(id, id, parentId, entry.path("name").asText(id), pathOf(entry),
+        return new DiscoveryNode(id, id, parentId, entry.path("name").asText(id),
+                AlfrescoDocumentBuilder.pathOf(entry),
                 DiscoveryNode.NodeType.DOCUMENT, depth, mimeType.isBlank() ? null : mimeType,
                 content.has("sizeInBytes") ? content.path("sizeInBytes").asLong() : null, modifiedAt(entry), null,
-                discoverySecurity(entry.path("permissions")));
+                discoverySecurity(entry.path("permissions"), settings.securityPolicy()));
     }
-
-    private static String pathOf(JsonNode entry) {
-        String parentPath = entry.path("path").path("name").asText("");
-        if (parentPath.isBlank()) {
-            return null;
-        }
-        return (parentPath.endsWith("/") ? parentPath : parentPath + "/") + entry.path("name").asText("");
-    }
-
-    /** Alfresco writes offsets without a colon ({@code 2026-11-05T10:00:00.000+0000}). */
-    private static final java.time.format.DateTimeFormatter ALFRESCO_TIME =
-            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX][XX]");
 
     static Instant modifiedAt(JsonNode entry) {
-        String value = entry.path("modifiedAt").asText("");
-        if (value.isBlank()) {
-            return null;
-        }
-        try {
-            return java.time.OffsetDateTime.parse(value, ALFRESCO_TIME).toInstant();
-        } catch (java.time.format.DateTimeParseException e) {
-            return null;
-        }
+        return AlfrescoDocumentBuilder.parseTimestamp(entry.path("modifiedAt").asText(""));
     }
 
     /**
-     * The node's effective permissions (locally set, plus inherited ones when inheritance is on), or {@code null}
-     * when Alfresco returned none or none that allow anything.
-     *
-     * <p>Missing permissions are never read as public, and a DENIED entry becomes a {@code deny} rule, so a caller
-     * Alfresco denies is not shown the node. The crawler maps permissions the same way ({@link AlfrescoSecurityMapper}),
-     * so discovery and search agree.
+     * Unified discovery security mapping: delegates directly to {@link AlfrescoSecurityMapper#mapSecurity} so search
+     * and discovery always agree by construction.
      */
     static SecurityConfig discoverySecurity(JsonNode permissions) {
-        if (permissions == null || permissions.isMissingNode() || permissions.isNull()) {
-            return null;
-        }
-        List<JsonNode> aces = new ArrayList<>();
-        permissions.path("locallySet").forEach(aces::add);
-        if (permissions.path("isInheritanceEnabled").asBoolean(true)) {
-            permissions.path("inherited").forEach(aces::add);
-        }
-        List<PermissionRule> rules = new ArrayList<>();
-        boolean allows = false;
-        for (JsonNode ace : aces) {
-            String authority = ace.path("authorityId").asText("").strip();
-            if (authority.isEmpty()) {
-                continue;
-            }
-            boolean denied = "DENIED".equalsIgnoreCase(ace.path("accessStatus").asText("ALLOWED"));
-            boolean everyone = PUBLIC_AUTHORITIES.contains(authority.toLowerCase(Locale.ROOT));
-            String type = everyone ? "public"
-                    : authority.startsWith("GROUP_") || authority.startsWith("ROLE_") ? "group" : "user";
-            String identity = everyone ? "public" : authority;
-            if (denied) {
-                // A denial of everyone denies no one in particular; it cannot be expressed as a rule.
-                if (!everyone) {
-                    rules.add(new PermissionRule(identity, type, authority, "deny"));
-                }
-            } else {
-                rules.add(new PermissionRule(identity, type, authority, accessLevel(ace.path("name").asText("Consumer"))));
-                allows = true;
-            }
-        }
-        return allows ? new SecurityConfig(permissions.path("isInheritanceEnabled").asBoolean(true), rules) : null;
+        return discoverySecurity(permissions, AlfrescoSecurityMapper.Policy.DEFAULT);
     }
 
-    private static String accessLevel(String roleName) {
-        String lower = roleName.toLowerCase(Locale.ROOT);
-        if (lower.contains("coordinator") || lower.contains("admin")) {
-            return "admin";
-        }
-        if (lower.contains("collaborator") || lower.contains("contributor") || lower.contains("editor") || lower.contains("write")) {
-            return "write";
-        }
-        return "read";
+    static SecurityConfig discoverySecurity(JsonNode permissions, AlfrescoSecurityMapper.Policy policy) {
+        AlfrescoSecurityMapper.SecurityResult res = AlfrescoSecurityMapper.mapSecurity(permissions, policy);
+        return res.aclString().isEmpty() ? null : res.securityConfig();
     }
 }
