@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.function.LongConsumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,13 +46,26 @@ public final class HostRegistry {
     private final ConcurrentHashMap<String, HostGate> gates = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CachedRules> robots = new ConcurrentHashMap<>();
     private final SimpleRobotRulesParser robotsParser = new SimpleRobotRulesParser();
+    private final LongConsumer requestStarts;
+
+    public HostRegistry() {
+        this(at -> { });
+    }
+
+    /**
+     * For tests: {@code requestStarts} receives the time (epoch millis) at which each request through a gate starts,
+     * where the politeness delay is kept, rather than when it reaches the server.
+     */
+    HostRegistry(LongConsumer requestStarts) {
+        this.requestStarts = requestStarts;
+    }
 
     public static HostRegistry shared() {
         return SHARED;
     }
 
     public HostGate gate(String host) {
-        return gates.computeIfAbsent(host.toLowerCase(Locale.ROOT), h -> new HostGate());
+        return gates.computeIfAbsent(host.toLowerCase(Locale.ROOT), h -> new HostGate(requestStarts));
     }
 
     /** A request that may throw, run while holding a host's politeness gate. */
@@ -65,7 +79,12 @@ public final class HostRegistry {
      */
     public static final class HostGate {
         private final Semaphore permit = new Semaphore(1, true);
+        private final LongConsumer requestStarts;
         private volatile long nextAllowedAt;
+
+        HostGate(LongConsumer requestStarts) {
+            this.requestStarts = requestStarts;
+        }
 
         public <T> T call(long delayMs, Request<T> request) throws Exception {
             permit.acquire();
@@ -74,7 +93,9 @@ public final class HostRegistry {
                 if (wait > 0) {
                     Thread.sleep(wait);
                 }
-                nextAllowedAt = System.currentTimeMillis() + delayMs;
+                long start = System.currentTimeMillis();
+                nextAllowedAt = start + delayMs;
+                requestStarts.accept(start);
                 return request.run();
             } finally {
                 permit.release();

@@ -56,7 +56,12 @@ class WebRepositoryConnectorTest {
     private String base;
     private final List<Request> requests = Collections.synchronizedList(new ArrayList<>());
 
-    private record Request(String method, String path, long at) {}
+    private record Request(String method, String path) {}
+
+    /** When each request started inside the politeness gate, where the delay is kept (#358). */
+    private final List<Long> requestStarts = Collections.synchronizedList(new ArrayList<>());
+    /** A registry of this test's own, so the gap tests share one politeness budget with nothing else. */
+    private final HostRegistry pacedHosts = new HostRegistry(requestStarts::add);
 
     @BeforeEach
     void startSite() throws IOException {
@@ -106,7 +111,7 @@ class WebRepositoryConnectorTest {
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
-            requests.add(new Request(exchange.getRequestMethod(), path, System.currentTimeMillis()));
+            requests.add(new Request(exchange.getRequestMethod(), path));
             Page page = site.get(path);
             respond(exchange, page != null ? page : new Page(404, "text/plain", "not found", Map.of()));
         });
@@ -172,19 +177,25 @@ class WebRepositoryConnectorTest {
 
     @Test
     void keepsThePolitenessDelayBetweenRequestsToTheSameHost() {
-        crawl(connector("job-1", Map.of("maxThreads", 8)));
-        assertMinimumGap(requests);
+        crawl(connector("job-1", Map.of("maxThreads", 8), pacedHosts));
+        // every request the server saw went through the gate (a gate call may also end without one: robots.txt
+        // already fetched by another worker or job)
+        assertThat(requestStarts).hasSizeGreaterThanOrEqualTo(requests.size());
+        assertMinimumGap(requestStarts);
     }
 
     @Test
     void sharesThePolitenessBudgetAcrossConcurrentJobs() {
         List<RepositoryDocument> docs = Flux.merge(
-                connector("job-1", Map.of()).scan(null),
-                connector("job-2", Map.of()).scan(null))
+                connector("job-1", Map.of(), pacedHosts).scan(null),
+                connector("job-2", Map.of(), pacedHosts).scan(null))
             .collectList().block(Duration.ofMinutes(1));
 
         assertThat(docs).hasSize(16);
-        assertMinimumGap(requests);
+        // every request the server saw went through the gate (a gate call may also end without one: robots.txt
+        // already fetched by another worker or job)
+        assertThat(requestStarts).hasSizeGreaterThanOrEqualTo(requests.size());
+        assertMinimumGap(requestStarts);
     }
 
     @Test
@@ -388,6 +399,10 @@ class WebRepositoryConnectorTest {
     }
 
     private WebRepositoryConnector connector(String jobId, Map<String, Object> overrides) {
+        return connector(jobId, overrides, HostRegistry.shared());
+    }
+
+    private WebRepositoryConnector connector(String jobId, Map<String, Object> overrides, HostRegistry hosts) {
         Map<String, Object> spec = new HashMap<>(Map.of(
             "seeds", List.of(base + "/"),
             "delayMs", DELAY_MS,
@@ -398,7 +413,7 @@ class WebRepositoryConnectorTest {
             "aclMode", "public",
             "confirmPublicExposure", true));
         spec.putAll(overrides);
-        return new WebRepositoryConnector(WebCrawlSettings.resolve(spec, Map.of(), key -> null, null), jobId);
+        return new WebRepositoryConnector(WebCrawlSettings.resolve(spec, Map.of(), key -> null, null), jobId, hosts);
     }
 
     private static List<RepositoryDocument> crawl(WebRepositoryConnector connector) {
@@ -413,8 +428,12 @@ class WebRepositoryConnectorTest {
         return docs.stream().map(RepositoryDocument::id).collect(Collectors.toSet());
     }
 
-    private static void assertMinimumGap(List<Request> requests) {
-        List<Long> times = requests.stream().map(Request::at).sorted().toList();
+    /**
+     * Every gap between the starts of consecutive requests is at least the delay. Measured where the connector keeps
+     * it: arrival times at the server can be a few milliseconds closer when one request is delayed on its way (#358).
+     */
+    private static void assertMinimumGap(List<Long> starts) {
+        List<Long> times = starts.stream().sorted().toList();
         assertThat(times).hasSizeGreaterThan(5);
         for (int i = 1; i < times.size(); i++) {
             // 5 ms tolerance for clock granularity
