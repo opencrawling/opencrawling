@@ -174,7 +174,7 @@
         <spring-ai.version>2.0.2</spring-ai.version>
         <tika.version>4.2.0</tika.version>
         <jackson.version>2.21.7</jackson.version>
-        <jackson-annotations.version>2.22</jackson-annotations.version>
+        <jackson-annotations.version>2.23</jackson-annotations.version>
         <tools-jackson.version>3.2.4</tools-jackson.version>
         <jsoup.version>1.24.1</jsoup.version>
         <assertj.version>3.27.7</assertj.version>
