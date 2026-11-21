@@ -37,6 +37,11 @@ public class SolrClientConfig {
 
     @Bean(destroyMethod = "close")
     public SolrClient solrClient(SolrOutputProperties properties) {
+        return client(properties);
+    }
+
+    /** A client for these settings: ZooKeeper in cloud mode, else the Solr URL; also used by per-run outputs (#319). */
+    public static SolrClient client(SolrOutputProperties properties) {
         if ("cloud".equalsIgnoreCase(properties.mode())) {
             log.info("Initializing CloudSolrClient pointing to ZooKeeper host: {}", properties.zkHost());
             List<String> zkHosts = List.of(properties.zkHost().split(","));

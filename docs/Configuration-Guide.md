@@ -70,6 +70,28 @@ OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, yo
 *   **Qdrant / Milvus**: Connects to standard cloud-native vector indexes.
 *   **Doxis 4**: Archives documents, descriptors, OIS ACLs and versions into a Doxis DMS repository via the CSB REST API; binaries are uploaded, registered in place (`predefinedLocator`) or referenced (`spring.opencrawling.output.type=doxis`).
 
+#### Per-run outputs ([#319](https://github.com/opencrawling/opencrawling/issues/319))
+
+`spring.opencrawling.output.type` picks the runtime's own output, the one its Kafka pipeline writes to. Separately, a job can name any saved output connector, and that job's runs then write there with that connector's own settings. Two runs can write to two instances of the same output type at the same time, for example two pgvector databases or two Elasticsearch clusters.
+
+*   **Every shipped output can be built per run:** pgvector, Milvus, Qdrant, Vespa, Solr, OpenSearch 2 and 3, Elasticsearch, Luxir, SeaTunnel, Alfresco, OpenArch, Doxis, Hyland CIC, Iceberg, Ozone and S3.
+*   **How it is built:** each output module provides an `OutputConnectorFactory`, found through `ServiceLoader` and matched on the connector's `className` (the fully qualified name, else the simple name). Each run gets a new connector with its own clients and connection pools, and they are closed when the run ends.
+*   **Store setup:** a per-run vector store creates its collection, index or table if it is missing, as the runtime's own output does at startup: the Milvus collection, the OpenSearch and Elasticsearch index, the Solr vector fields, the Luxir schema, the pgvector table. Its keys are the ones the admin UI saves: `milvusUri`, `opensearch2IndexName`, `elasticsearchUris`, `solrCollection`, `luxirEndpoint`, `pgVectorUrl`, `pgVectorTableName`, and so on.
+*   **Where a RAG run writes:** the pipeline writer only reaches the runtime's own destination. So a per-run vector store embeds and writes its run's documents directly, tombstones included, unless it is the runtime's output at the same destination; then the pipeline stores them once. "The same destination" is compared as each store defines it:
+    *   pgvector: the JDBC URL and table;
+    *   Milvus: the URI and collection;
+    *   Solr: the URL (ZooKeeper hosts in cloud mode) and collection;
+    *   Elasticsearch and OpenSearch: the nodes and index;
+    *   Luxir: the endpoint and collection;
+    *   Qdrant: the host, port and collection;
+    *   Vespa: the endpoint, namespace and document type.
+*   **No output named:** a job that names no output uses the runtime's output, as before.
+
+**Upgrading:**
+*   **Unknown outputs are refused.** A job that names an output whose class no factory builds no longer falls back to the runtime's output (which wrote its documents somewhere it did not ask for). It does not start, and the job API answers with the reason. A custom output connector needs an `OutputConnectorFactory`; the output archetype and `oc archetype init --type output` now generate one.
+*   **Outputs that used to fall back:** jobs that named Alfresco, OpenArch, OpenSearch, Solr, Milvus, Elasticsearch, Luxir or pgvector used to write to the runtime's output and now write to the saved connector's own target.
+*   **SeaTunnel settings:** a per-run SeaTunnel output now reads the keys the admin UI saves (`seaTunnelRestUrl`, `seaTunnelKafkaTopic`, ...). The lower-case `seatunnel...` spelling it read before is still accepted.
+
 #### Elasticsearch output (`spring.opencrawling.output.type=elasticsearch`)
 
 Writes chunks to Elasticsearch 8.x or 9.x with the official Elastic Java client (`co.elastic.clients:elasticsearch-java`, version managed by the Spring Boot BOM). The index is created on startup with a `dense_vector` mapping when it does not exist. Each chunk stores `security_allowed_read`, `security_denied_read` and normalized `security_read_keys`, so the MCP backend can pre-filter kNN candidates by ACL inside Elasticsearch; the access gate still re-checks every hit.

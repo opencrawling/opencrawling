@@ -70,11 +70,16 @@ public class MilvusStoreConfig {
                 .token(token)
                 .build();
         MilvusClientV2 client = new MilvusClientV2(connectConfig);
-        initializeCollection(client);
+        initializeCollection(client, collectionName, vectorFieldName, dimensions, indexType, metricType);
         return client;
     }
 
-    private void initializeCollection(MilvusClientV2 client) {
+    /**
+     * Creates the collection if it does not exist, with dynamic fields and an index on the vector field; used by the
+     * runtime's output and by per-run outputs (#319).
+     */
+    public static void initializeCollection(MilvusClientV2 client, String collectionName, String vectorFieldName,
+                                            int dimensions, String indexType, String metricType) {
         try {
             boolean exists = client.hasCollection(HasCollectionReq.builder()
                     .collectionName(collectionName)

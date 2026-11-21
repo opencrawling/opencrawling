@@ -194,6 +194,33 @@ public class ArchetypeCommand implements Runnable {
                 };
 
                 Files.writeString(srcPath.resolve(className + ".java"), javaContent);
+                if ("output".equals(normalizedType)) {
+                    // Job runs build their outputs through a factory (#319): without one, a job naming it won't start.
+                    Files.writeString(srcPath.resolve(className + "Factory.java"), """
+                        package %s;
+
+                        import java.util.Map;
+                        import org.opencrawling.core.connector.OutputConnector;
+                        import org.opencrawling.core.connector.OutputConnectorFactory;
+                        import org.opencrawling.core.connector.OutputContext;
+
+                        public class %sFactory implements OutputConnectorFactory {
+                            @Override
+                            public String className() {
+                                return %s.class.getName();
+                            }
+
+                            @Override
+                            public OutputConnector create(Map<String, String> configuration, OutputContext context) {
+                                return new %s();
+                            }
+                        }
+                        """.formatted(packageName, className, className, className));
+                    Path services = projectPath.resolve("src/main/resources/META-INF/services");
+                    Files.createDirectories(services);
+                    Files.writeString(services.resolve("org.opencrawling.core.connector.OutputConnectorFactory"),
+                            packageName + "." + className + "Factory\n");
+                }
 
                 System.out.println(AnsiColors.green("✔ Successfully generated connector project at: ") + projectPath.toAbsolutePath());
                 return 0;

@@ -73,6 +73,7 @@ public class LuxirOutputConnector implements OutputConnector {
     private final EmbeddingModel embeddingModel;
     private final TokenTextSplitter textSplitter;
     private final TextExtractionService textExtractionService;
+    private boolean outsidePipeline;
 
     public LuxirOutputConnector() {
         this(null, new LuxirOutputProperties(null, null, null, LuxirConstants.DEFAULT_DIMENSIONS, null, true, 0, LuxirConstants.DEFAULT_TIMEOUT_SECONDS), null, null);
@@ -83,6 +84,24 @@ public class LuxirOutputConnector implements OutputConnector {
             LuxirOutputProperties properties,
             EmbeddingModel embeddingModel) {
         this(luxirClient, properties, embeddingModel, null);
+    }
+
+    /**
+     * An output for one run (#319), with its own client.
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this collection, so a RAG run
+     *                        must send its documents here directly
+     */
+    public LuxirOutputConnector(LuxirClient luxirClient, LuxirOutputProperties properties,
+                                EmbeddingModel embeddingModel, TextExtractionService textExtractionService,
+                                boolean outsidePipeline) {
+        this(luxirClient, properties, embeddingModel, textExtractionService);
+        this.outsidePipeline = outsidePipeline;
+    }
+
+    /** The settings this connector writes with. */
+    public LuxirOutputProperties getProperties() {
+        return properties;
     }
 
     @Autowired
@@ -103,10 +122,13 @@ public class LuxirOutputConnector implements OutputConnector {
         return "LuxirOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here;
+     * except a per-run output writing where the pipeline does not (#319), which gets them directly.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
     }
 
     @Override

@@ -16,6 +16,8 @@
 package org.opencrawling.runtime.connector;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.opencrawling.cmis.CmisRepositoryConnector;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.connector.RepositoryConnector;
@@ -34,8 +36,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.opencrawling.qdrant.QdrantOutputConnector;
+import org.opencrawling.qdrant.QdrantOutputConnectorFactory;
 import org.opencrawling.qdrant.config.QdrantOutputProperties;
 import org.opencrawling.vespa.VespaOutputConnector;
+import org.opencrawling.vespa.VespaOutputConnectorFactory;
 import org.opencrawling.vespa.config.VespaOutputProperties;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -144,14 +148,141 @@ class ConnectorFactoryTest {
     // --- output ---
 
     @Test
-    void outputsThatAreNotBuiltPerJobUseTheActiveOutput() {
+    void aRunThatNamesNoOutputUsesTheRuntimesOutput() {
         assertThat(factory.output(null, PipelineMode.RAG)).isSameAs(activeOutput);
-        assertThat(factory.output(connector("PGVector_Output", "org.opencrawling.vector.VectorOutputConnector", Map.of()),
-                PipelineMode.RAG)).isSameAs(activeOutput);
-        assertThat(factory.output(connector("Milvus_Output", "org.opencrawling.milvus.MilvusOutputConnector", Map.of()),
-                PipelineMode.RAG)).isSameAs(activeOutput);
-        assertThat(factory.output(connector("custom", "com.acme.MyOutputConnector", Map.of()),
-                PipelineMode.RAG)).isSameAs(activeOutput);
+    }
+
+    @Test
+    void anOutputNoFactoryBuildsStopsTheRunInsteadOfWritingToTheRuntimesOutput() {
+        assertThatThrownBy(() -> factory.output(connector("custom", "com.acme.MyOutputConnector", Map.of()),
+                PipelineMode.RAG))
+                .isInstanceOf(ConnectorResolutionException.class)
+                .hasMessageContaining("custom")
+                .hasMessageContaining("com.acme.MyOutputConnector");
+        assertThatThrownBy(() -> factory.output(connector("blank", null, Map.of()), PipelineMode.RAG))
+                .isInstanceOf(ConnectorResolutionException.class);
+    }
+
+    /** #319: every output the runtime ships can be built for one run, with its own configuration. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "org.opencrawling.vector.VectorOutputConnector",
+            "org.opencrawling.qdrant.QdrantOutputConnector",
+            "org.opencrawling.milvus.MilvusOutputConnector",
+            "org.opencrawling.vespa.VespaOutputConnector",
+            "org.opencrawling.solr.SolrOutputConnector",
+            "org.opencrawling.opensearch2.OpenSearch2OutputConnector",
+            "org.opencrawling.opensearch3.OpenSearch3OutputConnector",
+            "org.opencrawling.elasticsearch.ElasticsearchOutputConnector",
+            "org.opencrawling.luxir.LuxirOutputConnector",
+            "org.opencrawling.seatunnel.SeaTunnelOutputConnector",
+            "org.opencrawling.hyland.cic.output.HylandCicOutputConnector",
+            "org.opencrawling.openarch.output.OpenArchOutputConnector",
+            "org.opencrawling.alfresco.output.AlfrescoOutputConnector",
+            "org.opencrawling.doxis.output.DoxisOutputConnector",
+            "org.opencrawling.iceberg.output.IcebergOutputConnector",
+            "org.opencrawling.ozone.OzoneOutputConnector",
+            "org.opencrawling.s3.S3OutputConnector"
+    })
+    void everyShippedOutputHasAFactory(String className) {
+        assertThat(factory.outputFactory(className)).as(className).hasValueSatisfying(found ->
+                assertThat(found.className()).isEqualTo(className));
+    }
+
+    @Test
+    void anOutputIsFoundByItsSimpleNameToo() {
+        assertThat(factory.outputFactory("S3OutputConnector")).hasValueSatisfying(found ->
+                assertThat(found.className()).isEqualTo("org.opencrawling.s3.S3OutputConnector"));
+        assertThat(factory.outputFactory("com.acme.S3OutputConnector"))
+                .as("a class of another package with a shipped output's simple name").isPresent();
+        assertThat(factory.outputFactory("S3")).isEmpty();
+    }
+
+    @Test
+    void theFactoryGetsTheRunsModeTheRuntimesOutputAndItsServices() {
+        org.springframework.ai.embedding.EmbeddingModel model = mock(org.springframework.ai.embedding.EmbeddingModel.class);
+        ConnectorFactory wired = new ConnectorFactory(fileSystem, activeOutput, pipelineProperties(), provider(model),
+                provider(null), provider(null));
+        List<org.opencrawling.core.connector.OutputContext> seen = new java.util.ArrayList<>();
+        Map<String, String> config = Map.of("key", "value");
+        List<Map<String, String>> configs = new java.util.ArrayList<>();
+        OutputConnector built = mock(OutputConnector.class);
+        wired.useOutputFactories(List.of(new org.opencrawling.core.connector.OutputConnectorFactory() {
+            @Override
+            public String className() {
+                return "com.acme.AcmeOutputConnector";
+            }
+
+            @Override
+            public OutputConnector create(Map<String, String> configuration,
+                                          org.opencrawling.core.connector.OutputContext context) {
+                seen.add(context);
+                configs.add(configuration);
+                return built;
+            }
+        }));
+
+        assertThat(wired.output(connector("acme", "com.acme.AcmeOutputConnector", config), PipelineMode.MIGRATION))
+                .isSameAs(built);
+        org.opencrawling.core.connector.OutputContext context = seen.getFirst();
+        assertThat(configs.getFirst()).isEqualTo(config);
+        assertThat(context.mode()).isEqualTo(PipelineMode.MIGRATION);
+        assertThat(context.pipelineOutput()).isSameAs(activeOutput);
+        assertThat(context.service(org.springframework.ai.embedding.EmbeddingModel.class)).isSameAs(model);
+        assertThat(context.service(PipelineProperties.class)).isNotNull();
+        assertThat(context.service(org.opencrawling.core.text.TextExtractionService.class)).isNull();
+        assertThat(context.service(String.class)).isNull();
+    }
+
+    @Test
+    void aFactoryThatRejectsItsConfigurationStopsTheRun() {
+        factory.useOutputFactories(List.of(new org.opencrawling.core.connector.OutputConnectorFactory() {
+            @Override
+            public String className() {
+                return "com.acme.AcmeOutputConnector";
+            }
+
+            @Override
+            public OutputConnector create(Map<String, String> configuration,
+                                          org.opencrawling.core.connector.OutputContext context) {
+                throw new IllegalArgumentException("endpoint is required");
+            }
+        }));
+
+        assertThatThrownBy(() -> factory.output(connector("acme", "com.acme.AcmeOutputConnector", Map.of()),
+                PipelineMode.RAG))
+                .isInstanceOf(ConnectorResolutionException.class)
+                .hasMessageContaining("could not be built: endpoint is required")
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void twoRunsGetTwoInstancesOfTheSameOutputEachWithItsOwnConfiguration() {
+        OutputConnector first = factory.output(connector("alfresco-a", "org.opencrawling.alfresco.output.AlfrescoOutputConnector",
+                Map.of("url", "http://alfresco-a.test/alfresco", "targetPathPrefix", "A", "aspects", "cm:titled, cm:dublincore")),
+                PipelineMode.MIGRATION);
+        OutputConnector second = factory.output(connector("alfresco-b", "org.opencrawling.alfresco.output.AlfrescoOutputConnector",
+                Map.of("url", "http://alfresco-b.test/alfresco", "targetPathPrefix", "B")), PipelineMode.MIGRATION);
+
+        assertThat(first).isNotSameAs(second).isNotSameAs(activeOutput);
+        var a = ((org.opencrawling.alfresco.output.AlfrescoOutputConnector) first).getProperties();
+        var b = ((org.opencrawling.alfresco.output.AlfrescoOutputConnector) second).getProperties();
+        assertThat(a.getUrl()).isEqualTo("http://alfresco-a.test/alfresco");
+        assertThat(a.getTargetPathPrefix()).isEqualTo("A");
+        assertThat(a.getAspects()).containsExactly("cm:titled", "cm:dublincore");
+        assertThat(b.getUrl()).isEqualTo("http://alfresco-b.test/alfresco");
+        assertThat(b.getTargetPathPrefix()).isEqualTo("B");
+        assertThat(b.getAspects()).as("unset keys keep their defaults").contains("cm:versionable");
+        assertThat(((org.opencrawling.alfresco.output.AlfrescoOutputConnector) first).getPipelineMode())
+                .isEqualTo(PipelineMode.MIGRATION);
+    }
+
+    @Test
+    void anOpenArchOutputIsBuiltPerRunWithItsOwnConfiguration() {
+        assertThat(factory.output(connector("openarch", "org.opencrawling.openarch.output.OpenArchOutputConnector",
+                Map.of("endpointUrl", "http://openarch.test:8080", "repositoryId", "archive")), PipelineMode.RAG))
+                .isInstanceOf(org.opencrawling.openarch.output.OpenArchOutputConnector.class)
+                .isNotSameAs(activeOutput);
     }
 
     @Test
@@ -178,6 +309,18 @@ class ConnectorFactoryTest {
         assertThat(((S3OutputConnector) s3).getProperties().getCustomHeaders())
                 .containsEntry("x-amz-meta-a", "1")
                 .containsEntry("x-amz-meta-b", "2");
+    }
+
+    @Test
+    void aPerRunSeaTunnelReadsTheKeysTheAdminUiSaves() {
+        OutputConnector output = factory.output(connector("SeaTunnel_Output",
+                "org.opencrawling.seatunnel.SeaTunnelOutputConnector", Map.of(
+                        "seaTunnelRestUrl", "http://seatunnel.test:5801",
+                        "seaTunnelKafkaTopic", "analytics-chunks",
+                        "seaTunnelTargetSinks", "clickhouse")), PipelineMode.RAG);
+
+        assertThat(output.writtenByPipeline(PipelineMode.RAG))
+                .as("its own topic, which the pipeline does not feed: the run sends its documents directly").isFalse();
     }
 
     @Test
@@ -278,35 +421,35 @@ class ConnectorFactoryTest {
     @Test
     void aPerJobQdrantOnARuntimeWritingAnotherStoreIsNotLeftToThePipeline() {
         // The runtime's pipeline writes pgvector (or anything but Qdrant): it would never reach the job's Qdrant.
-        assertThat(factory.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "job_kb"))).isFalse();
+        assertThat(QdrantOutputConnectorFactory.pipelineWrites(context(activeOutput), qdrant("qdrant.test", 6334, "job_kb")))
+                .isFalse();
     }
 
     @Test
     void aPerJobQdrantIsLeftToThePipelineOnlyWhenTheRuntimeWritesThatSameCollection() {
         QdrantOutputConnector active = mock(QdrantOutputConnector.class);
         when(active.getProperties()).thenReturn(qdrant("qdrant.test", 6334, "job_kb"));
-        ConnectorFactory qdrantRuntime = new ConnectorFactory(fileSystem, active, pipelineProperties());
 
-        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "job_kb"))).isTrue();
-        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6334, "other_kb"))).isFalse();
-        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.internal", 6334, "job_kb"))).isFalse();
-        assertThat(qdrantRuntime.pipelineWritesQdrant(qdrant("qdrant.test", 6335, "job_kb"))).isFalse();
+        assertThat(QdrantOutputConnectorFactory.pipelineWrites(context(active), qdrant("qdrant.test", 6334, "job_kb"))).isTrue();
+        assertThat(QdrantOutputConnectorFactory.pipelineWrites(context(active), qdrant("qdrant.test", 6334, "other_kb"))).isFalse();
+        assertThat(QdrantOutputConnectorFactory.pipelineWrites(context(active), qdrant("qdrant.internal", 6334, "job_kb"))).isFalse();
+        assertThat(QdrantOutputConnectorFactory.pipelineWrites(context(active), qdrant("qdrant.test", 6335, "job_kb"))).isFalse();
     }
 
     @Test
     void aPerJobVespaIsLeftToThePipelineOnlyWhenTheRuntimeFeedsThatSameDocumentType() {
-        assertThat(factory.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isFalse();
+        assertThat(VespaOutputConnectorFactory.pipelineWrites(context(activeOutput),
+                vespa("http://vespa.test:8080", "opencrawling_chunk"))).isFalse();
 
         VespaOutputConnector active = mock(VespaOutputConnector.class);
         when(active.getProperties()).thenReturn(vespa("http://vespa.test:8080/", "opencrawling_chunk"));
-        ConnectorFactory vespaRuntime = new ConnectorFactory(fileSystem, active, pipelineProperties());
 
         // The same endpoint, written without the trailing slash.
-        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "opencrawling_chunk"))).isTrue();
+        assertThat(VespaOutputConnectorFactory.pipelineWrites(context(active), vespa("http://vespa.test:8080", "opencrawling_chunk"))).isTrue();
         // Where a chunk lands depends on its embedding's length, unknown here: only an identical configuration is the
         // same destination (another type never loses documents; it may store them twice).
-        assertThat(vespaRuntime.pipelineWritesVespa(vespa("http://vespa.test:8080", "other_chunk"))).isFalse();
-        assertThat(vespaRuntime.pipelineWritesVespa(VespaOutputProperties.builder()
+        assertThat(VespaOutputConnectorFactory.pipelineWrites(context(active), vespa("http://vespa.test:8080", "other_chunk"))).isFalse();
+        assertThat(VespaOutputConnectorFactory.pipelineWrites(context(active), VespaOutputProperties.builder()
                 .endpoint("http://vespa.test:8080")
                 .namespace("another_namespace")
                 .build())).isFalse();
@@ -318,6 +461,93 @@ class ConnectorFactoryTest {
                 "org.opencrawling.seatunnel.SeaTunnelOutputConnector", Map.of()), PipelineMode.RAG);
 
         assertThat(output.writtenByPipeline(PipelineMode.RAG)).isTrue();
+    }
+
+    @Test
+    void theOtherVectorStoresAreLeftToThePipelineOnlyWhenTheRuntimeWritesThatSameDestination() {
+        org.opencrawling.milvus.MilvusOutputConnector milvus = mock(org.opencrawling.milvus.MilvusOutputConnector.class);
+        when(milvus.uri()).thenReturn("http://milvus.test:19530/");
+        when(milvus.collectionName()).thenReturn("kb");
+        assertThat(org.opencrawling.milvus.MilvusOutputConnectorFactory.pipelineWrites(context(milvus),
+                "http://milvus.test:19530", "kb")).isTrue();
+        assertThat(org.opencrawling.milvus.MilvusOutputConnectorFactory.pipelineWrites(context(milvus),
+                "http://milvus.test:19530", "other")).isFalse();
+        assertThat(org.opencrawling.milvus.MilvusOutputConnectorFactory.pipelineWrites(context(activeOutput),
+                "http://milvus.test:19530", "kb")).as("the runtime writes another store").isFalse();
+
+        org.opencrawling.opensearch2.OpenSearch2OutputConnector os2 = mock(org.opencrawling.opensearch2.OpenSearch2OutputConnector.class);
+        when(os2.uris()).thenReturn("http://os.test:9200");
+        when(os2.indexName()).thenReturn("kb");
+        assertThat(org.opencrawling.opensearch2.OpenSearch2OutputConnectorFactory.pipelineWrites(context(os2),
+                "http://os.test:9200", "kb")).isTrue();
+        assertThat(org.opencrawling.opensearch2.OpenSearch2OutputConnectorFactory.pipelineWrites(context(os2),
+                "http://os-b.test:9200", "kb")).isFalse();
+        assertThat(org.opencrawling.opensearch3.OpenSearch3OutputConnectorFactory.pipelineWrites(context(os2),
+                "http://os.test:9200", "kb")).as("an OpenSearch 2 writer is not an OpenSearch 3 one").isFalse();
+
+        org.opencrawling.luxir.LuxirOutputConnector luxir = mock(org.opencrawling.luxir.LuxirOutputConnector.class);
+        when(luxir.getProperties()).thenReturn(new org.opencrawling.luxir.config.LuxirOutputProperties(
+                "http://luxir.test:9400", "kb", null, 0, null, true, 0, 0));
+        assertThat(org.opencrawling.luxir.LuxirOutputConnectorFactory.pipelineWrites(context(luxir),
+                new org.opencrawling.luxir.config.LuxirOutputProperties("http://luxir.test:9400/", "kb", null, 0, null, true, 0, 0)))
+                .isTrue();
+        assertThat(org.opencrawling.luxir.LuxirOutputConnectorFactory.pipelineWrites(context(luxir),
+                new org.opencrawling.luxir.config.LuxirOutputProperties("http://luxir.test:9400", "other", null, 0, null, true, 0, 0)))
+                .isFalse();
+
+        org.opencrawling.solr.SolrOutputConnector solr = mock(org.opencrawling.solr.SolrOutputConnector.class);
+        when(solr.getProperties()).thenReturn(solr("standalone", "http://solr.test:8983/solr", "kb"));
+        assertThat(org.opencrawling.solr.SolrOutputConnectorFactory.pipelineWrites(context(solr),
+                solr("standalone", "http://solr.test:8983/solr/", "kb"))).isTrue();
+        assertThat(org.opencrawling.solr.SolrOutputConnectorFactory.pipelineWrites(context(solr),
+                solr("standalone", "http://solr.test:8983/solr", "other"))).isFalse();
+        assertThat(org.opencrawling.solr.SolrOutputConnectorFactory.pipelineWrites(context(solr),
+                solr("cloud", "http://solr.test:8983/solr", "kb"))).as("cloud mode names ZooKeeper, not the URL").isFalse();
+
+        org.opencrawling.elasticsearch.ElasticsearchOutputConnector elastic =
+                mock(org.opencrawling.elasticsearch.ElasticsearchOutputConnector.class);
+        when(elastic.getProperties()).thenReturn(elastic("http://es.test:9200", "kb"));
+        assertThat(org.opencrawling.elasticsearch.ElasticsearchOutputConnectorFactory.pipelineWrites(context(elastic),
+                elastic("http://es.test:9200", "kb"))).isTrue();
+        assertThat(org.opencrawling.elasticsearch.ElasticsearchOutputConnectorFactory.pipelineWrites(context(elastic),
+                elastic("http://es.test:9200", "other"))).isFalse();
+
+        org.opencrawling.vector.VectorOutputConnector pgvector = mock(org.opencrawling.vector.VectorOutputConnector.class);
+        when(pgvector.url()).thenReturn("jdbc:postgresql://pg.test:5432/opencrawling");
+        when(pgvector.getVectorTableName()).thenReturn("vector_store");
+        assertThat(org.opencrawling.vector.VectorOutputConnectorFactory.pipelineWrites(context(pgvector),
+                "jdbc:postgresql://pg.test:5432/opencrawling", "vector_store")).isTrue();
+        assertThat(org.opencrawling.vector.VectorOutputConnectorFactory.pipelineWrites(context(pgvector),
+                "jdbc:postgresql://pg.test:5432/opencrawling", "run_vectors")).isFalse();
+        assertThat(org.opencrawling.vector.VectorOutputConnectorFactory.pipelineWrites(context(pgvector),
+                "jdbc:postgresql://pg-b.test:5432/opencrawling", "vector_store")).isFalse();
+    }
+
+    @Test
+    void aPgvectorOutputRejectsATableNameThatIsNotAnIdentifier() {
+        assertThatThrownBy(() -> factory.output(connector("pg", "org.opencrawling.vector.VectorOutputConnector", Map.of(
+                "pgVectorUrl", "jdbc:postgresql://pg.test:5432/opencrawling",
+                "pgVectorTableName", "vector_store; DROP TABLE x")), PipelineMode.RAG))
+                .isInstanceOf(ConnectorResolutionException.class)
+                .hasMessageContaining("not a valid table name");
+        assertThatThrownBy(() -> factory.output(connector("pg", "org.opencrawling.vector.VectorOutputConnector", Map.of()),
+                PipelineMode.RAG))
+                .isInstanceOf(ConnectorResolutionException.class)
+                .hasMessageContaining("pgVectorUrl is required");
+    }
+
+    private static org.opencrawling.core.connector.OutputContext context(OutputConnector pipelineOutput) {
+        return new org.opencrawling.core.connector.OutputContext(PipelineMode.RAG, pipelineOutput, null);
+    }
+
+    private static org.opencrawling.solr.config.SolrOutputProperties solr(String mode, String url, String collection) {
+        return new org.opencrawling.solr.config.SolrOutputProperties(mode, url, "zk.test:2181", collection, 0, null, null,
+                null, 0, 0, 0, 0, null, null);
+    }
+
+    private static org.opencrawling.elasticsearch.config.ElasticsearchOutputProperties elastic(String uris, String index) {
+        return new org.opencrawling.elasticsearch.config.ElasticsearchOutputProperties(uris, "elastic", "", "", index,
+                1024, null, null, 500, true, 8, null);
     }
 
     private static QdrantOutputProperties qdrant(String host, int port, String collection) {

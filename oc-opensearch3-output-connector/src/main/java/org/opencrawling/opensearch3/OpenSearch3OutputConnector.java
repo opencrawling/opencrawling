@@ -71,6 +71,8 @@ public class OpenSearch3OutputConnector implements OutputConnector {
 
     private OpenSearchClient client;
     private final EmbeddingModel embeddingModel;
+    private boolean outsidePipeline;
+    private boolean ownsClient;
 
     @Autowired
     public OpenSearch3OutputConnector(
@@ -87,6 +89,33 @@ public class OpenSearch3OutputConnector implements OutputConnector {
             OpenSearchClient client,
             EmbeddingModel embeddingModel) {
         this(client, embeddingModel, null);
+    }
+
+    /**
+     * An output for one run (#319), writing to its own index.
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this index, so a RAG run must
+     *                        send its documents here directly
+     */
+    public OpenSearch3OutputConnector(OpenSearchClient client, String uris, String indexName, int dimensions,
+                                      EmbeddingModel embeddingModel, TextExtractionService textExtractionService,
+                                      boolean outsidePipeline) {
+        this(client, embeddingModel, textExtractionService);
+        this.uris = uris;
+        this.indexName = indexName;
+        this.dimensions = dimensions;
+        this.outsidePipeline = outsidePipeline;
+        this.ownsClient = true;
+    }
+
+    /** The server this connector writes to. */
+    public String uris() {
+        return uris;
+    }
+
+    /** The index this connector writes to. */
+    public String indexName() {
+        return indexName;
     }
 
     private synchronized OpenSearchClient getOrInitClient() {
@@ -117,10 +146,13 @@ public class OpenSearch3OutputConnector implements OutputConnector {
         return "OpenSearch3OutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here;
+     * except a per-run output writing where the pipeline does not (#319), which gets them directly.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
     }
 
     @Override
@@ -130,6 +162,10 @@ public class OpenSearch3OutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
+        // A per-run output built its own client; the runtime's output shares the client bean.
+        if (ownsClient && client != null) {
+            client._transport().close();
+        }
         client = null;
     }
 
