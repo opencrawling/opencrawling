@@ -153,6 +153,40 @@ class ConnectorFactoryTest {
     }
 
     @Test
+    void aBuiltInOutputWithItsPlaceholderSettingsStillMeansTheRuntimesOutput() {
+        // Default_Job names PGVector_Output, whose seed points at 127.0.0.1: before #319 it meant the runtime's output.
+        List<ConnectorDTO> seeds = org.opencrawling.runtime.api.ConnectorController.defaultConnectors().stream()
+                .filter(c -> "output".equals(c.type()) && ConnectorFactory.untouchedSeed(c)).toList();
+
+        assertThat(seeds).extracting(ConnectorDTO::name).contains("PGVector_Output", "Milvus_Output",
+                "Elasticsearch_Output", "Solr_Output", "Alfresco_Migration_Output", "OpenArch_Output");
+        for (ConnectorDTO seed : seeds) {
+            // As read back from the store: same name in another case, settings in another map.
+            ConnectorDTO stored = connector(seed.name().toLowerCase(), seed.className(), new HashMap<>(seed.configuration()));
+            assertThat(factory.output(stored, PipelineMode.RAG)).as(seed.name()).isSameAs(activeOutput);
+        }
+        assertThat(org.opencrawling.runtime.api.ConnectorController.defaultConnectors().stream()
+                .filter(c -> "Qdrant_Output".equals(c.name())).findFirst().map(ConnectorFactory::untouchedSeed))
+                .as("outputs built per run before #319 stay built per run").contains(false);
+    }
+
+    @Test
+    void aBuiltInOutputSomeoneEditedOrCopiedIsBuiltForTheRun() {
+        ConnectorDTO seed = org.opencrawling.runtime.api.ConnectorController.defaultConnectors().stream()
+                .filter(c -> "PGVector_Output".equals(c.name())).findFirst().orElseThrow();
+        Map<String, String> edited = new HashMap<>(seed.configuration());
+        edited.put("pgVectorTableName", "vector_store; DROP TABLE x");
+
+        assertThatThrownBy(() -> factory.output(connector(seed.name(), seed.className(), edited), PipelineMode.RAG))
+                .as("edited: its factory builds it, and rejects this table name")
+                .isInstanceOf(ConnectorResolutionException.class).hasMessageContaining("not a valid table name");
+        ConnectorDTO alfresco = org.opencrawling.runtime.api.ConnectorController.defaultConnectors().stream()
+                .filter(c -> "Alfresco_Migration_Output".equals(c.name())).findFirst().orElseThrow();
+        assertThat(factory.output(connector("My_Alfresco", alfresco.className(), alfresco.configuration()), PipelineMode.RAG))
+                .as("the same settings saved under another name").isNotSameAs(activeOutput);
+    }
+
+    @Test
     void anOutputNoFactoryBuildsStopsTheRunInsteadOfWritingToTheRuntimesOutput() {
         assertThatThrownBy(() -> factory.output(connector("custom", "com.acme.MyOutputConnector", Map.of()),
                 PipelineMode.RAG))

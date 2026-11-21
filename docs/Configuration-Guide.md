@@ -86,10 +86,11 @@ OpenCrawling uses a Service Provider Interface (SPI) structure. To run a job, yo
     *   Qdrant: the host, port and collection;
     *   Vespa: the endpoint, namespace and document type.
 *   **No output named:** a job that names no output uses the runtime's output, as before.
+*   **Built-in outputs with their placeholder settings:** the output connectors every installation starts with (`PGVector_Output`, `Milvus_Output`, `Elasticsearch_Output`, ...) carry placeholder settings such as a database on `127.0.0.1`. For the outputs listed under "Outputs that used to fall back" below, a job naming one whose settings are still the built-in ones uses the runtime's output, as before; `Default_Job` relies on this. Once its settings are edited, or the same settings are saved under another name, it is built for the run.
 
 **Upgrading:**
 *   **Unknown outputs are refused.** A job that names an output whose class no factory builds no longer falls back to the runtime's output (which wrote its documents somewhere it did not ask for). It does not start, and the job API answers with the reason. A custom output connector needs an `OutputConnectorFactory`; the output archetype and `oc archetype init --type output` now generate one.
-*   **Outputs that used to fall back:** jobs that named Alfresco, OpenArch, OpenSearch, Solr, Milvus, Elasticsearch, Luxir or pgvector used to write to the runtime's output and now write to the saved connector's own target.
+*   **Outputs that used to fall back:** jobs that named Alfresco, OpenArch, OpenSearch, Solr, Milvus, Elasticsearch, Luxir or pgvector used to write to the runtime's output and now write to the saved connector's own target. The built-in connector of each, while its settings are unchanged, still means the runtime's output.
 *   **SeaTunnel settings:** a per-run SeaTunnel output now reads the keys the admin UI saves (`seaTunnelRestUrl`, `seaTunnelKafkaTopic`, ...). The lower-case `seatunnel...` spelling it read before is still accepted.
 
 #### Elasticsearch output (`spring.opencrawling.output.type=elasticsearch`)

@@ -22,6 +22,7 @@ import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.filesystem.FileSystemRepositoryConnector;
+import org.opencrawling.runtime.api.ConnectorController;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,8 +37,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
  * Builds the repository and output connectors of a job from their saved configuration ({@code connectors.json}).
@@ -158,7 +161,7 @@ public class ConnectorFactory {
      * @throws ConnectorResolutionException when no factory builds the output, or its configuration is rejected
      */
     public OutputConnector output(ConnectorDTO connector, PipelineMode mode) {
-        if (connector == null) {
+        if (connector == null || untouchedSeed(connector)) {
             return activeOutputConnector;
         }
         OutputConnectorFactory factory = outputFactory(connector.className()).orElseThrow(() ->
@@ -171,6 +174,35 @@ public class ConnectorFactory {
             throw new ConnectorResolutionException("Output connector '" + connector.name() + "' could not be built: "
                     + e.getMessage(), e);
         }
+    }
+
+    /**
+     * The outputs a job used to share with the runtime before #319: their built-in connectors carry placeholder
+     * settings (such as a database on 127.0.0.1) and stood for the runtime's own output, which {@code Default_Job} relies on.
+     */
+    private static final Set<String> RUNTIME_STAND_INS = Set.of(
+            "org.opencrawling.vector.VectorOutputConnector",
+            "org.opencrawling.milvus.MilvusOutputConnector",
+            "org.opencrawling.opensearch2.OpenSearch2OutputConnector",
+            "org.opencrawling.opensearch3.OpenSearch3OutputConnector",
+            "org.opencrawling.elasticsearch.ElasticsearchOutputConnector",
+            "org.opencrawling.solr.SolrOutputConnector",
+            "org.opencrawling.luxir.LuxirOutputConnector",
+            "org.opencrawling.alfresco.output.AlfrescoOutputConnector",
+            "org.opencrawling.openarch.output.OpenArchOutputConnector");
+
+    /**
+     * A built-in output of one of {@link #RUNTIME_STAND_INS} whose settings nobody changed still means the runtime's
+     * own output, as before #319. Once it is edited, or saved under another name, it is built for the run.
+     */
+    static boolean untouchedSeed(ConnectorDTO connector) {
+        if (connector.className() == null || !RUNTIME_STAND_INS.contains(connector.className().trim())) {
+            return false;
+        }
+        Map<String, String> config = connector.configuration() != null ? connector.configuration() : Map.of();
+        return ConnectorController.defaultConnectors().stream().anyMatch(seed -> seed.name().equalsIgnoreCase(connector.name())
+                && seed.className().equals(connector.className().trim())
+                && Objects.equals(seed.configuration() != null ? seed.configuration() : Map.of(), config));
     }
 
     /** The factory that builds outputs of this class: the fully qualified name, else the simple name. */

@@ -69,7 +69,27 @@ public class ConnectorController {
         this.checkerService = checkerService;
         this.controlPlaneStore = controlPlaneStore;
 
-        // Initial mock data defaults
+        this.defaultConnectors = defaultConnectors();
+        controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaultConnectors); // saves or imports them on the first start
+
+        // Dynamically discover SPI connectors loaded via plugin classloaders
+        try {
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>())));
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>())));
+            java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn ->
+                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>())));
+        } catch (Throwable t) {
+            System.err.println("Notice: Dynamic SPI Connector discovery skipped: " + t.getMessage());
+        }
+    }
+
+    /**
+     * The built-in connectors, saved on the first start. Their settings are placeholders: a job that names an output
+     * among them whose settings are still these uses the runtime's own output (#319).
+     */
+    public static List<ConnectorDTO> defaultConnectors() {
         List<ConnectorDTO> defaults = new ArrayList<>();
         defaults.add(new ConnectorDTO("FileSystem_Local", "Local File System", "repository", "org.opencrawling.crawler.connectors.filesystem.FileConnector", 10, new HashMap<>()));
         defaults.add(new ConnectorDTO("Alfresco_Content_Services", "Alfresco Repository", "repository", "org.opencrawling.alfresco.AlfrescoRepositoryConnector", 10, Map.ofEntries(
@@ -562,20 +582,7 @@ public class ConnectorController {
         defaults.add(new ConnectorDTO("Ollama_Embedding_Default", "Local Ollama Embeddings using mxbai-embed-large", "transformation", "org.opencrawling.embedding.OllamaEmbeddingConnector", 10, Map.of("baseUrl", "http://localhost:11434", "engine", "ollama", "model", "mxbai-embed-large")));
         defaults.add(new ConnectorDTO("OpenAI_Embedding_Prod", "Production OpenAI Embeddings", "transformation", "org.opencrawling.embedding.OpenAIEmbeddingConnector", 10, Map.of("engine", "openai", "model", "text-embedding-3-small", "apiKey", "sk-placeholder")));
         
-        this.defaultConnectors = List.copyOf(defaults);
-        controlPlaneStore.loadList("connectors.json", ConnectorDTO.class, defaultConnectors); // saves or imports them on the first start
-
-        // Dynamically discover SPI connectors loaded via plugin classloaders
-        try {
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.RepositoryConnector.class).forEach(conn ->
-                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Repository Connector)", "repository", conn.getClass().getName(), 10, new HashMap<>())));
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.OutputConnector.class).forEach(conn ->
-                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Output Connector)", "output", conn.getClass().getName(), 10, new HashMap<>())));
-            java.util.ServiceLoader.load(org.opencrawling.core.connector.TransformationConnector.class).forEach(conn ->
-                    discoveredConnectors.add(new ConnectorDTO(conn.getName(), conn.getName() + " (Dynamic Transformation Connector)", "transformation", conn.getClass().getName(), 10, new HashMap<>())));
-        } catch (Throwable t) {
-            System.err.println("Notice: Dynamic SPI Connector discovery skipped: " + t.getMessage());
-        }
+        return List.copyOf(defaults);
     }
 
     /**
