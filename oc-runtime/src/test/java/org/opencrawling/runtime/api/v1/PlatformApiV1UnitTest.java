@@ -265,7 +265,8 @@ class PlatformApiV1UnitTest {
     @Test
     void secretsAreRecognisedByNameAndInsideUrls() {
         for (String key : List.of("password", "dbPassword", "apiKey", "qdrantApiKey", "token", "sessionToken", "clientSecret",
-                "s3SecretAccessKey", "secretKey", "vespaTlsPrivateKey", "connectionString", "customHeaders", "Authorization")) {
+                "s3SecretAccessKey", "secretKey", "vespaTlsPrivateKey", "connectionString", "customHeaders", "Authorization",
+                "serviceAccountJson", "service_account_json", "refreshToken")) {
             assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret(key)).as(key).isTrue();
         }
         assertThat(org.opencrawling.runtime.api.v1.model.ConnectorResource.isSecret("sessionTicket")).isTrue();

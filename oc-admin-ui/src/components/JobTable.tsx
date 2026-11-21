@@ -186,6 +186,9 @@ const getConnectorIconInfo = (className: string) => {
   if (className.toLowerCase().includes('s3') && !className.toLowerCase().includes('opensearch')) {
     return { icon: Cloud, color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-500/20' }
   }
+  if (className.includes('GoogleDrive') || className.toLowerCase().includes('googledrive')) {
+    return { icon: FolderOpen, color: 'text-sky-400', bg: 'bg-sky-400/10', border: 'border-sky-500/20' }
+  }
   return null;
 }
 
@@ -427,6 +430,12 @@ export default function JobTable({ setActiveView }: JobTableProps) {
           label: 'Root Folder Path',
           placeholder: 'e.g. default, or /Specs/2026',
           description: 'Use default for the connector configuration. A folder path runs a one-off (non-incremental) tree crawl of that folder in every selected library.'
+        };
+      case 'org.opencrawling.googledrive.GoogleDriveRepositoryConnector':
+        return {
+          label: 'Folder ID Scope Override',
+          placeholder: 'e.g. default, or a Google Drive folder ID',
+          description: 'Use default for the connector configuration (including Changes API incremental state and configured folder IDs). A specific folder ID runs a one-off non-incremental tree crawl of that folder.'
         };
       case 'org.opencrawling.doxis.DoxisRepositoryConnector':
         return {

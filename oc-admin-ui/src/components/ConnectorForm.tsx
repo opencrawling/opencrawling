@@ -293,6 +293,8 @@ export default function ConnectorForm() {
   const solrMode = watch('configuration.solrMode') || 'standalone'
   const doxisAuthType = watch('configuration.authType') || 'basic'
   const sharePointCrawlMode = watch('configuration.crawlMode') || 'delta'
+  const googleDriveAuthType = watch('configuration.authType') || 'service_account'
+  const googleDriveCrawlMode = watch('configuration.crawlMode') || 'changes'
   const mfilesAuthType = watch('configuration.authType') || 'token'
   const mfilesCrawlMode = watch('configuration.crawlMode') || 'search'
   const filenetAuthType = watch('configuration.authType') || 'basic'
@@ -444,6 +446,7 @@ export default function ConnectorForm() {
       { label: 'OASIS CMIS Repository (1.0 / 1.1)', value: 'org.opencrawling.cmis.CmisRepositoryConnector' },
       { label: 'Doxis Repository (Intelligent Content Automation)', value: 'org.opencrawling.doxis.DoxisRepositoryConnector' },
       { label: 'Microsoft SharePoint (Microsoft Graph API)', value: 'org.opencrawling.sharepoint.SharePointRepositoryConnector' },
+      { label: 'Google Drive (Google Workspace & Shared Drives)', value: 'org.opencrawling.googledrive.GoogleDriveRepositoryConnector' },
       { label: 'M-Files Repository (Knowledge Work Automation)', value: 'org.opencrawling.mfiles.MFilesRepositoryConnector' },
       { label: 'IBM FileNet P8 (Content Platform Engine)', value: 'org.opencrawling.filenet.FileNetRepositoryConnector' },
       { label: 'OpenText Documentum (REST Services)', value: 'org.opencrawling.documentum.DocumentumRepositoryConnector' },
@@ -2603,6 +2606,362 @@ export default function ConnectorForm() {
                           {...register('configuration.authorityUrl')}
                           placeholder="https://login.microsoftonline.com"
                           defaultValue="https://login.microsoftonline.com"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Google Drive (Google Workspace & Shared Drives) */}
+                  {selectedClass === 'org.opencrawling.googledrive.GoogleDriveRepositoryConnector' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div role="note" className="col-span-2 flex items-start gap-3 rounded-md border border-sky-500/20 bg-sky-400/10 px-3 py-2 text-sm">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
+                        <p>
+                          <span className="font-medium">Google Drive API v3 (Read-Only).</span>{' '}
+                          Uses a Google Cloud Service Account with the <code className="font-mono">drive.readonly</code> scope
+                          (Domain-Wide Delegation is optional, never required) or an OAuth2 refresh token. Leave State File
+                          empty to keep the Changes API page token in OpenCrawling&apos;s shared control plane across replicas.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Authentication Type</label>
+                        <select
+                          {...register('configuration.authType')}
+                          defaultValue="service_account"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="service_account">Service Account JSON (Recommended)</option>
+                          <option value="oauth2">OAuth2 Refresh Token</option>
+                          <option value="bearer">Static Bearer Access Token</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Crawl Mode</label>
+                        <select
+                          {...register('configuration.crawlMode')}
+                          defaultValue="changes"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="changes">Changes API (Incremental + Periodic Reconciliation)</option>
+                          <option value="tree">Folder Tree Traversal</option>
+                        </select>
+                      </div>
+                      {googleDriveAuthType === 'service_account' && (
+                        <>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">Service Account JSON (Inline JSON or Key File Path)</label>
+                            <textarea
+                              rows={4}
+                              {...register('configuration.serviceAccountJson')}
+                              placeholder='{"type":"service_account","client_email":"...","private_key":"-----BEGIN PRIVATE KEY-----\n..."} or /secrets/gcp-sa.json'
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Delegated User Email (Optional DWD)</label>
+                            <input
+                              {...register('configuration.delegatedUser')}
+                              placeholder="Optional (sub claim for Domain-Wide Delegation)"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">OAuth2 Scope</label>
+                            <input
+                              {...register('configuration.scope')}
+                              placeholder="https://www.googleapis.com/auth/drive.readonly"
+                              defaultValue="https://www.googleapis.com/auth/drive.readonly"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        </>
+                      )}
+                      {googleDriveAuthType === 'oauth2' && (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">OAuth2 Client ID</label>
+                            <input
+                              {...register('configuration.clientId')}
+                              placeholder="1234567890.apps.googleusercontent.com"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">OAuth2 Client Secret</label>
+                            <input
+                              type="password"
+                              {...register('configuration.clientSecret')}
+                              placeholder=""
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2 col-span-2">
+                            <label className="text-sm font-medium">OAuth2 Refresh Token</label>
+                            <input
+                              type="password"
+                              {...register('configuration.refreshToken')}
+                              placeholder=""
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        </>
+                      )}
+                      {googleDriveAuthType === 'bearer' && (
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-sm font-medium">Bearer Access Token</label>
+                          <input
+                            type="password"
+                            {...register('configuration.accessToken')}
+                            placeholder="ya29...."
+                            className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                          />
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Shared Drive ID (Optional)</label>
+                        <input
+                          {...register('configuration.driveId')}
+                          placeholder="Leave empty for My Drive, or enter 0AO..."
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Root Folder ID</label>
+                        <input
+                          {...register('configuration.rootFolderId')}
+                          placeholder="root or folder ID"
+                          defaultValue="root"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Root Folder IDs (Optional Multi-Folder Scope, Comma-Separated)</label>
+                        <input
+                          {...register('configuration.rootFolderIds')}
+                          placeholder="e.g. 1FolderProcedures,1FolderManuals"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <label className="text-sm font-medium">Excluded MIME Types (Comma-Separated)</label>
+                        <input
+                          {...register('configuration.excludedMimeTypes')}
+                          placeholder="application/vnd.google-apps.spreadsheet,application/vnd.google-apps.form"
+                          defaultValue="application/vnd.google-apps.spreadsheet,application/vnd.google-apps.form"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Google Docs Export Format</label>
+                        <select
+                          {...register('configuration.exportDocMimeType')}
+                          defaultValue="text/html"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="text/html">HTML (text/html — preserves headings)</option>
+                          <option value="application/pdf">PDF (application/pdf)</option>
+                          <option value="application/vnd.openxmlformats-officedocument.wordprocessingml.document">DOCX (Word)</option>
+                          <option value="text/plain">Plain Text (text/plain)</option>
+                          <option value="text/markdown">Markdown (text/markdown)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Google Slides Export Format</label>
+                        <select
+                          {...register('configuration.exportSlidesMimeType')}
+                          defaultValue="text/plain"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+                        >
+                          <option value="text/plain">Plain Text (text/plain)</option>
+                          <option value="application/pdf">PDF (application/pdf)</option>
+                          <option value="application/vnd.openxmlformats-officedocument.presentationml.presentation">PPTX (PowerPoint)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Google Sheets Export Format (When Not Excluded)</label>
+                        <input
+                          {...register('configuration.exportSheetMimeType')}
+                          defaultValue="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Google Drawings Export Format</label>
+                        <input
+                          {...register('configuration.exportDrawingMimeType')}
+                          defaultValue="application/pdf"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      {googleDriveCrawlMode === 'changes' && (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Periodic Full Reconciliation Interval</label>
+                            <input
+                              {...register('configuration.fullScanInterval')}
+                              placeholder="e.g. P7D or PT24H (empty = disabled)"
+                              defaultValue="P7D"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Full Reconciliation Window (Optional)</label>
+                            <input
+                              {...register('configuration.fullScanWindow')}
+                              placeholder="e.g. 01:00-05:00"
+                              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                            />
+                          </div>
+                        </>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Max File Size (Bytes)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.maxFileSizeBytes')}
+                          placeholder="52428800"
+                          defaultValue={52428800}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Page Size (1–1000)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.pageSize')}
+                          placeholder="100"
+                          defaultValue={100}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Parallelism</label>
+                        <input
+                          type="number"
+                          {...register('configuration.parallelism')}
+                          placeholder="4"
+                          defaultValue={4}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeout (Seconds)</label>
+                        <input
+                          type="number"
+                          {...register('configuration.timeoutSeconds')}
+                          placeholder="30"
+                          defaultValue={30}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeSubfoldersGoogleDrive"
+                          {...register('configuration.includeSubfolders')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSubfoldersGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Include Subfolders
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeSharedDrivesGoogleDrive"
+                          {...register('configuration.includeSharedDrives')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeSharedDrivesGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Include Shared Drives (supportsAllDrives)
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="exportGoogleDocsGoogleDrive"
+                          {...register('configuration.exportGoogleDocs')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="exportGoogleDocsGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Export Native Google Docs / Slides / Drawings
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeCustomPropertiesGoogleDrive"
+                          {...register('configuration.includeCustomProperties')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeCustomPropertiesGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Include Custom Drive Properties
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="includeAclsGoogleDrive"
+                          {...register('configuration.includeAcls')}
+                          defaultChecked={true}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="includeAclsGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Include Google Workspace Permissions &amp; ACLs
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="allowAnyonePublicGoogleDrive"
+                          {...register('configuration.allowAnyonePublic')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="allowAnyonePublicGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Allow &ldquo;Anyone&rdquo; Sharing Links as Public
+                        </label>
+                      </div>
+                      <div className="space-y-2 flex items-center gap-2 pt-4">
+                        <input
+                          type="checkbox"
+                          id="followShortcutsGoogleDrive"
+                          {...register('configuration.followShortcuts')}
+                          defaultChecked={false}
+                          className="rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <label htmlFor="followShortcutsGoogleDrive" className="text-sm font-medium cursor-pointer">
+                          Follow Drive Shortcuts
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Local State File Override (Optional)</label>
+                        <input
+                          {...register('configuration.stateFile')}
+                          placeholder="Leave empty to use shared Control Plane store"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Drive API Base URL (Overridable for Mock Testing)</label>
+                        <input
+                          {...register('configuration.apiBaseUrl')}
+                          placeholder="https://www.googleapis.com/drive/v3"
+                          defaultValue="https://www.googleapis.com/drive/v3"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">OAuth2 Token URL</label>
+                        <input
+                          {...register('configuration.tokenUrl')}
+                          placeholder="https://oauth2.googleapis.com/token"
+                          defaultValue="https://oauth2.googleapis.com/token"
                           className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none font-mono"
                         />
                       </div>

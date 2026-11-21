@@ -36,6 +36,7 @@ class ConnectorKindTest {
             "custom.cmisConnector, CMIS",
             "org.opencrawling.doxis.DoxisRepositoryConnector, DOXIS",
             "org.opencrawling.sharepoint.SharePointRepositoryConnector, SHAREPOINT",
+            "org.opencrawling.googledrive.GoogleDriveRepositoryConnector, GOOGLE_DRIVE",
             "org.opencrawling.mfiles.MFilesRepositoryConnector, MFILES",
             "org.opencrawling.filenet.FileNetRepositoryConnector, FILENET",
             "org.opencrawling.documentum.DocumentumRepositoryConnector, DOCUMENTUM",

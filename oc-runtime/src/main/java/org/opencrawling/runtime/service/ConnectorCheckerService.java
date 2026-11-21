@@ -163,6 +163,11 @@ public class ConnectorCheckerService {
                 return checkSharePointRepository(config);
             }
 
+            // --- Google Drive Repository Connector ---
+            if (className.contains("GoogleDriveRepositoryConnector") || className.contains("GoogleDrive") || className.contains("googledrive")) {
+                return checkGoogleDriveRepository(config);
+            }
+
             // --- M-Files Repository Connector ---
             if (className.contains("MFilesRepositoryConnector")) {
                 return checkMFilesRepository(config);
@@ -978,6 +983,55 @@ public class ConnectorCheckerService {
             }
             return new ConnectionCheckResult(false, "Failed to connect to Documentum at " + settings.url() + ": "
                     + e.getMessage() + " " + DocumentumRepositoryConnector.LICENCE_NOTICE, e.toString());
+        }
+    }
+
+    private ConnectionCheckResult checkGoogleDriveRepository(Map<String, String> config) {
+        org.opencrawling.googledrive.GoogleDriveProperties settings =
+                org.opencrawling.googledrive.GoogleDriveProperties.fromConfiguration(withNoRetries(config));
+        List<String> problems = settings.validate();
+        if (!problems.isEmpty()) {
+            return new ConnectionCheckResult(false,
+                    "Google Drive repository connector is not configured: " + String.join(" ", problems), null);
+        }
+        try (org.opencrawling.googledrive.GoogleDriveClient client =
+                     new org.opencrawling.googledrive.GoogleDriveClient(settings)) {
+            JsonNode about = client.getAbout();
+            String user = about.path("user").path("emailAddress").asText(
+                    about.path("user").path("displayName").asText("authenticated principal"));
+            com.fasterxml.jackson.databind.node.ObjectNode summary =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            summary.put("user", user);
+            summary.put("authType", settings.authType().name());
+            summary.put("crawlMode", settings.crawlMode().name());
+            if (settings.hasDriveId()) {
+                JsonNode drive = client.getDrive(settings.driveId().strip());
+                summary.put("driveId", drive.path("id").asText(settings.driveId().strip()));
+                summary.put("driveName", drive.path("name").asText(settings.driveId().strip()));
+            }
+            for (String rootId : settings.effectiveRootFolderIds()) {
+                if (!"root".equalsIgnoreCase(rootId) && !rootId.equals(settings.driveId())) {
+                    if (client.getFile(rootId).isEmpty()) {
+                        return new ConnectionCheckResult(false,
+                                "Google Drive root folder '" + rootId + "' was not found or is inaccessible.",
+                                summary.toString());
+                    }
+                }
+            }
+            String driveNote = summary.has("driveName")
+                    ? " (Shared Drive '" + summary.path("driveName").asText() + "')"
+                    : "";
+            return new ConnectionCheckResult(true,
+                    "Successfully authenticated to Google Drive API v3 at " + settings.apiBaseUrl()
+                            + " as '" + user + "'" + driveNote + ".",
+                    summary.toString());
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return new ConnectionCheckResult(false,
+                    "Failed to connect to Google Drive at " + settings.apiBaseUrl() + ": " + e.getMessage(),
+                    e.toString());
         }
     }
 

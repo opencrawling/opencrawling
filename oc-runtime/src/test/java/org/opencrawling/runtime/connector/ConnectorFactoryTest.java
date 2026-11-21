@@ -99,6 +99,8 @@ class ConnectorFactoryTest {
                 "org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector", Map.of("baseUrl", "https://hxp.test")));
         RepositoryConnector zammad = factory.repository(connector("zammad",
                 "org.opencrawling.zammad.ZammadRepositoryConnector", Map.of("baseUrl", "https://support.acme.com", "accessToken", "t")));
+        RepositoryConnector googleDrive = factory.repository(connector("gdrive",
+                "org.opencrawling.googledrive.GoogleDriveRepositoryConnector", Map.of("authType", "bearer", "accessToken", "t", "driveId", "0AO123")));
 
         assertThat(alfresco).isInstanceOf(org.opencrawling.alfresco.AlfrescoRepositoryConnector.class);
         assertThat(cmis).isInstanceOf(CmisRepositoryConnector.class);
@@ -107,6 +109,7 @@ class ConnectorFactoryTest {
         assertThat(push).isInstanceOf(GrpcPushRepositoryConnector.class);
         assertThat(cic).isInstanceOf(org.opencrawling.hyland.cic.repository.HylandCicRepositoryConnector.class);
         assertThat(zammad).isInstanceOf(org.opencrawling.zammad.ZammadRepositoryConnector.class);
+        assertThat(googleDrive).isInstanceOf(org.opencrawling.googledrive.GoogleDriveRepositoryConnector.class);
     }
 
     // --- repository: no more silent fallback to the file system ---

@@ -37,6 +37,7 @@ COPY oc-aps-repository-connector/pom.xml oc-aps-repository-connector/
 COPY oc-cmis-repository-connector/pom.xml oc-cmis-repository-connector/
 COPY oc-doxis-repository-connector/pom.xml oc-doxis-repository-connector/
 COPY oc-sharepoint-repository-connector/pom.xml oc-sharepoint-repository-connector/
+COPY oc-googledrive-repository-connector/pom.xml oc-googledrive-repository-connector/
 COPY oc-mfiles-repository-connector/pom.xml oc-mfiles-repository-connector/
 COPY oc-filenet-repository-connector/pom.xml oc-filenet-repository-connector/
 COPY oc-documentum-repository-connector/pom.xml oc-documentum-repository-connector/
@@ -90,6 +91,7 @@ COPY oc-aps-repository-connector/src/ /app/oc-aps-repository-connector/src/
 COPY oc-cmis-repository-connector/src/ /app/oc-cmis-repository-connector/src/
 COPY oc-doxis-repository-connector/src/ /app/oc-doxis-repository-connector/src/
 COPY oc-sharepoint-repository-connector/src/ /app/oc-sharepoint-repository-connector/src/
+COPY oc-googledrive-repository-connector/src/ /app/oc-googledrive-repository-connector/src/
 COPY oc-mfiles-repository-connector/src/ /app/oc-mfiles-repository-connector/src/
 COPY oc-filenet-repository-connector/src/ /app/oc-filenet-repository-connector/src/
 COPY oc-documentum-repository-connector/src/ /app/oc-documentum-repository-connector/src/

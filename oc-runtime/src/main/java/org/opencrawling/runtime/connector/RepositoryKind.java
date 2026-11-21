@@ -31,6 +31,7 @@ public enum RepositoryKind {
     CMIS,
     DOXIS,
     SHAREPOINT,
+    GOOGLE_DRIVE,
     MFILES,
     FILENET,
     DOCUMENTUM,
@@ -65,6 +66,8 @@ public enum RepositoryKind {
             return DOXIS;
         } else if (className.contains("SharePointRepositoryConnector")) {
             return SHAREPOINT;
+        } else if (className.contains("GoogleDriveRepositoryConnector") || className.contains("GoogleDrive") || className.contains("googledrive")) {
+            return GOOGLE_DRIVE;
         } else if (className.contains("MFilesRepositoryConnector")) {
             return MFILES;
         } else if (className.contains("FileNetRepositoryConnector")) {

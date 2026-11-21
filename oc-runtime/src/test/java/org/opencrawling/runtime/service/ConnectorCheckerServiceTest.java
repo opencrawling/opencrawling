@@ -714,4 +714,73 @@ class ConnectorCheckerServiceTest {
             zammad.stop(0);
         }
     }
+
+    @Test
+    void testCheckGoogleDriveConnectorSuccessMissingCredentialsAndMissingRootFolder() throws Exception {
+        ConnectorDTO missingCreds = new ConnectorDTO("GDrive_Missing", "Google Drive", "repository",
+                "org.opencrawling.googledrive.GoogleDriveRepositoryConnector", 10, Map.of("authType", "service_account"));
+        ConnectionCheckResult invalidResult = checker.check(missingCreds);
+        assertFalse(invalidResult.success());
+        assertTrue(invalidResult.message().contains("service-account-json"), invalidResult.message());
+
+        HttpServer gdrive = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        gdrive.createContext("/drive/v3/about", exchange -> {
+            byte[] bytes = "{\"user\":{\"emailAddress\":\"crawler@example.com\",\"displayName\":\"Crawler SA\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        gdrive.createContext("/drive/v3/drives/0AO_TEAM", exchange -> {
+            byte[] bytes = "{\"id\":\"0AO_TEAM\",\"name\":\"Support Shared Drive\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        gdrive.createContext("/drive/v3/files/folder-ok", exchange -> {
+            byte[] bytes = "{\"id\":\"folder-ok\",\"name\":\"Procedures\",\"mimeType\":\"application/vnd.google-apps.folder\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        gdrive.createContext("/drive/v3/files/folder-missing", exchange -> {
+            byte[] bytes = "{\"error\":{\"code\":404,\"message\":\"File not found\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(404, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        gdrive.start();
+        try {
+            String apiUrl = "http://127.0.0.1:" + gdrive.getAddress().getPort() + "/drive/v3";
+            ConnectorDTO valid = new ConnectorDTO("GDrive_Test", "Google Drive", "repository",
+                    "org.opencrawling.googledrive.GoogleDriveRepositoryConnector", 10, Map.of(
+                            "apiBaseUrl", apiUrl,
+                            "authType", "bearer",
+                            "accessToken", "test-tok",
+                            "driveId", "0AO_TEAM",
+                            "rootFolderIds", "folder-ok"));
+            ConnectionCheckResult ok = checker.check(valid);
+            assertTrue(ok.success(), ok.message());
+            assertTrue(ok.message().contains("crawler@example.com"), ok.message());
+            assertTrue(ok.message().contains("Support Shared Drive"), ok.message());
+            assertTrue(ok.details().contains("\"driveId\":\"0AO_TEAM\""), ok.details());
+
+            ConnectorDTO missingFolder = new ConnectorDTO("GDrive_MissingFolder", "Google Drive", "repository",
+                    "org.opencrawling.googledrive.GoogleDriveRepositoryConnector", 10, Map.of(
+                            "apiBaseUrl", apiUrl,
+                            "authType", "bearer",
+                            "accessToken", "test-tok",
+                            "rootFolderIds", "folder-missing"));
+            ConnectionCheckResult missingRes = checker.check(missingFolder);
+            assertFalse(missingRes.success());
+            assertTrue(missingRes.message().contains("folder-missing"), missingRes.message());
+        } finally {
+            gdrive.stop(0);
+        }
+    }
 }

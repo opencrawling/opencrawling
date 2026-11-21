@@ -118,4 +118,24 @@ public record DocumentLedgerEntry(
                 null, null, null, null, null, null, null, null
         );
     }
+
+    public static DocumentLedgerEntry skipped(
+            String jobId,
+            String executionId,
+            PipelineMode mode,
+            String documentId,
+            String sourceUri,
+            String connectorSource,
+            String connectorTarget,
+            long durationMs,
+            String reasonCode,
+            String reasonMessage) {
+        return new DocumentLedgerEntry(
+                jobId, executionId, mode, documentId, sourceUri,
+                connectorSource, connectorTarget, "SKIPPED", durationMs, Instant.now(),
+                reasonCode, reasonMessage,
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null
+        );
+    }
 }
