@@ -22,11 +22,13 @@ import org.opencrawling.core.text.TextExtractionResult;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.opencrawling.core.connector.OutputConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
+import org.opencrawling.core.document.DocumentAction;
 import org.opencrawling.core.document.RepositoryDocument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +60,10 @@ public class VectorOutputConnector implements OutputConnector {
     private final JdbcTemplate jdbcTemplate;
     private final boolean flowableCollocatedSchema;
     private final String vectorTableName;
+    @Value("${spring.ai.vectorstore.pgvector.url:}")
+    private String url = "";
+    private AutoCloseable resources;
+    private boolean outsidePipeline;
 
     @Autowired
     public VectorOutputConnector(
@@ -99,26 +105,63 @@ public class VectorOutputConnector implements OutputConnector {
         this(vectorStore, embeddingModel, null, jdbcTemplate, flowableCollocatedSchema, "vector_store");
     }
 
+    /**
+     * An output for one run (#319), writing to its own database table.
+     *
+     * @param url             the JDBC URL of its database, to tell whether the runtime's pipeline writes there
+     * @param resources       closed by {@link #disconnect()} (its connection pool); may be {@code null}
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this table, so a RAG run must
+     *                        send its documents here directly
+     */
+    public VectorOutputConnector(VectorStore vectorStore, EmbeddingModel embeddingModel,
+                                 TextExtractionService textExtractionService, JdbcTemplate jdbcTemplate,
+                                 String vectorTableName, String url, AutoCloseable resources,
+                                 boolean outsidePipeline) {
+        this(vectorStore, embeddingModel, textExtractionService, jdbcTemplate, false, vectorTableName);
+        this.url = url;
+        this.resources = resources;
+        this.outsidePipeline = outsidePipeline;
+    }
+
+    /** The JDBC URL of the database this connector writes to; empty when unknown. */
+    public String url() {
+        return url;
+    }
+
     @Override
     public String getName() {
         return "VectorStoreOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here;
+     * except a per-run output writing where the pipeline does not (#319), which gets them directly.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
     }
 
     @Override
     public void connect() throws Exception {}
 
     @Override
-    public void disconnect() throws Exception {}
+    public void disconnect() throws Exception {
+        if (resources != null) {
+            resources.close();
+            resources = null;
+        }
+    }
 
     @Override
     public Mono<Void> send(RepositoryDocument document) {
         return Mono.fromRunnable(() -> {
+            if (document.action() == DocumentAction.DELETE) {
+                // Chunks are stored under their own ids; the document id is in their metadata.
+                vectorStore.delete(new FilterExpressionBuilder().eq("documentId", document.id()).build());
+                log.info("Purged document {} from {}.", document.id(), vectorTableName);
+                return;
+            }
             try (InputStream is = document.contentStream()) {
                 byte[] contentBytes = is.readAllBytes();
                 

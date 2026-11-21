@@ -16,10 +16,11 @@
 package org.opencrawling.runtime.connector;
 
 /**
- * Which output connector a configured {@code className} names, for jobs started through the job API.
+ * Which storage output a configured {@code className} names, for the features that read an output's store directly
+ * (OIS sidecars, Iceberg table access).
  *
- * <p>Only some outputs are built per job; every other class name uses the runtime's configured output connector
- * ({@link #ACTIVE}), as before. The checks run in the order the job API has always used.
+ * <p>Job runs no longer use it: {@link ConnectorFactory} builds every output through its
+ * {@link org.opencrawling.core.connector.OutputConnectorFactory} (#319). {@link #ACTIVE} means none of these.
  */
 public enum OutputKind {
     QDRANT,

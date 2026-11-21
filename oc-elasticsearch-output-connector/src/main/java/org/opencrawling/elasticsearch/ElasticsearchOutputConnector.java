@@ -66,6 +66,7 @@ public class ElasticsearchOutputConnector implements OutputConnector {
 
     private ElasticsearchClient client;
     private boolean ownsClient;
+    private boolean outsidePipeline;
 
     @Autowired
     public ElasticsearchOutputConnector(
@@ -84,6 +85,25 @@ public class ElasticsearchOutputConnector implements OutputConnector {
         this(client, properties, embeddingModel, null);
     }
 
+    /**
+     * An output for one run (#319), with its own client, which {@link #disconnect()} closes.
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this index, so a RAG run must
+     *                        send its documents here directly
+     */
+    public ElasticsearchOutputConnector(ElasticsearchClient client, ElasticsearchOutputProperties properties,
+                                        EmbeddingModel embeddingModel, TextExtractionService textExtractionService,
+                                        boolean outsidePipeline) {
+        this(client, properties, embeddingModel, textExtractionService);
+        this.ownsClient = client != null;
+        this.outsidePipeline = outsidePipeline;
+    }
+
+    /** The settings this connector writes with. */
+    public ElasticsearchOutputProperties getProperties() {
+        return properties;
+    }
+
     private synchronized ElasticsearchClient getOrInitClient() {
         if (client == null) {
             log.info("Initializing lazy ElasticsearchClient in connector. URIs: {}", properties.uris());
@@ -98,10 +118,13 @@ public class ElasticsearchOutputConnector implements OutputConnector {
         return "ElasticsearchOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here;
+     * except a per-run output writing where the pipeline does not (#319), which gets them directly.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
     }
 
     @Override

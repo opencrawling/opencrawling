@@ -70,6 +70,8 @@ public class MilvusOutputConnector implements OutputConnector {
 
     private MilvusClientV2 client;
     private final EmbeddingModel embeddingModel;
+    private boolean outsidePipeline;
+    private boolean ownsClient;
 
     @Autowired
     public MilvusOutputConnector(
@@ -89,6 +91,34 @@ public class MilvusOutputConnector implements OutputConnector {
         this(client, embeddingModel, null);
     }
 
+    /**
+     * An output for one run (#319), writing to its own collection.
+     *
+     * @param outsidePipeline whether the runtime's pipeline writer does not store to this collection, so a RAG run
+     *                        must send its documents here directly
+     */
+    public MilvusOutputConnector(MilvusClientV2 client, String uri, String collectionName, String vectorFieldName,
+                                 int dimensions, EmbeddingModel embeddingModel,
+                                 TextExtractionService textExtractionService, boolean outsidePipeline) {
+        this(client, embeddingModel, textExtractionService);
+        this.uri = uri;
+        this.collectionName = collectionName;
+        this.vectorFieldName = vectorFieldName;
+        this.dimensions = dimensions;
+        this.outsidePipeline = outsidePipeline;
+        this.ownsClient = true;
+    }
+
+    /** The Milvus server this connector writes to. */
+    public String uri() {
+        return uri;
+    }
+
+    /** The collection this connector writes to. */
+    public String collectionName() {
+        return collectionName;
+    }
+
     private synchronized MilvusClientV2 getOrInitClient() {
         if (client == null) {
             log.info("Initializing lazy MilvusClientV2 in connector. URI: {}", uri);
@@ -106,10 +136,13 @@ public class MilvusOutputConnector implements OutputConnector {
         return "MilvusOutputConnector";
     }
 
-    /** In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here. */
+    /**
+     * In RAG runs the Kafka pipeline's writer stores this output's chunks, so a run must not also send them here;
+     * except a per-run output writing where the pipeline does not (#319), which gets them directly.
+     */
     @Override
     public boolean writtenByPipeline(PipelineMode mode) {
-        return mode == PipelineMode.RAG;
+        return mode == PipelineMode.RAG && !outsidePipeline;
     }
 
     @Override
@@ -119,7 +152,10 @@ public class MilvusOutputConnector implements OutputConnector {
 
     @Override
     public void disconnect() throws Exception {
-        // MilvusClientV2 doesn't have a close/disconnect in standard v2 API, but we release reference
+        // A per-run output built its own client; the runtime's output shares the client bean.
+        if (ownsClient && client != null) {
+            client.close();
+        }
         client = null;
     }
 

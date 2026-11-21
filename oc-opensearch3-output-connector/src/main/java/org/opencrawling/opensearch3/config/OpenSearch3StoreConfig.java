@@ -57,6 +57,13 @@ public class OpenSearch3StoreConfig {
 
     @Bean
     public OpenSearchClient openSearchClient() {
+        OpenSearchClient client = client(uris, username, password);
+        initializeIndex(client, indexName, dimensions);
+        return client;
+    }
+
+    /** A client for this server, with basic authentication; used by the runtime's output and by per-run outputs (#319). */
+    public static OpenSearchClient client(String uris, String username, String password) {
         log.info("Initializing OpenSearchClient (3.x) connected to: {}", uris);
         try {
             final HttpHost host = HttpHost.create(uris);
@@ -71,15 +78,15 @@ public class OpenSearch3StoreConfig {
                     .build();
 
             OpenSearchClient client = new OpenSearchClient(transport);
-            initializeIndex(client);
             return client;
         } catch (Exception e) {
-            log.error("Failed to initialize OpenSearchClient bean", e);
-            throw new RuntimeException("OpenSearch client bean initialization error", e);
+            log.error("Failed to initialize OpenSearchClient", e);
+            throw new RuntimeException("OpenSearch client initialization error", e);
         }
     }
 
-    private void initializeIndex(OpenSearchClient client) {
+    /** Creates the k-NN index if it does not exist, retrying while the server starts. */
+    public static void initializeIndex(OpenSearchClient client, String indexName, int dimensions) {
         int maxRetries = 10;
         int delaySeconds = 3;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {

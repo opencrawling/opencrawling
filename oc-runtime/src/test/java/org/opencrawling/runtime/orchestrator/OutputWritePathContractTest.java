@@ -32,6 +32,8 @@ import org.opencrawling.vespa.VespaDocumentMapper;
 import org.opencrawling.vespa.VespaOutputConnector;
 import org.opencrawling.vespa.config.VespaOutputProperties;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
@@ -101,6 +103,37 @@ class OutputWritePathContractTest {
                 .writtenByPipeline(PipelineMode.RAG)).isTrue();
         assertThat(new VespaOutputConnector(mock(FeedClient.class), vespa, new VespaDocumentMapper(), null, null)
                 .writtenByPipeline(PipelineMode.RAG)).isTrue();
+    }
+
+    /** #319: every vector store built for one run writes directly when the pipeline does not reach its destination. */
+    @Test
+    void everyPerRunVectorStoreThePipelineDoesNotWriteKeepsItsDirectWrite() {
+        List<OutputConnector> outsidePipeline = List.of(
+                new org.opencrawling.milvus.MilvusOutputConnector(null, "http://milvus.test:19530", "kb", "embeddings",
+                        1024, null, null, true),
+                new org.opencrawling.opensearch2.OpenSearch2OutputConnector(null, "http://os.test:9200", "kb", 1024,
+                        null, null, true),
+                new org.opencrawling.opensearch3.OpenSearch3OutputConnector(null, "http://os.test:9200", "kb", 1024,
+                        null, null, true),
+                new org.opencrawling.elasticsearch.ElasticsearchOutputConnector(null,
+                        org.opencrawling.elasticsearch.config.ElasticsearchOutputProperties.defaults(), null, null, true),
+                new org.opencrawling.solr.SolrOutputConnector(null, null, null, null, true),
+                new org.opencrawling.luxir.LuxirOutputConnector(null, null, null, null, true),
+                new org.opencrawling.vector.VectorOutputConnector(mock(org.springframework.ai.vectorstore.VectorStore.class),
+                        null, null, null, "run_vectors", "jdbc:postgresql://pg.test:5432/db", null, true));
+        for (OutputConnector output : outsidePipeline) {
+            assertThat(output.writtenByPipeline(PipelineMode.RAG)).as(output.getName()).isFalse();
+        }
+
+        List<OutputConnector> samePlaceAsThePipeline = List.of(
+                new org.opencrawling.milvus.MilvusOutputConnector(null, "http://milvus.test:19530", "kb", "embeddings",
+                        1024, null, null, false),
+                new org.opencrawling.solr.SolrOutputConnector(null, null, null, null, false),
+                new org.opencrawling.vector.VectorOutputConnector(mock(org.springframework.ai.vectorstore.VectorStore.class),
+                        null, null, null, "vector_store", "jdbc:postgresql://pg.test:5432/db", null, false));
+        for (OutputConnector output : samePlaceAsThePipeline) {
+            assertThat(output.writtenByPipeline(PipelineMode.RAG)).as(output.getName()).isTrue();
+        }
     }
 
     @Test

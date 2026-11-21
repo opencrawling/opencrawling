@@ -16,10 +16,13 @@
 package org.opencrawling.runtime.connector;
 
 import org.opencrawling.core.connector.OutputConnector;
+import org.opencrawling.core.connector.OutputConnectorFactory;
+import org.opencrawling.core.connector.OutputContext;
 import org.opencrawling.core.connector.RepositoryConnector;
 import org.opencrawling.core.pipeline.PipelineMode;
 import org.opencrawling.core.pipeline.PipelineProperties;
 import org.opencrawling.filesystem.FileSystemRepositoryConnector;
+import org.opencrawling.runtime.api.ConnectorController;
 import org.opencrawling.runtime.api.ConnectorController.ConnectorDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +34,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
  * Builds the repository and output connectors of a job from their saved configuration ({@code connectors.json}).
@@ -45,8 +54,9 @@ import java.util.Map;
  * <ul>
  *   <li>A job whose connector name is not in the saved configuration still uses the file system connector (the
  *       built-in default job relies on this).</li>
- *   <li>Outputs that are not built per job use the runtime's configured output connector, as do unknown output
- *       class names: in decoupled deployments the writer service decides where vectors go.</li>
+ *   <li>A job that names no output uses the runtime's configured output connector: in decoupled deployments the
+ *       writer service decides where vectors go. A named output is built for the run by its
+ *       {@link OutputConnectorFactory} (#319); an output class no factory builds stops the job.</li>
  * </ul>
  */
 @Component
@@ -62,6 +72,7 @@ public class ConnectorFactory {
     private final ObjectProvider<EmbeddingModel> embeddingModels;
     private final ObjectProvider<TextExtractionService> textExtractionServices;
     private final ObjectProvider<KafkaTemplate<String, Object>> kafkaTemplates;
+    private volatile List<OutputConnectorFactory> outputFactories;
 
     @Autowired(required = false)
     private org.opencrawling.googledrive.GoogleDriveCrawlState.StateStore googleDriveStateStore;
@@ -141,33 +152,28 @@ public class ConnectorFactory {
     }
 
     /**
-     * The output connector for a job.
+     * The output connector for a job run (#319).
+     *
+     * <p>A run that names no saved output uses the runtime's configured output. A named output is built for this run
+     * by the {@link OutputConnectorFactory} whose {@link OutputConnectorFactory#className()} matches its class name
+     * (the fully qualified name, or the simple name), so two runs can write to two instances of the same output at
+     * the same time. A named output that no factory builds stops the run: it no longer falls back to the runtime's
+     * output, which wrote the run's documents somewhere it did not ask for.
      *
      * @param connector the saved connector configuration, or {@code null} when the job names no saved connector
-     * @param mode      the job's pipeline mode (the Ozone and S3 outputs carry it)
-     * @throws ConnectorResolutionException when a per-job output's configuration is rejected
+     * @param mode      the run's pipeline mode
+     * @throws ConnectorResolutionException when no factory builds the output, or its configuration is rejected
      */
     public OutputConnector output(ConnectorDTO connector, PipelineMode mode) {
-        if (connector == null) {
+        if (connector == null || untouchedSeed(connector)) {
             return activeOutputConnector;
         }
+        OutputConnectorFactory factory = outputFactory(connector.className()).orElseThrow(() ->
+                new ConnectorResolutionException("Output connector '" + connector.name() + "' has an unknown class '"
+                        + connector.className() + "': no output connector factory builds it."));
         Map<String, String> config = connector.configuration() != null ? connector.configuration() : Map.of();
-        OutputKind kind = OutputKind.of(connector.className());
-        if (kind == OutputKind.ACTIVE) {
-            return activeOutputConnector;
-        }
         try {
-            return switch (kind) {
-                case QDRANT -> buildQdrant(config, mode);
-                case VESPA -> buildVespa(config, mode);
-                case SEATUNNEL -> buildSeaTunnel(config, mode);
-                case OZONE -> buildOzone(config, mode);
-                case S3 -> buildS3(config, mode);
-                case ICEBERG -> buildIcebergOutput(config);
-                case HYLAND_CIC -> buildHylandCicOutput(config);
-                case DOXIS -> buildDoxisOutput(config);
-                default -> throw new IllegalStateException("Unhandled output kind " + kind);
-            };
+            return factory.create(config, new OutputContext(mode, activeOutputConnector, this::service));
         } catch (RuntimeException e) {
             throw new ConnectorResolutionException("Output connector '" + connector.name() + "' could not be built: "
                     + e.getMessage(), e);
@@ -175,8 +181,86 @@ public class ConnectorFactory {
     }
 
     /**
-     * Releases an output connector built for one job by {@link #output(ConnectorDTO, PipelineMode)}: such a connector owns its
-     * clients and sessions (e.g. a Doxis CSB login). The runtime's shared output connector is left untouched.
+     * The outputs a job used to share with the runtime before #319: their built-in connectors carry placeholder
+     * settings (such as a database on 127.0.0.1) and stood for the runtime's own output, which {@code Default_Job} relies on.
+     */
+    private static final Set<String> RUNTIME_STAND_INS = Set.of(
+            "org.opencrawling.vector.VectorOutputConnector",
+            "org.opencrawling.milvus.MilvusOutputConnector",
+            "org.opencrawling.opensearch2.OpenSearch2OutputConnector",
+            "org.opencrawling.opensearch3.OpenSearch3OutputConnector",
+            "org.opencrawling.elasticsearch.ElasticsearchOutputConnector",
+            "org.opencrawling.solr.SolrOutputConnector",
+            "org.opencrawling.luxir.LuxirOutputConnector",
+            "org.opencrawling.alfresco.output.AlfrescoOutputConnector",
+            "org.opencrawling.openarch.output.OpenArchOutputConnector");
+
+    /**
+     * A built-in output of one of {@link #RUNTIME_STAND_INS} whose settings nobody changed still means the runtime's
+     * own output, as before #319. Once it is edited, or saved under another name, it is built for the run.
+     */
+    static boolean untouchedSeed(ConnectorDTO connector) {
+        if (connector.className() == null || !RUNTIME_STAND_INS.contains(connector.className().trim())) {
+            return false;
+        }
+        Map<String, String> config = connector.configuration() != null ? connector.configuration() : Map.of();
+        return ConnectorController.defaultConnectors().stream().anyMatch(seed -> seed.name().equalsIgnoreCase(connector.name())
+                && seed.className().equals(connector.className().trim())
+                && Objects.equals(seed.configuration() != null ? seed.configuration() : Map.of(), config));
+    }
+
+    /** The factory that builds outputs of this class: the fully qualified name, else the simple name. */
+    Optional<OutputConnectorFactory> outputFactory(String className) {
+        if (className == null || className.isBlank()) {
+            return Optional.empty();
+        }
+        String name = className.trim();
+        List<OutputConnectorFactory> factories = outputFactories();
+        return factories.stream().filter(f -> f.className().equals(name)).findFirst()
+                .or(() -> factories.stream().filter(f -> simpleName(f.className()).equals(simpleName(name))).findFirst());
+    }
+
+    private static String simpleName(String className) {
+        return className.substring(className.lastIndexOf('.') + 1);
+    }
+
+    /** Replaces the factories found through {@link ServiceLoader}, as in tests. */
+    void useOutputFactories(List<OutputConnectorFactory> factories) {
+        this.outputFactories = List.copyOf(factories);
+    }
+
+    private List<OutputConnectorFactory> outputFactories() {
+        List<OutputConnectorFactory> loaded = outputFactories;
+        if (loaded == null) {
+            List<OutputConnectorFactory> found = new ArrayList<>();
+            ServiceLoader.load(OutputConnectorFactory.class, ConnectorFactory.class.getClassLoader()).forEach(found::add);
+            loaded = List.copyOf(found);
+            outputFactories = loaded;
+        }
+        return loaded;
+    }
+
+    /** The runtime's shared services a per-run output may use. */
+    private Object service(Class<?> type) {
+        if (type == EmbeddingModel.class) {
+            return available(embeddingModels);
+        }
+        if (type == TextExtractionService.class) {
+            return available(textExtractionServices);
+        }
+        if (type == KafkaTemplate.class) {
+            return available(kafkaTemplates);
+        }
+        if (type == PipelineProperties.class) {
+            return pipelineProperties();
+        }
+        return null;
+    }
+
+    /**
+     * Releases an output connector built for one run by {@link #output(ConnectorDTO, PipelineMode)}: such a connector
+     * owns its clients and sessions (e.g. a Doxis CSB login, a connection pool). The runtime's shared output connector
+     * is left untouched.
      */
     public void release(OutputConnector connector) {
         if (connector == null || connector == activeOutputConnector) {
@@ -401,371 +485,18 @@ public class ConnectorFactory {
         return new org.opencrawling.push.grpc.GrpcPushRepositoryConnector();
     }
 
-    private OutputConnector buildQdrant(Map<String, String> config, PipelineMode mode) {
-        String host = config.getOrDefault("qdrantHost", "localhost");
-        int grpcPort = 6334;
-        try {
-            grpcPort = Integer.parseInt(config.getOrDefault("qdrantPort", "6334"));
-        } catch (Exception ignored) {}
-        boolean useTls = Boolean.parseBoolean(config.getOrDefault("useTls", "false"));
-        String apiKey = config.getOrDefault("qdrantApiKey", "");
-        String collectionName = config.getOrDefault("qdrantCollection", "enterprise_kb");
-        int dimensions = 1024;
-        try {
-            dimensions = Integer.parseInt(config.getOrDefault("qdrantDimensions", "1024"));
-        } catch (Exception ignored) {}
-
-        io.qdrant.client.QdrantGrpcClient.Builder grpcBuilder = io.qdrant.client.QdrantGrpcClient.newBuilder(host, grpcPort, useTls);
-        if (apiKey != null && !apiKey.isBlank()) {
-            grpcBuilder.withApiKey(apiKey);
-        }
-        io.qdrant.client.QdrantClient qdrantClient = new io.qdrant.client.QdrantClient(grpcBuilder.build());
-
-        org.opencrawling.qdrant.config.QdrantOutputProperties props = new org.opencrawling.qdrant.config.QdrantOutputProperties(
-            host, grpcPort, apiKey, collectionName, dimensions,
-            org.opencrawling.qdrant.config.QdrantOutputProperties.Distance.COSINE,
-            org.opencrawling.qdrant.config.QdrantOutputProperties.Quantization.NONE,
-            useTls, 500
-        );
-        org.opencrawling.qdrant.config.QdrantCollectionInitializer initializer = new org.opencrawling.qdrant.config.QdrantCollectionInitializer(qdrantClient, props);
-        initializer.initializeCollection();
-
-        org.opencrawling.qdrant.QdrantPointMapper mapper = new org.opencrawling.qdrant.QdrantPointMapper();
-        log.info("Resolving dynamic Qdrant output connector for collection '{}'", collectionName);
-        // Unless the pipeline's writer stores to this destination, the job's documents go to it directly.
-        return new org.opencrawling.qdrant.QdrantOutputConnector(qdrantClient, props, mapper,
-                available(embeddingModels), available(textExtractionServices), !pipelineWritesQdrant(props));
-    }
-
-    /**
-     * Whether the runtime's pipeline writer stores to this Qdrant destination: its active output is Qdrant, with the
-     * same host, port and collection. Only then may a RAG run leave the job's documents to the pipeline; otherwise
-     * they are sent to the job's Qdrant directly, or they would never reach it.
-     */
-    boolean pipelineWritesQdrant(org.opencrawling.qdrant.config.QdrantOutputProperties job) {
-        return activeOutputConnector instanceof org.opencrawling.qdrant.QdrantOutputConnector active
-                && sameQdrantDestination(active.getProperties(), job);
-    }
-
-    static boolean sameQdrantDestination(org.opencrawling.qdrant.config.QdrantOutputProperties a,
-                                         org.opencrawling.qdrant.config.QdrantOutputProperties b) {
-        return a != null && b != null && java.util.Objects.equals(a.host(), b.host()) && a.port() == b.port()
-                && java.util.Objects.equals(a.collectionName(), b.collectionName());
-    }
-
-    private OutputConnector buildVespa(Map<String, String> config, PipelineMode mode) {
-        String endpoint = config.getOrDefault("vespaEndpoint", "http://localhost:8080");
-        String namespace = config.getOrDefault("vespaNamespace", "opencrawling");
-        String documentType = config.getOrDefault("vespaDocumentType", "opencrawling_chunk");
-        int dimensions = 1024;
-        try {
-            dimensions = Integer.parseInt(config.getOrDefault("vespaDimensions", "1024"));
-        } catch (Exception ignored) {}
-        int timeoutSeconds = 30;
-        try {
-            timeoutSeconds = Integer.parseInt(config.getOrDefault("vespaTimeoutSeconds", "30"));
-        } catch (Exception ignored) {}
-        boolean tlsEnabled = Boolean.parseBoolean(config.getOrDefault("vespaTlsEnabled", "false"));
-        String tlsCertificate = config.getOrDefault("vespaTlsCertificate", "");
-        String tlsPrivateKey = config.getOrDefault("vespaTlsPrivateKey", "");
-        String tlsCaCertificates = config.getOrDefault("vespaTlsCaCertificates", "");
-
-        ai.vespa.feed.client.FeedClientBuilder feedClientBuilder = ai.vespa.feed.client.FeedClientBuilder.create(java.net.URI.create(endpoint));
-        if (tlsEnabled && !tlsCertificate.isBlank() && !tlsPrivateKey.isBlank()) {
-            feedClientBuilder.setCertificate(java.nio.file.Path.of(tlsCertificate), java.nio.file.Path.of(tlsPrivateKey));
-            if (!tlsCaCertificates.isBlank()) {
-                feedClientBuilder.setCaCertificatesFile(java.nio.file.Path.of(tlsCaCertificates));
-            }
-        }
-        ai.vespa.feed.client.FeedClient feedClient = feedClientBuilder.build();
-
-        org.opencrawling.vespa.config.VespaOutputProperties vespaProps = org.opencrawling.vespa.config.VespaOutputProperties.builder()
-                .endpoint(endpoint)
-                .namespace(namespace)
-                .documentType(documentType)
-                .dimensions(dimensions)
-                .timeoutSeconds(timeoutSeconds)
-                .tlsEnabled(tlsEnabled)
-                .tlsCertificate(tlsCertificate.isBlank() ? null : tlsCertificate)
-                .tlsPrivateKey(tlsPrivateKey.isBlank() ? null : tlsPrivateKey)
-                .tlsCaCertificates(tlsCaCertificates.isBlank() ? null : tlsCaCertificates)
-                .contentCluster(config.getOrDefault("vespaContentCluster",
-                        org.opencrawling.vespa.config.VespaOutputProperties.DEFAULT_CONTENT_CLUSTER))
-                .build();
-
-        org.opencrawling.vespa.VespaDocumentMapper vespaMapper = new org.opencrawling.vespa.VespaDocumentMapper();
-        log.info("Resolving dynamic Vespa output connector at endpoint '{}'", endpoint);
-        // Unless the pipeline's writer feeds this destination, the job's documents go to it directly.
-        return new org.opencrawling.vespa.VespaOutputConnector(feedClient, vespaProps, vespaMapper,
-                available(embeddingModels), available(textExtractionServices), !pipelineWritesVespa(vespaProps));
-    }
-
-    /**
-     * Whether the runtime's pipeline writer feeds this Vespa destination: its active output is Vespa with the same
-     * endpoint, namespace and configured document type. Otherwise a RAG run sends the job's documents to it directly.
-     *
-     * <p>Which document type a chunk lands in depends on its embedding's actual length, which is not known here (the
-     * usual sizes go to the dimension-specific types whatever type is configured), so only an identical configuration
-     * counts as the same destination. A difference never loses documents; a job pointing at the runtime's endpoint
-     * and namespace with another type stores its documents twice. Like {@link #pipelineWritesQdrant}, this compares
-     * this process's configuration as written: it cannot tell which writer consumes the embedded topic in a decoupled
-     * deployment (it assumes the crawler and the writer share the output settings), nor that two host names reach the
-     * same server (then documents are written both ways).
-     */
-    boolean pipelineWritesVespa(org.opencrawling.vespa.config.VespaOutputProperties job) {
-        return activeOutputConnector instanceof org.opencrawling.vespa.VespaOutputConnector active
-                && sameVespaDestination(active.getProperties(), job);
-    }
-
-    static boolean sameVespaDestination(org.opencrawling.vespa.config.VespaOutputProperties a,
-                                        org.opencrawling.vespa.config.VespaOutputProperties b) {
-        return a != null && b != null && java.util.Objects.equals(endpoint(a.endpoint()), endpoint(b.endpoint()))
-                && java.util.Objects.equals(a.namespace(), b.namespace())
-                && java.util.Objects.equals(a.documentType(), b.documentType());
-    }
-
-    private static String endpoint(String endpoint) {
-        return endpoint != null && endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
-    }
-
-    private OutputConnector buildSeaTunnel(Map<String, String> config, PipelineMode mode) {
-        String restUrl = config.getOrDefault("seatunnelRestUrl", "http://localhost:8080");
-        String jobName = config.getOrDefault("seatunnelJobName", "opencrawling_ingestion_pipeline");
-        String kafkaBootstrap = config.getOrDefault("seatunnelKafkaBootstrapServers", "localhost:9092");
-        String targetSinks = config.getOrDefault("seatunnelTargetSinks", "console");
-        org.opencrawling.seatunnel.config.SeaTunnelOutputProperties stProps = new org.opencrawling.seatunnel.config.SeaTunnelOutputProperties(
-                restUrl, jobName, "STREAMING", 5000, 4, kafkaBootstrap,
-                org.opencrawling.core.messaging.PipelineTopics.EMBEDDED, "opencrawling-seatunnel-group",
-                targetSinks, 1024, true, 30
-        );
-        org.opencrawling.seatunnel.client.SeaTunnelRestClient restClient = new org.opencrawling.seatunnel.client.SeaTunnelRestClient(restUrl, 30);
-        log.info("Resolving dynamic SeaTunnel output connector for endpoint '{}'", restUrl);
-        return new org.opencrawling.seatunnel.SeaTunnelOutputConnector(restClient, stProps,
-                available(embeddingModels), available(kafkaTemplates), available(textExtractionServices));
-    }
-
-    private OutputConnector buildOzone(Map<String, String> config, PipelineMode mode) {
-        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = ozoneProperties(config);
-        String volume = ozoneProps.getVolume();
-        String bucket = ozoneProps.getBucket();
-        String clientType = ozoneProps.getClientType();
-
-        org.opencrawling.ozone.OzoneOutputConnector ozoneConnector = new org.opencrawling.ozone.OzoneOutputConnector(ozoneProps, null, pipelineProperties(), null);
-        ozoneConnector.setPipelineMode(mode);
-        log.info("Resolving dynamic Apache Ozone output connector (Volume: {}, Bucket: {}, Strategy: {})", volume, bucket, clientType);
-        return ozoneConnector;
-    }
-
-    private OutputConnector buildS3(Map<String, String> config, PipelineMode mode) {
-        org.opencrawling.s3.config.S3OutputProperties s3Props = s3Properties(config);
-        String bucket = s3Props.getBucket();
-        String region = s3Props.getRegion();
-        String keyStrategy = s3Props.getKeyStrategy();
-
-        org.opencrawling.s3.S3OutputConnector s3Connector = new org.opencrawling.s3.S3OutputConnector(s3Props, null, pipelineProperties(), null);
-        s3Connector.setPipelineMode(mode);
-        log.info("Resolving dynamic AWS S3 output connector (Bucket: {}, Region: {}, Strategy: {})", bucket, region, keyStrategy);
-        return s3Connector;
-    }
-
     /** The Apache Ozone settings a registered Ozone output connector's configuration describes. */
     public static org.opencrawling.ozone.config.OzoneOutputProperties ozoneProperties(Map<String, String> config) {
-        String volume = config.getOrDefault("volume", "opencrawling");
-        String bucket = config.getOrDefault("bucket", "migration");
-        String clientType = config.getOrDefault("clientType", "NATIVE");
-        String omHost = config.getOrDefault("omHost", "localhost");
-        int omPort = 9862;
-        try { omPort = Integer.parseInt(config.getOrDefault("omPort", "9862")); } catch (Exception ignored) {}
-        String s3Endpoint = config.getOrDefault("s3Endpoint", "http://localhost:9878");
-        String accessKey = config.getOrDefault("accessKey", "any");
-        String secretKey = config.getOrDefault("secretKey", "any");
-        org.opencrawling.ozone.config.OzoneOutputProperties ozoneProps = new org.opencrawling.ozone.config.OzoneOutputProperties();
-        ozoneProps.setVolume(volume);
-        ozoneProps.setBucket(bucket);
-        ozoneProps.setClientType(clientType);
-        ozoneProps.setOmHost(omHost);
-        ozoneProps.setOmPort(omPort);
-        ozoneProps.setS3Endpoint(s3Endpoint);
-        ozoneProps.setAccessKey(accessKey);
-        ozoneProps.setSecretKey(secretKey);
-        ozoneProps.setKeyStrategy(config.getOrDefault("keyStrategy", ozoneProps.getKeyStrategy()));
-        ozoneProps.setTombstoneAction(config.getOrDefault("tombstoneAction", ozoneProps.getTombstoneAction()));
-
-        return ozoneProps;
+        return org.opencrawling.ozone.OzoneOutputConnectorFactory.properties(config);
     }
 
     /** The AWS S3 settings a registered S3 output connector's configuration describes. */
     public static org.opencrawling.s3.config.S3OutputProperties s3Properties(Map<String, String> config) {
-        String bucket = config.getOrDefault("bucket", "enterprise-migration-lake");
-        String region = config.getOrDefault("region", "us-east-1");
-        String endpoint = config.getOrDefault("endpointOverride", "");
-        boolean pathStyle = Boolean.parseBoolean(config.getOrDefault("pathStyleAccess", "false"));
-        String credsStrategy = config.getOrDefault("credentialsStrategy", "DEFAULT_CHAIN");
-        String accessKey = config.getOrDefault("accessKey", "");
-        String secretKey = config.getOrDefault("secretKey", "");
-        String sessionToken = config.getOrDefault("sessionToken", "");
-        String assumeRoleArn = config.getOrDefault("assumeRoleArn", "");
-        String assumeRoleExternalId = config.getOrDefault("assumeRoleExternalId", "");
-        String keyStrategy = config.getOrDefault("keyStrategy", "HIERARCHICAL");
-        String keyPrefix = config.getOrDefault("keyPrefix", "migration/v1/");
-        String storageClass = config.getOrDefault("storageClass", "INTELLIGENT_TIERING");
-        String sse = config.getOrDefault("serverSideEncryption", "SSE_S3");
-        String kmsKeyId = config.getOrDefault("kmsKeyId", "");
-        boolean bucketKey = Boolean.parseBoolean(config.getOrDefault("bucketKeyEnabled", "true"));
-        String tombstoneAction = config.getOrDefault("tombstoneAction", "DELETE_OBJECTS");
-
-        org.opencrawling.s3.config.S3OutputProperties s3Props = new org.opencrawling.s3.config.S3OutputProperties();
-        s3Props.setBucket(bucket);
-        s3Props.setRegion(region);
-        s3Props.setEndpointOverride(endpoint);
-        s3Props.setPathStyleAccess(pathStyle);
-        s3Props.setCredentialsStrategy(credsStrategy);
-        s3Props.setAccessKey(accessKey);
-        s3Props.setSecretKey(secretKey);
-        s3Props.setSessionToken(sessionToken);
-        s3Props.setAssumeRoleArn(assumeRoleArn);
-        s3Props.setAssumeRoleExternalId(assumeRoleExternalId);
-        s3Props.setKeyStrategy(keyStrategy);
-        s3Props.setKeyPrefix(keyPrefix);
-        s3Props.setStorageClass(storageClass);
-        s3Props.setServerSideEncryption(sse);
-        s3Props.setKmsKeyId(kmsKeyId);
-        s3Props.setBucketKeyEnabled(bucketKey);
-        s3Props.setTombstoneAction(tombstoneAction);
-
-        String customHeadersJson = config.get("customHeaders");
-        if (customHeadersJson != null && !customHeadersJson.isBlank()) {
-            try {
-                Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
-                        customHeadersJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
-                if (parsed != null) {
-                    s3Props.getCustomHeaders().putAll(parsed);
-                }
-            } catch (Exception ex) {
-                log.warn("Failed to parse customHeaders JSON for S3 output connector: {}", ex.getMessage());
-            }
-        }
-        config.forEach((k, v) -> {
-            if (k != null && k.startsWith("customHeader.") && v != null && !v.isBlank()) {
-                String headerName = k.substring("customHeader.".length()).trim();
-                if (!headerName.isBlank()) {
-                    s3Props.getCustomHeaders().put(headerName, v.trim());
-                }
-            }
-        });
-        return s3Props;
+        return org.opencrawling.s3.S3OutputConnectorFactory.properties(config);
     }
 
-    private OutputConnector buildDoxisOutput(Map<String, String> config) {
-        org.opencrawling.doxis.output.config.DoxisOutputProperties doxisProps =
-                org.opencrawling.doxis.output.config.DoxisConnectorSettings.fromConfiguration(config);
-        log.info("Resolving dynamic Doxis output connector for '{}' (repository '{}', content strategy {})",
-                doxisProps.baseUrl(), doxisProps.repository(), doxisProps.content().strategy());
-        return new org.opencrawling.doxis.output.DoxisOutputConnector(doxisProps);
-    }
-
-    private OutputConnector buildHylandCicOutput(Map<String, String> config) {
-        org.opencrawling.hyland.cic.config.HylandCicProperties cicSettings =
-                org.opencrawling.hyland.cic.config.HylandCicProperties.fromConfiguration(config);
-        log.info("Resolving dynamic Hyland CIC output connector for base URL '{}' (target folder '{}')",
-                cicSettings.getBaseUrl(), cicSettings.getTargetFolderPath());
-        return new org.opencrawling.hyland.cic.output.HylandCicOutputConnector(cicSettings);
-    }
-
-    private OutputConnector buildIcebergOutput(Map<String, String> config) {
-        org.opencrawling.iceberg.output.config.IcebergOutputProperties properties = icebergProperties(config);
-        log.info("Resolving dynamic Iceberg output connector for catalog '{}' (table strategy: {})",
-                properties.getCatalogName(), properties.getTableStrategy());
-        return new org.opencrawling.iceberg.output.IcebergOutputConnector(properties);
-    }
-
+    /** The Apache Iceberg settings a registered Iceberg output connector's configuration describes. */
     public static org.opencrawling.iceberg.output.config.IcebergOutputProperties icebergProperties(Map<String, String> config) {
-        Map<String, String> safe = config != null ? config : Map.of();
-        org.opencrawling.iceberg.output.config.IcebergOutputProperties props = new org.opencrawling.iceberg.output.config.IcebergOutputProperties();
-        String catalogType = firstNonBlank(safe, "catalogType", "catalog.type");
-        if (catalogType != null) {
-            props.setCatalogType(catalogType);
-        } else {
-            props.setCatalogType("rest");
-        }
-        String catalogName = firstNonBlank(safe, "catalogName", "catalog.name");
-        props.setCatalogName(catalogName != null ? catalogName : "opencrawling_catalog");
-        String catalogUri = firstNonBlank(safe, "catalogUri", "catalog.uri");
-        if (catalogUri != null) {
-            props.setCatalogUri(catalogUri);
-        } else if ("rest".equalsIgnoreCase(props.getCatalogType())) {
-            props.setCatalogUri("http://localhost:8181");
-        }
-        String warehouse = firstNonBlank(safe, "warehouse");
-        props.setWarehouse(warehouse != null ? warehouse : "s3://warehouse");
-        String namespace = firstNonBlank(safe, "namespace");
-        props.setNamespace(namespace != null ? namespace : "enterprise_data");
-        String tableName = firstNonBlank(safe, "tableName", "table.name");
-        props.setTableName(tableName != null ? tableName : "documents");
-        String tableStrategy = firstNonBlank(safe, "tableStrategy", "table.strategy");
-        if (tableStrategy != null) {
-            try {
-                props.setTableStrategy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.TableStrategy.valueOf(tableStrategy.toUpperCase()));
-            } catch (Exception ignored) {}
-        }
-        String partitionStrategy = firstNonBlank(safe, "partitionStrategy", "partitionBy", "partition.strategy");
-        if (partitionStrategy != null) {
-            try {
-                props.setPartitionBy(org.opencrawling.iceberg.output.config.IcebergOutputProperties.PartitionStrategy.valueOf(partitionStrategy.toUpperCase()));
-            } catch (Exception ignored) {}
-        }
-        String autoCreate = firstNonBlank(safe, "autoCreateTable", "auto.create.table");
-        if (autoCreate != null) {
-            props.setAutoCreateTable(Boolean.parseBoolean(autoCreate));
-        }
-        String autoSchemaEvolution = firstNonBlank(safe, "autoSchemaEvolution", "auto.schema.evolution");
-        if (autoSchemaEvolution != null) {
-            props.setAutoSchemaEvolution(Boolean.parseBoolean(autoSchemaEvolution));
-        }
-        String writeFormat = firstNonBlank(safe, "writeFormat", "write.format");
-        if (writeFormat != null) {
-            props.setWriteFormat(writeFormat);
-        }
-        String compressionCodec = firstNonBlank(safe, "compressionCodec", "compression.codec");
-        if (compressionCodec != null) {
-            props.setCompressionCodec(compressionCodec);
-        }
-        String ioImpl = firstNonBlank(safe, "ioImpl", "io.impl", "fileIoImpl");
-        if (ioImpl != null) {
-            props.setIoImpl(ioImpl);
-        }
-
-        org.opencrawling.iceberg.output.config.IcebergOutputProperties.S3Properties s3 = props.getS3();
-        String s3Endpoint = firstNonBlank(safe, "s3Endpoint", "s3.endpoint");
-        if (s3Endpoint != null) {
-            s3.setEndpoint(s3Endpoint);
-        }
-        String s3Region = firstNonBlank(safe, "s3Region", "s3.region");
-        if (s3Region != null) {
-            s3.setRegion(s3Region);
-        }
-        String s3AccessKeyId = firstNonBlank(safe, "s3AccessKeyId", "s3.access-key-id", "s3AccessKey");
-        if (s3AccessKeyId != null) {
-            s3.setAccessKeyId(s3AccessKeyId);
-        }
-        String s3SecretAccessKey = firstNonBlank(safe, "s3SecretAccessKey", "s3.secret-access-key", "s3SecretKey");
-        if (s3SecretAccessKey != null) {
-            s3.setSecretAccessKey(s3SecretAccessKey);
-        }
-        String s3PathStyle = firstNonBlank(safe, "s3PathStyleAccess", "s3.path-style-access", "pathStyleAccess");
-        if (s3PathStyle != null) {
-            s3.setPathStyleAccess(Boolean.parseBoolean(s3PathStyle));
-        }
-        return props;
-    }
-
-    private static String firstNonBlank(Map<String, String> config, String... keys) {
-        for (String key : keys) {
-            String value = config.get(key);
-            if (value != null && !value.isBlank()) {
-                return value.trim();
-            }
-        }
-        return null;
+        return org.opencrawling.iceberg.output.IcebergOutputConnectorFactory.properties(config);
     }
 }
