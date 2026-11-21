@@ -151,6 +151,8 @@ jobs:
             script: "test-sharepoint-repository-connector.sh"
           - name: "SharePoint Decoupled Pipeline Test Suite"
             script: "test-sharepoint-decoupled.sh"
+          - name: "Google Drive Connector Test Suite"
+            script: "test-googledrive-connector.sh"
           - name: "Apache SeaTunnel Decoupled Pipeline Test Suite"
             script: "test-seatunnel-decoupled.sh"
           - name: "Apache Solr Decoupled Pipeline Test Suite"

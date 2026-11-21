@@ -110,6 +110,7 @@ public class OpenCrawlingApplication {
                     !"cmis".equalsIgnoreCase(repositoryConnectorType) &&
                     !"doxis".equalsIgnoreCase(repositoryConnectorType) &&
                     !"sharepoint".equalsIgnoreCase(repositoryConnectorType) &&
+                    !"googledrive".equalsIgnoreCase(repositoryConnectorType) &&
                     !"mfiles".equalsIgnoreCase(repositoryConnectorType) &&
                     !"filenet".equalsIgnoreCase(repositoryConnectorType) &&
                     !"documentum".equalsIgnoreCase(repositoryConnectorType) &&

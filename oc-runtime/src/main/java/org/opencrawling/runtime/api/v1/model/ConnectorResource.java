@@ -54,8 +54,9 @@ public record ConnectorResource(
     /** Keys that end like a secret but hold none: a CMIS change-log position, not a credential. */
     private static final Set<String> NOT_SECRET = Set.of("changelogtoken");
 
-    /** Keys whose whole value may carry credentials, such as an {@code Authorization} header. */
-    private static final Set<String> SECRET_KEYS = Set.of("customheaders", "headers", "authorization");
+    /** Keys whose whole value may carry credentials, such as an {@code Authorization} header or Service Account JSON. */
+    private static final Set<String> SECRET_KEYS = Set.of("customheaders", "headers", "authorization",
+            "serviceaccountjson", "service_account_json");
 
     /**
      * Keys that say where and how a connector connects: changing one must not reuse stored secrets. Ports and TLS

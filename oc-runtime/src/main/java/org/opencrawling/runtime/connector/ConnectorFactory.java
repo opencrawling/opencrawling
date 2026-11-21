@@ -63,6 +63,9 @@ public class ConnectorFactory {
     private final ObjectProvider<TextExtractionService> textExtractionServices;
     private final ObjectProvider<KafkaTemplate<String, Object>> kafkaTemplates;
 
+    @Autowired(required = false)
+    private org.opencrawling.googledrive.GoogleDriveCrawlState.StateStore googleDriveStateStore;
+
     public ConnectorFactory(FileSystemRepositoryConnector fileSystemRepositoryConnector,
                             OutputConnector activeOutputConnector,
                             ObjectProvider<PipelineProperties> pipelinePropertiesProvider) {
@@ -121,6 +124,7 @@ public class ConnectorFactory {
                 case CMIS -> buildCmis(name, config);
                 case DOXIS -> buildDoxis(name, config);
                 case SHAREPOINT -> buildSharePoint(name, config);
+                case GOOGLE_DRIVE -> buildGoogleDrive(name, config);
                 case MFILES -> buildMFiles(name, config);
                 case FILENET -> buildFileNet(name, config);
                 case DOCUMENTUM -> buildDocumentum(name, config);
@@ -269,6 +273,24 @@ public class ConnectorFactory {
                 sharePointSettings.siteUrl() != null ? sharePointSettings.siteUrl() : sharePointSettings.siteId(),
                 sharePointSettings.crawlMode());
         return new org.opencrawling.sharepoint.SharePointRepositoryConnector(sharePointSettings);
+    }
+
+    /** For unit tests verifying control-plane state-store injection. */
+    void setGoogleDriveStateStore(org.opencrawling.googledrive.GoogleDriveCrawlState.StateStore stateStore) {
+        this.googleDriveStateStore = stateStore;
+    }
+
+    private RepositoryConnector buildGoogleDrive(String name, Map<String, String> config) {
+        org.opencrawling.googledrive.GoogleDriveProperties gdSettings =
+                org.opencrawling.googledrive.GoogleDriveProperties.fromConfiguration(config);
+        org.opencrawling.googledrive.GoogleDriveCrawlState.StateStore store =
+                (gdSettings.stateFile() == null || gdSettings.stateFile().isBlank()) && googleDriveStateStore != null
+                        ? googleDriveStateStore
+                        : org.opencrawling.googledrive.GoogleDriveCrawlState.localFileStore(gdSettings);
+        log.info("Resolving dynamic Google Drive repository connector '{}' ({} mode, auth {}, state={})",
+                name, gdSettings.crawlMode(), gdSettings.authType(),
+                store instanceof ControlPlaneGoogleDriveStateStore ? "control-plane" : "local-file");
+        return new org.opencrawling.googledrive.GoogleDriveRepositoryConnector(gdSettings, store);
     }
 
     private RepositoryConnector buildMFiles(String name, Map<String, String> config) {

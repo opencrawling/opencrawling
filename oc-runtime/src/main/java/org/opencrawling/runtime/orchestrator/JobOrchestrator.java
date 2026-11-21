@@ -319,6 +319,29 @@ public class JobOrchestrator {
 
                             doc = withOisBlocks(doc, repositoryConnector, currentJobId, provenance);
 
+                            // Documents explicitly flagged as TOO_LARGE by a connector (no content stream) are recorded
+                            // as SKIPPED with reason TOO_LARGE rather than falsely counted as indexed SUCCESS (#339, #397).
+                            String docStatus = doc.metadata() != null
+                                    ? doc.metadata().getOrDefault("opencrawling.document.status", List.of()).stream().findFirst().orElse(null)
+                                    : null;
+                            if (doc.action() != DocumentAction.DELETE && doc.contentStream() == null
+                                    && "TOO_LARGE".equalsIgnoreCase(docStatus)) {
+                                String reason = doc.metadata().getOrDefault("opencrawling.document.reason", List.of("Document exceeds maximum allowed file size")).stream().findFirst().orElse("Document exceeds maximum allowed file size");
+                                log.warn("Document {} reported as TOO_LARGE: {}", doc.id(), reason);
+                                traceStore.recordError(currentJobId, "WARN", repositoryConnector.getClass().getSimpleName(),
+                                        "Document " + doc.id() + " skipped (TOO_LARGE): " + reason, null);
+                                if (ledgerAccumulator != null) {
+                                    long docDuration = System.currentTimeMillis() - docStartTime;
+                                    ledgerAccumulator.recordDocument(DocumentLedgerEntry.skipped(
+                                            currentJobId, currentExecutionId, pipelineMode, doc.id(), doc.uri(),
+                                            repositoryConnector.getClass().getSimpleName(),
+                                            outputConnector != null ? outputConnector.getClass().getSimpleName() : "Kafka",
+                                            docDuration, "TOO_LARGE", reason
+                                    ));
+                                }
+                                return new ScanResult.Success(doc.id(), "TOO_LARGE");
+                            }
+
                             String finalUri = doc.uri();
                             boolean isLocalFileUri = finalUri != null && finalUri.startsWith("file:");
                             boolean isSupportedByPrimary = claimCheckStore instanceof CompositeClaimCheckStore composite
